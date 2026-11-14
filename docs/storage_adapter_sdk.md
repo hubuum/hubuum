@@ -46,6 +46,26 @@ Upgrade matching adapters, binaries, lifecycle migration 000005 and grants
 together; older decoders cannot retain pressure evidence. See the
 [accounting contract](history_retention.md#scope-and-original-clocks).
 
+**Breaking size-selection/recovery contract:** initial size-bearing passes use
+`HistorySizeCensus::for_family` and `HistoryExpirySizeSelection` to prove complete
+accounting and exhaust the unchanged family again before choosing its bounded
+oldest eligible prefix. Share the original five-second planning clock and 64-MiB
+metadata budget; cap each pass at 100,000 rows. The admission result reports both
+passes' source examinations (up to 200,000), and exposes accounting-unavailable
+fallback in task progress. Preserve independent age-or-size short-circuiting.
+Native intent/audit failures cannot fall back or commit partially.
+
+Preserve `HistoryExpirySizeAuthorization` with every size-dependent member,
+including its original episode, observed bytes and reserved logical bytes.
+Pending unreceipted copies reserve bytes once per exact source, and selection
+stops at the lower target. Ending pressure does not release an independently
+protected exclusion or erase its original cleanup cause. Recheck current policies,
+holds, native intervals and dependencies before deletion; keep first receipts
+through replay. Protect pressure changes even when a pass selects nothing.
+Upgrade all adapters and checkpoint/restore readers before retaining these facts;
+older decoders cannot preserve their authorization. Keep signed evidence and roll
+forward. Production activation and P6 remain gated.
+
 **Breaking expiry-admission capability:** implement
 `HistoryLifecycleStorage::admit_history_expiry` using native selection under the
 same authority transaction as intent and canonical-audit retention. Require the
@@ -56,7 +76,8 @@ Generic policy commits preserve retained expiry byte-for-byte on both adapters.
 Capture endpoint and class/collection ownership at version creation; preserve it
 through closure, same-version refresh and restore. Older missing ownership stays
 unresolved. Never infer historical ownership from a current row during selection.
-Measure complete native rows within the 1000-row/16-MiB input bound and transfer
+For ordinary age pages, measure native rows within the 1000-source-row bound;
+all admitted batches retain the 1000-member/16-MiB input bound. Transfer
 only bounded identity/authorization metadata. Preserve current/open copies and
 retained schema revisions. Keep admitted membership and object authorization facts
 through checkpoint capture and recovery; primary admission is not independent
@@ -133,9 +154,14 @@ qualification.
 Finite H1/H4 qualification runs each shape on a separate isolated CI runner, with
 one warm-up and five fresh measurements per shape. Every shape retains the same
 30-minute phase bounds, four-hour job limit and worker/database resource caps.
-A shape report cannot qualify the complete profile. Aggregation requires all five
+A shape report cannot qualify the complete profile. Aggregation requires all six
 shapes, identical settings and binary provenance, and recomputes acceptance and raw
-RSS evidence before publishing the 30-run profile. Restore/replay must preserve
+RSS evidence before publishing the 36-run profile. The logical-size shape exercises
+65 updates per scope, protected size witnesses and oldest-first ordering through
+the actual worker, independent protection and signed restore/replay. It retains
+the existing 1000-examined-row profile ceiling, memory and CPU limits; it does not
+establish worst-case 100,000-row accounting or steady-state lag acceptance.
+Restore/replay must preserve
 first receipts and release quarantine. P6 sustained-load acceptance remains #561.
 
 **Breaking recovery capability:**

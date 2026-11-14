@@ -1114,6 +1114,7 @@ impl hubuum_storage_core::StorageObserver for HideSizeRecovery {
 #[actix_web::test]
 async fn pressure_acknowledgement_requires_independent_recovery_protection(
     #[case] unavailable: bool,
+    #[values(false, true)] empty_pass: bool,
 ) {
     use hubuum_storage_core::{
         HistoryExpiryTrigger, HistoryLogicalBytes, HistoryPolicyReference, HistoryRetentionSeconds,
@@ -1167,12 +1168,25 @@ async fn pressure_acknowledgement_requires_independent_recovery_protection(
     if unavailable {
         *observer.0.lock().unwrap() = Some(directory.clone());
     }
-    let result = observe_size(
-        &fixture.context,
-        &fixture.admin,
-        HistoryPolicyReference::from(&record),
-    )
-    .await;
+    let result = if empty_pass {
+        let actor = principal(&fixture.context, &fixture.admin).await.unwrap();
+        let (accounting, _) = storage
+            .observe_history_size(HistoryPolicyReference::from(&record), actor)
+            .await
+            .unwrap()
+            .into_parts();
+        let (execution, _) = TaskExecutionContext::new(std::time::Duration::from_secs(10)).unwrap();
+        protect_expiry_observation(&fixture.context, &execution)
+            .await
+            .map(|()| accounting)
+    } else {
+        observe_size(
+            &fixture.context,
+            &fixture.admin,
+            HistoryPolicyReference::from(&record),
+        )
+        .await
+    };
     if unavailable {
         fs::remove_file(&directory).unwrap();
         fs::rename(directory.with_extension("withheld"), &directory).unwrap();

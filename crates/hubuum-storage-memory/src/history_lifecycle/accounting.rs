@@ -20,6 +20,29 @@ pub(super) async fn observe(
     let family = policy.key().family();
     let mut census =
         HistorySizeCensus::new(snapshot.clone(), &policy).map_err(invalid_contract_value)?;
+    fold_on(&state, family, &mut census)?;
+    let mut accounting = census.finish().map_err(invalid_contract_value)?;
+    let change = snapshot
+        .control()
+        .observe_size(&mut accounting, actor)
+        .map_err(|error| StorageError::unavailable(error.to_string()))?;
+    let events = change
+        .next()
+        .audit_events_since(change.expected())
+        .map_err(invalid_contract_value)?;
+    state.append_retained_lifecycle_events(events)?;
+    state.history_lifecycle = change.next().clone();
+    Ok(HistorySizeObservation::new(
+        accounting,
+        state.history_lifecycle_snapshot()?,
+    ))
+}
+
+pub(super) fn fold_on(
+    state: &MemoryState,
+    family: StorageIdentityHistoryKind,
+    census: &mut HistorySizeCensus,
+) -> Result<(), StorageError> {
     let started = std::time::Instant::now();
     let mut consider = |row: &StorageBackupRow| -> Result<(), StorageError> {
         if started.elapsed() > std::time::Duration::from_secs(5) {
@@ -69,7 +92,12 @@ pub(super) async fn observe(
             .observe(candidate.as_ref(), bytes, metadata_bytes)
             .map_err(|error| StorageError::unavailable(error.to_string()))
     };
-    for source in sources(&state, family) {
+    for source in sources(state, family) {
+        if started.elapsed() > std::time::Duration::from_secs(5) {
+            return Err(StorageError::unavailable(
+                "Complete history accounting exceeded its time budget",
+            ));
+        }
         match source {
             ExpirySource::History(row) if row.family() != family => {}
             ExpirySource::History(row) => consider(&row.backup_history_row()?.1)?,
@@ -84,21 +112,7 @@ pub(super) async fn observe(
             }
         }
     }
-    let mut accounting = census.finish().map_err(invalid_contract_value)?;
-    let change = snapshot
-        .control()
-        .observe_size(&mut accounting, actor)
-        .map_err(|error| StorageError::unavailable(error.to_string()))?;
-    let events = change
-        .next()
-        .audit_events_since(change.expected())
-        .map_err(invalid_contract_value)?;
-    state.append_retained_lifecycle_events(events)?;
-    state.history_lifecycle = change.next().clone();
-    Ok(HistorySizeObservation::new(
-        accounting,
-        state.history_lifecycle_snapshot()?,
-    ))
+    Ok(())
 }
 
 #[cfg(test)]

@@ -10,6 +10,8 @@ use crate::StorageRecordIdentity;
 
 mod scan;
 pub use scan::*;
+mod size;
+pub use size::*;
 
 /// Stable batch identity and captured authority for native selection. This is
 /// not caller-supplied membership or independent checkpoint protection.
@@ -24,6 +26,11 @@ pub struct HistoryExpiryAdmissionRequest {
 }
 
 impl HistoryExpiryAdmissionRequest {
+    pub fn needs_size_selection(&self, authority: &HistoryLifecycleAuthority) -> bool {
+        self.continuation.is_none() && authority.policies().records().iter().any(|record|
+            record.proposal().key().family() == self.scan.key().family()
+                && matches!(record.proposal().binding(), HistoryPolicyBinding::Expire { trigger, .. } if trigger.size().is_some()))
+    }
     pub fn new(
         identity: Uuid,
         run: Uuid,
@@ -306,6 +313,8 @@ pub struct HistoryExpiryMember {
     input_bytes: HistoryExpiryInputBytes,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     object_authorization: Option<HistoryObjectAuthorizationFacts>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    size_authorizations: Vec<HistoryExpirySizeAuthorization>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -319,6 +328,8 @@ struct MemberInput {
     input_bytes: HistoryExpiryInputBytes,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     object_authorization: Option<HistoryObjectAuthorizationFacts>,
+    #[serde(default)]
+    size_authorizations: Vec<HistoryExpirySizeAuthorization>,
 }
 impl TryFrom<MemberInput> for HistoryExpiryMember {
     type Error = StorageValidationError;
@@ -332,13 +343,63 @@ impl TryFrom<MemberInput> for HistoryExpiryMember {
             policies: value.policies,
             input_bytes: value.input_bytes,
             object_authorization: value.object_authorization,
+            size_authorizations: value.size_authorizations,
         };
         member.validate()?;
         Ok(member)
     }
 }
 impl HistoryExpiryMember {
+    fn from_candidate(
+        candidate: &HistoryExpiryCandidate,
+        input_bytes: HistoryExpiryInputBytes,
+        decision: &HistoryExpiryDecision,
+        size_authorizations: Vec<HistoryExpirySizeAuthorization>,
+    ) -> Result<Self, StorageValidationError> {
+        let anchor = candidate
+            .anchor()
+            .ok_or_else(|| invalid("Expiry membership requires an original closed anchor"))?;
+        let read_span = candidate.read_span().cloned().ok_or_else(|| {
+            invalid("Executable expiry membership requires native read-span evidence")
+        })?;
+        let policies = decision
+            .endpoints()
+            .iter()
+            .map(|endpoint| {
+                endpoint
+                    .policy()
+                    .source()
+                    .cloned()
+                    .ok_or_else(|| invalid("Eligible expiry endpoint lacks governing policy"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            family: candidate.family(),
+            target: candidate.target(),
+            anchor,
+            read_span,
+            attributions: candidate.attributions().to_vec(),
+            policies,
+            input_bytes,
+            object_authorization: candidate.object_authorization().cloned(),
+            size_authorizations,
+        })
+    }
+
     fn validate(&self) -> Result<(), StorageValidationError> {
+        let mut size_sources = BTreeSet::new();
+        for authorization in &self.size_authorizations {
+            if !self.policies.contains(authorization.policy())
+                || !size_sources.insert((
+                    authorization.policy().key(),
+                    authorization.policy().revision(),
+                ))
+            {
+                return Err(invalid(
+                    "Size authorization differs from exact membership policies",
+                ));
+            }
+        }
         let expected = if matches!(
             self.family,
             StorageIdentityHistoryKind::ClassRelation | StorageIdentityHistoryKind::ObjectRelation
@@ -399,6 +460,9 @@ impl HistoryExpiryMember {
     pub const fn object_authorization(&self) -> Option<&HistoryObjectAuthorizationFacts> {
         self.object_authorization.as_ref()
     }
+    pub fn size_authorizations(&self) -> &[HistoryExpirySizeAuthorization] {
+        &self.size_authorizations
+    }
     pub const fn input_bytes(&self) -> HistoryExpiryInputBytes {
         self.input_bytes
     }
@@ -421,7 +485,8 @@ impl HistoryExpiryMember {
                 "Native expiry copy differs from retained membership",
             ));
         }
-        let decision = authority.inspect(candidate, now, &[])?;
+        let measurements = self.size_measurements(authority)?;
+        let decision = authority.inspect(candidate, now, &measurements)?;
         if !decision.eligible()
             || decision
                 .endpoints()
@@ -726,6 +791,15 @@ impl<'a> HistoryExpirySelection<'a> {
         input_bytes: HistoryExpiryInputBytes,
         measurements: &[HistorySizePressure],
     ) -> Result<HistoryExpirySelectionOutcome, StorageValidationError> {
+        self.consider_authorized(candidate, input_bytes, measurements, Vec::new())
+    }
+    fn consider_authorized(
+        &mut self,
+        candidate: HistoryExpiryCandidate,
+        input_bytes: HistoryExpiryInputBytes,
+        measurements: &[HistorySizePressure],
+        size_authorizations: Vec<HistoryExpirySizeAuthorization>,
+    ) -> Result<HistoryExpirySelectionOutcome, StorageValidationError> {
         if !self.scan.includes(&candidate) {
             return Err(invalid(
                 "History expiry candidate differs from selected scope",
@@ -751,33 +825,12 @@ impl<'a> HistoryExpirySelection<'a> {
         {
             return Ok(HistoryExpirySelectionOutcome::BudgetReached);
         }
-        let anchor = candidate
-            .anchor()
-            .ok_or_else(|| invalid("Expiry membership requires an original closed anchor"))?;
-        let read_span = candidate.read_span().cloned().ok_or_else(|| {
-            invalid("Executable expiry membership requires native read-span evidence")
-        })?;
-        let policies = decision
-            .endpoints()
-            .iter()
-            .map(|endpoint| {
-                endpoint
-                    .policy()
-                    .source()
-                    .cloned()
-                    .ok_or_else(|| invalid("Eligible expiry endpoint lacks governing policy"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let member = HistoryExpiryMember {
-            family: candidate.family(),
-            target: candidate.target(),
-            anchor,
-            read_span,
-            attributions: candidate.attributions().to_vec(),
-            policies,
+        let member = HistoryExpiryMember::from_candidate(
+            &candidate,
             input_bytes,
-            object_authorization: candidate.object_authorization().cloned(),
-        };
+            &decision,
+            size_authorizations,
+        )?;
         let next_input = self.manifest.input_bytes + input_bytes.value();
         let member_bytes = serde_json::to_vec(&member)
             .map_err(|_| invalid("Cannot encode exact expiry membership"))?

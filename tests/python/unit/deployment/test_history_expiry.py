@@ -35,6 +35,17 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
         resources["replicas"] = [dict(resources)]
         return report, resources
 
+    def test_size_profile_requires_original_size_witnesses_and_order(self):
+        report, resources = self.fixture()
+        report["shape"] = "logical_size"
+        report["batches"][0].update(size_authorized_rows=1000, oldest_first=True)
+        self.assertTrue(all(assess(report, resources).values()))
+        for field, value in (("size_authorized_rows", 999), ("oldest_first", False)):
+            with self.subTest(field=field):
+                broken = copy.deepcopy(report)
+                broken["batches"][0][field] = value
+                self.assertFalse(assess(broken, resources)["size_selection_pass"])
+
     def test_complete_evidence_passes(self):
         self.assertTrue(all(assess(*self.fixture()).values()))
 
@@ -65,7 +76,7 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
             diagnostic.assert_called_once()
             fixture.__exit__.assert_called_once()
             summary = json.loads((args.output / "summary.json").read_text())
-            self.assertEqual(summary["expected_measured_runs"], 25)
+            self.assertEqual(summary["expected_measured_runs"], 5 * len(SHAPES))
             self.assertEqual(summary["measured_runs"], 0)
             self.assertFalse(summary["h1_h4_worker_qualified"])
             self.assertFalse(summary["full_shared_topology_qualified"])
@@ -89,6 +100,8 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                 elif shape == "oversized":
                     report.update(oversized_deferred_rows=1, oversized_preserved_rows=1,
                                   oversized_reported_rows=1, backup_rejected_oversized=True)
+                elif shape == "logical_size":
+                    report["batches"][0].update(size_authorized_rows=1000, oldest_first=True)
                 elif shape == "authority":
                     report.pop("replica_reports")
                     report["maximum_composite_verified"] = True
@@ -118,8 +131,8 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                                  for root in roots))
             summary = aggregate_measurements(roots, parent / "combined")
             self.assertTrue(summary["h1_h4_worker_qualified"])
-            self.assertEqual(summary["measured_runs"], 25)
-            self.assertEqual(len(json.loads((parent / "combined/samples.json").read_text())), 30)
+            self.assertEqual(summary["measured_runs"], 5 * len(SHAPES))
+            self.assertEqual(len(json.loads((parent / "combined/samples.json").read_text())), 6 * len(SHAPES))
 
     def test_aggregation_rejects_incomplete_duplicate_or_mixed_provenance_shards(self):
         for invalid in ("missing", "duplicate", "manifest", "build", "sample", "raw", "failed"):
@@ -171,7 +184,7 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/history-expiry-qualification.yml").read_text()
         aggregate = workflow.split("\n  aggregate:\n")[1].split("\n  reuse:\n")[0]
         self.assertIn("if: ${{ !cancelled() && (needs.measure.result == 'success' || inputs.measurement_run_id != '') }}", aggregate)
-        step = aggregate.split("- name: Verify measurement source and all ten completed shape jobs")[1]
+        step = aggregate.split("- name: Verify measurement source and all completed shape jobs")[1]
         script = textwrap.dedent(step.split("<<'PY'\n")[1].split("\n          PY")[0])
         for invalid in (None, "driver", "production", "missing", "failed", "branch", "recipe"):
             with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as temporary:
@@ -183,7 +196,7 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                            "repository": {"full_name": "owner/repo"},
                            "head_repository": {"full_name": "owner/repo"}}
                 source = {**current, "head_sha": "a" * 40}
-                jobs = [{"name": f"measure ({profile}, {shape})", "id": index * 5 + position,
+                jobs = [{"name": f"measure ({profile}, {shape})", "id": index * len(SHAPES) + position,
                          "conclusion": "success"} for index, profile in enumerate(("local", "shared"))
                         for position, shape in enumerate(SHAPES)]
                 changed = [".github/workflows/history-expiry-qualification.yml",
@@ -223,7 +236,7 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                         exec(compile(script, "measurement provenance", "exec"), {})
                         proof = json.loads((root / "target/aggregation-provenance.json").read_text())
                         self.assertEqual(proof["measurement_commit"], source["head_sha"])
-                        self.assertEqual(len(proof["shape_jobs"]), 10)
+                        self.assertEqual(len(proof["shape_jobs"]), 2 * len(SHAPES))
                         self.assertEqual((root / "outputs").read_text(), "source_sha=" + source["head_sha"] + "\n")
 
     def test_packaging_retains_failure_evidence_without_private_runtime_material(self):

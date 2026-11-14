@@ -5,14 +5,15 @@ use hubuum_domain::{ResourceId, ResourceIdentity};
 use hubuum_storage_core::{
     HistoryAuthorityRevision, HistoryExpiryCancellation, HistoryExpiryDecision,
     HistoryExpiryInputBytes, HistoryExpiryIntent, HistoryExpiryManifest, HistoryExpiryOrigin,
-    HistoryExpiryReadSpan, HistoryExpiryRemovalReceipt, HistoryHoldRevision,
-    HistoryLifecycleOperationEvidence, HistoryLifecycleScan, HistoryPolicyAction,
-    HistoryPolicyApplication, HistoryPolicyApplyRequest, HistoryPolicyBinding, HistoryPolicyChange,
-    HistoryPolicyKey, HistoryPolicyRecord, HistoryPolicyReference, HistoryPolicyReviewEvidence,
-    HistoryPolicyReviewReference, HistoryPolicyRevision, HistoryPolicyScope,
-    HistoryPreviewCoverage, HistoryRetentionAnchor, HistoryReviewFence, HistoryScopeAttribution,
-    HistorySizeTransition, LogicalIdentityStorage, StorageIdentityHistoryKind,
-    StorageIdentityResourceKind, StorageIdentityTarget, StorageRecordIdentity,
+    HistoryExpiryReadSpan, HistoryExpiryRemovalReceipt, HistoryExpirySizeAuthorization,
+    HistoryHoldRevision, HistoryLifecycleOperationEvidence, HistoryLifecycleScan,
+    HistoryPolicyAction, HistoryPolicyApplication, HistoryPolicyApplyRequest, HistoryPolicyBinding,
+    HistoryPolicyChange, HistoryPolicyKey, HistoryPolicyRecord, HistoryPolicyReference,
+    HistoryPolicyReviewEvidence, HistoryPolicyReviewReference, HistoryPolicyRevision,
+    HistoryPolicyScope, HistoryPreviewCoverage, HistoryRetentionAnchor, HistoryReviewFence,
+    HistoryScopeAttribution, HistorySizeTransition, LogicalIdentityStorage,
+    StorageIdentityHistoryKind, StorageIdentityResourceKind, StorageIdentityTarget,
+    StorageRecordIdentity,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -299,6 +300,9 @@ struct HistoryExpiryMemberResponse {
     attributions: Vec<HistoryScopeAttribution>,
     policies: Vec<HistoryPolicyReference>,
     input_bytes: HistoryExpiryInputBytes,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(required = false)]
+    size_authorizations: Vec<HistoryExpirySizeAuthorization>,
 }
 
 impl TryFrom<HistoryLifecycleOperationEvidence> for HistoryLifecycleOperationResponse {
@@ -358,6 +362,7 @@ impl HistoryExpiryManifestResponse {
                     attributions: member.attributions().to_vec(),
                     policies: member.policies().to_vec(),
                     input_bytes: member.input_bytes(),
+                    size_authorizations: member.size_authorizations().to_vec(),
                 })
                 .collect(),
         }

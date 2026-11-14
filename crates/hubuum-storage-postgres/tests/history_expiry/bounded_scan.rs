@@ -310,6 +310,7 @@ pub(super) async fn schema_collection_policy(
     fixture: &Fixture,
     family: StorageIdentityHistoryKind,
     collection: i32,
+    size: bool,
 ) {
     if family != StorageIdentityHistoryKind::ClassSchema {
         return;
@@ -336,9 +337,16 @@ pub(super) async fn schema_collection_policy(
         HistoryPolicyKey::new(family, HistoryPolicyScope::Collection { identity }).unwrap(),
         HistoryPolicyRevision::new(0).unwrap(),
         HistoryPolicyBinding::Expire {
-            trigger: HistoryExpiryTrigger::Age {
-                age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
-                deleted_age_seconds: Some(HistoryRetentionSeconds::new(0).unwrap()),
+            trigger: if size {
+                HistoryExpiryTrigger::LogicalSize {
+                    upper_logical_bytes: HistoryLogicalBytes::new(1).unwrap(),
+                    lower_logical_bytes: HistoryLogicalBytes::new(0).unwrap(),
+                }
+            } else {
+                HistoryExpiryTrigger::Age {
+                    age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                    deleted_age_seconds: Some(HistoryRetentionSeconds::new(0).unwrap()),
+                }
             },
             minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
         },
@@ -605,7 +613,7 @@ async fn finite_native_pass_revisits_held_prefix_after_release(
 async fn finite_native_pass_revisits_late_commit(#[case] family: StorageIdentityHistoryKind) {
     let _guard = CONTROL_LOCK.lock().await;
     let (a, _, collection_a) = expiry_fixture(family, 32).await;
-    schema_collection_policy(&a, family, collection_a).await;
+    schema_collection_policy(&a, family, collection_a, false).await;
     live_edges(&a, family, collection_a).await;
     // Graph mutations serialize through an advisory lock. For those families,
     // reserve a lower native position before the second fixture commits, then
@@ -765,7 +773,7 @@ async fn finite_native_pass_keeps_its_boundary_when_rows_are_appended(
 ) {
     let _guard = CONTROL_LOCK.lock().await;
     let (a, _, collection_a) = expiry_fixture(family, 32).await;
-    schema_collection_policy(&a, family, collection_a).await;
+    schema_collection_policy(&a, family, collection_a, false).await;
     live_edges(&a, family, collection_a).await;
     let (b, _, collection_b) = expiry_fixture(family, 32).await;
     let runtime = a.storage.register_history_runtime(None).await.unwrap();
@@ -1189,9 +1197,9 @@ async fn retained_native_expiry_quarantines_restored_copies(
     use hubuum_storage_postgres::test_support::probe_history_restore_exposure;
     let _guard = CONTROL_LOCK.lock().await;
     let (a, restore_target) = restore_fixture().await;
-    let (a, _, collection_a) = expiry_fixture_on(a, family, 32).await;
+    let (a, _, collection_a) = expiry_fixture_on(a, family, 32, false).await;
     let (b, _) = restore_fixture().await;
-    let (b, _, collection_b) = expiry_fixture_on(b, family, 32).await;
+    let (b, _, collection_b) = expiry_fixture_on(b, family, 32, false).await;
     let RestoredCopy {
         source_table,
         position,

@@ -49,7 +49,21 @@ async fn observe_on(
     // ordinary history writes/physical expiry while the census is folded.
     let snapshot = capture_on(connection).await?;
     let mut census = HistorySizeCensus::new(snapshot.clone(), &policy)?;
-    let family = policy.key().family();
+    fold_on(connection, policy.key().family(), &mut census).await?;
+    let mut accounting = census.finish()?;
+    let change = snapshot
+        .control()
+        .observe_size(&mut accounting, actor)
+        .map_err(|error| PostgresStorageError::unavailable(error.to_string()))?;
+    let applied = commit_on(connection, change).await?;
+    Ok::<_, PostgresStorageError>(HistorySizeObservation::new(accounting, applied))
+}
+
+pub(super) async fn fold_on(
+    connection: &mut PostgresConnection,
+    family: StorageIdentityHistoryKind,
+    census: &mut HistorySizeCensus,
+) -> Result<(), PostgresStorageError> {
     let (table, position) = expiry::source(family);
     let (from, until) = if family == StorageIdentityHistoryKind::ClassSchema {
         ("occurred_at", "NULL::timestamptz")
@@ -102,13 +116,7 @@ async fn observe_on(
                 .map_err(|error| PostgresStorageError::unavailable(error.to_string()))?;
         }
     }
-    let mut accounting = census.finish()?;
-    let change = snapshot
-        .control()
-        .observe_size(&mut accounting, actor)
-        .map_err(|error| PostgresStorageError::unavailable(error.to_string()))?;
-    let applied = commit_on(connection, change).await?;
-    Ok::<_, PostgresStorageError>(HistorySizeObservation::new(accounting, applied))
+    Ok(())
 }
 
 #[cfg(all(test, feature = "integration-test-support"))]

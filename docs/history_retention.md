@@ -118,12 +118,45 @@ pressure through signed recovery. Operation inspection returns exact retained
 transition evidence. Pressure alone changes no history visibility or expiry
 membership.
 
-Destructive size-rule execution remains gated pending oldest-eligible bounded
-selection and cleanup qualification. Existing inspection and policy previews
+The gated executor implements oldest-eligible size selection and protected exact
+cleanup; production activation still requires qualification. Existing inspection and policy previews
 continue to report size accounting as unavailable when it would be required for
 an executable expiry decision; their bounded samples are never complete gauges. A proven
 age condition suffices for age-or-size; a false age condition makes age-and-size
 false without consulting size.
+
+An initial size pass folds the complete family, including all effective size
+sources, then exhausts the same unchanged family again under the history control
+gate. Each pass is capped at 100,000 rows; both share the original five-second
+planning clock and cumulative 64-MiB metadata budget. The result reports all
+source examinations (up to 200,000), rather than presenting accounting work as
+a 1000-row source page. Its oldest-prefix heap retains at most 1000 candidates
+and 1 MiB of metadata, with the existing 16-MiB native input, 1-MiB manifest and
+reserved completion budgets. No historical payload enters that heap.
+
+Ordering uses the original closure/deletion/schema-event clock, then stable
+resource/version UUIDs. Holds, open versions, dependencies, unresolved identities
+and exclusions remain protected. Pending unreceipted exact copies reserve their
+fresh logical bytes against each applicable immutable source; a shared relation
+source is charged once. Selection stops adding size-dependent copies at or below
+the lower target. One indivisible version can cross that target. Independently
+due age work can continue. Individually oversized sources remain untouched.
+
+Each size-dependent member retains its pressure episode, complete observed bytes
+and reserved bytes. Administrator operation evidence includes these bounded
+witnesses without disclosing retained object names or payloads. The original independently protected exclusion remains a
+cleanup obligation after pressure ends; ending pressure does not resurrect that
+copy or invalidate its first receipt. Removal still rechecks exact native facts,
+current governing policies, holds, minimums and dependencies. Recovery rejects
+missing or foreign size witnesses and preserves original authorization through
+physical replay. A size pass that selects nothing still protects any new pressure
+transition before task success, including after restart.
+
+Only read-only planning can fall back when complete accounting is unavailable.
+That path considers independent age eligibility and reports
+`size_accounting_unavailable` in task progress. Required audit and intent-commit
+failures roll back the transaction. Existing finite native-position continuations
+finish their original pass; new size selection starts at a fresh pass boundary.
 
 ## Review and protection
 
@@ -193,7 +226,8 @@ Neither boundary relies on a filesystem or S3 artifact adapter. Both preserve
 delete/restore authority, holds, protected minimums, original anchors and the
 revision-bound review/application contract. Complete bounded accounting and
 persistent pressure observation are available to administrators. Size-driven
-oldest-first selection, cleanup and liveness qualification remain executor work;
+oldest-first selection and protected cleanup are implemented in the gated executor;
+broader concurrency and resource/liveness qualification remain activation gates;
 inspection results and pressure receipts are not executable membership manifests.
 P6 remains deferred under #561, and production expiry remains disabled.
 

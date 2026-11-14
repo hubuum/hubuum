@@ -57,16 +57,16 @@ pub(crate) async fn process(
             }
             let checkpoint = checkpoint_for(connection, &row).await?;
             let snapshot = crate::backend::capture_history_lifecycle_on(connection).await?;
-            let (next, total, removed, scanned, oversized_source_rows) = if checkpoint.admitted() {
+            let (next, total, removed, scanned, oversized_source_rows, size_accounting_unavailable) = if checkpoint.admitted() {
                 let total = checkpoint.retained_manifest(&snapshot)?.members().len() as i32;
                 match request.protection() {
                     Some(protection) => {
                         let (next, removed) = crate::backend::remove_history_expiry_on(connection, &checkpoint, protection, &snapshot).await?;
-                        (next, total, removed, 0, 0)
+                        (next, total, removed, 0, 0, false)
                     }
                     None if stored.checkpoint().is_none() => {
                         let removed = snapshot.control().authority().expiry().intent(checkpoint.batch()).expect("validated retained manifest").removals().len() as u32;
-                        (checkpoint, total, removed, 0, 0)
+                        (checkpoint, total, removed, 0, 0, false)
                     }
                     None => return Ok(checkpoint),
                 }
@@ -95,18 +95,19 @@ pub(crate) async fn process(
                 request.require_selection_authorization(&checkpoint)?;
                 let page = crate::backend::admit_history_expiry_on(connection, selection).await?;
                 let total = page.manifest().map_or(0, |manifest| manifest.members().len() as i32);
-                (checkpoint.record_page(&page)?, total, 0, page.scanned(), page.oversized_source_rows())
+                (checkpoint.record_page(&page)?, total, 0, page.scanned(), page.oversized_source_rows(), page.accounting_unavailable())
             };
             let encoded = next.encode()?;
             append_task_lifecycle_event(
                 connection,
                 &row,
                 StorageTaskEventInput::new("running",
-                    if oversized_source_rows > 0 { "History expiry warning: source rows exceeding input or identity budgets remain deferred" } else { "History expiry continuation committed" })
+                    if size_accounting_unavailable { "History expiry warning: complete size accounting unavailable; only independent age eligibility considered" } else if oversized_source_rows > 0 { "History expiry warning: source rows exceeding input or identity budgets remain deferred" } else { "History expiry continuation committed" })
                     .with_data(Some(serde_json::json!({
                         "batch": next.batch(), "admitted": next.admitted(),
                         "pass_finished": next.pass_finished(), "finished": next.finished(), "removed": removed, "scanned": scanned,
                         "oversized_source_rows": oversized_source_rows,
+                        "size_accounting_unavailable": size_accounting_unavailable,
                     }))),
                 &worker_provenance(&row)?,
             )

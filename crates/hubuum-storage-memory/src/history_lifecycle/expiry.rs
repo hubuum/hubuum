@@ -2,6 +2,7 @@ mod admission;
 pub(super) use admission::submit;
 mod recovery;
 pub(super) use recovery::recover_task;
+mod size;
 
 use super::*;
 
@@ -64,6 +65,8 @@ pub(super) async fn process_task(
     let snapshot = guard.history_lifecycle_snapshot()?;
     let mut state = guard.clone();
     let mut oversized_source_rows = 0;
+    let mut size_accounting_unavailable = false;
+    let mut scanned_source_rows = 0;
     let next = if checkpoint.admitted() {
         checkpoint
             .retained_manifest(&snapshot)
@@ -103,6 +106,8 @@ pub(super) async fn process_task(
             .map_err(invalid_contract_value)?;
         let page = admit_on(&mut state, selection)?;
         oversized_source_rows = page.oversized_source_rows();
+        size_accounting_unavailable = page.accounting_unavailable();
+        scanned_source_rows = page.scanned();
         checkpoint
             .record_page(&page)
             .map_err(invalid_contract_value)?
@@ -130,7 +135,9 @@ pub(super) async fn process_task(
         lease.task_id(),
         StorageTaskEventInput::new(
             "running",
-            if oversized_source_rows > 0 {
+            if size_accounting_unavailable {
+                "History expiry warning: complete size accounting unavailable; only independent age eligibility considered"
+            } else if oversized_source_rows > 0 {
                 "History expiry warning: source rows exceeding input or identity budgets remain deferred"
             } else {
                 "History expiry continuation committed"
@@ -140,6 +147,7 @@ pub(super) async fn process_task(
             "batch": next.batch(), "admitted": next.admitted(),
             "pass_finished": next.pass_finished(), "finished": next.finished(), "removed": removed,
             "oversized_source_rows": oversized_source_rows,
+            "size_accounting_unavailable": size_accounting_unavailable, "scanned": scanned_source_rows,
         }))),
     )?;
     task_for_expiry(&state, &lease)?;
@@ -436,6 +444,45 @@ pub(super) fn sources(
 }
 
 fn admit_on(
+    state: &mut MemoryState,
+    request: HistoryExpiryAdmissionRequest,
+) -> Result<HistoryExpiryAdmissionResult, StorageError> {
+    let needs_size = request.needs_size_selection(state.history_lifecycle.authority());
+    if needs_size
+        && state
+            .runtime_registrations
+            .values()
+            .all(|runtime| runtime.history_protocol.supports_online())
+    {
+        // Accounting is read-only until both complete passes succeed. An
+        // unavailable gauge cannot suppress independently eligible age work.
+        if let Ok(plan) = size::plan(state, request.clone()) {
+            let (pressure, result) = plan.into_parts();
+            let mut next = pressure.next().clone();
+            if let Some(manifest) = result.manifest() {
+                next = next
+                    .admit_expiry(manifest.clone(), manifest.fence())
+                    .map_err(invalid_contract_value)?
+                    .next()
+                    .clone();
+            }
+            let events = next
+                .audit_events_since(pressure.expected())
+                .map_err(invalid_contract_value)?;
+            state.append_retained_lifecycle_events(events)?;
+            state.history_lifecycle = next;
+            return Ok(result);
+        }
+    }
+    let result = admit_age_on(state, request)?;
+    Ok(if needs_size {
+        result.with_accounting_unavailable()
+    } else {
+        result
+    })
+}
+
+fn admit_age_on(
     state: &mut MemoryState,
     request: HistoryExpiryAdmissionRequest,
 ) -> Result<HistoryExpiryAdmissionResult, StorageError> {

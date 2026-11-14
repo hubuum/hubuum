@@ -210,7 +210,12 @@ fn incomplete_or_ambiguous_census_fails_closed(#[case] mode: &str) {
     }
     if mode == "rows" {
         census.seen = (0..HistorySizeCensus::MAX_ROWS)
-            .map(|_| (ResourceIdentity::generate(), VersionIdentity::generate()))
+            .map(|_| {
+                (
+                    (ResourceIdentity::generate(), VersionIdentity::generate()),
+                    HistoryLogicalBytes::new(0).unwrap(),
+                )
+            })
             .collect();
     }
     if mode == "duplicate" {

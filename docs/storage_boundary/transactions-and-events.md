@@ -597,8 +597,8 @@ transaction. Lock deletion/application authority before history authority UPDATE
 API/task validation and native source rows. First intent admission serializes
 with runtime registration; a Legacy producer blocks admission. Recheck the
 captured policy/hold fence, native original intervals/identities and protected
-current/open copies. Keep complete-row input within 16 MiB, source rows within
-1000 and transferred metadata within 1 MiB. A bounded empty result does not prove
+current/open copies. Ordinary age pages keep complete-row input within 16 MiB,
+source rows within 1000 and transferred metadata within 1 MiB. A bounded empty result does not prove
 source exhaustion. Return `HistoryExpiryAdmissionResult` with examined-row counts
 and a finite-pass continuation even without membership. Count every examined
 source row before filtering and advance after deciding it; preserve byte-deferred rows for a fresh page
@@ -611,6 +611,22 @@ canonical audit facts together; append failure rolls back all of them. Existing
 publications stay charged after their original revision is fenced and require
 exact positive settlement. Primary commit grants no deletion authority: capture
 and independently publish its recovery authority before any removal step.
+
+Initial size passes use complete family accounting followed by an unchanged
+second pass, both under the same control gate. Share the original five-second
+planning clock and 64-MiB metadata budget; cap each pass at 100,000 rows and report
+all examinations. Keep at most 1000 oldest eligible candidates and 1 MiB of
+metadata, retaining the ordinary input/manifest/completion bounds. Resolve
+original clocks and exact sources, reserve pending unreceipted copies once per
+source, and stop size-dependent selection at the lower target. Persist each
+member's original pressure episode and observed/reserved byte witness. Ending
+pressure changes no admitted cleanup obligation; current policy, hold, native
+interval and dependency checks remain mandatory. Preserve these witnesses through
+independent checkpointing and physical recovery replay. Empty size passes must
+protect pressure transitions before acknowledging task completion, also on retry.
+Only read-only unavailable planning may fall back to independent age eligibility;
+report `size_accounting_unavailable`. Required audit/commit failure is terminal
+to the transaction. Existing native-position cursors finish their original pass.
 
 `HistoryLifecycleStorage::recover_history_expiry_task` uses independent original
 OnlineV1 application admission and locks history authority before task capacity

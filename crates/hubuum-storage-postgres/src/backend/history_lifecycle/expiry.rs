@@ -1,6 +1,8 @@
 //! Bounded native admission and exact protected removal.
 use super::*;
 use diesel::OptionalExtension;
+use diesel_async::SimpleAsyncConnection;
+mod size;
 
 #[derive(QueryableByName)]
 struct SourceRow {
@@ -16,6 +18,8 @@ struct SourceRow {
     deleted: bool,
     #[diesel(sql_type = BigInt)]
     input_bytes: i64,
+    #[diesel(sql_type = BigInt)]
+    metadata_bytes: i64,
     #[diesel(sql_type = Bool)]
     within_budget: bool,
     #[diesel(sql_type = Bool)]
@@ -60,6 +64,37 @@ pub(crate) async fn admit_on(
         ));
     }
     let snapshot = capture_on(connection).await?;
+    let mut accounting_unavailable = false;
+    if request.needs_size_selection(snapshot.control().authority()) {
+        connection
+            .batch_execute("SAVEPOINT history_size_observation")
+            .await?;
+        match size::plan_on(connection, request.clone(), snapshot.clone()).await {
+            Ok(plan) => {
+                connection
+                    .batch_execute("RELEASE SAVEPOINT history_size_observation")
+                    .await?;
+                let (mut pressure, result) = plan.into_parts();
+                let applied = loop {
+                    let (first, rest) = pressure.split_first_size_transition()?;
+                    let applied = commit_on(connection, first).await?;
+                    if let Some(next) = rest {
+                        pressure = next;
+                    } else {
+                        break applied;
+                    }
+                };
+                persist_admission(connection, &applied, &result).await?;
+                return Ok(result);
+            }
+            Err(_) => {
+                accounting_unavailable = true;
+                // Only read-only planning may fall back. Required audit or
+                // intent-commit failures remain fatal to the outer transaction.
+                connection.batch_execute("ROLLBACK TO SAVEPOINT history_size_observation; RELEASE SAVEPOINT history_size_observation").await?;
+            }
+        }
+    }
     let mut selection = request.selection(&snapshot).map_err(|_| {
         PostgresStorageError::conflict("Expiry authority changed or batch already admitted")
     })?;
@@ -81,7 +116,7 @@ pub(crate) async fn admit_on(
     let rows = rows(connection, request.scan(), &window).await?;
     let source_exhausted = rows.len() < request.scan().limit() as usize;
     let mut stopped = false;
-    for row in rows {
+    for mut row in rows {
         window.observe(u64::try_from(row.position).map_err(|error| {
             PostgresStorageError::invalid_persisted_value("native history scan position", error)
         })?)?;
@@ -106,29 +141,7 @@ pub(crate) async fn admit_on(
             window.advance();
             continue;
         }
-        let Some(raw) = row.logical_identity else {
-            window.advance();
-            continue;
-        };
-        let evidence: StorageIdentityEvidence = serde_json::from_value(raw).map_err(|error| {
-            PostgresStorageError::invalid_persisted_value("expiry source identity", error)
-        })?;
-        if evidence.has_unknown_restore_source() {
-            window.advance();
-            continue;
-        }
-        let anchor = match family {
-            StorageIdentityHistoryKind::ClassSchema => {
-                HistoryRetentionAnchor::SchemaEvent(row.valid_from)
-            }
-            _ if row.deleted => HistoryRetentionAnchor::Deleted(row.valid_from),
-            _ => HistoryRetentionAnchor::Closed(row.valid_to.ok_or_else(|| {
-                PostgresStorageError::invalid_input("Expiry source must be closed")
-            })?),
-        };
-        let Some(mut candidate) =
-            HistoryExpiryCandidate::from_evidence(family, &evidence, Some(anchor), row.dependency)?
-        else {
+        let Some(candidate) = decode_candidate(family, &mut row, request.scan())? else {
             window.advance();
             continue;
         };
@@ -136,47 +149,11 @@ pub(crate) async fn admit_on(
             window.advance();
             continue;
         }
-        candidate = candidate.with_native_interval(row.valid_from, row.valid_to)?;
-        if family == StorageIdentityHistoryKind::Object {
-            let Some(mut coordinates) = row
-                .coordinates
-                .filter(|_| !candidate.attributions().is_empty())
-            else {
-                window.advance();
-                continue;
-            };
-            coordinates["target"] = serde_json::to_value(candidate.target()).map_err(|_| {
-                PostgresStorageError::invalid_input("Cannot encode expiry identity")
-            })?;
-            coordinates["attribution"] = serde_json::to_value(candidate.attributions().first())
-                .map_err(|_| PostgresStorageError::invalid_input("Cannot encode expiry scope"))?;
-            coordinates["read_span"] =
-                serde_json::to_value(candidate.read_span()).map_err(|_| {
-                    PostgresStorageError::invalid_input("Cannot encode expiry interval")
-                })?;
-            coordinates["kind"] = Value::String(
-                if row.deleted {
-                    "tombstone"
-                } else {
-                    "closed_value"
-                }
-                .into(),
-            );
-            coordinates["source_versions"] = serde_json::to_value(
-                evidence
-                    .restore_source_versions()
-                    .iter()
-                    .collect::<Vec<_>>(),
-            )
-            .map_err(|_| PostgresStorageError::invalid_input("Cannot encode expiry ancestry"))?;
-            let facts: HistoryObjectAuthorizationFacts = serde_json::from_value(coordinates)
-                .map_err(|error| {
-                    PostgresStorageError::invalid_persisted_value(
-                        "expiry object authorization",
-                        error,
-                    )
-                })?;
-            candidate = candidate.with_object_authorization(facts)?;
+        if family == StorageIdentityHistoryKind::Object
+            && candidate.object_authorization().is_none()
+        {
+            window.advance();
+            continue;
         }
         if matches!(
             selection.consider(
@@ -193,13 +170,34 @@ pub(crate) async fn admit_on(
     }
     let exhausted = source_exhausted && !stopped;
     if selection.is_empty() {
-        return window.finish(None, exhausted).map_err(Into::into);
+        let result = window.finish(None, exhausted)?;
+        return Ok(if accounting_unavailable {
+            result.with_accounting_unavailable()
+        } else {
+            result
+        });
     }
     let manifest = selection.finish()?;
+    let result = window.finish(Some(manifest), exhausted)?;
+    persist_admission(connection, &snapshot, &result).await?;
+    Ok(if accounting_unavailable {
+        result.with_accounting_unavailable()
+    } else {
+        result
+    })
+}
+
+async fn persist_admission(
+    connection: &mut PostgresConnection,
+    snapshot: &HistoryLifecycleSnapshot,
+    result: &HistoryExpiryAdmissionResult,
+) -> Result<(), PostgresStorageError> {
+    let Some(manifest) = result.manifest() else {
+        return Ok(());
+    };
     let change = snapshot
         .control()
         .admit_expiry(manifest.clone(), snapshot.fence())?;
-    let result = window.finish(Some(manifest), exhausted)?;
     let committed =
         sql_query("SELECT public.hubuum_history_expiry_admit($1,$2,$3,$4) AS committed")
             .bind::<Jsonb, _>(serde_json::to_value(change.expected()).map_err(|_| {
@@ -210,8 +208,8 @@ pub(crate) async fn admit_on(
                     PostgresStorageError::invalid_input("Cannot encode expiry intent")
                 })?,
             )
-            .bind::<SqlUuid, _>(request.fence().incarnation())
-            .bind::<BigInt, _>(request.fence().deletion_revision().value() as i64)
+            .bind::<SqlUuid, _>(snapshot.fence().incarnation())
+            .bind::<BigInt, _>(snapshot.fence().deletion_revision().value() as i64)
             .get_result::<CommittedRow>(connection)
             .await?
             .committed;
@@ -224,7 +222,78 @@ pub(crate) async fn admit_on(
         crate::operations::event_record::append_retained_lifecycle_event(connection, &event)
             .await?;
     }
-    Ok::<_, PostgresStorageError>(result)
+    Ok(())
+}
+
+fn decode_candidate(
+    family: StorageIdentityHistoryKind,
+    row: &mut SourceRow,
+    scan: &HistoryLifecycleScan,
+) -> Result<Option<HistoryExpiryCandidate>, PostgresStorageError> {
+    let Some(raw) = row.logical_identity.take() else {
+        return Ok(None);
+    };
+    let evidence: StorageIdentityEvidence = serde_json::from_value(raw).map_err(|error| {
+        PostgresStorageError::invalid_persisted_value("expiry source identity", error)
+    })?;
+    if evidence.has_unknown_restore_source() {
+        return Ok(None);
+    }
+    let anchor = if family == StorageIdentityHistoryKind::ClassSchema {
+        Some(HistoryRetentionAnchor::SchemaEvent(row.valid_from))
+    } else if row.deleted {
+        Some(HistoryRetentionAnchor::Deleted(row.valid_from))
+    } else {
+        row.valid_to.map(HistoryRetentionAnchor::Closed)
+    };
+    let Some(mut candidate) =
+        HistoryExpiryCandidate::from_evidence(family, &evidence, anchor, row.dependency)?
+    else {
+        return Ok(None);
+    };
+    let selected = row.visible
+        && scan.includes(&candidate)
+        && row.input_bytes > 0
+        && row.input_bytes <= i64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES);
+    if anchor.is_some() && selected {
+        candidate = candidate.with_native_interval(row.valid_from, row.valid_to)?;
+    }
+    if family == StorageIdentityHistoryKind::Object && anchor.is_some() && selected {
+        let Some(mut coordinates) = row
+            .coordinates
+            .take()
+            .filter(|_| !candidate.attributions().is_empty())
+        else {
+            return Ok(Some(candidate));
+        };
+        coordinates["target"] = serde_json::to_value(candidate.target())
+            .map_err(|_| PostgresStorageError::invalid_input("Cannot encode expiry identity"))?;
+        coordinates["attribution"] = serde_json::to_value(candidate.attributions().first())
+            .map_err(|_| PostgresStorageError::invalid_input("Cannot encode expiry scope"))?;
+        coordinates["read_span"] = serde_json::to_value(candidate.read_span())
+            .map_err(|_| PostgresStorageError::invalid_input("Cannot encode expiry interval"))?;
+        coordinates["kind"] = Value::String(
+            if row.deleted {
+                "tombstone"
+            } else {
+                "closed_value"
+            }
+            .into(),
+        );
+        coordinates["source_versions"] = serde_json::to_value(
+            evidence
+                .restore_source_versions()
+                .iter()
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|_| PostgresStorageError::invalid_input("Cannot encode expiry ancestry"))?;
+        let facts: HistoryObjectAuthorizationFacts =
+            serde_json::from_value(coordinates).map_err(|error| {
+                PostgresStorageError::invalid_persisted_value("expiry object authorization", error)
+            })?;
+        candidate = candidate.with_object_authorization(facts)?;
+    }
+    Ok(Some(candidate))
 }
 
 pub(crate) async fn remove_on(
@@ -564,7 +633,7 @@ async fn rows(
     // Measure one row beyond the byte prefix to decide whether to defer or
     // skip it. Do not encode an entire row-count window after an oversized row.
     let query = format!(
-        "WITH RECURSIVE bounded AS (SELECT native.*,1::bigint AS scanned,input_bytes AS total_input,metadata_bytes AS total_metadata FROM ({first}) native UNION ALL SELECT native.*,previous.scanned+1,previous.total_input+native.input_bytes,previous.total_metadata+native.metadata_bytes FROM bounded previous CROSS JOIN LATERAL ({next}) native WHERE previous.scanned<$1 AND previous.total_input<=16777216 AND previous.total_metadata<=1048576), measured AS (SELECT *, total_input<=16777216 AND total_metadata<=1048576 AS within_budget,input_bytes<=16777216 AND metadata_bytes<=1048576 AS row_within_budget FROM bounded) SELECT position,valid_from,valid_to,CASE WHEN within_budget THEN logical_identity END AS logical_identity,deleted,input_bytes,within_budget,row_within_budget,CASE WHEN within_budget THEN public.hubuum_history_version_visible($4,logical_identity) ELSE FALSE END AS visible,CASE WHEN within_budget THEN public.hubuum_history_expiry_dependency($4,logical_identity) ELSE TRUE END AS dependency,CASE WHEN within_budget THEN coordinates END AS coordinates FROM measured ORDER BY position"
+        "WITH RECURSIVE bounded AS (SELECT native.*,1::bigint AS scanned,input_bytes AS total_input,metadata_bytes AS total_metadata FROM ({first}) native UNION ALL SELECT native.*,previous.scanned+1,previous.total_input+native.input_bytes,previous.total_metadata+native.metadata_bytes FROM bounded previous CROSS JOIN LATERAL ({next}) native WHERE previous.scanned<$1 AND previous.total_input<=16777216 AND previous.total_metadata<=1048576), measured AS (SELECT *, total_input<=16777216 AND total_metadata<=1048576 AS within_budget,input_bytes<=16777216 AND metadata_bytes<=1048576 AS row_within_budget FROM bounded) SELECT position,valid_from,valid_to,metadata_bytes,CASE WHEN within_budget THEN logical_identity END AS logical_identity,deleted,input_bytes,within_budget,row_within_budget,CASE WHEN within_budget THEN public.hubuum_history_version_visible($4,logical_identity) ELSE FALSE END AS visible,CASE WHEN within_budget THEN public.hubuum_history_expiry_dependency($4,logical_identity) ELSE TRUE END AS dependency,CASE WHEN within_budget THEN coordinates END AS coordinates FROM measured ORDER BY position"
     );
     sql_query(query)
         .bind::<BigInt, _>(i64::from(scan.limit()))
@@ -579,4 +648,82 @@ async fn rows(
         .load(connection)
         .await
         .map_err(Into::into)
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::*;
+    use hubuum_domain::{IdentityReference, ResourceIdentity, VersionIdentity};
+    use hubuum_storage_core::{
+        StorageCapturedIdentity, StorageIdentityResourceKind, StorageIdentitySubject,
+    };
+    use std::collections::BTreeMap;
+
+    #[rstest::rstest]
+    #[case::foreign(false)]
+    #[case::selected(true)]
+    #[test]
+    fn authorization_decode_follows_scope_selection(#[case] selected: bool) {
+        let collection = ResourceIdentity::generate();
+        let evidence = StorageIdentityEvidence::try_new(
+            Some(StorageIdentitySubject::Resource {
+                identity: IdentityReference::Known {
+                    identity: ResourceIdentity::generate(),
+                },
+                version: VersionIdentity::generate(),
+            }),
+            BTreeMap::from([
+                (
+                    "/collection_id".into(),
+                    StorageCapturedIdentity::Resource {
+                        family: StorageIdentityResourceKind::Collection,
+                        reference: IdentityReference::Known {
+                            identity: collection,
+                        },
+                    },
+                ),
+                (
+                    "/class_id".into(),
+                    StorageCapturedIdentity::Resource {
+                        family: StorageIdentityResourceKind::Class,
+                        reference: IdentityReference::Known {
+                            identity: ResourceIdentity::generate(),
+                        },
+                    },
+                ),
+            ]),
+        )
+        .unwrap();
+        let mut row = SourceRow {
+            position: 1,
+            valid_from: DateTime::from_timestamp(0, 0).unwrap(),
+            valid_to: Some(DateTime::from_timestamp(1, 0).unwrap()),
+            logical_identity: Some(serde_json::to_value(evidence).unwrap()),
+            deleted: false,
+            input_bytes: 100,
+            metadata_bytes: 100,
+            within_budget: true,
+            row_within_budget: true,
+            visible: true,
+            dependency: false,
+            coordinates: Some(serde_json::json!({})),
+        };
+        let family = StorageIdentityHistoryKind::Object;
+        let scan = HistoryLifecycleScan::new(
+            HistoryPolicyKey::new(
+                family,
+                HistoryPolicyScope::Collection {
+                    identity: if selected {
+                        collection
+                    } else {
+                        ResourceIdentity::generate()
+                    },
+                },
+            )
+            .unwrap(),
+            1,
+        )
+        .unwrap();
+        assert_eq!(decode_candidate(family, &mut row, &scan).is_err(), selected);
+    }
 }

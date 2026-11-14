@@ -66,6 +66,7 @@ async fn measure() {
         "bytes" => (513, 32 * 1024),
         "large_row" => (4, 4 * 1024 * 1024 - 8192),
         "oversized" => (2, 17 * 1024 * 1024),
+        "logical_size" => (65, 32 * 1024),
         _ => panic!("Unknown qualification shape"),
     };
     let pool = postgres_test_pool_with_timeout(&database_url(), 2, 0);
@@ -141,9 +142,16 @@ async fn measure() {
                 .policies()
                 .current_revision(key),
             HistoryPolicyBinding::Expire {
-                trigger: HistoryExpiryTrigger::Age {
-                    age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
-                    deleted_age_seconds: None,
+                trigger: if shape == "logical_size" {
+                    HistoryExpiryTrigger::LogicalSize {
+                        upper_logical_bytes: HistoryLogicalBytes::new(1).unwrap(),
+                        lower_logical_bytes: HistoryLogicalBytes::new(0).unwrap(),
+                    }
+                } else {
+                    HistoryExpiryTrigger::Age {
+                        age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                        deleted_age_seconds: None,
+                    }
                 },
                 minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
             },
@@ -289,7 +297,9 @@ async fn measure() {
             .filter(|intent| intent.manifest().key() == *key);
         // Periodic production may admit another finite batch while a different
         // scope waits. Account for every admitted batch, independent of UUID order.
+        let mut scope_batches = 0;
         for intent in intents {
+            scope_batches += 1;
             let native_input_bytes: u64 = intent
                 .manifest()
                 .members()
@@ -303,10 +313,31 @@ async fn measure() {
                 .map(|member| input[&member.target().version().to_string()])
                 .max()
                 .unwrap();
+            let size_authorized_rows = intent
+                .manifest()
+                .members()
+                .iter()
+                .filter(|member| !member.size_authorizations().is_empty())
+                .count();
+            let oldest_first = intent.manifest().members().windows(2).all(|pair| {
+                let key = |member: &HistoryExpiryMember| {
+                    (
+                        member.anchor().at(),
+                        member.target().resource(),
+                        member.target().version(),
+                    )
+                };
+                key(&pair[0]) < key(&pair[1])
+            });
             batches.push(json!({"rows":intent.manifest().members().len(), "input_bytes":intent.manifest().input_bytes(),
                 "largest_claimed_row_bytes":largest_claimed_row_bytes,
-                "native_input_bytes":native_input_bytes, "removed_rows":intent.removals().len()}));
+                "native_input_bytes":native_input_bytes, "removed_rows":intent.removals().len(),
+                "size_authorized_rows":size_authorized_rows, "oldest_first":oldest_first}));
         }
+        assert!(
+            shape != "logical_size" || scope_batches > 0,
+            "Every size scope must admit protected size-authorized membership"
+        );
         oversized_deferred_rows += input
             .values()
             .filter(|bytes| **bytes > 16 * 1024 * 1024)

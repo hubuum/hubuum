@@ -20,7 +20,7 @@ TEST = "restore_contract::history_expiry_qualification::qualified_history_expiry
 PUBLISHER_TEST = "services::deletion_recovery::repository::size_tests::maximum_composite_checkpoint_resource_probe"
 REPLICA_TEST = "restore_contract::history_expiry_qualification::replica::qualified_history_expiry_replica"
 CEILING = 512 * 1024 ** 2
-SHAPES = ("rows", "bytes", "large_row", "oversized", "authority")
+SHAPES = ("rows", "bytes", "large_row", "oversized", "logical_size", "authority")
 
 
 def verify_binary_reuse(changed_paths, original_workflow, current_workflow):
@@ -127,6 +127,10 @@ def assess(report, resources):
                     and (report["shape"] != "large_row" or any(4 * 1024 ** 2 - 8192 <= batch["largest_claimed_row_bytes"] <= 4 * 1024 ** 2 for batch in batches))
                     and (report["shape"] != "oversized" or report["oversized_deferred_rows"] == report["slots"] * report.get("replicas", 1))),
     }
+    if report["shape"] == "logical_size":
+        checks["size_selection_pass"] = bool(batches) and all(
+            batch.get("size_authorized_rows") == batch["rows"]
+            and batch.get("oldest_first") is True for batch in batches)
     if report["shape"] == "oversized":
         checks["oversized_outcome_pass"] = (report["backup_rejected_oversized"]
             and report["oversized_preserved_rows"] == report["oversized_deferred_rows"]

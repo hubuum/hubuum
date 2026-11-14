@@ -334,6 +334,56 @@ pub struct HistoryLifecycleControlChange {
     fence: HistoryReviewFence,
 }
 impl HistoryLifecycleControlChange {
+    /// Preserve a planned multi-source observation while committing one native
+    /// pressure transition at a time in the same outer transaction. This does
+    /// not permit policy, hold, exclusion or preview changes through that path.
+    pub fn split_first_size_transition(
+        self,
+    ) -> Result<(Self, Option<Self>), StorageValidationError> {
+        let before = self.expected.authority();
+        let after = self.next.authority();
+        if before.policies() != after.policies()
+            || before.hold_revisions() != after.hold_revisions()
+            || before.expiry() != after.expiry()
+            || self.expected.previews != self.next.previews
+            || !after
+                .size_transitions()
+                .starts_with(before.size_transitions())
+            || after
+                .revision()
+                .value()
+                .checked_sub(before.revision().value())
+                != Some((after.size_transitions().len() - before.size_transitions().len()) as u64)
+        {
+            return Err(invalid(
+                "Only conserved pressure transitions may be split for native commit",
+            ));
+        }
+        if after.size_transitions().len() <= before.size_transitions().len() + 1 {
+            return Ok((self, None));
+        }
+        let mut prefix = self.expected.clone();
+        if after.size_transitions()[before.size_transitions().len()]
+            .revision()
+            .value()
+            != before.revision().value() + 1
+        {
+            return Err(invalid(
+                "Pressure transitions must preserve their original successor revisions",
+            ));
+        }
+        prefix.authority.size_transitions =
+            after.size_transitions()[..before.size_transitions().len() + 1].to_vec();
+        prefix.authority.revision = HistoryAuthorityRevision::new(before.revision().value() + 1)?;
+        let fence = HistoryReviewFence::new(
+            self.fence.incarnation(),
+            prefix.authority().revision(),
+            self.fence.deletion_revision(),
+        )?;
+        let first = self.expected.change(prefix.clone(), self.fence)?;
+        let rest = prefix.change(self.next, fence)?;
+        Ok((first, Some(rest)))
+    }
     /// Recheck clock-dependent review protection under the adapter's commit
     /// lock, after verifying the exact predecessor and fence. Preparing a change
     /// does not extend its review lifetime or freeze a hold's expiry clock.

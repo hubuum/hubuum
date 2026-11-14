@@ -90,9 +90,35 @@ pub struct HistoryExpiryAdmissionResult {
     scanned: u32,
     oversized_source_rows: u32,
     progress: HistoryExpiryScanProgress,
+    accounting_unavailable: bool,
 }
 
 impl HistoryExpiryAdmissionResult {
+    pub(super) fn complete_size_pass(
+        manifest: Option<HistoryExpiryManifest>,
+        scanned: u32,
+        oversized_source_rows: u32,
+    ) -> Result<Self, StorageValidationError> {
+        if scanned as usize > 2 * HistorySizeCensus::MAX_ROWS || oversized_source_rows > scanned {
+            return Err(invalid(
+                "Complete size selection exceeds its two-pass census budget",
+            ));
+        }
+        Ok(Self {
+            manifest,
+            scanned,
+            oversized_source_rows,
+            progress: HistoryExpiryScanProgress::PassFinished,
+            accounting_unavailable: false,
+        })
+    }
+    pub const fn accounting_unavailable(&self) -> bool {
+        self.accounting_unavailable
+    }
+    pub fn with_accounting_unavailable(mut self) -> Self {
+        self.accounting_unavailable = true;
+        self
+    }
     pub fn manifest(&self) -> Option<&HistoryExpiryManifest> {
         self.manifest.as_ref()
     }
@@ -230,6 +256,7 @@ impl<'a> HistoryExpiryScanWindow<'a> {
             scanned: self.scanned,
             oversized_source_rows: self.oversized_source_rows,
             progress,
+            accounting_unavailable: false,
         })
     }
 }

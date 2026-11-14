@@ -34275,6 +34275,12 @@
           "read_span": {
             "$ref": "#/components/schemas/HistoryExpiryReadSpan"
           },
+          "size_authorizations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryExpirySizeAuthorization"
+            }
+          },
           "target": {
             "$ref": "#/components/schemas/StorageRecordIdentity"
           }
@@ -34420,6 +34426,31 @@
           }
         },
         "additionalProperties": false
+      },
+      "HistoryExpirySizeAuthorization": {
+        "type": "object",
+        "description": "Original selection cause, retained independently of later pressure refreshes.\nReserved bytes cover pending copies and earlier members of this same batch.",
+        "required": [
+          "policy",
+          "episode",
+          "observed_bytes",
+          "reserved_bytes"
+        ],
+        "properties": {
+          "episode": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "observed_bytes": {
+            "$ref": "#/components/schemas/HistoryLogicalBytes"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/HistoryPolicyReference"
+          },
+          "reserved_bytes": {
+            "$ref": "#/components/schemas/HistoryLogicalBytes"
+          }
+        }
       },
       "HistoryExpiryTrigger": {
         "oneOf": [

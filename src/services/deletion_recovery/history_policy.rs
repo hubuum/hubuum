@@ -270,6 +270,38 @@ pub(super) async fn protect_expiry(
     Ok(HistoryExposureProtection::new(authority, fence, identity))
 }
 
+/// A complete size pass can start/end pressure without selecting any copy.
+/// Protect those facts before acknowledging an empty task, including restart
+/// after its native checkpoint was committed but publication failed.
+pub(super) async fn protect_expiry_observation(
+    context: &AppContext,
+    execution: &TaskExecutionContext,
+) -> Result<(), ApiError> {
+    let storage = storage_handle(context);
+    let snapshot = storage.capture_history_lifecycle().await?;
+    if snapshot.control().authority().size_transitions().is_empty() {
+        return Ok(());
+    }
+    let session = expiry_session(context.history_retention(), execution).await?;
+    if !covers_checkpoint(
+        &storage.capture_control_checkpoint().await?,
+        session.checkpoint(),
+    ) {
+        return Err(unavailable(
+            "Recover current control authority before protecting size observations",
+        ));
+    }
+    if session
+        .checkpoint()
+        .history_lifecycle()
+        .is_some_and(|authority| authority.covers(snapshot.control().authority()))
+    {
+        return Ok(());
+    }
+    protect_snapshot(context, session, snapshot).await?;
+    Ok(())
+}
+
 pub(crate) async fn list(
     context: &AppContext,
     admin: &AdminAccess,

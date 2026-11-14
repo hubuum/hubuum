@@ -9,6 +9,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Gated logical-size expiry selects the oldest eligible original history clocks
+  from complete bounded accounting, reserves pending exact copies against the
+  lower target, and retains each selected copy's original pressure episode.
+  Protected cleanup and signed restore/replay preserve that selection cause
+  after pressure clears while rechecking policies, holds and dependencies.
+  Empty passes independently protect pressure transitions before task success.
+  Administrator operation evidence shows size selection witnesses without
+  exposing retained object names or payloads.
+  Production activation remains gated and P6 remains deferred.
+- **Breaking storage SDK 0.20 size admission/recovery:** complete adapters must
+  preserve `HistoryExpirySizeAuthorization` with exact membership and enforce
+  complete two-pass selection budgets. `HistoryExpiryAdmissionResult::scanned`
+  can report up to 200,000 source examinations for an initial size pass; preserve
+  its accounting-unavailable diagnostic when falling back to independent age
+  eligibility. Deploy matching adapters and all checkpoint/restore readers
+  before retaining size-selected membership; older decoders cannot preserve its
+  original authorization. Preserve signed evidence and roll forward.
+
 - Administrator history accounting refresh measures complete bounded retained
   sets using compact JSON v1 logical bytes and records independently protected
   pressure start/end transitions with durable hysteresis and audit evidence.

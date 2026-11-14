@@ -302,6 +302,28 @@ through independent checkpoints and restore. `HistorySizeObservation` requires
 service-side independent publication/readback before acknowledgement. It grants
 no physical expiry permission; P6 remains deferred.
 
+Size-bearing admission uses `HistorySizeCensus::for_family`, positive exhaustion
+and `HistoryExpirySizeSelection` for a second unchanged family pass. Preserve the
+original five-second planning clock, cumulative 64-MiB metadata bound, 100,000
+rows per pass and bounded oldest metadata heap. `HistoryExpiryAdmissionResult`
+reports both passes' examinations (up to 200,000) and an explicit
+`accounting_unavailable` diagnostic for independent age fallback. Ordinary age
+pages retain their 1000-source-row bound. Commit pressure transitions, exact
+membership, required audit and task continuation atomically. Never fall back
+after an audit or native intent-commit failure.
+Adapters with one-transition native CAS use
+`HistoryLifecycleControlChange::split_first_size_transition` inside that same
+outer transaction; preserve every planned operation UUID and successor revision.
+
+Preserve each member's `HistoryExpirySizeAuthorization` through checkpoint and
+restore. It binds the original pressure episode and complete observation minus
+reserved logical bytes. Pending exact copies reserve bytes only once per source.
+Once independently protected, size membership remains a cleanup obligation after
+pressure clears; recheck current policies, holds, native intervals and dependencies
+without replacing that original selection cause. Missing witnesses cannot become
+new deletion permission. Matching 0.20 adapters and recovery readers are required
+before retaining these facts; preserve signed evidence and roll forward.
+
 The unreleased 0.20 contract also requires `submit_history_expiry_task`,
 `process_history_expiry_task` and `recover_history_expiry_task`. Shared admission
 accepts trusted `HistoryExpiryTaskSubmission`, coalesces exact stable scopes

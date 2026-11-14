@@ -2521,13 +2521,14 @@ async fn expiry_fixture(
     family: StorageIdentityHistoryKind,
     width: i32,
 ) -> (Fixture, HistoryPolicyKey, i32) {
-    expiry_fixture_on(Fixture::new().await, family, width).await
+    expiry_fixture_on(Fixture::new().await, family, width, false).await
 }
 
 async fn expiry_fixture_on(
     fixture: Fixture,
     family: StorageIdentityHistoryKind,
     width: i32,
+    size: bool,
 ) -> (Fixture, HistoryPolicyKey, i32) {
     use diesel::sql_types::Integer;
     #[derive(QueryableByName)]
@@ -2609,9 +2610,16 @@ async fn expiry_fixture_on(
         key,
         HistoryPolicyRevision::new(0).unwrap(),
         HistoryPolicyBinding::Expire {
-            trigger: HistoryExpiryTrigger::Age {
-                age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
-                deleted_age_seconds: Some(HistoryRetentionSeconds::new(0).unwrap()),
+            trigger: if size {
+                HistoryExpiryTrigger::LogicalSize {
+                    upper_logical_bytes: HistoryLogicalBytes::new(1).unwrap(),
+                    lower_logical_bytes: HistoryLogicalBytes::new(0).unwrap(),
+                }
+            } else {
+                HistoryExpiryTrigger::Age {
+                    age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                    deleted_age_seconds: Some(HistoryRetentionSeconds::new(0).unwrap()),
+                }
             },
             minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
         },

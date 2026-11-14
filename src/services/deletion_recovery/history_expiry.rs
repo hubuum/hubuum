@@ -193,6 +193,12 @@ pub(crate) async fn execute(
             .await;
         }
         if checkpoint.finished() {
+            if checkpoint.removed_count() == 0 {
+                checkpoint_with_retry(&execution, || {
+                    super::history_policy::protect_expiry_observation(context, &execution)
+                })
+                .await?;
+            }
             let summary = if checkpoint.removed_count() == 0 {
                 "History expiry scan pass finished without an admitted batch"
             } else {

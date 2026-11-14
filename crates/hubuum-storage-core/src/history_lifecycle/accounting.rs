@@ -1,8 +1,10 @@
 //! Versioned logical accounting, independent of physical/compressed storage.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
 use bigdecimal::BigDecimal;
+use hubuum_domain::VersionIdentity;
 use serde_json::Value;
 
 use super::*;
@@ -130,13 +132,13 @@ impl HistorySizeAccounting {
 /// replace with transactionally maintained counters when larger scopes need it.
 pub struct HistorySizeCensus {
     snapshot: HistoryLifecycleSnapshot,
-    policy: HistoryEffectivePolicy,
-    seen: std::collections::BTreeSet<(ResourceIdentity, hubuum_domain::VersionIdentity)>,
+    family: StorageIdentityHistoryKind,
+    policies: Vec<(HistoryEffectivePolicy, u64, u64)>,
+    policy_indices: BTreeMap<(HistoryPolicyKey, HistoryPolicyRevision), usize>,
+    seen: BTreeMap<(ResourceIdentity, VersionIdentity), HistoryLogicalBytes>,
     metadata_bytes: u64,
     failed: bool,
     started: std::time::Instant,
-    governed_rows: u64,
-    bytes: u64,
 }
 impl HistorySizeCensus {
     pub const MAX_ROWS: usize = 100_000;
@@ -147,16 +149,47 @@ impl HistorySizeCensus {
     ) -> Result<Self, StorageValidationError> {
         let policy = snapshot.control().authority().policies().exact(reference)?;
         HistorySizePressure::measure(&policy, HistoryLogicalBytes::new(0)?, None)?;
-        Ok(Self {
+        let family = reference.key().family();
+        Ok(Self::with_policies(snapshot, family, vec![policy]))
+    }
+    /// One complete family fold shares identity and byte budgets across all
+    /// immutable size-bearing sources, including distinct relation endpoints.
+    pub fn for_family(
+        snapshot: HistoryLifecycleSnapshot,
+        family: StorageIdentityHistoryKind,
+    ) -> Result<Self, StorageValidationError> {
+        let policies = snapshot.control().authority().policies().records().iter()
+            .filter(|record| record.proposal().key().family() == family)
+            .map(HistoryPolicyReference::from)
+            .map(|reference| snapshot.control().authority().policies().exact(&reference))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter().filter(|policy| matches!(policy.binding(), HistoryPolicyBinding::Expire { trigger, .. } if trigger.size().is_some()))
+            .collect();
+        Ok(Self::with_policies(snapshot, family, policies))
+    }
+    fn with_policies(
+        snapshot: HistoryLifecycleSnapshot,
+        family: StorageIdentityHistoryKind,
+        policies: Vec<HistoryEffectivePolicy>,
+    ) -> Self {
+        let policy_indices = policies
+            .iter()
+            .enumerate()
+            .map(|(index, policy)| {
+                let source = policy.source().expect("exact accounting policy");
+                ((source.key(), source.revision()), index)
+            })
+            .collect();
+        Self {
             snapshot,
-            policy,
+            family,
+            policies: policies.into_iter().map(|policy| (policy, 0, 0)).collect(),
+            policy_indices,
             seen: Default::default(),
             metadata_bytes: 0,
             failed: false,
             started: std::time::Instant::now(),
-            governed_rows: 0,
-            bytes: 0,
-        })
+        }
     }
     pub fn observe(
         &mut self,
@@ -174,7 +207,6 @@ impl HistorySizeCensus {
         bytes: HistoryLogicalBytes,
         metadata_bytes: u64,
     ) -> Result<(), StorageValidationError> {
-        let reference = self.policy.source().expect("census has an exact policy");
         if self.started.elapsed() > std::time::Duration::from_secs(5)
             || self.seen.len() == Self::MAX_ROWS
             || metadata_bytes > HistoryLifecycleScan::MAX_INPUT_BYTES as u64
@@ -191,15 +223,18 @@ impl HistorySizeCensus {
         }
         let candidate = candidate
             .filter(|candidate| {
-                candidate.family() == reference.key().family()
-                    && !candidate.attributions().is_empty()
+                candidate.family() == self.family && !candidate.attributions().is_empty()
             })
             .ok_or_else(|| {
                 invalid("Complete history accounting has unresolved historical attribution")
             })?;
-        if !self
+        if self
             .seen
-            .insert((candidate.target().resource(), candidate.target().version()))
+            .insert(
+                (candidate.target().resource(), candidate.target().version()),
+                bytes,
+            )
+            .is_some()
         {
             return Err(invalid(
                 "Complete history accounting has duplicate version identities",
@@ -207,46 +242,125 @@ impl HistorySizeCensus {
         }
         // Both relation endpoints can resolve to the same source: charge the
         // exact logical version once, independently of protection/eligibility.
-        if candidate.attributions().iter().any(|attribution| {
-            self.snapshot
-                .control()
-                .authority()
-                .policies()
-                .resolve_accounting(
-                    candidate.family(),
-                    *attribution,
-                    candidate.anchor(),
-                    self.snapshot.observed_at(),
-                )
-                .source()
-                == Some(reference)
-        }) {
-            self.governed_rows += 1;
-            self.bytes = add(self.bytes, bytes.value())?;
+        let sources = candidate
+            .attributions()
+            .iter()
+            .filter_map(|attribution| {
+                self.snapshot
+                    .control()
+                    .authority()
+                    .policies()
+                    .resolve_accounting(
+                        candidate.family(),
+                        *attribution,
+                        candidate.anchor(),
+                        self.snapshot.observed_at(),
+                    )
+                    .source()
+                    .map(|source| (source.key(), source.revision()))
+            })
+            .collect::<BTreeSet<_>>();
+        for source in sources {
+            if let Some(index) = self.policy_indices.get(&source) {
+                let (_, governed_rows, total) = &mut self.policies[*index];
+                *governed_rows += 1;
+                *total = add(*total, bytes.value())?;
+            }
         }
         Ok(())
     }
     /// The adapter must call this only after positively exhausting its source.
     pub fn finish(self) -> Result<HistorySizeAccounting, StorageValidationError> {
+        if self.policies.len() != 1 {
+            return Err(invalid(
+                "A single-policy accounting result requires exactly one source",
+            ));
+        }
+        Ok(self
+            .finish_family()?
+            .accounting
+            .pop()
+            .expect("one census source"))
+    }
+    pub fn finish_family(self) -> Result<HistoryFamilySizeAccounting, StorageValidationError> {
         if self.failed || self.started.elapsed() > std::time::Duration::from_secs(5) {
             return Err(invalid(
                 "A failed or expired history census cannot produce complete accounting",
             ));
         }
         let authority = self.snapshot.control().authority();
-        Ok(HistorySizeAccounting {
-            format: "compact_json_v1",
-            fence: self.snapshot.fence(),
-            observed_at: self.snapshot.observed_at(),
-            scanned_rows: self.seen.len().to_string(),
-            governed_rows: self.governed_rows.to_string(),
-            pressure: HistorySizePressure::measure(
-                &self.policy,
-                HistoryLogicalBytes::new(self.bytes)?,
-                authority.size_pressure(self.policy.source().expect("exact census policy")),
-            )?,
-            transition: None,
+        let accounting = self
+            .policies
+            .iter()
+            .map(|(policy, governed_rows, bytes)| {
+                Ok(HistorySizeAccounting {
+                    format: "compact_json_v1",
+                    fence: self.snapshot.fence(),
+                    observed_at: self.snapshot.observed_at(),
+                    scanned_rows: self.seen.len().to_string(),
+                    governed_rows: governed_rows.to_string(),
+                    pressure: HistorySizePressure::measure(
+                        policy,
+                        HistoryLogicalBytes::new(*bytes)?,
+                        authority.size_pressure(policy.source().expect("exact census policy")),
+                    )?,
+                    transition: None,
+                })
+            })
+            .collect::<Result<Vec<_>, StorageValidationError>>()?;
+        Ok(HistoryFamilySizeAccounting {
+            family: self.family,
+            snapshot: self.snapshot,
+            accounting,
+            rows: self.seen,
+            metadata_bytes: self.metadata_bytes,
+            started: self.started,
         })
+    }
+}
+
+/// Complete, adapter-observed family accounting. This cannot be deserialized
+/// from a caller's gauges or from an inspection sample.
+pub struct HistoryFamilySizeAccounting {
+    pub(super) family: StorageIdentityHistoryKind,
+    pub(super) snapshot: HistoryLifecycleSnapshot,
+    pub(super) accounting: Vec<HistorySizeAccounting>,
+    pub(super) rows: BTreeMap<(ResourceIdentity, VersionIdentity), HistoryLogicalBytes>,
+    pub(super) metadata_bytes: u64,
+    pub(super) started: std::time::Instant,
+}
+
+impl HistoryFamilySizeAccounting {
+    pub(super) fn retain(
+        mut self,
+        actor: PrincipalIdentity,
+    ) -> Result<(Self, HistoryLifecycleControlChange), StorageValidationError> {
+        let original = self.snapshot.clone();
+        let mut control = original.control().clone();
+        for accounting in &mut self.accounting {
+            let previous = control
+                .authority()
+                .size_pressure(accounting.pressure().policy());
+            if previous.map_or(!accounting.pressure().reclaiming(), |old| {
+                old.reclaiming() == accounting.pressure().reclaiming()
+            }) {
+                continue;
+            }
+            accounting.fence = HistoryReviewFence::new(
+                original.fence().incarnation(),
+                control.authority().revision(),
+                original.fence().deletion_revision(),
+            )?;
+            control = control.observe_size(accounting, actor)?.next().clone();
+        }
+        let change = original.control().change(control, original.fence())?;
+        self.snapshot = HistoryLifecycleSnapshot::new(
+            change.next().clone(),
+            original.fence().incarnation(),
+            original.fence().deletion_revision(),
+            original.observed_at(),
+        )?;
+        Ok((self, change))
     }
 }
 

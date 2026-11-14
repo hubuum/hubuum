@@ -60,6 +60,7 @@ impl ReplayTrace {
 #[tokio::test]
 async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
     #[values(StorageBackendKind::Postgres, StorageBackendKind::Memory)] kind: StorageBackendKind,
+    #[values(false, true)] size: bool,
 ) {
     let _guard = RESTORE_TEST_LOCK.lock().await;
     let pool = postgres_test_pool_with_timeout(&database_url(), 8, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
@@ -82,6 +83,7 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
         .await
         .unwrap();
     let mut batch = None;
+    let actor = PrincipalIdentity::generate();
     let result = AssertUnwindSafe(async {
         let class = fixture.create_class("expiry_restore_scope").await.unwrap();
         let collection = storage
@@ -110,9 +112,16 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
                 .policies()
                 .current_revision(key),
             HistoryPolicyBinding::Expire {
-                trigger: HistoryExpiryTrigger::Age {
-                    age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
-                    deleted_age_seconds: None,
+                trigger: if size {
+                    HistoryExpiryTrigger::LogicalSize {
+                        upper_logical_bytes: HistoryLogicalBytes::new(1).unwrap(),
+                        lower_logical_bytes: HistoryLogicalBytes::new(0).unwrap(),
+                    }
+                } else {
+                    HistoryExpiryTrigger::Age {
+                        age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                        deleted_age_seconds: None,
+                    }
                 },
                 minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
             },
@@ -125,7 +134,7 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
                     .control()
                     .apply(
                         HistoryPolicyApplyRequest::new(proposal, None),
-                        PrincipalIdentity::generate(),
+                        actor,
                         before.fence(),
                         before.observed_at(),
                     )
@@ -152,7 +161,7 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
                         Uuid::new_v4(),
                         Uuid::new_v4(),
                         HistoryExpiryOrigin::Scheduled {
-                            initiator: None,
+                            initiator: Some(actor),
                             policy: None,
                         },
                         HistoryLifecycleScan::new(key, 1000).unwrap(),

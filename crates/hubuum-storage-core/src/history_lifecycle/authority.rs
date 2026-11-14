@@ -231,6 +231,10 @@ impl HistoryLifecycleAuthority {
             .holds
             .iter()
             .any(|record| record.operation() == manifest.identity())
+            || self
+                .size_transitions
+                .iter()
+                .any(|entry| entry.operation() == manifest.identity())
         {
             return Err(invalid(
                 "Expiry intent identity collides with retained operation evidence",
@@ -247,7 +251,8 @@ impl HistoryLifecycleAuthority {
                 member.attributions().to_vec(),
                 false,
             )?;
-            let decision = self.inspect(&candidate, manifest.selected_at(), &[])?;
+            let measurements = member.size_measurements(self)?;
+            let decision = self.inspect(&candidate, manifest.selected_at(), &measurements)?;
             let policies = decision
                 .endpoints()
                 .iter()
@@ -265,7 +270,9 @@ impl HistoryLifecycleAuthority {
                 ));
             }
         }
-        self.with_expiry(self.expiry.admit(manifest)?)
+        let next = self.with_expiry(self.expiry.admit(manifest)?)?;
+        next.validate_size_membership()?;
+        Ok(next)
     }
     pub(super) fn cancel_expiry(
         &self,
@@ -636,6 +643,7 @@ impl TryFrom<AuthorityInput> for HistoryLifecycleAuthority {
             ));
         }
         authority.validate_size_transitions()?;
+        authority.validate_size_membership()?;
         Ok(authority)
     }
 }

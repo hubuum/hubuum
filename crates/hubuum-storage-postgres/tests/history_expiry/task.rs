@@ -158,9 +158,13 @@ async fn native_expiry_admission_enforces_internal_lane_kind_limits(#[case] kind
 
 impl TaskFixture {
     async fn new(family: StorageIdentityHistoryKind) -> Self {
+        Self::with_size(family, false).await
+    }
+
+    async fn with_size(family: StorageIdentityHistoryKind, size: bool) -> Self {
         use hubuum_storage_postgres::test_support::{TestTaskCreate, create_task};
         let (fixture, restore_target) = bounded_scan::restore_fixture().await;
-        let (fixture, _, collection) = expiry_fixture_on(fixture, family, 32).await;
+        let (fixture, _, collection) = expiry_fixture_on(fixture, family, 32, size).await;
         let user = fixture
             .storage
             .create_user(StorageUserCreate::new(
@@ -176,7 +180,7 @@ impl TaskFixture {
             .into_value()
             .into_parts()
             .id();
-        bounded_scan::schema_collection_policy(&fixture, family, collection).await;
+        bounded_scan::schema_collection_policy(&fixture, family, collection, size).await;
         // Relations need live endpoints before a later source can be appended.
         // The bounded-scan helper creates them through ordinary native triggers.
         bounded_scan::live_edges(&fixture, family, collection).await;
@@ -197,7 +201,24 @@ impl TaskFixture {
             )
             .unwrap(),
             HistoryExpiryOrigin::Scheduled {
-                initiator: None,
+                initiator: if size {
+                    Some(
+                        fixture
+                            .storage
+                            .capture_history_lifecycle()
+                            .await
+                            .unwrap()
+                            .control()
+                            .authority()
+                            .policies()
+                            .records()
+                            .last()
+                            .unwrap()
+                            .principal(),
+                    )
+                } else {
+                    None
+                },
                 policy: None,
             },
             application.fence(),
@@ -417,14 +438,16 @@ async fn native_task_cancellation_preserves_retained_history_obligations(
 #[rstest::rstest]
 #[case::missing_approval("approval")]
 #[case::required_audit("audit")]
+#[case::size_required_audit("size_audit")]
 #[case::checkpoint_internal_capacity("capacity")]
 #[case::checkpoint_kind_capacity("kind_capacity")]
 #[case::unknown_checkpoint("unknown")]
 #[tokio::test]
 async fn native_failed_task_step_rolls_back_admission_and_checkpoint(#[case] mode: &str) {
     let _guard = CONTROL_LOCK.lock().await;
-    let test = TaskFixture::new(StorageIdentityHistoryKind::Object).await;
-    if mode == "audit" {
+    let test =
+        TaskFixture::with_size(StorageIdentityHistoryKind::Object, mode == "size_audit").await;
+    if matches!(mode, "audit" | "size_audit") {
         with_transaction(&test.fixture.owner_pool, async |connection| {
             owner(connection).await?;
             connection.batch_execute("CREATE FUNCTION public.history_expiry_task_audit_fault() RETURNS trigger LANGUAGE plpgsql AS $fault$ BEGIN IF NEW.metadata #>> '{lifecycle,name}'='lifecycle.erasure.requested' THEN RAISE EXCEPTION 'required expiry audit fault'; END IF; RETURN NEW; END $fault$; CREATE TRIGGER history_expiry_task_audit_fault BEFORE INSERT ON public.events FOR EACH ROW EXECUTE FUNCTION public.history_expiry_task_audit_fault()").await?;
@@ -515,7 +538,7 @@ async fn native_failed_task_step_rolls_back_admission_and_checkpoint(#[case] mod
     .unwrap()
     .into_parts()
     .0;
-    if mode == "audit" {
+    if matches!(mode, "audit" | "size_audit") {
         with_transaction(&test.fixture.owner_pool, async |connection| {
             owner(connection).await?;
             connection.batch_execute("DROP TRIGGER history_expiry_task_audit_fault ON public.events; DROP FUNCTION public.history_expiry_task_audit_fault()").await?;
@@ -852,9 +875,10 @@ async fn native_removal_preserves_shared_deletion_authority_readers() {
 #[tokio::test]
 async fn native_protected_batch_removes_exact_copies_and_requires_protected_completion(
     #[case] family: StorageIdentityHistoryKind,
+    #[values(false, true)] size: bool,
 ) {
     let _guard = CONTROL_LOCK.lock().await;
-    let mut test = TaskFixture::new(family).await;
+    let mut test = TaskFixture::with_size(family, size).await;
     let result = async {
         let checkpoint = test.process(true).await?;
         let before = test.fixture.storage.capture_history_lifecycle().await?;

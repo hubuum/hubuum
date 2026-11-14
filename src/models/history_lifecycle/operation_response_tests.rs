@@ -6,12 +6,13 @@ use hubuum_domain::{
     VersionIdentity,
 };
 use hubuum_storage_core::{
-    HistoryDeletionRevision, HistoryExpiryCandidate, HistoryExpiryIntent, HistoryExpirySelection,
-    HistoryExpirySelectionOutcome, HistoryExpiryTrigger, HistoryLifecycleControl,
-    HistoryLifecycleSnapshot, HistoryObjectAuthorizationFacts, HistoryRetentionSeconds,
-    StorageCapturedIdentity, StorageHistoryMetadata, StorageHistoryOperation,
-    StorageIdentityEvidence, StorageIdentitySubject, StorageObject, StorageObjectHistoryRecord,
-    StorageRecordMetadata,
+    HistoryDeletionRevision, HistoryExpiryAdmissionRequest, HistoryExpiryCandidate,
+    HistoryExpiryIntent, HistoryExpirySelection, HistoryExpirySelectionOutcome,
+    HistoryExpirySizeSelection, HistoryExpiryTrigger, HistoryLifecycleControl,
+    HistoryLifecycleSnapshot, HistoryLogicalBytes, HistoryObjectAuthorizationFacts,
+    HistoryRetentionSeconds, HistorySizeCensus, StorageCapturedIdentity, StorageHistoryMetadata,
+    StorageHistoryOperation, StorageIdentityEvidence, StorageIdentitySubject, StorageObject,
+    StorageObjectHistoryRecord, StorageRecordMetadata,
 };
 
 use super::*;
@@ -19,7 +20,7 @@ use super::*;
 fn at(seconds: i64) -> DateTime<Utc> {
     Utc.timestamp_opt(seconds, 0).single().unwrap()
 }
-fn intent() -> HistoryExpiryIntent {
+fn intent(size: bool) -> HistoryExpiryIntent {
     let collection = ResourceIdentity::generate();
     let class = ResourceIdentity::generate();
     let evidence = StorageIdentityEvidence::try_new(
@@ -104,9 +105,16 @@ fn intent() -> HistoryExpiryIntent {
         key,
         HistoryPolicyRevision::new(0).unwrap(),
         HistoryPolicyBinding::Expire {
-            trigger: HistoryExpiryTrigger::Age {
-                age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
-                deleted_age_seconds: None,
+            trigger: if size {
+                HistoryExpiryTrigger::LogicalSize {
+                    upper_logical_bytes: HistoryLogicalBytes::new(1).unwrap(),
+                    lower_logical_bytes: HistoryLogicalBytes::new(0).unwrap(),
+                }
+            } else {
+                HistoryExpiryTrigger::Age {
+                    age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                    deleted_age_seconds: None,
+                }
             },
             minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
         },
@@ -129,6 +137,31 @@ fn intent() -> HistoryExpiryIntent {
         at(200),
     )
     .unwrap();
+    if size {
+        let mut census = HistorySizeCensus::for_family(snapshot.clone(), key.family()).unwrap();
+        census
+            .observe(
+                Some(&candidate),
+                HistoryLogicalBytes::new(4096).unwrap(),
+                100,
+            )
+            .unwrap();
+        let request = HistoryExpiryAdmissionRequest::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            HistoryExpiryOrigin::Manual {
+                principal: PrincipalIdentity::generate(),
+            },
+            HistoryLifecycleScan::new(key, 1).unwrap(),
+            snapshot.fence(),
+        )
+        .unwrap();
+        let mut selection =
+            HistoryExpirySizeSelection::new(request, census.finish_family().unwrap()).unwrap();
+        selection.observe(candidate, 4096, 100, true).unwrap();
+        let (_, result) = selection.finish().unwrap().into_parts();
+        return HistoryExpiryIntent::new(result.into_manifest().unwrap());
+    }
     let mut selection = HistoryExpirySelection::new(
         Uuid::new_v4(),
         HistoryExpiryOrigin::Manual {
@@ -147,9 +180,11 @@ fn intent() -> HistoryExpiryIntent {
     HistoryExpiryIntent::new(selection.finish().unwrap())
 }
 
-#[test]
-fn public_operation_evidence_omits_stored_names_without_rewriting_retained_intent() {
-    let intent = intent();
+#[rstest::rstest]
+fn public_operation_evidence_omits_stored_names_without_rewriting_retained_intent(
+    #[values(false, true)] size: bool,
+) {
+    let intent = intent(size);
     let retained = serde_json::to_vec(&intent).unwrap();
     assert!(String::from_utf8_lossy(&retained).contains("protected_original_name_marker"));
     let expected_digest = Sha256::digest(serde_json::to_vec(intent.manifest()).unwrap())
@@ -164,6 +199,7 @@ fn public_operation_evidence_omits_stored_names_without_rewriting_retained_inten
     assert!(!encoded.contains("protected_original_name_marker"));
     assert!(!encoded.contains("object_authorization"));
     assert!(!encoded.contains("private_payload_marker"));
+    assert_eq!(encoded.contains("size_authorizations"), size);
     assert!(encoded.contains(&intent.identity().to_string()));
     assert!(encoded.contains(&expected_digest));
     assert_eq!(serde_json::to_vec(&intent).unwrap(), retained);
