@@ -12,7 +12,7 @@ use hubuum_storage_core::StorageErrorKind;
 use hubuum_storage_core::artifacts::{
     ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReference,
     ArtifactReservation, ArtifactResult, ArtifactStore, Destination, LOCAL_SPOOL_CLEANUP_GRACE,
-    TaskArtifactStore, VerifiedArtifact,
+    TaskArtifactCleanup, TaskArtifactStore, VerifiedArtifact,
 };
 use uuid::Uuid;
 
@@ -33,6 +33,18 @@ impl PostgresArtifactStore {
 }
 
 fn boundary(error: PostgresStorageError) -> ArtifactError {
+    let error = hubuum_storage_core::StorageError::from(error);
+    if error.api_request_rejection().is_some()
+        || error.task_capacity_rejection().is_some()
+        || matches!(
+            error.kind(),
+            StorageErrorKind::TaskCancelled | StorageErrorKind::TaskDeadlineExceeded
+        )
+    {
+        // Never flatten API/task admission into a generic byte-budget error.
+        // The application must still validate the original operation/scope.
+        return ArtifactError::Source(Box::new(error));
+    }
     match error.kind() {
         StorageErrorKind::NotFound => ArtifactError::NotFound,
         StorageErrorKind::Conflict => ArtifactError::Conflict(error.to_string()),
@@ -440,6 +452,29 @@ pub(crate) async fn publish_for_task(
 
 #[async_trait]
 impl TaskArtifactStore for PostgresArtifactStore {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        crate::runtime::ensure_no_storage_callback().map_err(boundary)?;
+        let identity = cleanup.identity();
+        let lease = cleanup.lease();
+        self.runtime.with_control_transaction(async |connection| {
+            let attempt = load(connection, identity, true).await?;
+            if attempt.state == "published" { return Err(conflict()); }
+            #[derive(QueryableByName)]
+            struct Owned { #[diesel(sql_type = Bool)] owned: bool }
+            let token = Uuid::parse_str(lease.token().adapter_value()).map_err(invalid)?;
+            let owned = diesel::sql_query("SELECT EXISTS(SELECT 1 FROM artifact_task_owners WHERE artifact_id=$1 AND task_id=$2 AND lease_token=$3) AS owned")
+                .bind::<SqlUuid,_>(artifact_id(identity))
+                .bind::<Integer,_>(lease.task_id().id())
+                .bind::<SqlUuid,_>(token).get_result::<Owned>(connection).await?;
+            if !owned.owned { return Err(conflict()); }
+            if attempt.state != "discarded" {
+                diesel::sql_query("UPDATE artifact_attempts SET state='deleting' WHERE artifact_id=$1")
+                    .bind::<SqlUuid,_>(artifact_id(identity)).execute(connection).await?;
+            }
+            Ok::<_,PostgresStorageError>(())
+        }).await.map_err(boundary)
+    }
+
     async fn bind_task(
         &self,
         identity: &ArtifactIdentity,
@@ -468,5 +503,96 @@ impl TaskArtifactStore for PostgresArtifactStore {
             })
             .await
             .map_err(boundary)
+    }
+}
+
+#[cfg(test)]
+mod admission_causality_tests {
+    use super::*;
+    use hubuum_storage_core::{ApiRequestRejection, StorageError, TaskCapacityRejection};
+    use hubuum_task_core::{TaskExecutionContext, TaskStopReason};
+    use rstest::rstest;
+    use std::time::Duration as StdDuration;
+
+    #[rstest]
+    #[case::api_output(StorageError::api_request(ApiRequestRejection::OutputBytes))]
+    #[case::api_deadline(StorageError::api_request(ApiRequestRejection::DeadlineExceeded))]
+    #[case::task_capacity(StorageError::task_capacity(TaskCapacityRejection::Deployment))]
+    #[case::task_cancel(StorageError::task_stopped(TaskStopReason::Cancelled))]
+    #[case::task_deadline(StorageError::task_stopped(TaskStopReason::DeadlineExceeded))]
+    fn byte_admission_cause_is_not_a_generic_artifact_limit(#[case] failure: StorageError) {
+        let kind = failure.kind();
+        let api = failure.api_request_rejection();
+        let task = failure.task_capacity_rejection();
+        let converted = boundary(PostgresStorageError::from(failure));
+        let ArtifactError::Source(source) = converted else {
+            panic!("Structured admission failure was flattened");
+        };
+        let cause = source
+            .downcast::<StorageError>()
+            .expect("portable typed cause");
+        assert_eq!(cause.kind(), kind);
+        assert_eq!(cause.api_request_rejection(), api);
+        assert_eq!(cause.task_capacity_rejection(), task);
+    }
+
+    #[derive(Default)]
+    struct PoolAccess(std::sync::atomic::AtomicUsize);
+    impl crate::PostgresObserver for PoolAccess {
+        fn connection_acquired(&self, _: hubuum_storage_core::StorageCallSite, _: StdDuration) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn connection_acquisition_failed(
+            &self,
+            _: hubuum_storage_core::StorageCallSite,
+            _: StdDuration,
+        ) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[rstest]
+    #[case::cancelled(TaskStopReason::Cancelled, StorageErrorKind::TaskCancelled)]
+    #[case::deadline(
+        TaskStopReason::DeadlineExceeded,
+        StorageErrorKind::TaskDeadlineExceeded
+    )]
+    #[tokio::test]
+    async fn stopped_byte_stage_retains_typed_cause_before_pool_access(
+        #[case] reason: TaskStopReason,
+        #[case] expected: StorageErrorKind,
+    ) {
+        // A lazy unconnected pool: this test must not acquire any connection.
+        let settings =
+            crate::PostgresPoolSettings::builder("postgres://unused:unused@127.0.0.1:1/unused")
+                .max_size(1)
+                .acquire_timeout_ms(100)
+                .statement_timeout_ms(100)
+                .build()
+                .unwrap();
+        let pool = crate::build_postgres_pool(&settings).unwrap();
+        let observer = std::sync::Arc::new(PoolAccess::default());
+        let store = PostgresArtifactStore::new(PostgresRuntime::new(pool, observer.clone()));
+        let identity =
+            ArtifactIdentity::new(hubuum_storage_core::artifacts::DestinationId::generate());
+        let (execution, stop) = TaskExecutionContext::new(StdDuration::from_secs(30)).unwrap();
+        stop.request_stop(reason);
+        let failure = crate::runtime::with_task_execution(
+            Some(execution),
+            store.stage(&identity, ArtifactLimits::format_ceiling()),
+        )
+        .await
+        .unwrap_err();
+        let ArtifactError::Source(source) = failure else {
+            panic!("Actual productive byte stage lost its stop cause");
+        };
+        assert_eq!(
+            source.downcast_ref::<StorageError>().unwrap().kind(),
+            expected
+        );
+        assert_eq!(
+            std::sync::atomic::AtomicUsize::load(&observer.0, std::sync::atomic::Ordering::SeqCst),
+            0
+        );
     }
 }

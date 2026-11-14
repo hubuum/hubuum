@@ -1,6 +1,7 @@
 pub mod actor_context;
 pub(crate) mod api_request_admission;
 pub mod client_allowlist;
+pub(crate) mod history_publication;
 pub mod maintenance;
 pub mod rate_limit;
 pub mod runtime_settings;

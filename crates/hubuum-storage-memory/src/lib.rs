@@ -233,6 +233,15 @@ macro_rules! append_memory_scoped_simple_event {
 }
 
 impl MemoryHistoryEntry {
+    fn family(&self) -> StorageIdentityHistoryKind {
+        match self.value {
+            MemoryHistoryValue::Collection(_) => StorageIdentityHistoryKind::Collection,
+            MemoryHistoryValue::Class(_) => StorageIdentityHistoryKind::Class,
+            MemoryHistoryValue::Object(_) => StorageIdentityHistoryKind::Object,
+            MemoryHistoryValue::ExportTemplate(_) => StorageIdentityHistoryKind::ExportTemplate,
+            MemoryHistoryValue::RemoteTarget(_) => StorageIdentityHistoryKind::RemoteTarget,
+        }
+    }
     fn metadata(&self) -> Result<StorageHistoryMetadata, StorageError> {
         StorageHistoryMetadata::try_new(
             self.operation,
@@ -360,6 +369,7 @@ impl MemoryTokenRecord {
 
 #[derive(Clone)]
 struct MemoryRuntimeRegistration {
+    history_protocol: HistoryRuntimeProtocol,
     ownership_token: Uuid,
     isolation: Option<RuntimeIsolationDomain>,
     drained: Option<ApplicationFence>,
@@ -376,6 +386,8 @@ struct MemoryState {
     task_purge_attempts: BTreeMap<TaskPurgeBatchId, u64>,
     next_task_purge_attempt: u64,
     deletion_control: DeletionControlState,
+    history_lifecycle: HistoryLifecycleControl,
+    history_publications: HistoryPublicationRegistry,
     application_control: ApplicationControlState,
     pending_restore: bool,
     runtime_registrations: BTreeMap<Uuid, MemoryRuntimeRegistration>,
@@ -490,7 +502,10 @@ impl MemoryState {
         } = request;
         let sequence = EventSequence::new(self.next_event_sequence)
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
-        self.next_event_sequence += 1;
+        self.next_event_sequence = self
+            .next_event_sequence
+            .checked_add(1)
+            .ok_or_else(|| StorageError::backend_failure("Event sequence exhausted"))?;
         let event_id = Uuid::new_v4();
         let actor_user_id = context.actor_user_id();
         let principal = |principal_id| ProvenancePrincipal {
@@ -891,6 +906,7 @@ mod credential_approval;
 mod deletion_control;
 mod events;
 mod execution;
+mod history_lifecycle;
 mod identity;
 mod imports;
 mod logical_identity;

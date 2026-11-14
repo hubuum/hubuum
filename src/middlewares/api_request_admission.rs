@@ -118,10 +118,7 @@ pub(super) async fn run(
 ) -> Result<ServiceResponse<BoxBody>, Error> {
     let Some((class, principal)) = operation(req.method(), req.match_info().as_str()).zip(actor)
     else {
-        return next
-            .call(req)
-            .await
-            .map(ServiceResponse::map_into_boxed_body);
+        return super::history_publication::call(req, next).await;
     };
     let storage = AppContext::from_http_request(req.request())?
         .backend()
@@ -211,7 +208,7 @@ pub(super) async fn run(
                         )
                         .into());
                     }
-                    let response = next.call(req).await?.map_into_boxed_body();
+                    let response = super::history_publication::call(req, next).await?;
                     if Instant::now() >= deadline {
                         return Err(ApiError::ApiRequestAdmission(
                             ApiRequestRejection::DeadlineExceeded,

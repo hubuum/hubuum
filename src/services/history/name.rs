@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
 use hubuum_domain::ResourceId;
+use hubuum_storage_core::{
+    ExecutionStorage, HistoryObjectPopulationGap, LogicalIdentityStorage, StorageErrorKind,
+    StorageIdentityResourceKind, StorageIdentityTarget,
+};
 
 use crate::errors::ApiError;
 use crate::models::{
@@ -20,7 +24,7 @@ use crate::storage::{
 use crate::traits::{AuthzSubject, scope_allows};
 
 use super::access::{HistoryAccess, HistoryIdentity};
-use super::{history_total, object_from_storage};
+use super::{history_total, object_from_storage, original_as_of_query};
 
 #[derive(Clone)]
 enum ObjectHistoryQuery {
@@ -35,6 +39,32 @@ impl ObjectHistoryQuery {
             Self::Population(query) => query.options(),
         }
     }
+    async fn bind_original(self, context: &AppContext) -> Result<Self, ApiError> {
+        Ok(match self {
+            Self::Name(query) => Self::Name(query),
+            Self::Population(query) => {
+                // Preserve an earlier canonical selection. A fresh integer-ID
+                // lookup cannot replace that identity; adapters must reject a
+                // stale/reused ID before population or absence projection.
+                if query.expected_resource().is_some() {
+                    return Ok(Self::Population(query));
+                }
+                let original = original_as_of_query(
+                    context,
+                    StorageIdentityResourceKind::Class,
+                    ResourceId::new(query.class_id().id())?,
+                    query.at(),
+                )
+                .await?
+                .expected_resource();
+                Self::Population(match original {
+                    Some(original) => query.for_resource(original),
+                    None => query,
+                })
+            }
+        })
+    }
+
     fn visibility(self, scope: StorageHistoryCollectionScope, include_deleted: bool) -> Self {
         match self {
             Self::Name(query) => Self::Name(query.visibility(scope, include_deleted)),
@@ -51,12 +81,237 @@ impl ObjectHistoryQuery {
     async fn fetch(
         self,
         storage: &StorageHandle,
+        access: &HistoryAccess<'_>,
     ) -> Result<StoragePage<StorageObjectHistoryRecord>, ApiError> {
-        Ok(match self {
-            Self::Name(query) => storage.list_object_history_by_name(query).await?,
-            Self::Population(query) => storage.list_class_objects_as_of(query).await?,
-        })
+        let result = match &self {
+            Self::Name(query) => storage.list_object_history_by_name(query.clone()).await,
+            Self::Population(query) => storage.list_class_objects_as_of(query.clone()).await,
+        };
+        let error = match result {
+            Ok(page) => return Ok(page),
+            Err(error) => error,
+        };
+        if error.api_request_rejection().is_some() || error.task_capacity_rejection().is_some() {
+            return Err(error.into());
+        }
+        let Some(gap) = error.history_population_gap_evidence() else {
+            return Err(error.into());
+        };
+        let Self::Population(query) = &self else {
+            return Err(ApiError::ServiceUnavailable(
+                "Retained gap differs from the original history operation".into(),
+            ));
+        };
+        authorize_population_gap(access, storage, query, gap).await?;
+        Err(ApiError::NotFound(
+            "Historical object population contains an expired version".into(),
+        ))
     }
+}
+
+/// The evidence contains original policy inputs, never caller authorization.
+/// No current name may stand in for missing or contradictory retained facts.
+async fn authorize_population_gap(
+    access: &HistoryAccess<'_>,
+    storage: &StorageHandle,
+    query: &StorageClassObjectsAsOfQuery,
+    gap: &HistoryObjectPopulationGap,
+) -> Result<(), ApiError> {
+    let original_scope = storage.current_execution_scope();
+    if !gap.matches_query(query)
+        || original_scope
+            .history_read_override()
+            .is_none_or(|context| context.epoch() != gap.epoch())
+    {
+        return Err(ApiError::ServiceUnavailable(
+            "Retained population differs from the original productive read".into(),
+        ));
+    }
+    let facts = gap.facts();
+    let object_id = gap
+        .remapping()
+        .map_or(facts.object_id(), |proof| proof.object_id());
+    let collection_id = gap
+        .remapping()
+        .map_or(facts.collection_id(), |proof| proof.collection_id());
+    let class_id = gap
+        .remapping()
+        .map_or(facts.class_id(), |proof| proof.class_id());
+    let current = storage
+        .list_authorization_objects(StorageAuthorizationResourceIds::new(vec![ResourceId::new(
+            object_id.id(),
+        )?]))
+        .await?
+        .into_iter()
+        .next();
+    if current.is_none() && access.deleted().is_none() {
+        return Err(ApiError::Forbidden("Permission denied".into()));
+    }
+    let class = facts.attribution().class().ok_or_else(|| {
+        ApiError::ServiceUnavailable("Original retained class is unavailable".into())
+    })?;
+    for (kind, id, expected) in [
+        (
+            StorageIdentityResourceKind::Object,
+            object_id.id(),
+            facts.target().resource(),
+        ),
+        (
+            StorageIdentityResourceKind::Collection,
+            collection_id.id(),
+            facts.attribution().collection(),
+        ),
+        (StorageIdentityResourceKind::Class, class_id.id(), class),
+    ] {
+        let evidence = storage
+            .resolve_logical_identity(StorageIdentityTarget::Resource {
+                kind,
+                id: ResourceId::new(id)?,
+            })
+            .await;
+        let actual = match evidence {
+            Ok(evidence) => evidence
+                .subject()
+                .and_then(|subject| subject.record_identity())
+                .map(|target| target.resource()),
+            Err(error) if error.kind() == StorageErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        let deleted_object = kind == StorageIdentityResourceKind::Object
+            && current.is_none()
+            && access.deleted().is_some();
+        if actual != Some(expected) && !(actual.is_none() && deleted_object) {
+            return Err(ApiError::ServiceUnavailable(
+                "Original retained resource correspondence changed".into(),
+            ));
+        }
+    }
+    let current_shape = current.as_ref().map(|record| {
+        (
+            record.collection_id(),
+            record.class_id(),
+            record.name().to_owned(),
+        )
+    });
+    if let Some(current) = current {
+        if gap.remapping().is_some()
+            && (current.collection_id() != collection_id || current.class_id() != class_id)
+        {
+            return Err(ApiError::ServiceUnavailable(
+                "Original remapped object relationships changed".into(),
+            ));
+        }
+        access
+            .authorize(
+                Permissions::ReadObject,
+                ResourceRef::object(
+                    current.id().id(),
+                    ClassResourceEndpoint::new(
+                        current.collection_id().id(),
+                        current.class_id().id(),
+                    ),
+                    Some(current.name().to_owned()),
+                ),
+            )
+            .await?;
+    }
+    access
+        .authorize(
+            Permissions::ReadObject,
+            HistoryAuthorizationSnapshot::object(
+                object_id.id(),
+                collection_id.id(),
+                class_id.id(),
+                facts.name().to_owned(),
+            )
+            .into_resource(),
+        )
+        .await?;
+    // Re-enter the original productive scope after external policy I/O. This
+    // validates the captured app/history/API owners; it does not refresh them.
+    if gap.remapping().is_some() {
+        let final_shape = storage
+            .list_authorization_objects(StorageAuthorizationResourceIds::new(vec![
+                ResourceId::new(object_id.id())?,
+            ]))
+            .await?
+            .into_iter()
+            .next()
+            .map(|record| {
+                (
+                    record.collection_id(),
+                    record.class_id(),
+                    record.name().to_owned(),
+                )
+            });
+        if final_shape != current_shape {
+            return Err(ApiError::ServiceUnavailable(
+                "Current authorization shape changed during policy evaluation".into(),
+            ));
+        }
+        // Re-run the bounded native correspondence gate in the SAME original
+        // productive scope, after external policy I/O. Never refresh an owner.
+        let Err(error) = storage.list_class_objects_as_of(query.clone()).await else {
+            return Err(ApiError::ServiceUnavailable(
+                "Retained population correspondence changed during authorization".into(),
+            ));
+        };
+        if error.api_request_rejection().is_some() || error.task_capacity_rejection().is_some() {
+            return Err(error.into());
+        }
+        if error
+            .history_population_gap_evidence()
+            .is_some_and(|current| {
+                current.epoch() == gap.epoch()
+                    && current.facts() == gap.facts()
+                    && current.remapping() == gap.remapping()
+                    && current.matches_query(query)
+            })
+        {
+            return Ok(());
+        }
+        return Err(ApiError::ServiceUnavailable(
+            "Retained population correspondence changed during authorization".into(),
+        ));
+    }
+    for (kind, id, expected) in [
+        (
+            StorageIdentityResourceKind::Object,
+            object_id.id(),
+            facts.target().resource(),
+        ),
+        (
+            StorageIdentityResourceKind::Collection,
+            collection_id.id(),
+            facts.attribution().collection(),
+        ),
+        (StorageIdentityResourceKind::Class, class_id.id(), class),
+    ] {
+        let evidence = storage
+            .resolve_logical_identity(StorageIdentityTarget::Resource {
+                kind,
+                id: ResourceId::new(id)?,
+            })
+            .await;
+        let deleted_object = kind == StorageIdentityResourceKind::Object
+            && access.deleted().is_some()
+            && gap.remapping().is_none();
+        match evidence {
+            Ok(evidence)
+                if !evidence.has_unknown_restore_source()
+                    && evidence
+                        .subject()
+                        .and_then(|s| s.record_identity())
+                        .is_some_and(|record| record.resource() == expected) => {}
+            Err(error) if deleted_object && error.kind() == StorageErrorKind::NotFound => {}
+            _ => {
+                return Err(ApiError::ServiceUnavailable(
+                    "Original retained correspondence changed during authorization".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub async fn class_objects_as_of(
@@ -100,7 +355,10 @@ async fn authorized_object_history(
     let collections = access
         .candidate_collections(Permissions::ReadObject)
         .await?;
-    let query = query.visibility(collections, include_deleted);
+    let query = query
+        .bind_original(context)
+        .await?
+        .visibility(collections, include_deleted);
     let storage = storage_handle(context);
     if access.uses_storage_visibility() {
         // The adapter can enforce both collection checks in the same snapshot
@@ -109,7 +367,7 @@ async fn authorized_object_history(
         let options = prepare_db_pagination::<HubuumObjectHistory>(query.options())?;
         let (rows, total) = query
             .with_options(options.clone())?
-            .fetch(&storage)
+            .fetch(&storage, &access)
             .await?
             .into_parts();
         return Ok((
@@ -125,10 +383,11 @@ async fn authorized_object_history(
         |options| {
             let query = query.clone();
             let storage = &storage;
+            let access = &access;
             async move {
                 query
                     .with_options(options)?
-                    .fetch(storage)
+                    .fetch(storage, access)
                     .await?
                     .into_parts()
                     .0

@@ -598,7 +598,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
             &storage,
             &admin_cli.control_recovery,
         )
-        .await?;
+        .await?
+        .protect_renderers()?;
         let registration = storage
             .register_runtime_isolated(recovery.isolation_domain())
             .await?;
@@ -640,7 +641,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
             &storage,
             &admin_cli.control_recovery,
         )
-        .await?;
+        .await?
+        .protect_renderers()?;
         let registration = if action.requires_execution() {
             Some(
                 storage
@@ -785,7 +787,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
                 &storage,
                 &admin_cli.control_recovery,
             )
-            .await?,
+            .await?
+            .protect_renderers()?,
         )
     } else {
         None
@@ -805,7 +808,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
                 &storage,
                 &admin_cli.control_recovery,
             )
-            .await?,
+            .await?
+            .protect_renderers()?,
         )
     } else {
         None

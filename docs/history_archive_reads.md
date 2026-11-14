@@ -9,7 +9,7 @@ is no archive movement, cold provider or predicate search.
 ## Supported mode
 
 Every catalog, capture and result entry requires an original application/deletion
-permit and a live registered Legacy runtime owner. A missing, retired, mismatched
+permit and its live registered runtime owner. A missing, retired, mismatched
 or stale owner fails closed. Captures preserve their original application image,
 deletion revision, runtime owner, stable principal/resource/version identities,
 catalog generation and deadline across segment I/O. They never refresh an old
@@ -19,19 +19,18 @@ invalidates access without returning payloads or coverage to the rejected caller
 The original runtime and application fence are rechecked after external
 authorization completes, before admitting a handle or returning a result.
 
-Migration `2026-11-03-000004_history_archive_reads` owns the protected, fixed-true
-`hubuum_archive_history_requires_legacy_runtime()` hook. It has no configuration
-or TTL bypass. The archive entry guard accepts unversioned registrations only
-under the explicitly supported migration version. If the history protocol column
-exists, it requires protocol zero. Unknown values, schema or permission errors
-fail closed. The SDK exports the equivalent fixed Legacy requirement for memory
-composition.
+Migration `2026-11-03-000004_history_archive_reads` initially installed the
+protected, fixed-true `hubuum_archive_history_requires_legacy_runtime()` hook.
+The subsequent `2026-11-03-000005_history_lifecycle` migration replaces that
+restriction with the shared history-authority and original publication/producer
+entry. Both adapters accept Legacy before retained expiry and OnlineV1 with its
+original history scope. Unknown protocols, schema or permission errors fail
+closed. There is no configuration or TTL bypass. A retained collection-expiry
+member makes archive capture unavailable for that resource; a descriptor cannot
+restore access through archive fallback.
 
-The eventual combined runtime must refuse OnlineV1 registration while this hook
-is true, including an empty catalog. #513 owns that integration and the future
-archive publication/read/restore gate. This standalone slice does not establish
-combined-fleet or online-expiry acceptance. Replacing the restriction requires a
-later reviewed migration after integration and qualification; never edit shipped
+Production still registers Legacy. These adapter boundaries do not establish
+complete production transport or online-expiry acceptance. Never edit shipped
 migration history to activate expiry. Rollback conservatively refuses any of the
 lifecycle control, expiry-membership or publication tables, even when empty, as
 well as retained catalog records or query pins.
@@ -129,7 +128,7 @@ Capture staging exhaustion preserves at most 4 KiB of encoded historical
 authorization facts plus fixed original request/fence/lifetime metadata in a
 private validated error proof. Both adapters preserve this proof across their
 error boundary. The service checks its bindings, configured historical policy
-and fresh Legacy authority before exposing budget-limited admission; bare size
+and the original registered authority before exposing budget-limited admission; bare size
 errors do not establish authorized coverage. Error display/debug and transport
 serialization omit these facts. This does not establish a publication fence or
 activate the service alongside retained online expiry.

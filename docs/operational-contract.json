@@ -2037,12 +2037,17 @@
           "values": [
             "abandon_schema_revision",
             "abort",
+            "abort_task",
             "acknowledge_runtime_drain",
             "acknowledge_task_stop",
             "activate_schema_revision",
             "activate_task_submission",
             "add_group_member",
             "admit_api_request",
+            "admit_history_archive_execution",
+            "admit_history_expiry",
+            "admit_history_producer",
+            "admit_history_publication",
             "admit_task_execution",
             "aggregate_objects",
             "analyze_query_usage",
@@ -2073,14 +2078,17 @@
             "capture_control_checkpoint",
             "capture_deletion_control",
             "capture_history_archive",
+            "capture_history_lifecycle",
             "change_event_sink_grant",
             "change_task_hold",
             "claim_event_delivery_batch",
             "claim_event_retention_batch",
+            "claim_history_archive_publication",
             "claim_next_task",
             "cleanup",
             "cleanup_hot_object_history",
             "commit_deletion_control",
+            "commit_history_lifecycle",
             "commit_task_control",
             "complete_event_retention_batch",
             "complete_task",
@@ -2292,6 +2300,7 @@
             "move_collection",
             "observe_credential_source",
             "observe_deletion_checkpoint",
+            "observe_history_size",
             "patch_object_data",
             "poll_task_execution",
             "preflight_import",
@@ -2301,6 +2310,7 @@
             "prepare_object_relation",
             "prepare_task_details_purge",
             "process_event_fanout_batch",
+            "process_history_expiry_task",
             "process_schema_work",
             "publish",
             "publish_history_archive",
@@ -2318,6 +2328,7 @@
             "read_task_receipt_activation",
             "read_task_retention_policy",
             "reapply_deletion_decisions",
+            "reapply_history_expiry",
             "reapply_task_retention",
             "record_claimed_import_results",
             "record_credential_creation",
@@ -2325,9 +2336,12 @@
             "record_remote_target_invocation",
             "recover_application_control",
             "recover_expired_task_leases",
+            "recover_history_expiry_task",
+            "recover_history_lifecycle",
             "recover_task_control",
             "refresh_principal",
             "register_destination",
+            "register_history_runtime",
             "register_runtime",
             "register_runtime_isolated",
             "release_application_exposure",
@@ -2368,6 +2382,7 @@
             "revoke_token_by_hash",
             "rotate_auth_session",
             "save_schema_repair_report",
+            "scan_history_lifecycle",
             "schema_compliance_counts",
             "seal",
             "search_classes",
@@ -2376,10 +2391,13 @@
             "select_expired_task_receipts",
             "set_user_password",
             "settle_api_request",
+            "settle_history_producer",
+            "settle_history_publication",
             "stage",
             "stage_restore_artifact",
             "stage_schema_revision",
             "start_restore_draining",
+            "submit_history_expiry_task",
             "sync_external_user",
             "task_capacity_snapshot",
             "task_policy",
@@ -2531,12 +2549,17 @@
           "values": [
             "abandon_schema_revision",
             "abort",
+            "abort_task",
             "acknowledge_runtime_drain",
             "acknowledge_task_stop",
             "activate_schema_revision",
             "activate_task_submission",
             "add_group_member",
             "admit_api_request",
+            "admit_history_archive_execution",
+            "admit_history_expiry",
+            "admit_history_producer",
+            "admit_history_publication",
             "admit_task_execution",
             "aggregate_objects",
             "analyze_query_usage",
@@ -2567,14 +2590,17 @@
             "capture_control_checkpoint",
             "capture_deletion_control",
             "capture_history_archive",
+            "capture_history_lifecycle",
             "change_event_sink_grant",
             "change_task_hold",
             "claim_event_delivery_batch",
             "claim_event_retention_batch",
+            "claim_history_archive_publication",
             "claim_next_task",
             "cleanup",
             "cleanup_hot_object_history",
             "commit_deletion_control",
+            "commit_history_lifecycle",
             "commit_task_control",
             "complete_event_retention_batch",
             "complete_task",
@@ -2786,6 +2812,7 @@
             "move_collection",
             "observe_credential_source",
             "observe_deletion_checkpoint",
+            "observe_history_size",
             "patch_object_data",
             "poll_task_execution",
             "preflight_import",
@@ -2795,6 +2822,7 @@
             "prepare_object_relation",
             "prepare_task_details_purge",
             "process_event_fanout_batch",
+            "process_history_expiry_task",
             "process_schema_work",
             "publish",
             "publish_history_archive",
@@ -2812,6 +2840,7 @@
             "read_task_receipt_activation",
             "read_task_retention_policy",
             "reapply_deletion_decisions",
+            "reapply_history_expiry",
             "reapply_task_retention",
             "record_claimed_import_results",
             "record_credential_creation",
@@ -2819,9 +2848,12 @@
             "record_remote_target_invocation",
             "recover_application_control",
             "recover_expired_task_leases",
+            "recover_history_expiry_task",
+            "recover_history_lifecycle",
             "recover_task_control",
             "refresh_principal",
             "register_destination",
+            "register_history_runtime",
             "register_runtime",
             "register_runtime_isolated",
             "release_application_exposure",
@@ -2862,6 +2894,7 @@
             "revoke_token_by_hash",
             "rotate_auth_session",
             "save_schema_repair_report",
+            "scan_history_lifecycle",
             "schema_compliance_counts",
             "seal",
             "search_classes",
@@ -2870,10 +2903,13 @@
             "select_expired_task_receipts",
             "set_user_password",
             "settle_api_request",
+            "settle_history_producer",
+            "settle_history_publication",
             "stage",
             "stage_restore_artifact",
             "stage_schema_revision",
             "start_restore_draining",
+            "submit_history_expiry_task",
             "sync_external_user",
             "task_capacity_snapshot",
             "task_policy",
@@ -2967,7 +3003,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3017,7 +3054,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3051,7 +3089,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         }
       ],
@@ -3075,7 +3114,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3109,7 +3149,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3161,7 +3202,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3195,7 +3237,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         }
       ],
@@ -3219,7 +3262,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3321,7 +3365,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         }
       ],
@@ -3363,7 +3408,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3425,7 +3471,8 @@
             "reindex",
             "remote_call",
             "schema_validation",
-            "schema_profiling"
+            "schema_profiling",
+            "history_expiry"
           ]
         },
         {
@@ -3934,6 +3981,42 @@
       ],
       "appears_in_running_configuration": true,
       "source": "server",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_ARCHIVE_TEST_DATABASE_URL",
+      "owner": "operations",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL",
+      "owner": "operations",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
       "dynamic_prefix": false
     },
     {
@@ -6922,6 +7005,113 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICA",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [
+        "0",
+        "1"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICAS",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": true,
+      "default": [
+        "1"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "1",
+        "2"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT",
+      "owner": "operations",
+      "exposure": "sensitive_metadata",
+      "value_kind": "path",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TEST_HISTORY_QUALIFICATION_SHAPE",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "enum",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [
+        "rows",
+        "bytes",
+        "large_row",
+        "oversized",
+        "authority"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
+      "name": "HUBUUM_TEST_HISTORY_QUALIFICATION_SLOTS",
+      "owner": "operations",
+      "exposure": "public",
+      "value_kind": "integer",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [
+        "1",
+        "2"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_TEST_S3_CA",
       "owner": "operations",
       "exposure": "sensitive_metadata",
@@ -8388,6 +8578,7 @@
       {
         "name": "lifecycle",
         "actions": [
+          "created",
           "queued",
           "updated",
           "succeeded"

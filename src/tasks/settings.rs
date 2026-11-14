@@ -210,6 +210,7 @@ pub struct TaskExecutionLimits {
     remote_call: TaskExecutionLimit,
     schema_validation: TaskExecutionLimit,
     schema_profiling: TaskExecutionLimit,
+    history_expiry: TaskExecutionLimit,
 }
 impl Default for TaskExecutionLimits {
     fn default() -> Self {
@@ -227,6 +228,8 @@ impl Default for TaskExecutionLimits {
             schema_profiling: TaskExecutionLimit::from_milliseconds(300 * 1000)
                 .expect("default duration is valid"),
             schema_validation: TaskExecutionLimit::from_milliseconds(7200 * 1000)
+                .expect("default duration is valid"),
+            history_expiry: TaskExecutionLimit::from_milliseconds(7200 * 1000)
                 .expect("default duration is valid"),
         }
     }
@@ -246,6 +249,7 @@ impl TaskExecutionLimits {
             TaskKind::RemoteCall => self.remote_call = limit,
             TaskKind::SchemaProfiling => self.schema_profiling = limit,
             TaskKind::SchemaValidation => self.schema_validation = limit,
+            TaskKind::HistoryExpiry => self.history_expiry = limit,
         }
         Ok(self)
     }
@@ -258,6 +262,7 @@ impl TaskExecutionLimits {
             TaskKind::RemoteCall => self.remote_call,
             TaskKind::SchemaProfiling => self.schema_profiling,
             TaskKind::SchemaValidation => self.schema_validation,
+            TaskKind::HistoryExpiry => self.history_expiry,
         }
     }
 }

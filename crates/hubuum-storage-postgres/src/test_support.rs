@@ -6,6 +6,11 @@
 
 pub mod computed_lock_protocol;
 
+// Adapter unit tests share the runner's isolated restore database. Other test
+// binaries run sequentially and have their own fixture coordination.
+#[cfg(test)]
+pub(crate) static RESTORE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 use chrono::NaiveDateTime;
 use diesel::sql_types::{Bool, Integer, Text, Timestamp};
 use diesel::{
@@ -19,10 +24,10 @@ use hubuum_domain::{
 };
 use hubuum_events_core::{Action, EntityType, EventEntityId, EventSequence, NewEvent};
 use hubuum_storage_core::{
-    StorageEventDelivery, StorageEventDeliveryWorkItem, StorageExportTaskArtifact,
-    StorageIdentityGroup, StorageRecordedEvent, StorageTask, StorageTaskClaim,
-    StorageTaskClaimToken, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
-    StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
+    HistoryLifecycleControl, StorageEventDelivery, StorageEventDeliveryWorkItem,
+    StorageExportTaskArtifact, StorageIdentityGroup, StorageRecordedEvent, StorageTask,
+    StorageTaskClaim, StorageTaskClaimToken, StorageTaskKind, StorageTaskLease,
+    StorageTaskLeaseDuration, StorageTaskProgress, StorageTaskScopeSnapshot, StorageTaskStatus,
 };
 use tokio::time::{Duration, Instant, sleep};
 
@@ -70,6 +75,17 @@ pub fn integration_test_pool(max_size: u32) -> PostgresPool {
         .build()
         .expect("integration-test PostgreSQL settings must be valid");
     build_postgres_pool(&settings).expect("integration-test PostgreSQL pool must be constructed")
+}
+
+/// Probe the native restore exposure gate inside an owner-only, rollback-only
+/// fixture. The caller holds deletion, application and history authority in
+/// production order. This neither opens exposure nor changes retained clocks.
+pub async fn probe_history_restore_exposure(
+    connection: &mut PostgresConnection,
+    target: &IsolatedRestoreTarget,
+) -> Result<HistoryLifecycleControl, PostgresStorageError> {
+    target.validate_connection(connection).await?;
+    crate::backend::require_history_exposure_safe_on(connection).await
 }
 
 /// Manufacture a retained collection transition that public object updates do
@@ -1482,6 +1498,22 @@ pub struct IsolatedRestoreTarget {
     database: String,
 }
 impl IsolatedRestoreTarget {
+    /// Verify the actual connected database before an isolated fixture writes.
+    pub async fn validate_connection(
+        &self,
+        connection: &mut PostgresConnection,
+    ) -> Result<(), PostgresStorageError> {
+        #[derive(QueryableByName)]
+        struct Database {
+            #[diesel(sql_type = Text)]
+            name: String,
+        }
+        let database = diesel::sql_query("SELECT current_database() AS name")
+            .get_result::<Database>(connection)
+            .await?;
+        self.validate_connected_database(&database.name)
+    }
+
     pub fn new(restore_url: &str, primary_url: &str) -> Result<Self, PostgresStorageError> {
         let unavailable = || {
             PostgresStorageError::invalid_input("Isolated restore database identity unavailable")

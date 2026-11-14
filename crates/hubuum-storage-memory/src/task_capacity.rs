@@ -51,7 +51,9 @@ impl TaskOwner {
     fn internal(&self) -> bool {
         matches!(
             self.kind,
-            StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation
+            StorageTaskKind::Reindex
+                | StorageTaskKind::SchemaValidation
+                | StorageTaskKind::HistoryExpiry
         )
     }
 }
@@ -226,6 +228,27 @@ impl MemoryTaskCapacity {
                 others().collect(),
                 TaskCapacityRejection::Internal,
             )?;
+            if candidate.owner.kind == StorageTaskKind::HistoryExpiry {
+                let kind = policy.for_kind(candidate.owner.kind);
+                let scope = others()
+                    .filter(|entry| entry.owner.kind == candidate.owner.kind)
+                    .collect::<Vec<_>>();
+                check(kind.capacity(), scope.clone(), TaskCapacityRejection::Kind)?;
+                if matches!(change, CapacityChange::Admission)
+                    && scope
+                        .iter()
+                        .filter(|entry| {
+                            entry.outstanding && entry.owner.principal == candidate.owner.principal
+                        })
+                        .count() as u64
+                        >= kind.principal_outstanding().get()
+                {
+                    return Err(StorageError::task_capacity(
+                        TaskCapacityRejection::PrincipalKind,
+                    ));
+                }
+                return Ok(());
+            }
             return if matches!(change, CapacityChange::Claim) {
                 check(
                     policy.for_kind(candidate.owner.kind).capacity(),
@@ -534,6 +557,39 @@ impl MemoryState {
         let owner = self.task_owner(&task)?;
         let candidate = TaskAccounting::new(owner, &task)?;
         capacity.check(&candidate, CapacityChange::Admission)?;
+        if task.kind == StorageTaskKind::HistoryExpiry && !task.status.is_terminal() {
+            let scope = |task: &MemoryTaskRecord| {
+                task.metadata
+                    .as_ref()
+                    .and_then(|metadata| match metadata.details() {
+                        TaskMetadataDetails::HistoryExpiry {
+                            admission_scope: Some(scope),
+                            ..
+                        } => serde_json::to_value(scope).ok(),
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        task.request_payload
+                            .as_ref()?
+                            .get("scan")?
+                            .get("key")
+                            .filter(|value| !value.is_null())
+                            .cloned()
+                    })
+            };
+            if let Some(key) = scope(&task)
+                && self.tasks.values().any(|other| {
+                    other.id != task.id
+                        && other.kind == StorageTaskKind::HistoryExpiry
+                        && !other.status.is_terminal()
+                        && scope(other).as_ref() == Some(&key)
+                })
+            {
+                return Err(StorageError::conflict(
+                    "History scope already has an active task",
+                ));
+            }
+        }
         let task_id = task.id;
         self.store_task_record(id, task);
         let identity = self.task_identity(task_id)?;

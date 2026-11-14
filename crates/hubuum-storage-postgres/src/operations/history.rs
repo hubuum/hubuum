@@ -3,12 +3,20 @@ pub(crate) mod navigation;
 pub(crate) mod relations;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use diesel::SelectableHelper;
+use diesel::dsl::{exists, not, sql};
+use diesel::expression::SqlLiteral;
 use diesel::prelude::{BoolExpressionMethods, ExpressionMethods, OptionalExtension, QueryDsl};
+use diesel::sql_types::{
+    Array, Bool, Jsonb, Nullable, Text, Timestamp, Timestamptz, Uuid as SqlUuid,
+};
+use diesel::{
+    IntoSql, NullableExpressionMethods, PgAnyJsonExpressionMethods, PgExpressionMethods,
+    SelectableHelper,
+};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{
-    ClassId, CollectionId, HistoryRecordId, PrincipalId, PrincipalIdentity, ResourceRevision,
-    TaskId,
+    ClassId, CollectionId, HistoryRecordId, ObjectId, PrincipalId, PrincipalIdentity, ResourceId,
+    ResourceIdentity, ResourceRevision, TaskId,
 };
 use hubuum_query::{FilterField, QueryOptions};
 use hubuum_storage_core::{
@@ -24,6 +32,7 @@ use hubuum_storage_core::{
     StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
 };
 use serde_json::Value;
+use uuid::Uuid;
 
 use crate::cursor::{CursorSqlField, CursorSqlType};
 use crate::revision::record_metadata;
@@ -33,6 +42,12 @@ use crate::{PostgresRevision, PostgresRuntime, PostgresStorageError};
 mod name_tests;
 #[cfg(test)]
 mod population_tests;
+
+/// The fixed path must stay literal so PostgreSQL generic prepared plans can
+/// match the installed expression indexes. Resource values remain parameters.
+pub(crate) fn resource_identity_path() -> SqlLiteral<Array<Text>> {
+    sql("'{subject,identity,identity}'")
+}
 
 #[derive(diesel::Queryable, diesel::Selectable)]
 #[diesel(table_name = crate::schema::collections_history)]
@@ -404,14 +419,14 @@ pub async fn resolve_principal_names(
         .collect::<Vec<_>>();
     runtime
         .with_connection(async |connection| {
-            use crate::schema::principals::dsl::{name as principal_name, principals};
-            use diesel::dsl::sql;
-            use diesel::sql_types::Text;
-            let identity = sql::<Text>("logical_identity #>> '{subject,identity,identity}'");
+            use crate::schema::principals::dsl::{
+                logical_identity, name as principal_name, principals,
+            };
+            let identity = logical_identity.retrieve_by_path_as_text(resource_identity_path());
             principals
                 .filter(identity.clone().eq_any(principal_ids))
                 .order(identity.clone().asc())
-                .select((identity, principal_name))
+                .select((identity.assume_not_null(), principal_name))
                 .load::<(String, String)>(connection)
                 .await?
                 .into_iter()
@@ -424,6 +439,82 @@ pub async fn resolve_principal_names(
                 .collect()
         })
         .await
+}
+
+async fn require_unrestricted_history_absence(
+    connection: &mut crate::PostgresConnection,
+    family: &'static str,
+    resource: ResourceIdentity,
+    entity_id: ResourceId,
+    at: DateTime<Utc>,
+) -> Result<(), PostgresStorageError> {
+    let visible = diesel::select(history_requested_as_of_visible(
+        family,
+        Uuid::from_bytes(*resource.as_bytes()),
+        at,
+    ))
+    .get_result::<bool>(connection)
+    .await?;
+    if !visible {
+        return Err(PostgresStorageError::not_found(
+            "Historical version is expired",
+        ));
+    }
+    macro_rules! before_creation {
+        ($table:ident) => {{
+            use crate::schema::$table;
+            diesel::select(exists(
+                $table::table
+                    .filter($table::id.eq(entity_id.id()))
+                    .filter(
+                        $table::logical_identity
+                            .retrieve_by_path_as_text(resource_identity_path())
+                            .eq(resource.to_string()),
+                    )
+                    .filter(history_created_at("UTC", $table::created_at).gt(at)),
+            ))
+            .get_result::<bool>(connection)
+            .await?
+        }};
+    }
+    let before_creation = match family {
+        "collection" => before_creation!(collections),
+        "class" => before_creation!(hubuumclass),
+        "object" => before_creation!(hubuumobject),
+        "export_template" => before_creation!(export_templates),
+        "remote_target" => before_creation!(remote_targets),
+        _ => {
+            return Err(PostgresStorageError::unavailable(
+                "Unsupported canonical empty-history proof",
+            ));
+        }
+    };
+    if !before_creation {
+        return Err(PostgresStorageError::unavailable(
+            "Historical coverage for the original resource is unavailable",
+        ));
+    }
+    Ok(())
+}
+
+#[diesel::declare_sql_function]
+extern "SQL" {
+    #[sql_name = "pg_catalog.timezone"]
+    fn history_created_at(timezone: Text, value: Timestamp) -> Timestamptz;
+
+    #[sql_name = "public.hubuum_history_version_visible"]
+    fn history_version_visible(family: Text, identity: Nullable<Jsonb>) -> Bool;
+
+    #[sql_name = "public.hubuum_history_as_of_visible"]
+    fn history_as_of_visible(
+        family: Text,
+        identity: Nullable<Jsonb>,
+        at: Timestamptz,
+        selected_from: Timestamptz,
+    ) -> Bool;
+
+    #[sql_name = "public.hubuum_history_requested_as_of_visible"]
+    fn history_requested_as_of_visible(family: Text, resource: SqlUuid, at: Timestamptz) -> Bool;
 }
 
 fn history_cursor_fields(
@@ -484,6 +575,7 @@ macro_rules! history_operations {
         $as_of_fn:ident,
         $table:ident,
         $table_name:literal,
+        $family:literal,
         $row:ty,
         $record:ty,
         $visibility_column:ident
@@ -502,7 +594,8 @@ macro_rules! history_operations {
 
                     let mut count_query = crate::schema::$table::table
                         .into_boxed()
-                        .filter(id.eq(entity_id.id()));
+                        .filter(id.eq(entity_id.id()))
+                        .filter(history_version_visible($family, logical_identity));
                     if let Some(collection_ids) = &visible_collection_ids {
                         count_query = count_query.filter($visibility_column.eq_any(collection_ids));
                     }
@@ -517,7 +610,8 @@ macro_rules! history_operations {
 
                     let mut records = crate::schema::$table::table
                         .into_boxed()
-                        .filter(id.eq(entity_id.id()));
+                        .filter(id.eq(entity_id.id()))
+                        .filter(history_version_visible($family, logical_identity));
                     if let Some(collection_ids) = &visible_collection_ids {
                         records = records.filter($visibility_column.eq_any(collection_ids));
                     }
@@ -550,23 +644,53 @@ macro_rules! history_operations {
             runtime: &PostgresRuntime,
             query: StorageHistoryAsOfQuery,
         ) -> Result<Option<$record>, PostgresStorageError> {
+            let expected_resource = query.expected_resource();
+            if expected_resource.is_none()
+                && crate::runtime::current_execution_scope()
+                    .history_read_override()
+                    .is_some()
+            {
+                return Err(PostgresStorageError::unavailable(
+                    "Online history reads require the original logical resource identity",
+                ));
+            }
             let (entity_id, at) = query.into_parts();
             runtime
                 .with_connection(async |connection| {
                     use crate::schema::$table::dsl::*;
 
-                    crate::schema::$table::table
+                    let expected = expected_resource.map(|identity| identity.to_string());
+                    let visible = history_as_of_visible($family, logical_identity, at, valid_from)
+                        .and(
+                            expected.is_none().into_sql::<Bool>().or(logical_identity
+                                .retrieve_by_path_as_text(resource_identity_path())
+                                .is_not_distinct_from(expected)),
+                        );
+                    let selected = crate::schema::$table::table
                         .filter(id.eq(entity_id.id()))
                         .filter(valid_from.le(at))
                         .filter(valid_to.is_null().or(valid_to.gt(at)))
                         .order(history_id.desc())
-                        .select(<$row>::as_select())
-                        .first::<$row>(connection)
+                        .select((<$row>::as_select(), visible))
+                        .first::<($row, bool)>(connection)
                         .await
                         .optional()
-                        .map_err(PostgresStorageError::from)?
-                        .map(<$record>::try_from)
-                        .transpose()
+                        .map_err(PostgresStorageError::from)?;
+                    let Some((row, visible)) = selected else {
+                        if let Some(resource) = expected_resource {
+                            require_unrestricted_history_absence(
+                                connection, $family, resource, entity_id, at,
+                            )
+                            .await?;
+                        }
+                        return Ok(None);
+                    };
+                    if !visible {
+                        return Err(PostgresStorageError::not_found(
+                            "Historical version is expired or differs from the original resource",
+                        ));
+                    }
+                    <$record>::try_from(row).map(Some)
                 })
                 .await
         }
@@ -578,6 +702,7 @@ history_operations!(
     get_collection_history_as_of,
     collections_history,
     "collections_history",
+    "collection",
     CollectionHistoryRow,
     StorageCollectionHistoryRecord,
     id
@@ -588,6 +713,7 @@ history_operations!(
     get_class_history_as_of,
     hubuumclass_history,
     "hubuumclass_history",
+    "class",
     ClassHistoryRow,
     StorageClassHistoryRecord,
     collection_id
@@ -598,6 +724,7 @@ history_operations!(
     get_export_template_history_as_of,
     export_templates_history,
     "export_templates_history",
+    "export_template",
     ExportTemplateHistoryRow,
     StorageExportTemplateHistoryRecord,
     collection_id
@@ -608,6 +735,7 @@ history_operations!(
     get_remote_target_history_as_of,
     remote_targets_history,
     "remote_targets_history",
+    "remote_target",
     RemoteTargetHistoryRow,
     StorageRemoteTargetHistoryRecord,
     collection_id
@@ -628,7 +756,8 @@ pub async fn list_object_history(
             let mut count_query = history::hubuumobject_history
                 .into_boxed()
                 .filter(history::id.eq(object_id.id()))
-                .filter(history::hubuum_class_id.eq(class_id.id()));
+                .filter(history::hubuum_class_id.eq(class_id.id()))
+                .filter(history_version_visible("object", history::logical_identity));
             if let Some(collection_ids) = &visible_collection_ids {
                 count_query = count_query.filter(history::collection_id.eq_any(collection_ids));
             }
@@ -644,7 +773,8 @@ pub async fn list_object_history(
             let mut records = history::hubuumobject_history
                 .into_boxed()
                 .filter(history::id.eq(object_id.id()))
-                .filter(history::hubuum_class_id.eq(class_id.id()));
+                .filter(history::hubuum_class_id.eq(class_id.id()))
+                .filter(history_version_visible("object", history::logical_identity));
             if let Some(collection_ids) = &visible_collection_ids {
                 records = records.filter(history::collection_id.eq_any(collection_ids));
             }
@@ -684,7 +814,8 @@ fn object_name_history_query(
     let mut records = history::hubuumobject_history
         .into_boxed()
         .filter(history::hubuum_class_id.eq(query.class_id().id()))
-        .filter(history::name.eq(query.name().to_owned()));
+        .filter(history::name.eq(query.name().to_owned()))
+        .filter(history_version_visible("object", history::logical_identity));
     let current_ids = live::hubuumobject.select(live::id);
     if let Some(collection_ids) = visible_collection_ids(query.collection_scope()) {
         let readable_ids = current_ids.filter(live::collection_id.eq_any(collection_ids.clone()));
@@ -781,6 +912,230 @@ fn class_objects_as_of_query(
     Ok(records)
 }
 
+async fn require_population_class_binding(
+    connection: &mut crate::PostgresConnection,
+    query: &StorageClassObjectsAsOfQuery,
+) -> Result<(), PostgresStorageError> {
+    let Some(expected) = query.expected_resource() else {
+        if crate::runtime::current_execution_scope()
+            .history_read_override()
+            .is_some()
+        {
+            return Err(PostgresStorageError::unavailable(
+                "Online populations require the original logical class identity",
+            ));
+        }
+        return Ok(());
+    };
+    let expected = Uuid::from_bytes(*expected.as_bytes());
+    let canonical = sql::<Bool>("EXISTS(SELECT 1 FROM public.hubuumclass WHERE id=")
+        .bind::<diesel::sql_types::Integer, _>(query.class_id().id())
+        .sql(" AND (logical_identity #>> '{subject,identity,identity}')::UUID=")
+        .bind::<SqlUuid, _>(expected)
+        .sql(")");
+    let canonical = diesel::select(canonical)
+        .get_result::<bool>(connection)
+        .await?;
+    if !canonical {
+        return Err(PostgresStorageError::unavailable(
+            "Original population class correspondence changed",
+        ));
+    }
+    Ok(())
+}
+
+async fn require_population_gap_authorization(
+    connection: &mut crate::PostgresConnection,
+    query: &StorageClassObjectsAsOfQuery,
+) -> Result<(), PostgresStorageError> {
+    use std::collections::BTreeMap;
+
+    use diesel::sql_types::{Array, BigInt, Integer, Jsonb, Text};
+    use hubuum_storage_core::{
+        HistoryAuthorizationResource, HistoryObjectAuthorizationRemapping,
+        HistoryObjectPopulationGap, StorageError,
+    };
+
+    let scope = crate::runtime::current_execution_scope();
+    let Some(context) = scope.history_read_override() else {
+        return Ok(());
+    };
+    // Productive entry already acquired history authority before API ownership.
+    // Capture on this same snapshot; do not open an exempt control transaction.
+    let snapshot = crate::backend::capture_history_lifecycle_on(connection).await?;
+    if snapshot.fence() != context.epoch().history() {
+        return Err(PostgresStorageError::unavailable(
+            "Original population history authority changed",
+        ));
+    }
+    let gaps = HistoryObjectPopulationGap::for_population(
+        snapshot.control().authority().expiry(),
+        query,
+        context.epoch().clone(),
+    )
+    .map_err(|_| {
+        PostgresStorageError::unavailable(
+            "Retained population lacks bounded original authorization facts",
+        )
+    })?;
+    if gaps.is_empty() {
+        return Ok(());
+    }
+    #[derive(diesel::QueryableByName)]
+    struct Binding {
+        #[diesel(sql_type = Text)]
+        family: String,
+        #[diesel(sql_type = Integer)]
+        id: i32,
+        #[diesel(sql_type = Nullable<Integer>)]
+        collection_id: Option<i32>,
+        #[diesel(sql_type = Nullable<Integer>)]
+        class_id: Option<i32>,
+        #[diesel(sql_type = Nullable<Jsonb>)]
+        logical_identity: Option<Value>,
+        #[diesel(sql_type = BigInt)]
+        encoded_bytes: i64,
+    }
+    let objects = gaps
+        .iter()
+        .map(|g| g.facts().target().resource().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    let collections = gaps
+        .iter()
+        .map(|g| g.facts().attribution().collection().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    let classes = gaps
+        .iter()
+        .filter_map(|g| g.facts().attribution().class())
+        .map(|id| id.to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    // Three bounded indexed UUID sets, never a compatibility-ID fallback.
+    // Guard metadata before transferring it: 64KiB each and 1MiB in total.
+    let rows = diesel::sql_query(
+        "SELECT family,id,collection_id,class_id,encoded_bytes,
+          CASE WHEN encoded_bytes<=65536 AND SUM(encoded_bytes) OVER(ORDER BY family,id)<=1048576 THEN logical_identity END AS logical_identity
+         FROM (
+          SELECT 'object'::TEXT AS family,id,collection_id,hubuum_class_id AS class_id,logical_identity,coalesce(octet_length(logical_identity::TEXT),0)::BIGINT AS encoded_bytes FROM public.hubuumobject WHERE logical_identity #>> '{subject,identity,identity}'=ANY($1)
+          UNION ALL
+          SELECT 'collection',id,NULL::INTEGER,NULL::INTEGER,logical_identity,coalesce(octet_length(logical_identity::TEXT),0)::BIGINT FROM public.collections WHERE logical_identity #>> '{subject,identity,identity}'=ANY($2)
+          UNION ALL
+          SELECT 'class',id,collection_id,NULL::INTEGER,logical_identity,coalesce(octet_length(logical_identity::TEXT),0)::BIGINT FROM public.hubuumclass WHERE logical_identity #>> '{subject,identity,identity}'=ANY($3)
+         ) bounded ORDER BY family,id LIMIT 3001",
+    )
+    .bind::<Array<Text>, _>(objects.into_iter().collect::<Vec<_>>())
+    .bind::<Array<Text>, _>(collections.into_iter().collect::<Vec<_>>())
+    .bind::<Array<Text>, _>(classes.into_iter().collect::<Vec<_>>())
+    .load::<Binding>(connection).await?;
+    if rows.len() > HistoryObjectPopulationGap::MAX_CANDIDATES * 3 {
+        return Err(PostgresStorageError::unavailable(
+            "Population correspondence exceeds its row bound",
+        ));
+    }
+    let mut bindings = BTreeMap::new();
+    for row in rows {
+        let identity: StorageIdentityEvidence = serde_json::from_value(
+            row.logical_identity
+                .filter(|_| row.encoded_bytes <= 65536)
+                .ok_or_else(|| {
+                    PostgresStorageError::unavailable(
+                        "Population correspondence exceeds its metadata bound",
+                    )
+                })?,
+        )
+        .map_err(|error| {
+            PostgresStorageError::invalid_persisted_value("population correspondence", error)
+        })?;
+        let resource = identity
+            .subject()
+            .and_then(|s| s.record_identity())
+            .ok_or_else(|| {
+                PostgresStorageError::unavailable("Population correspondence is unresolved")
+            })?
+            .resource();
+        let coordinate_error = |_| {
+            PostgresStorageError::unavailable("Population correspondence coordinates are invalid")
+        };
+        let binding = match row.family.as_str() {
+            "object" => HistoryAuthorizationResource::object(
+                ObjectId::new(row.id).map_err(coordinate_error)?,
+                CollectionId::new(row.collection_id.ok_or_else(|| {
+                    PostgresStorageError::unavailable("Missing object collection")
+                })?)
+                .map_err(coordinate_error)?,
+                ClassId::new(
+                    row.class_id
+                        .ok_or_else(|| PostgresStorageError::unavailable("Missing object class"))?,
+                )
+                .map_err(coordinate_error)?,
+                identity,
+            ),
+            "collection" => HistoryAuthorizationResource::collection(
+                CollectionId::new(row.id).map_err(coordinate_error)?,
+                identity,
+            ),
+            "class" => HistoryAuthorizationResource::class(
+                ClassId::new(row.id).map_err(coordinate_error)?,
+                CollectionId::new(row.collection_id.ok_or_else(|| {
+                    PostgresStorageError::unavailable("Missing class collection")
+                })?)
+                .map_err(coordinate_error)?,
+                identity,
+            ),
+            _ => {
+                return Err(PostgresStorageError::unavailable(
+                    "Unexpected population correspondence family",
+                ));
+            }
+        };
+        if bindings.insert((row.family, resource), binding).is_some() {
+            return Err(PostgresStorageError::unavailable(
+                "Population correspondence is ambiguous",
+            ));
+        }
+    }
+    for gap in gaps {
+        let facts = gap.facts();
+        let object = bindings.get(&("object".into(), facts.target().resource()));
+        let Some(object) = object else {
+            return Err(PostgresStorageError::unavailable(
+                "Original object UUID correspondence is missing",
+            ));
+        };
+        let collection = bindings.get(&("collection".into(), facts.attribution().collection()));
+        let class = facts
+            .attribution()
+            .class()
+            .and_then(|id| bindings.get(&("class".into(), id)));
+        let (Some(collection), Some(class)) = (collection, class) else {
+            return Err(PostgresStorageError::unavailable(
+                "Population endpoint correspondence is missing",
+            ));
+        };
+        let proof = HistoryObjectAuthorizationRemapping::new(
+            facts,
+            context.epoch().clone(),
+            object.clone(),
+            collection.clone(),
+            class.clone(),
+        )
+        .map_err(|_| {
+            PostgresStorageError::unavailable("Population correspondence or provenance differs")
+        })?;
+        if visible_collection_ids(query.collection_scope())
+            .is_some_and(|ids| !ids.contains(&proof.collection_id().id()))
+        {
+            continue;
+        }
+        let gap = gap.with_remapping(proof).map_err(|_| {
+            PostgresStorageError::unavailable(
+                "Population remapping differs from its original selection",
+            )
+        })?;
+        return Err(StorageError::history_population_gap(gap).into());
+    }
+    Ok(())
+}
+
 pub async fn list_class_objects_as_of(
     runtime: &PostgresRuntime,
     query: StorageClassObjectsAsOfQuery,
@@ -789,6 +1144,33 @@ pub async fn list_class_objects_as_of(
     let fields = history_cursor_fields(options, "hubuumobject_history")?;
     runtime
         .with_read_only_snapshot(async |connection| {
+            require_population_class_binding(connection, &query).await?;
+            require_population_gap_authorization(connection, &query).await?;
+            use crate::schema::hubuumobject_history as history;
+            let visible = history_as_of_visible(
+                "object",
+                history::logical_identity,
+                query.at(),
+                history::valid_from,
+            );
+            let expired = diesel::select(diesel::dsl::exists(
+                class_objects_as_of_query(&query)?.filter(not(visible)),
+            ))
+            .get_result::<bool>(connection)
+            .await?;
+            if expired {
+                if crate::runtime::current_execution_scope()
+                    .history_read_override()
+                    .is_some()
+                {
+                    return Err(PostgresStorageError::unavailable(
+                        "Expired population lacks original authorization evidence",
+                    ));
+                }
+                return Err(PostgresStorageError::not_found(
+                    "Historical object population contains an expired version",
+                ));
+            }
             let total = if options.include_total() {
                 Some(
                     class_objects_as_of_query(&query)?
@@ -826,24 +1208,62 @@ pub async fn get_object_history_as_of(
     runtime: &PostgresRuntime,
     query: StorageObjectHistoryAsOfQuery,
 ) -> Result<Option<StorageObjectHistoryRecord>, PostgresStorageError> {
+    let expected_resource = query.expected_resource();
+    if expected_resource.is_none()
+        && crate::runtime::current_execution_scope()
+            .history_read_override()
+            .is_some()
+    {
+        return Err(PostgresStorageError::unavailable(
+            "Online object history requires the original logical resource identity",
+        ));
+    }
     let (object_id, class_id, at) = query.into_parts();
     runtime
         .with_connection(async |connection| {
             use crate::schema::hubuumobject_history::dsl as history;
 
-            history::hubuumobject_history
+            let expected = expected_resource.map(|identity| identity.to_string());
+            let visible =
+                history_as_of_visible("object", history::logical_identity, at, history::valid_from)
+                    .and(
+                        expected
+                            .is_none()
+                            .into_sql::<Bool>()
+                            .or(history::logical_identity
+                                .retrieve_by_path_as_text(resource_identity_path())
+                                .is_not_distinct_from(expected)),
+                    );
+            let selected = history::hubuumobject_history
                 .filter(history::id.eq(object_id.id()))
                 .filter(history::hubuum_class_id.eq(class_id.id()))
                 .filter(history::valid_from.le(at))
                 .filter(history::valid_to.is_null().or(history::valid_to.gt(at)))
                 .order(history::history_id.desc())
-                .select(ObjectHistoryRow::as_select())
-                .first::<ObjectHistoryRow>(connection)
+                .select((ObjectHistoryRow::as_select(), visible))
+                .first::<(ObjectHistoryRow, bool)>(connection)
                 .await
                 .optional()
-                .map_err(PostgresStorageError::from)?
-                .map(StorageObjectHistoryRecord::try_from)
-                .transpose()
+                .map_err(PostgresStorageError::from)?;
+            let Some((row, visible)) = selected else {
+                if let Some(resource) = expected_resource {
+                    require_unrestricted_history_absence(
+                        connection,
+                        "object",
+                        resource,
+                        ResourceId::new(object_id.id())?,
+                        at,
+                    )
+                    .await?;
+                }
+                return Ok(None);
+            };
+            if !visible {
+                return Err(PostgresStorageError::not_found(
+                    "Historical version is expired or differs from the original object",
+                ));
+            }
+            StorageObjectHistoryRecord::try_from(row).map(Some)
         })
         .await
 }
@@ -854,6 +1274,53 @@ mod tests {
     use hubuum_storage_core::StorageErrorKind;
 
     use super::*;
+
+    #[cfg(feature = "integration-test-support")]
+    #[rstest::rstest]
+    #[case::before_creation(false, true, true)]
+    #[case::changed_uuid(true, true, false)]
+    #[case::unproved_gap(false, false, false)]
+    #[tokio::test]
+    async fn original_canonical_creation_is_required_for_empty_history(
+        #[case] changed: bool,
+        #[case] before: bool,
+        #[case] empty: bool,
+    ) {
+        use crate::{test_support::integration_test_pool, with_transaction};
+        use diesel::sql_types::{Integer, Jsonb, Text, Timestamp};
+        use diesel::{QueryableByName, sql_query};
+        use diesel_async::SimpleAsyncConnection;
+
+        #[derive(QueryableByName)]
+        struct Canonical {
+            #[diesel(sql_type = Integer)]
+            id: i32,
+            #[diesel(sql_type = Jsonb)]
+            logical_identity: Value,
+            #[diesel(sql_type = Timestamp)]
+            created_at: NaiveDateTime,
+        }
+        let pool = integration_test_pool(1);
+        with_transaction(&pool, async |connection| {
+            connection.batch_execute("SAVEPOINT original_history_empty").await?;
+            let canonical = sql_query("INSERT INTO public.collections(name,description,parent_collection_id)
+                SELECT $1,'history empty proof',id FROM public.collections WHERE parent_collection_id IS NULL
+                RETURNING id, logical_identity, created_at")
+                .bind::<Text, _>(format!("history_empty_{}", Uuid::new_v4().simple()))
+                .get_result::<Canonical>(connection).await?;
+            let evidence: StorageIdentityEvidence = serde_json::from_value(canonical.logical_identity).unwrap();
+            let original = evidence.subject().unwrap().record_identity().unwrap().resource();
+            let requested = if changed { ResourceIdentity::generate() } else { original };
+            let at = canonical.created_at.and_utc() + if before { -chrono::Duration::microseconds(1) } else { chrono::Duration::microseconds(1) };
+            // Empty-coverage predicate test only. No payload is removed; actual
+            // expiry publication and executor qualification remain separate.
+            let result = require_unrestricted_history_absence(connection,"collection",requested,ResourceId::new(canonical.id).unwrap(),at).await;
+            connection.batch_execute("ROLLBACK TO SAVEPOINT original_history_empty").await?;
+            if empty { assert!(result.is_ok()); }
+            else { assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Unavailable); }
+            Ok::<_, PostgresStorageError>(())
+        }).await.unwrap();
+    }
 
     #[test]
     fn reversed_history_intervals_are_classified_as_backend_corruption() {

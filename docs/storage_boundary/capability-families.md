@@ -474,6 +474,7 @@ only terminal updates (`succeeded`, `failed`, `partially_succeeded`, or
 | `export` | Export artifact |
 | `backup` | Backup artifact |
 | `remote_call` | Remote-call artifact |
+| `history_expiry` | None for a finished empty pass; an admitted batch must remain pending |
 
 The completion DTO validates the matrix before adapter dispatch. The adapter
 must additionally verify that the DTO's declared task kind matches the claimed
@@ -552,7 +553,7 @@ Sink and subscription mutations include their lifecycle events atomically.
 Required traits:
 
 - `MetricsStorage` and `OperationalStateStorage`;
-- `DeletionControlStorage`;
+- `DeletionControlStorage` and `HistoryLifecycleStorage`;
 - `EventDeliveryWorkerStorage`, `EventFanoutStorage`, `EventHealthStorage`, and
   `EventRetentionStorage`;
 - `RuntimeSettingsStorage`;
@@ -583,6 +584,15 @@ and reject retained intents until restriction reapplication is implemented.
 The application owns independent checkpoint publication and recovery evidence;
 see the [deletion recovery foundation](../deletion_recovery.md) for its durability
 contract and activation gates.
+
+`HistoryLifecycleStorage` owns bounded identity-only policy inspection and
+exact-predecessor policy/hold/review transitions. Capture includes the adapter
+clock and application/deletion/history fences. Commit appends canonical audit
+atomically; recovery preserves every retained policy and hold transition and is
+quarantine-only. Logical replacement preserves this authority and invalidates
+issued previews through the application incarnation. Independent publication is
+an application responsibility; a commit does not authorize physical expiry.
+See [history retention](../history_retention.md) for activation and evidence gaps.
 
 Queue and gauge snapshots correlate optional oldest/last timestamps with their
 counts. A positive queued, active, due, pending, or terminal count requires the

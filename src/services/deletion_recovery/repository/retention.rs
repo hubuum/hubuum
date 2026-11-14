@@ -201,6 +201,12 @@ fn read_candidate(path: &Path, remaining: &mut u64) -> Result<Option<Vec<u8>>, A
 
 fn dominates(current: &Payload, old: &Payload) -> bool {
     current.state.covers(&old.state)
+        && old.history_lifecycle.as_ref().is_none_or(|old| {
+            current
+                .history_lifecycle
+                .as_ref()
+                .is_some_and(|current| current.covers(old))
+        })
         && match (&current.task_control, &old.task_control) {
             (Some(current), Some(old)) => current.supersedes_for_recovery(old),
             (None, Some(_)) => false,
@@ -209,7 +215,14 @@ fn dominates(current: &Payload, old: &Payload) -> bool {
 }
 
 fn head_matches(head: &Head, payload: &Payload) -> bool {
-    head.format == if payload.task_control.is_some() { 2 } else { 1 }
+    head.format
+        == if payload.history_lifecycle.is_some() {
+            3
+        } else if payload.task_control.is_some() {
+            2
+        } else {
+            1
+        }
         && head.lineage == payload.state.lineage()
         && head.epoch == payload.state.epoch()
         && head.revision == payload.state.revision()
@@ -351,6 +364,7 @@ mod tests {
             reapplication: None,
             task_control: None,
             task_reapplication: None,
+            history_lifecycle: None,
         }
     }
 

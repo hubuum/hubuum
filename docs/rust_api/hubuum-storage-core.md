@@ -273,9 +273,78 @@ cumulative work outside logical restore. Admission requests carry no local
 quota override. See the [SDK upgrade notes](../storage_adapter_sdk.md#upgrading-from-07-to-08)
 and [restore ownership table](../task_admission.md#ownership-and-restore-reconciliation).
 
+## History lifecycle policy capability (unreleased)
+
+`HistoryLifecycleStorage` is a required operational capability. Complete adapters
+must recheck clock-dependent policy review protection under their commit lock;
+`HistoryLifecycleControlChange::validate_commit_at` performs that check after
+the exact predecessor and fence have been verified. Preparation cannot extend a
+review lifetime or freeze a hold's expiry. Native deletion points retain
+`valid_to == valid_from` in `HistoryExpiryReadSpan` and protect the subsequent
+deletion gap. Unknown restore ancestry cannot produce an eligible scan candidate.
+
+Complete adapters must implement `register_history_runtime`, `capture_history_lifecycle`,
+`scan_history_lifecycle`, `observe_history_size`, `admit_history_expiry`,
+`commit_history_lifecycle` and `recover_history_lifecycle`. Capture returns the
+adapter clock with application incarnation and history/deletion revision fences.
+The unreleased 0.20 contract also requires `reapply_history_expiry`, a trusted
+quarantined exact-copy recovery operation taking `HistoryExpiryReapplication`.
+External adapters must implement positive drain, current protection, preserved
+first receipts, and fail-closed exposure checks; this is a breaking trait addition.
+
+The breaking `observe_history_size` addition requires complete bounded accounting
+and pressure transition/audit retention under one control transaction. Finish
+`HistorySizeCensus` only after source exhaustion; preserve unresolved attribution
+and budget failures as unavailable rather than a partial total. The compact
+JSON v1 measure normalizes decimal numbers before compression. Preserve the
+append-only `HistorySizeTransition` journal and its terminal capacity reserves
+through independent checkpoints and restore. `HistorySizeObservation` requires
+service-side independent publication/readback before acknowledgement. It grants
+no physical expiry permission; P6 remains deferred.
+
+The unreleased 0.20 contract also requires `submit_history_expiry_task`,
+`process_history_expiry_task` and `recover_history_expiry_task`. Shared admission
+accepts trusted `HistoryExpiryTaskSubmission`, coalesces exact stable scopes
+atomically, and resolves retained cleanup before creating fresh scans. Preserve
+the durable discovery scope and optional immutable scheduled policy root through
+ownership changes. Coalescing consumes no additional admission capacity and
+never replaces the original initiation or clocks. See the
+[shared admission contract](../storage_boundary/transactions-and-events.md#shared-history-task-admission).
+Scanning covers all nine history families using captured UUID ownership and
+original closure/deletion/schema-event anchors, without reading payloads. Missing
+captured identity or ownership remains unresolved; never infer it from a current
+integer owner. Enforce the 1000-row/1-MiB source limits and explicit bounded
+coverage, including when a limit happens to coincide with the final row.
+
+Commit compares the exact predecessor and fences, preserves immutable policy and
+hold prefixes, validates retained preview identity/principal/proposal/deadline,
+and appends required canonical audit in the same transaction. Keep space for a
+terminal transition of every created hold. Recovery only adds compatible retained
+authority while quarantined, clears transient previews, and replays original audit
+identities and clocks. Logical restore preserves control authority and rotates
+the application incarnation. Composite checkpoint capture must include history
+authority in the same consistent snapshot as deletion and task authority.
+
+This required capability is an incompatible SDK change. Advance all ten exact
+SDK dependencies together to the next coordinated minor selected from the actual
+integration tip; the release number is not reserved by this draft. Existing
+adapters must implement the complete contract before upgrading. Physical expiry
+and its runtime safety boundary remain separate activation gates; see
+[history retention](../history_retention.md).
+
+History-aware producer registration declares `OnlineV1`; existing registration
+remains `Legacy`. Implement ownership/isolation/capacity/exposure checks and
+serialize registration with online intent admission. Admission refuses a mixed
+fleet, and retained expiry refuses subsequent legacy startup. A registration or
+API-owner row is not a shutdown proof; retain uncertain registrations until
+positive producer stop/isolation. Upgrade every API/backup/publication producer
+before enabling expiry, and roll forward after retained expiry is published.
+Production must not advertise the new protocol until all read/publication fences
+are implemented. These are incompatible SDK and deployment requirements.
+
 ## Audited runtime settings
 
-The combined 0.19 SDK replaces legacy query-observation control with the mandatory
+The combined 0.20 SDK replaces legacy query-observation control with the mandatory
 `RuntimeSettingsStorage` capability in `OperationalStorage`. Complete typed
 snapshots, revision-checked writes with atomic audit records, bounded history,
 restore preservation, and runtime-settings notifications are part of the adapter

@@ -339,6 +339,7 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
     }
     let recovery = require_runtime_permit(&storage, &config.control_recovery)
         .await
+        .and_then(|permit| permit.protect_renderers())
         .unwrap_or_else(|error| {
             fatal_error(
                 &format!("Recovery startup gate: {error}"),
@@ -520,6 +521,7 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
         });
         let app_context = AppContext::new(storage, permission_backend)
             .with_task_receipts(task_receipts)
+            .with_history_retention(config.control_recovery.clone())
             .with_configured_deployment_authorization(config.permission_backend);
         app_context.apply_runtime_settings(&applied).await;
         if let Err(error) =
@@ -589,6 +591,24 @@ async fn run_http_role(
     restore_settings: &RestoreSettings,
     active_event_sinks: Option<i64>,
 ) -> std::io::Result<()> {
+    let (server, _) = start_http_role(
+        config,
+        app_context,
+        backup_settings,
+        restore_settings,
+        active_event_sinks,
+    )
+    .await?;
+    supervise_http_server(server, wait_for_runtime_shutdown()).await
+}
+
+pub(crate) async fn start_http_role(
+    config: &AppConfig,
+    app_context: &AppContext,
+    backup_settings: &BackupSettings,
+    restore_settings: &RestoreSettings,
+    active_event_sinks: Option<i64>,
+) -> std::io::Result<(Server, std::net::SocketAddr)> {
     let storage_backend = app_context.storage_backend_descriptor();
     let authorization_backend = app_context.permission_backend().kind();
     let login_rate_limit_store_settings = login_rate_limit_store_settings(config)
@@ -613,10 +633,12 @@ async fn run_http_role(
     let background_worker_context = app_context.clone();
     let app_backup_settings = backup_settings.clone();
     let app_restore_settings = restore_settings.clone();
+    let owned_http_publication = server_app_context.backend().uses_online_history();
 
     let server = HttpServer::new(move || {
         let app = App::new()
             .wrap(from_fn(middlewares::actor_context))
+            .wrap(from_fn(middlewares::history_publication::transmit))
             .wrap(from_fn(middlewares::reject_during_maintenance))
             // Actix runs the last registered middleware first. Reject disallowed
             // clients before bearer-token resolution can touch the database.
@@ -646,6 +668,11 @@ async fn run_http_role(
         );
 
         app.configure(api::config)
+    })
+    .on_connect(move |io, extensions| {
+        if owned_http_publication {
+            middlewares::history_publication::on_connect(io, extensions);
+        }
     });
 
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
@@ -706,12 +733,13 @@ async fn run_http_role(
 
     // Own the signal path so every successful exit follows an explicit graceful
     // stop. Actix's built-in forced signal path does not wait for its workers.
+    let address = server.addrs()[0];
     let server = server
         .disable_signals()
         .shutdown_timeout(HTTP_SHUTDOWN_TIMEOUT.as_secs())
         .workers(config.actix_workers)
         .run();
-    supervise_http_server(server, wait_for_runtime_shutdown()).await
+    Ok((server, address))
 }
 
 async fn supervise_http_server(
@@ -887,6 +915,9 @@ async fn wait_for_shutdown_signal() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod runtime_shutdown_tests;
+
+#[cfg(test)]
+mod history_publication_tests;
 
 #[cfg(test)]
 mod tests {

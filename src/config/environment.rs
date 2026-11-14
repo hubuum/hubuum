@@ -300,6 +300,21 @@ pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
         sensitive
     ),
     option!("HUBUUM_RESTORE_TEST_DATABASE_URL", Operations, sensitive),
+    option!(
+        "HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT",
+        Operations,
+        metadata
+    ),
+    option!("HUBUUM_TEST_HISTORY_QUALIFICATION_SHAPE", Operations),
+    option!("HUBUUM_TEST_HISTORY_QUALIFICATION_SLOTS", Operations),
+    option!("HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICAS", Operations),
+    option!("HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICA", Operations),
+    option!(
+        "HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL",
+        Operations,
+        sensitive
+    ),
+    option!("HUBUUM_ARCHIVE_TEST_DATABASE_URL", Operations, sensitive),
     option!("HUBUUM_PROBE_ROWS", Operations),
     option!("HUBUUM_PROBE_ROW_BYTES", Operations),
     option!("HUBUUM_PROBE_MODE", Operations),
@@ -915,6 +930,7 @@ pub(crate) fn configuration_constraints() -> Vec<String> {
 /// intentionally small and reviewable. The application secret adapter owns
 /// dynamic namespace mapping and injects resolved values into consumers.
 pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
+    "src/services/deletion_recovery/repository/size_tests.rs",
     "src/config.rs",
     #[cfg(any(test, feature = "integration-test-support"))]
     "src/config/control_recovery.rs",

@@ -32,20 +32,30 @@ args = sys.argv[1:]
 call = {"tool": name, "args": args}
 for key in ("HUBUUM_DATABASE_URL", "HUBUUM_MIGRATION_DATABASE_URL",
             "HUBUUM_RESTORE_TEST_DATABASE_URL", "HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL",
+            "HUBUUM_ARCHIVE_TEST_DATABASE_URL", "HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL",
             "HUBUUM_DATABASE_ROLE_TESTS", "HUBUUM_DATABASE_ROLE_MODE",
             "HUBUUM_DATABASE_OWNER_ROLE", "HUBUUM_DATABASE_MIGRATOR_ROLE",
-            "HUBUUM_DATABASE_RUNTIME_ROLE", "PGOPTIONS"):
+            "HUBUUM_DATABASE_RUNTIME_ROLE", "PGOPTIONS", "CARGO_BIN_EXE_hubuum-template-worker"):
     call[key] = os.environ.get(key)
 with open(os.environ["RUNNER_CALLS"], "a") as output:
     output.write(json.dumps(call) + "\\n")
 if name == "cargo":
+    if "--message-format=json" in args:
+        print(json.dumps({"reason": "compiler-artifact", "target": {"name": "dependency"}}))
+        if os.environ["RUNNER_FAILURE"] != "worker_artifact":
+            print(json.dumps({"reason": "compiler-artifact", "target": {"name": "hubuum-template-worker"},
+                              "executable": "/separate build directory/template worker"}))
     restore_migration = "--migrate" in args and (call["HUBUUM_DATABASE_URL"] or "").endswith("_restore")
+    archive_migration = "--migrate" in args and (call["HUBUUM_DATABASE_URL"] or "").endswith("_archive")
     application_tests = args == ["test", "--features", "integration-test-support,embedded-migrations"]
     if (os.environ["RUNNER_FAILURE"] == "migration" and restore_migration
+            or os.environ["RUNNER_FAILURE"] == "archive_migration" and archive_migration
             or os.environ["RUNNER_FAILURE"] == "tests" and application_tests):
         sys.exit(17)
 if name == "diesel" and os.environ["RUNNER_FAILURE"] == "diesel":
     sys.exit(17)
+if name == "python3" and args[:1] == ["-c"]:
+    os.execv(sys.executable, [sys.executable, *args])
 ''')
             stub.chmod(0o755)
             for name in ("cargo", "diesel", "psql", "python3"):
@@ -95,6 +105,21 @@ if name == "diesel" and os.environ["RUNNER_FAILURE"] == "diesel":
                 self.assertIn("HUBUUM_DATABASE_ROLE_TESTS", result.stdout + result.stderr)
                 self.assertFalse(any(call["tool"] in {"cargo", "diesel", "psql"} for call in calls))
 
+    def test_all_rust_suites_receive_cargo_reported_worker_path(self):
+        result, calls = self.run_fixture()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        tests = [call for call in calls if call["tool"] == "cargo" and call["args"][0] == "test"]
+        self.assertEqual(len(tests), 4)
+        for call in tests:
+            self.assertEqual(call["CARGO_BIN_EXE_hubuum-template-worker"],
+                             "/separate build directory/template worker")
+
+    def test_missing_worker_artifact_fails_before_database_provisioning(self):
+        result, calls = self.run_fixture("worker_artifact")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one template worker", result.stderr)
+        self.assertFalse(any(call["tool"] in {"diesel", "psql"} for call in calls))
+
     def test_single_login_runs_general_suites_with_separate_migrated_restore_database(self):
         result, calls = self.run_fixture(role_tests="false")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -115,14 +140,20 @@ if name == "diesel" and os.environ["RUNNER_FAILURE"] == "diesel":
             self.assertEqual(call["HUBUUM_DATABASE_ROLE_MODE"], "single")
             application = urlsplit(call["HUBUUM_DATABASE_URL"])
             restore = urlsplit(call["HUBUUM_RESTORE_TEST_DATABASE_URL"])
+            archive = urlsplit(call["HUBUUM_ARCHIVE_TEST_DATABASE_URL"])
             self.assertEqual(application.username, "postgres")
             self.assertEqual(restore.username, application.username)
             self.assertNotEqual(application.path, restore.path)
+            self.assertEqual(archive.username, application.username)
+            self.assertEqual(len({application.path, restore.path, archive.path}), 3)
             self.assertEqual(call["HUBUUM_DATABASE_URL"], call["HUBUUM_MIGRATION_DATABASE_URL"])
             self.assertEqual(call["HUBUUM_RESTORE_TEST_DATABASE_URL"],
                              call["HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL"])
+            self.assertEqual(call["HUBUUM_ARCHIVE_TEST_DATABASE_URL"],
+                             call["HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL"])
         first_test = calls.index(tests[0])
-        for key in ("HUBUUM_DATABASE_URL", "HUBUUM_RESTORE_TEST_DATABASE_URL"):
+        for key in ("HUBUUM_DATABASE_URL", "HUBUUM_RESTORE_TEST_DATABASE_URL",
+                    "HUBUUM_ARCHIVE_TEST_DATABASE_URL"):
             database_url = tests[0][key]
             self.assertTrue(any(
                 call["tool"] == "cargo" and "--migrate" in call["args"]
@@ -156,7 +187,7 @@ if name == "diesel" and os.environ["RUNNER_FAILURE"] == "diesel":
         self.assertNotIn(" OWNER ", sql)
 
     def test_single_login_failure_removes_every_created_database_without_roles(self):
-        for failure in ("diesel", "migration", "tests"):
+        for failure in ("diesel", "migration", "archive_migration", "tests"):
             with self.subTest(failure=failure):
                 result, calls = self.run_fixture(failure, role_tests="false")
                 self.assertNotEqual(result.returncode, 0)
@@ -204,8 +235,27 @@ if name == "diesel" and os.environ["RUNNER_FAILURE"] == "diesel":
             for call in calls
         ))
 
-    def test_failure_removes_both_databases_before_removing_shared_roles(self):
-        for failure in ("migration", "tests"):
+    def test_archive_contract_has_distinct_migrated_storage_with_split_roles(self):
+        result, calls = self.run_fixture()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        tests = next(call for call in calls if call["tool"] == "cargo" and call["args"] == [
+            "test", "--features", "integration-test-support,embedded-migrations",
+        ])
+        runtime = urlsplit(tests["HUBUUM_ARCHIVE_TEST_DATABASE_URL"])
+        migrator = urlsplit(tests["HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL"])
+        self.assertEqual(runtime.path, migrator.path)
+        self.assertNotEqual(runtime.username, migrator.username)
+        self.assertEqual(len({runtime.path, urlsplit(tests["HUBUUM_DATABASE_URL"]).path,
+                              urlsplit(tests["HUBUUM_RESTORE_TEST_DATABASE_URL"]).path}), 3)
+        self.assertTrue(any(
+            call["tool"] == "cargo" and "--migrate" in call["args"]
+            and call["HUBUUM_DATABASE_URL"] == runtime.geturl()
+            and call["HUBUUM_MIGRATION_DATABASE_URL"] == migrator.geturl()
+            for call in calls
+        ))
+
+    def test_failure_removes_all_databases_before_removing_shared_roles(self):
+        for failure in ("migration", "archive_migration", "tests"):
             with self.subTest(failure=failure):
                 result, calls = self.run_fixture(failure)
                 self.assertNotEqual(result.returncode, 0)
@@ -215,6 +265,6 @@ if name == "diesel" and os.environ["RUNNER_FAILURE"] == "diesel":
                 application_name = restore_name.removesuffix("_restore")
                 sql = [call["args"][-1] for call in calls
                        if call["tool"] == "psql" and "-c" in call["args"]]
-                for name in (restore_name, application_name):
+                for name in (restore_name, application_name, application_name + "_archive"):
                     self.assertIn(f"DROP DATABASE IF EXISTS {name};", sql)
                 self.assertIn("DROP ROLE IF EXISTS", sql[-1])

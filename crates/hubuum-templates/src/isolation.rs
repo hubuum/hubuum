@@ -3,10 +3,11 @@
 //! The worker owns a capped allocator. A failed allocation terminates only that
 //! worker; the parent owns the wall-clock deadline, protocol and admission cap.
 use std::borrow::Cow;
+use std::fs::File;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -332,6 +333,11 @@ pub(crate) async fn validate_syntax(
 }
 
 fn worker_executable() -> Result<PathBuf, TemplateError> {
+    // Cargo's test executables can live outside the final binary directory.
+    // Test runners supply this for unit tests across workspace packages too.
+    if let Some(worker) = std::env::var_os("CARGO_BIN_EXE_hubuum-template-worker") {
+        return Ok(PathBuf::from(worker));
+    }
     let executable = std::env::current_exe()
         .map_err(|_| TemplateError::boundary("cannot locate template worker"))?;
     let mut directory = executable
@@ -397,6 +403,7 @@ struct WorkerRuntime {
     stopping: watch::Sender<bool>,
     stopped: watch::Receiver<bool>,
     uncertain: Arc<AtomicBool>,
+    process_isolation: Mutex<Option<Arc<File>>>,
 }
 
 struct WorkerCompletion {
@@ -415,6 +422,7 @@ type SpoolPins = (Arc<crate::TemplateRows>, Arc<SpoolFile>);
 
 struct Job {
     spool_pins: Option<SpoolPins>,
+    process_isolation: Option<Arc<File>>,
     encoded: String,
     max_response_bytes: usize,
     expected_results: usize,
@@ -439,7 +447,7 @@ impl WorkerRuntime {
             TemplateError::boundary("template worker capacity exhausted or supervisor stopped")
         })
     }
-    fn start() -> Result<Self, String> {
+    fn start(process_isolation: Option<Arc<File>>) -> Result<Self, String> {
         let runtime = Builder::new_current_thread()
             .enable_all()
             .build()
@@ -492,6 +500,7 @@ impl WorkerRuntime {
             stopping,
             stopped,
             uncertain,
+            process_isolation: Mutex::new(process_isolation),
         })
     }
 
@@ -509,12 +518,77 @@ impl WorkerRuntime {
                 )
             })?;
         if self.is_idle() {
+            self.process_isolation
+                .lock()
+                .map_err(|_| TemplateError::boundary("template process isolation is unavailable"))?
+                .take();
             Ok(())
         } else {
             Err(TemplateError::boundary(
                 "template worker cleanup could not be confirmed",
             ))
         }
+    }
+}
+
+/// Configure the process-exclusion file before any template execution. Every
+/// renderer inherits its shared lock across exec. A different or already
+/// unisolated supervisor is rejected; successful shutdown releases the pin only
+/// after every child is reaped. The file must be the caller's stable runtime lock.
+#[cfg(unix)]
+pub fn configure_template_process_isolation(file: File) -> Result<(), TemplateError> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = file
+        .metadata()
+        .map_err(|_| TemplateError::boundary("cannot inspect template process isolation"))?;
+    if !metadata.is_file() {
+        return Err(TemplateError::boundary(
+            "template process isolation requires a regular file",
+        ));
+    }
+    // Stdio setup in the child replaces descriptors 0..=2. Keep the pin above
+    // that range even when an embedding process starts with closed stdio.
+    // SAFETY: fcntl duplicates this live descriptor into a new owned descriptor
+    // with parent CLOEXEC set; from_raw_fd takes only that fresh duplicate.
+    let descriptor = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
+    if descriptor == -1 {
+        return Err(TemplateError::boundary(
+            "cannot pin template process isolation",
+        ));
+    }
+    // SAFETY: the successful duplication above created this scope-owned fd.
+    let file = unsafe { File::from_raw_fd(descriptor) };
+    // SAFETY: this owned descriptor remains pinned by the supervisor and jobs.
+    // Nonblocking shared admission never waits for an offline recovery owner.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) } != 0 {
+        return Err(TemplateError::boundary(
+            "template process isolation is busy",
+        ));
+    }
+    let runtime = RUNTIME
+        .get_or_init(|| WorkerRuntime::start(Some(Arc::new(file))))
+        .as_ref()
+        .map_err(|message| TemplateError::boundary(message))?;
+    if SHUTTING_DOWN.load(Ordering::SeqCst) || *runtime.stopping.borrow() {
+        return Err(TemplateError::boundary(
+            "template supervisor is shutting down",
+        ));
+    }
+    let isolation = runtime
+        .process_isolation
+        .lock()
+        .map_err(|_| TemplateError::boundary("template process isolation is unavailable"))?;
+    let configured = isolation.as_ref().and_then(|file| file.metadata().ok());
+    if configured
+        .is_some_and(|current| current.dev() == metadata.dev() && current.ino() == metadata.ino())
+    {
+        Ok(())
+    } else {
+        Err(TemplateError::boundary(
+            "configure process isolation before the first template execution",
+        ))
     }
 }
 
@@ -552,7 +626,7 @@ async fn execute_pinned(
         ));
     }
     let runtime = RUNTIME
-        .get_or_init(WorkerRuntime::start)
+        .get_or_init(|| WorkerRuntime::start(None))
         .as_ref()
         .map_err(|message| TemplateError::boundary(message))?;
     // Shutdown may have raced the first lazy initialization. Never submit work
@@ -605,6 +679,11 @@ async fn execute_pinned(
     let span = info_span!("template_execution", operation_id = NEXT_OPERATION.fetch_add(1, Ordering::Relaxed), operation = ?request.operation, pid = tracing::field::Empty);
     let job = Job {
         spool_pins,
+        process_isolation: runtime
+            .process_isolation
+            .lock()
+            .map_err(|_| TemplateError::boundary("template process isolation is unavailable"))?
+            .clone(),
         encoded,
         max_response_bytes,
         expected_results: request.templates.len(),
@@ -627,6 +706,38 @@ async fn execute_pinned(
         .map_err(|_| TemplateError::boundary("template supervisor unavailable"))?
 }
 
+fn inherit_process_isolation(command: &mut Command, file: &File) {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let descriptor = file.as_raw_fd();
+        // SAFETY: only async-signal-safe fcntl runs after fork. Stdio setup has
+        // completed. Clear stdio CLOEXEC too: dup2(fd, fd) preserves it when a
+        // closed parent stdio slot was reused by a pipe. The job pins the lock
+        // until reaping; parent flags stay set, and orphans retain exclusion.
+        unsafe {
+            command.pre_exec(move || {
+                for descriptor in [
+                    libc::STDIN_FILENO,
+                    libc::STDOUT_FILENO,
+                    libc::STDERR_FILENO,
+                    descriptor,
+                ] {
+                    let flags = libc::fcntl(descriptor, libc::F_GETFD);
+                    if flags == -1
+                        || libc::fcntl(descriptor, libc::F_SETFD, flags & !libc::FD_CLOEXEC) == -1
+                    {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (command, file);
+}
+
 async fn supervise(
     mut job: Job,
     workers: Arc<Semaphore>,
@@ -635,6 +746,7 @@ async fn supervise(
 ) {
     let _capacity = job.capacity;
     let _spool_pins = job.spool_pins;
+    let process_isolation = job.process_isolation;
     // This guard drops before capacity: a panic cannot transiently advertise
     // an idle runtime before recording that child cleanup is uncertain.
     let mut completion = WorkerCompletion {
@@ -667,6 +779,9 @@ async fn supervise(
             "template execution admission deadline exceeded",
         )));
         return;
+    }
+    if let Some(file) = &process_isolation {
+        inherit_process_isolation(&mut job.command, file);
     }
     let child = job
         .command

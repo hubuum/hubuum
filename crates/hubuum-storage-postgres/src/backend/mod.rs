@@ -31,6 +31,12 @@ mod computed_fields;
 pub(crate) mod deletion_control;
 pub(crate) use deletion_control::acknowledge_coordinator_drain_on;
 mod export_templates;
+mod history_lifecycle;
+pub(crate) use history_lifecycle::admit_history_expiry_on;
+pub(crate) use history_lifecycle::capture_on as capture_history_lifecycle_on;
+pub(crate) use history_lifecycle::remove_history_expiry_on;
+#[cfg(feature = "integration-test-support")]
+pub(crate) use history_lifecycle::require_history_exposure_safe_on;
 mod imports;
 mod logical_identity;
 mod notifications;
@@ -141,3 +147,5 @@ impl PostgresStorage {
 }
 
 impl StorageBackend for PostgresStorage {}
+
+pub(crate) use history_lifecycle::scope_known_on as history_scope_known_on;

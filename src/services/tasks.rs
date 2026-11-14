@@ -26,15 +26,16 @@ use crate::permissions::{
 };
 
 use crate::storage::{
-    AuthenticationStorage, ComputedFieldStorage, StorageBackupOutput, StorageBackupOutputSummary,
-    StorageContext, StorageExportOutput, StorageExportOutputSummary, StorageImportTaskResult,
-    StorageTask, StorageTaskActiveStatus, StorageTaskActiveUpdate, StorageTaskChildListQuery,
-    StorageTaskClaim, StorageTaskCompletion, StorageTaskCompletionPayload,
-    StorageTaskCreateRequest, StorageTaskEvent, StorageTaskEventAppend, StorageTaskEventInput,
-    StorageTaskFailure, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
-    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskResultCounts,
-    StorageTaskScopeSnapshot, StorageTaskStatus, StorageTaskTerminalStatus,
-    StorageTaskTerminalUpdate, TaskExecutionStorage, TaskQueueStorage, storage_handle,
+    AuthenticationStorage, ComputedFieldStorage, ExecutionStorage, StorageBackupOutput,
+    StorageBackupOutputSummary, StorageContext, StorageExecutionScope, StorageExportOutput,
+    StorageExportOutputSummary, StorageImportTaskResult, StorageTask, StorageTaskActiveStatus,
+    StorageTaskActiveUpdate, StorageTaskChildListQuery, StorageTaskClaim, StorageTaskCompletion,
+    StorageTaskCompletionPayload, StorageTaskCreateRequest, StorageTaskEvent,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageTaskTerminalStatus, StorageTaskTerminalUpdate, TaskExecutionStorage, TaskQueueStorage,
+    storage_handle,
 };
 use crate::traits::AuthzSubject;
 use hubuum_storage_core::{
@@ -184,15 +185,19 @@ pub async fn recover_expired_task_leases(
     backend: &impl StorageContext,
     batch_size: usize,
 ) -> Result<Vec<TaskRecord>, ApiError> {
-    storage_handle(backend)
-        .recover_expired_task_leases(batch_size)
-        .await?
-        .into_iter()
-        .map(|task| {
-            crate::observability::metrics::task_stop_acknowledged(&task);
-            task_from_storage(task)
-        })
-        .collect()
+    let storage = storage_handle(backend);
+    crate::tasks::history::retry_control(&storage, || async {
+        storage
+            .recover_expired_task_leases(batch_size)
+            .await?
+            .into_iter()
+            .map(|task| {
+                crate::observability::metrics::task_stop_acknowledged(&task);
+                task_from_storage(task)
+            })
+            .collect()
+    })
+    .await
 }
 
 pub(crate) async fn append_task_event(
@@ -233,19 +238,25 @@ pub(crate) async fn complete_task(
         storage_task_event(event),
         payload,
     );
-    // Finalization decides the winner under the task lock. An expired local
-    // context must not prevent receipt reconciliation or terminal bookkeeping.
-    crate::storage::with_storage_execution_scope(
-        backend,
-        hubuum_storage_core::StorageExecutionScope::default().with_task_execution(None),
-        storage_handle(backend).complete_task(completion),
-    )
-    .await
-    .map_err(ApiError::from)
-    .and_then(|task| {
-        crate::observability::metrics::task_stop_acknowledged(&task);
-        task_from_storage(task)
-    })
+    let storage = storage_handle(backend);
+    // Publication-bound completion must retain the original supervised task.
+    // Unowned terminal reconciliation keeps its existing deadline exemption.
+    let scope = if storage
+        .current_execution_scope()
+        .history_read_override()
+        .is_some()
+    {
+        StorageExecutionScope::default()
+    } else {
+        StorageExecutionScope::default().with_task_execution(None)
+    };
+    crate::storage::with_storage_execution_scope(backend, scope, storage.complete_task(completion))
+        .await
+        .map_err(ApiError::from)
+        .and_then(|task| {
+            crate::observability::metrics::task_stop_acknowledged(&task);
+            task_from_storage(task)
+        })
 }
 
 pub(crate) async fn acknowledge_task_stop(
@@ -822,6 +833,7 @@ fn task_kind_to_storage(kind: TaskKind) -> StorageTaskKind {
         TaskKind::RemoteCall => StorageTaskKind::RemoteCall,
         TaskKind::SchemaValidation => StorageTaskKind::SchemaValidation,
         TaskKind::SchemaProfiling => StorageTaskKind::SchemaProfiling,
+        TaskKind::HistoryExpiry => StorageTaskKind::HistoryExpiry,
     }
 }
 
@@ -1056,7 +1068,9 @@ pub(crate) async fn cancel_task(
         .is_some_and(|id| id.id() == principal.user_id);
     let internal = matches!(
         stored.kind(),
-        StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation
+        StorageTaskKind::Reindex
+            | StorageTaskKind::SchemaValidation
+            | StorageTaskKind::HistoryExpiry
     );
     if requestor.scopes().is_some()
         && (!is_owner || stored.scope_snapshot().token_id() != Some(requestor.token_meta.id()))
@@ -1118,4 +1132,20 @@ pub(crate) async fn cancel_task(
         .await?;
     crate::observability::metrics::task_cancellation_requested(&outcome);
     find_task(backend, outcome.task().id()).await
+}
+
+#[cfg(test)]
+mod lease_recovery_publication_tests {
+    use super::*;
+    use hubuum_storage_core::{DeletionControlStorage, HistoryLifecycleStorage};
+
+    #[actix_web::test]
+    async fn lease_recovery_admits_and_retires_its_online_publication() {
+        let raw = crate::storage::StorageHandle::memory();
+        let registration = raw.register_history_runtime(None).await.unwrap();
+        let storage = raw.clone().with_runtime_owner(registration.owner());
+        let recovered = recover_expired_task_leases(&storage, 100).await;
+        raw.unregister_runtime(registration).await.unwrap();
+        assert!(recovered.unwrap().is_empty());
+    }
 }

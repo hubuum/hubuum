@@ -157,7 +157,8 @@ fn preflight_failure_kind(error: &ApiError) -> FailureKind {
         ApiError::Forbidden(_) | ApiError::Unauthorized(_) | ApiError::ReauthenticationRequired => {
             FailureKind::Permission
         }
-        ApiError::Conflict(_)
+        ApiError::HistoryPolicyReview(_)
+        | ApiError::Conflict(_)
         | ApiError::IdempotencyConflict
         | ApiError::LegacyTaskRequestUnverifiable
         | ApiError::PreconditionFailed(_, _)

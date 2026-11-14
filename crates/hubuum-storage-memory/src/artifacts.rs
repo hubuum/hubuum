@@ -42,6 +42,17 @@ fn conflict() -> ArtifactError {
     ArtifactError::Conflict("Artifact identity, state or owner changed".into())
 }
 fn boundary(error: StorageError) -> ArtifactError {
+    if error.api_request_rejection().is_some()
+        || error.task_capacity_rejection().is_some()
+        || matches!(
+            error.kind(),
+            StorageErrorKind::TaskCancelled | StorageErrorKind::TaskDeadlineExceeded
+        )
+    {
+        // Retain this operation's structured admission failure. Possession of
+        // the cause alone does not authorize a public API projection.
+        return ArtifactError::Source(Box::new(error));
+    }
     ArtifactError::Backend(error.to_string())
 }
 impl Artifacts {
@@ -519,6 +530,26 @@ impl ArtifactStore for MemoryStorage {
 
 #[async_trait]
 impl TaskArtifactStore for MemoryStorage {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        if self.current_execution_scope().storage_callback_active() {
+            return Err(conflict());
+        }
+        let mut state = self.state.write_control().await;
+        let attempt = state.artifacts.attempt_mut(cleanup.identity())?;
+        if attempt.phase == Phase::Published
+            || attempt.owner.as_ref().is_none_or(|owner| {
+                owner.lease.task_id() != cleanup.lease().task_id()
+                    || owner.lease.token() != cleanup.lease().token()
+            })
+        {
+            return Err(conflict());
+        }
+        if attempt.phase != Phase::Discarded {
+            attempt.phase = Phase::Deleting;
+        }
+        Ok(())
+    }
+
     async fn bind_task(
         &self,
         identity: &ArtifactIdentity,
@@ -1028,5 +1059,122 @@ mod retention_tests {
         if spool {
             assert!(attempt.owner.as_ref().unwrap().cleanup_after.unwrap() > Utc::now());
         }
+    }
+}
+
+#[cfg(test)]
+mod admission_causality_tests {
+    use super::*;
+    use hubuum_storage_core::{ApiRequestRejection, StorageError, TaskCapacityRejection};
+    use hubuum_task_core::{TaskExecutionContext, TaskStopReason};
+    use rstest::rstest;
+    use std::time::Duration as StdDuration;
+
+    #[rstest]
+    #[case::api_output(StorageError::api_request(ApiRequestRejection::OutputBytes))]
+    #[case::api_deadline(StorageError::api_request(ApiRequestRejection::DeadlineExceeded))]
+    #[case::task_capacity(StorageError::task_capacity(TaskCapacityRejection::Deployment))]
+    #[case::task_cancel(StorageError::task_stopped(TaskStopReason::Cancelled))]
+    #[case::task_deadline(StorageError::task_stopped(TaskStopReason::DeadlineExceeded))]
+    fn byte_admission_cause_is_not_a_generic_artifact_limit(#[case] failure: StorageError) {
+        let kind = failure.kind();
+        let api = failure.api_request_rejection();
+        let task = failure.task_capacity_rejection();
+        let converted = boundary(failure);
+        let ArtifactError::Source(source) = converted else {
+            panic!("Structured admission failure was flattened");
+        };
+        let cause = source
+            .downcast::<StorageError>()
+            .expect("portable typed cause");
+        assert_eq!(cause.kind(), kind);
+        assert_eq!(cause.api_request_rejection(), api);
+        assert_eq!(cause.task_capacity_rejection(), task);
+    }
+
+    #[rstest]
+    #[case::cancelled(TaskStopReason::Cancelled, StorageErrorKind::TaskCancelled)]
+    #[case::deadline(
+        TaskStopReason::DeadlineExceeded,
+        StorageErrorKind::TaskDeadlineExceeded
+    )]
+    #[tokio::test]
+    async fn stopped_byte_stage_issues_no_attempt_and_does_not_poison_other_scope(
+        #[case] reason: TaskStopReason,
+        #[case] expected: StorageErrorKind,
+    ) {
+        let storage = MemoryStorage::new();
+        let destination = Destination::new(DestinationId::generate(), "admission-stop").unwrap();
+        storage.register_destination(&destination).await.unwrap();
+        let stopped_identity = ArtifactIdentity::new(destination.id());
+        let unrelated_identity = ArtifactIdentity::new(destination.id());
+        let (execution, stop) = TaskExecutionContext::new(StdDuration::from_secs(30)).unwrap();
+        stop.request_stop(reason);
+        let scope = StorageExecutionScope::default().with_task_execution(Some(execution));
+        let (rejected, unrelated) = tokio::join!(
+            storage.run_in_scope(
+                scope,
+                storage.stage(&stopped_identity, ArtifactLimits::format_ceiling())
+            ),
+            storage.stage(&unrelated_identity, ArtifactLimits::format_ceiling()),
+        );
+        let ArtifactError::Source(source) = rejected.unwrap_err() else {
+            panic!("Actual productive byte stage lost its stop cause");
+        };
+        assert_eq!(
+            source.downcast_ref::<StorageError>().unwrap().kind(),
+            expected
+        );
+        unrelated.unwrap();
+        let state = storage.state.read_control().await;
+        assert!(
+            !state
+                .artifacts
+                .attempts
+                .contains_key(&stopped_identity.artifact())
+        );
+        assert!(
+            state
+                .artifacts
+                .attempts
+                .contains_key(&unrelated_identity.artifact())
+        );
+    }
+    #[tokio::test]
+    async fn stopped_byte_stage_rejects_before_waiting_for_state_lock() {
+        let storage = MemoryStorage::new();
+        let identity = ArtifactIdentity::new(DestinationId::generate());
+        let (execution, stop) = TaskExecutionContext::new(StdDuration::from_secs(30)).unwrap();
+        stop.request_stop(TaskStopReason::Cancelled);
+        let scope = StorageExecutionScope::default().with_task_execution(Some(execution));
+        let blocker = storage.state.write_control().await;
+        let result = tokio::time::timeout(
+            StdDuration::from_millis(100),
+            storage.run_in_scope(
+                scope,
+                storage.stage(&identity, ArtifactLimits::format_ceiling()),
+            ),
+        )
+        .await;
+        drop(blocker);
+        let ArtifactError::Source(cause) = result
+            .expect("Stopped work must not wait for state access")
+            .unwrap_err()
+        else {
+            panic!("Stopped work lost its typed cause");
+        };
+        assert_eq!(
+            cause.downcast_ref::<StorageError>().unwrap().kind(),
+            StorageErrorKind::TaskCancelled
+        );
+        assert!(
+            storage
+                .state
+                .read_control()
+                .await
+                .artifacts
+                .attempts
+                .is_empty()
+        );
     }
 }

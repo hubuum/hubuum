@@ -247,6 +247,8 @@ mod events;
 mod execution;
 pub(crate) use execution::ApplicationAdmission;
 mod api_request_admission;
+mod history_lifecycle;
+
 mod history_archive;
 mod identity;
 mod identity_queries;
@@ -487,6 +489,10 @@ impl StorageHandle {
                 operation,
                 "get_readiness_snapshot"
                     | "get_maintenance_state"
+                    | "settle_api_request"
+                    | "settle_history_publication"
+                    | "settle_history_producer"
+                    | "abort_task"
                     | "poll_task_execution"
                     | "acknowledge_task_stop"
                     | "renew_task_lease"

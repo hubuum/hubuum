@@ -18,7 +18,18 @@ esac
 python3 scripts/check-python-version.py
 
 # Rendering tests use the same isolated executable shipped in production.
-cargo build --locked -p hubuum-templates --bin hubuum-template-worker
+TEMPLATE_WORKER="$(cargo build --locked -p hubuum-templates --bin hubuum-template-worker \
+    --message-format=json | python3 -c '
+import json, sys
+workers = [entry["executable"] for line in sys.stdin
+           if (entry := json.loads(line)).get("reason") == "compiler-artifact"
+           and entry["target"]["name"] == "hubuum-template-worker"
+           and entry.get("executable")]
+if len(workers) != 1:
+    sys.exit("Cargo did not report exactly one template worker executable")
+print(workers[0])
+')"
+CARGO_TEST_ENV=(env "CARGO_BIN_EXE_hubuum-template-worker=$TEMPLATE_WORKER")
 
 # Fetching database details from environment variables with HUBUUM_TEST_ prefix
 DB_USER="${HUBUUM_TEST_DB_USER:-postgres}"  # Default to 'postgres' if not set
@@ -51,11 +62,22 @@ UNIQUE_SUFFIX="$(date +%s)_$$_${RANDOM}${RANDOM}"
 TEST_DB_NAME="${TEST_DB_PREFIX}${UNIQUE_SUFFIX}"
 SINGLE_TEST_DB_NAME="${TEST_DB_NAME}_single"
 RESTORE_TEST_DB_NAME="${TEST_DB_NAME}_restore"
+ARCHIVE_TEST_DB_NAME="${TEST_DB_NAME}_archive"
 OWNER_ROLE="hubuum_test_owner_${UNIQUE_SUFFIX}"
 MIGRATOR_ROLE="hubuum_test_migrator_${UNIQUE_SUFFIX}"
 RUNTIME_ROLE="hubuum_test_runtime_${UNIQUE_SUFFIX}"
 
 cleanup() {
+    if [ -n "${ARCHIVE_TEST_DB_NAME:-}" ]; then
+        PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$ARCHIVE_TEST_DB_NAME' AND pid <> pg_backend_pid();" \
+            > /dev/null 2>&1 || true
+        PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
+            -v ON_ERROR_STOP=1 \
+            -c "DROP DATABASE IF EXISTS $ARCHIVE_TEST_DB_NAME;" \
+            > /dev/null 2>&1 || true
+    fi
     if [ -n "${RESTORE_TEST_DB_NAME:-}" ]; then
         PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
             -v ON_ERROR_STOP=1 \
@@ -172,35 +194,50 @@ if [ "$HUBUUM_DATABASE_ROLE_TESTS" = true ]; then
         -c "CREATE DATABASE $RESTORE_TEST_DB_NAME OWNER $OWNER_ROLE;" > /dev/null
     export HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL="postgres://$MIGRATOR_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$RESTORE_TEST_DB_NAME$SSL_MODE"
     export HUBUUM_RESTORE_TEST_DATABASE_URL="postgres://$RUNTIME_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$RESTORE_TEST_DB_NAME$SSL_MODE"
+    PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+        -c "CREATE DATABASE $ARCHIVE_TEST_DB_NAME OWNER $OWNER_ROLE;" > /dev/null
+    export HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL="postgres://$MIGRATOR_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$ARCHIVE_TEST_DB_NAME$SSL_MODE"
+    export HUBUUM_ARCHIVE_TEST_DATABASE_URL="postgres://$RUNTIME_ROLE:$DB_PASSWORD@$DB_HOST:$DB_PORT/$ARCHIVE_TEST_DB_NAME$SSL_MODE"
 else
     PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
         -c "CREATE DATABASE $RESTORE_TEST_DB_NAME;" > /dev/null
     export HUBUUM_RESTORE_TEST_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$RESTORE_TEST_DB_NAME$SSL_MODE"
     export HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL="$HUBUUM_RESTORE_TEST_DATABASE_URL"
+    PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+        -c "CREATE DATABASE $ARCHIVE_TEST_DB_NAME;" > /dev/null
+    export HUBUUM_ARCHIVE_TEST_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$ARCHIVE_TEST_DB_NAME$SSL_MODE"
+    export HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL="$HUBUUM_ARCHIVE_TEST_DATABASE_URL"
 fi
 HUBUUM_DATABASE_URL="$HUBUUM_RESTORE_TEST_DATABASE_URL" \
     HUBUUM_MIGRATION_DATABASE_URL="$HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL" \
     cargo run --quiet --features embedded-migrations --bin hubuum-admin -- \
         --migrate > /dev/null
 
+# Archive overflow/cancellation fixtures intentionally retain publication owners.
+# Keep them outside both ordinary backup inputs and later restore certification.
+HUBUUM_DATABASE_URL="$HUBUUM_ARCHIVE_TEST_DATABASE_URL" \
+    HUBUUM_MIGRATION_DATABASE_URL="$HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL" \
+    cargo run --quiet --features embedded-migrations --bin hubuum-admin -- \
+        --migrate > /dev/null
+
 # Run adapter-native tests before the application suite while the isolated,
 # migrated database is available.
-cargo test --workspace --exclude hubuum --exclude hubuum-storage-postgres "$@"
+"${CARGO_TEST_ENV[@]}" cargo test --workspace --exclude hubuum --exclude hubuum-storage-postgres "$@"
 if [ "$#" -eq 0 ]; then
     python3 tests/python/run.py integration schema-budget
 fi
 if [ "$#" -eq 0 ] && [ "$HUBUUM_DATABASE_ROLE_TESTS" = true ]; then
-    cargo test -p hubuum-storage-postgres \
+    "${CARGO_TEST_ENV[@]}" cargo test -p hubuum-storage-postgres \
         --features integration-test-support \
         --test database_privileges \
         split_role_reconciliation_adopts_existing_single_role_objects \
         -- --exact --ignored
 fi
-cargo test -p hubuum-storage-postgres \
+"${CARGO_TEST_ENV[@]}" cargo test -p hubuum-storage-postgres \
     --features integration-test-support,scale-benchmark-support,embedded-migrations "$@"
 
 # Run the application and request-level suites.
-if cargo test --features integration-test-support,embedded-migrations "$@"; then
+if "${CARGO_TEST_ENV[@]}" cargo test --features integration-test-support,embedded-migrations "$@"; then
     echo "Test database dropped: $TEST_DB_NAME"
 else
     exit 1

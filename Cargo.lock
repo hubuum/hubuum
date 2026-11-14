@@ -2457,6 +2457,7 @@ dependencies = [
  "actix-http",
  "actix-rt",
  "actix-service",
+ "actix-tls",
  "actix-web",
  "argon2",
  "async-trait",
@@ -2580,14 +2581,14 @@ dependencies = [
 
 [[package]]
 name = "hubuum-budget"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "rstest",
 ]
 
 [[package]]
 name = "hubuum-computed-fields"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "bigdecimal",
  "rstest",
@@ -2598,7 +2599,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-domain"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "bigdecimal",
  "chrono",
@@ -2702,7 +2703,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-events-core"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "chrono",
  "hubuum-domain",
@@ -2729,7 +2730,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-query"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "base64 0.23.1",
  "bigdecimal",
@@ -2744,7 +2745,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-regex"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "regex-syntax",
  "rstest",
@@ -2784,7 +2785,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-schema-diagnostics"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "jsonschema 0.59.0",
  "rstest",
@@ -2805,7 +2806,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-storage-conformance"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "async-trait",
  "hubuum-domain",
@@ -2816,10 +2817,11 @@ dependencies = [
 
 [[package]]
 name = "hubuum-storage-core"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
+ "bigdecimal",
  "chrono",
  "hubuum-budget",
  "hubuum-computed-fields",
@@ -2905,7 +2907,7 @@ dependencies = [
 
 [[package]]
 name = "hubuum-task-core"
-version = "0.19.0"
+version = "0.20.0"
 
 [[package]]
 name = "hubuum-templates"

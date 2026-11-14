@@ -53,6 +53,7 @@ const STORAGE_OPERATION_SOURCES: &[&str] = &[
     include_str!("storage/context/api.rs"),
     include_str!("storage/context/computed_fields.rs"),
     include_str!("storage/context/events.rs"),
+    include_str!("storage/context/history_lifecycle.rs"),
     include_str!("storage/context/execution.rs"),
     include_str!("storage/context/history_archive.rs"),
     include_str!("storage/context/identity.rs"),
@@ -1986,6 +1987,15 @@ fn process_environment_metadata(name: &str) -> Option<CliArgumentMetadata> {
     let (value_kind, default, allowed_values): (&str, &[&str], &[&str]) = match name {
         "HUBUUM_CONTROL_CHECKPOINT_MEASURE" => ("boolean", &["false"], &["true", "false"]),
         "HUBUUM_MEASUREMENT_CPU_AFFINITY" => ("cpu_set", &[], &[]),
+        "HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT" => ("path", &[], &[]),
+        "HUBUUM_TEST_HISTORY_QUALIFICATION_SHAPE" => (
+            "enum",
+            &[],
+            &["rows", "bytes", "large_row", "oversized", "authority"],
+        ),
+        "HUBUUM_TEST_HISTORY_QUALIFICATION_SLOTS" => ("integer", &[], &["1", "2"]),
+        "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICAS" => ("integer", &["1"], &["1", "2"]),
+        "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICA" => ("integer", &[], &["0", "1"]),
         "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY" => {
             ("boolean", &["false"], &["true", "false", "1", "0"])
         }

@@ -106,7 +106,8 @@ The administrator task-capacity policy now requires a `scheduling` object:
     {"kind": "reindex", "weight": 1},
     {"kind": "remote_call", "weight": 1},
     {"kind": "schema_validation", "weight": 1},
-    {"kind": "schema_profiling", "weight": 1}
+    {"kind": "schema_profiling", "weight": 1},
+    {"kind": "history_expiry", "weight": 1}
   ]
 }
 ```

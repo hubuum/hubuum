@@ -5,6 +5,8 @@
 //! narrower restrictions; importing authority never releases those restrictions.
 
 mod cleanup;
+pub(crate) mod history_expiry;
+pub(crate) mod history_policy;
 mod reapplication;
 mod repository;
 mod status;
@@ -18,6 +20,7 @@ pub(crate) use task_receipts::{TaskReceiptService, TaskRetentionSweep};
 
 pub(crate) use cleanup::cleanup_object_history;
 
+use hubuum_storage_core::HistoryLifecycleStorage;
 use std::path::Path;
 
 use hubuum_storage_core::{
@@ -46,6 +49,14 @@ pub(crate) struct RuntimeRecoveryLifetime {
 }
 
 impl RuntimeRecoveryLifetime {
+    pub(crate) fn protect_renderers(mut self) -> Result<Self, ApiError> {
+        self.permit
+            .as_mut()
+            .expect("unreleased runtime lifetime")
+            .pin_renderers()?;
+        Ok(self)
+    }
+
     pub(crate) fn isolation_domain(&self) -> Option<RuntimeIsolationDomain> {
         self.permit
             .as_ref()
@@ -66,6 +77,18 @@ impl Drop for RuntimeRecoveryLifetime {
 }
 
 impl RuntimeRecoveryPermit {
+    pub(crate) fn protect_renderers(mut self) -> Result<Self, ApiError> {
+        self.pin_renderers()?;
+        Ok(self)
+    }
+
+    fn pin_renderers(&mut self) -> Result<(), ApiError> {
+        if let Some(isolation) = &mut self.isolation {
+            isolation.protect_renderers()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn into_runtime_lifetime(self) -> RuntimeRecoveryLifetime {
         RuntimeRecoveryLifetime { permit: Some(self) }
     }
@@ -193,6 +216,12 @@ pub(crate) async fn recover(
             "Recovered authority read-back did not cover the checkpoint; keep the deployment quarantined",
         ));
     }
+    if let Some(history) = required.checkpoint().history_lifecycle() {
+        let snapshot = storage.capture_history_lifecycle().await?;
+        let recovery = hubuum_storage_core::HistoryLifecycleRecovery::new(snapshot, history.clone())
+            .map_err(|_| unavailable("History retention recovery conflicts with local authority; keep the deployment quarantined"))?;
+        storage.recover_history_lifecycle(recovery).await?;
+    }
     if let Some(tasks) = required.checkpoint().task_control() {
         let current = storage.read_task_control().await?;
         let change = TaskControlRecovery::new(current, tasks.clone()).map_err(|_| unavailable(
@@ -257,7 +286,11 @@ fn covers_checkpoint(
     current: &ControlCheckpointCapture,
     required: &repository::DurableCheckpoint,
 ) -> bool {
-    current.deletion().state().covers(required.state())
+    required.history_lifecycle().is_none_or(|history| {
+        current
+            .history_lifecycle()
+            .is_some_and(|current| current.covers(history))
+    }) && current.deletion().state().covers(required.state())
         && required
             .task_control()
             .is_none_or(|tasks| current.task_control().covers(tasks))
@@ -336,3 +369,33 @@ fn invalid_control(error: StorageValidationError) -> ApiError {
 
 #[cfg(all(test, unix))]
 mod tests;
+
+/// Integration-only authority fixture. It exercises the real checkpoint,
+/// exclusive isolation, recovery and reapplication paths without enabling
+/// generic online intent admission or representing executor/removal evidence.
+#[cfg(feature = "integration-test-support")]
+pub(crate) async fn prepare_history_read_fixture(
+    storage: &impl StorageContext,
+    required: hubuum_storage_core::HistoryLifecycleAuthority,
+    directory: &Path,
+    key: &Path,
+) -> Result<(), ApiError> {
+    // This prepares restrictions and protected exact replay for fixture-owned
+    // history. It is not native selection/input-budget qualification.
+    // Use genuine isolation/quarantine and sign the actual native capture;
+    // never override a captured component or initialize acknowledged authority.
+    let isolation = runtime_isolation(directory, key, true).await?;
+    let storage = storage_handle(storage);
+    let before = storage.read_deletion_control().await?;
+    let change = before.recover_from(&before).map_err(invalid_control)?;
+    storage
+        .recover_application_control(change, isolation.domain())
+        .await?;
+    let snapshot = storage.capture_history_lifecycle().await?;
+    let recovery = hubuum_storage_core::HistoryLifecycleRecovery::new(snapshot, required)
+        .map_err(invalid_control)?;
+    storage.recover_history_lifecycle(recovery).await?;
+    checkpoint(&storage, directory, key, false).await?;
+    reapply(&storage, directory, key).await?;
+    Ok(())
+}

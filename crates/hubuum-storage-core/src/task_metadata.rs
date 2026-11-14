@@ -117,6 +117,12 @@ impl TaskOutputMetadata {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TaskMetadataDetails {
+    HistoryExpiry {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recovery_batch: Option<uuid::Uuid>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        admission_scope: Option<crate::HistoryPolicyKey>,
+    },
     Import {
         dry_run: Option<bool>,
         atomicity: Option<TaskImportAtomicity>,
@@ -164,6 +170,7 @@ impl TaskMetadataDetails {
     #[must_use]
     pub const fn kind(&self) -> StorageTaskKind {
         match self {
+            Self::HistoryExpiry { .. } => StorageTaskKind::HistoryExpiry,
             Self::Import { .. } => StorageTaskKind::Import,
             Self::Export { .. } => StorageTaskKind::Export,
             Self::Backup { .. } => StorageTaskKind::Backup,
@@ -260,6 +267,10 @@ impl StorageTaskMetadata {
                 class_id: None,
                 computation_revision: None,
             },
+            StorageTaskKind::HistoryExpiry => TaskMetadataDetails::HistoryExpiry {
+                recovery_batch: None,
+                admission_scope: None,
+            },
             StorageTaskKind::RemoteCall => TaskMetadataDetails::RemoteCall {
                 remote_target_id: None,
                 target: None,
@@ -270,6 +281,12 @@ impl StorageTaskMetadata {
 
     pub fn new(data: TaskMetadataDetails) -> Result<Self, StorageValidationError> {
         match &data {
+            TaskMetadataDetails::HistoryExpiry {
+                recovery_batch: Some(batch),
+                ..
+            } if batch.is_nil() => {
+                return Err(invalid("History cleanup batch must not be nil"));
+            }
             TaskMetadataDetails::SchemaValidation {
                 class_id,
                 schema_revision,

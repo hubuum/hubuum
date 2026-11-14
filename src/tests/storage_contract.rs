@@ -12,8 +12,10 @@ mod credential_approvals;
 mod event_delivery;
 mod history_access;
 mod history_archive;
+mod history_authentication;
 mod history_computed;
 mod history_fixtures;
+mod history_http_publication;
 mod history_name;
 mod history_navigation;
 mod history_population;
@@ -4307,14 +4309,14 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
 }
 
 #[actix_web::test]
-async fn every_available_storage_backend_supplies_the_complete_task_state_machine() {
+async fn every_available_storage_backend_supplies_enabled_task_state_machines() {
     let _permit = postgres_permit().await;
 
     for environment in available_backend_environments() {
         let backend = environment.storage();
         let user = create_backend_user(&backend, &prefix("task_execution_user")).await;
         let mut fixture_ids = Vec::new();
-        for task_kind in StorageTaskKind::ALL {
+        for task_kind in hubuum_storage_core::TaskWorkerKinds::STANDARD.iter() {
             let task = backend
                 .create_task(
                     StorageTaskCreateRequest::builder(
@@ -4432,10 +4434,16 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 StorageTaskKind::Import
                 | StorageTaskKind::Reindex
                 | StorageTaskKind::RemoteCall
-                | StorageTaskKind::SchemaValidation => {}
+                | StorageTaskKind::SchemaValidation
+                | StorageTaskKind::HistoryExpiry => {}
             }
         }
-        assert_eq!(completed_kinds.len(), StorageTaskKind::ALL.len());
+        assert_eq!(
+            completed_kinds.len(),
+            hubuum_storage_core::TaskWorkerKinds::STANDARD
+                .iter()
+                .count()
+        );
 
         let mismatched_kind_task = backend
             .create_task(
@@ -4581,6 +4589,7 @@ fn compatibility_completion_payload(kind: StorageTaskKind) -> StorageTaskComplet
     let output_expires_at =
         chrono::Utc::now() + chrono::Duration::try_hours(1).expect("valid duration");
     match kind {
+        StorageTaskKind::HistoryExpiry => StorageTaskCompletionPayload::HistoryExpiry,
         StorageTaskKind::Import => StorageTaskCompletionPayload::Import,
         StorageTaskKind::Reindex => StorageTaskCompletionPayload::Reindex,
         StorageTaskKind::SchemaValidation => StorageTaskCompletionPayload::SchemaValidation,
@@ -4625,6 +4634,55 @@ fn compatibility_completion_payload(kind: StorageTaskKind) -> StorageTaskComplet
                 StorageRemoteCallArtifactOutcome::new(1, true, None),
             ))
         }
+    }
+}
+
+#[actix_web::test]
+async fn every_backend_refuses_expiry_task_recovery_without_original_online_admission() {
+    use hubuum_storage_core::HistoryLifecycleStorage;
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let before = backend.capture_history_lifecycle().await.unwrap();
+        let result = backend
+            .recover_history_expiry_task(uuid::Uuid::new_v4())
+            .await;
+        assert_eq!(
+            result.unwrap_err().kind(),
+            hubuum_storage_core::StorageErrorKind::Unavailable
+        );
+        assert_eq!(
+            backend.capture_history_lifecycle().await.unwrap().control(),
+            before.control()
+        );
+    }
+}
+
+#[actix_web::test]
+async fn every_backend_refuses_expiry_task_execution_without_original_online_admission() {
+    use hubuum_storage_core::HistoryLifecycleStorage;
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let before = backend.capture_history_lifecycle().await.unwrap();
+        let lease = hubuum_storage_core::StorageTaskLease::new(
+            hubuum_domain::TaskId::new(1).unwrap(),
+            hubuum_storage_core::StorageTaskClaimToken::new(uuid::Uuid::new_v4().to_string()),
+        );
+        let result = backend
+            .process_history_expiry_task(hubuum_storage_core::HistoryExpiryTaskRequest::new(
+                lease,
+                Some(hubuum_storage_core::HistoryExpiryTaskAuthorization::scheduled()),
+            ))
+            .await;
+        assert_eq!(
+            result.unwrap_err().kind(),
+            hubuum_storage_core::StorageErrorKind::Unavailable
+        );
+        assert_eq!(
+            backend.capture_history_lifecycle().await.unwrap().control(),
+            before.control()
+        );
     }
 }
 
@@ -7451,3 +7509,47 @@ pub(crate) fn prefix(label: &str) -> String {
 mod query_usage;
 mod query_usage_analysis;
 mod runtime_settings;
+
+#[actix_web::test]
+async fn every_backend_refuses_expiry_task_submission_without_original_online_admission() {
+    use hubuum_storage_core::{
+        ApplicationFence, HistoryExpiryTaskSubmission, HistoryLifecycleScan,
+        HistoryLifecycleStorage, HistoryPolicyKey, HistoryPolicyScope, StorageIdentityHistoryKind,
+    };
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let before = backend.capture_history_lifecycle().await.unwrap();
+        let scan = HistoryLifecycleScan::new(
+            HistoryPolicyKey::new(
+                StorageIdentityHistoryKind::Object,
+                HistoryPolicyScope::Deployment,
+            )
+            .unwrap(),
+            1000,
+        )
+        .unwrap();
+        let request = HistoryExpiryTaskSubmission::manual(
+            scan,
+            ApplicationFence::new(
+                before.fence().incarnation(),
+                before.fence().deletion_revision().value() as i64,
+            )
+            .unwrap(),
+            hubuum_domain::PrincipalId::new(1).unwrap(),
+            hubuum_domain::PrincipalIdentity::generate(),
+        );
+        assert_eq!(
+            backend
+                .submit_history_expiry_task(request)
+                .await
+                .unwrap_err()
+                .kind(),
+            hubuum_storage_core::StorageErrorKind::Unavailable
+        );
+        assert_eq!(
+            backend.capture_history_lifecycle().await.unwrap().control(),
+            before.control()
+        );
+    }
+}

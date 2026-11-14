@@ -61,9 +61,34 @@ pub(crate) fn application_work_is_settled() -> bool {
     !ABANDONED_APPLICATION_WORK.load(Ordering::Acquire)
 }
 
-struct ApplicationWorkCompletion {
+pub(crate) struct ApplicationWorkCompletion {
     abandoned: Arc<AtomicBool>,
     complete: bool,
+}
+
+impl ApplicationWorkCompletion {
+    #[cfg(test)]
+    pub(crate) fn isolated() -> (Arc<AtomicBool>, Self) {
+        let abandoned = Arc::new(AtomicBool::new(false));
+        (
+            Arc::clone(&abandoned),
+            Self {
+                abandoned,
+                complete: false,
+            },
+        )
+    }
+
+    pub(crate) fn begin() -> Self {
+        Self {
+            abandoned: Arc::clone(&ABANDONED_APPLICATION_WORK),
+            complete: false,
+        }
+    }
+
+    pub(crate) fn confirm(&mut self) {
+        self.complete = true;
+    }
 }
 
 impl Drop for ApplicationWorkCompletion {

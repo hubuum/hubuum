@@ -1582,7 +1582,8 @@ mod tests {
              CREATE TEMP TABLE {resource}_history (
                 LIKE {resource}, op text, valid_from timestamptz,
                 valid_to timestamptz, actor_id integer, history_id bigint,
-                actor_kind text, initiator_user_id integer, task_id integer
+                actor_kind text, initiator_user_id integer, task_id integer,
+                logical_identity jsonb
              ) ON COMMIT DROP;"
                 ))
                 .await?;

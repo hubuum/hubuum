@@ -2,6 +2,8 @@ use std::fmt;
 
 use hubuum_domain::MaintenanceState;
 
+use crate::HistoryRuntimeProtocol;
+
 use super::*;
 
 /// Identity of the stable, owner-controlled process-exclusion file. This value
@@ -12,6 +14,22 @@ pub struct RuntimeIsolationDomain {
     nonce: Uuid,
     device: u64,
     inode: u64,
+    #[serde(skip_serializing_if = "RendererIsolation::is_parent_only")]
+    renderer_isolation: RendererIsolation,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RendererIsolation {
+    #[default]
+    ParentOnly,
+    InheritedLockV1,
+}
+
+impl RendererIsolation {
+    const fn is_parent_only(&self) -> bool {
+        matches!(self, Self::ParentOnly)
+    }
 }
 
 #[derive(Deserialize)]
@@ -20,6 +38,8 @@ struct IsolationInput {
     nonce: Uuid,
     device: u64,
     inode: u64,
+    #[serde(default)]
+    renderer_isolation: RendererIsolation,
 }
 
 impl RuntimeIsolationDomain {
@@ -31,7 +51,22 @@ impl RuntimeIsolationDomain {
             nonce,
             device,
             inode,
+            renderer_isolation: RendererIsolation::ParentOnly,
         })
+    }
+    /// Trusted startup attestation, only after installing shared-lock
+    /// inheritance before the first renderer admission. This descriptor is not
+    /// itself proof that offline recovery holds exclusive exclusion.
+    pub const fn with_renderer_isolation(mut self) -> Self {
+        self.renderer_isolation = RendererIsolation::InheritedLockV1;
+        self
+    }
+    pub const fn excludes_renderers(&self) -> bool {
+        matches!(self.renderer_isolation, RendererIsolation::InheritedLockV1)
+    }
+    /// Coverage describes the admitting runtime, not the exclusion file's identity.
+    pub fn same_lock(&self, other: &Self) -> bool {
+        self.nonce == other.nonce && self.device == other.device && self.inode == other.inode
     }
     pub const fn nonce(&self) -> Uuid {
         self.nonce
@@ -47,7 +82,9 @@ impl RuntimeIsolationDomain {
 impl TryFrom<IsolationInput> for RuntimeIsolationDomain {
     type Error = StorageValidationError;
     fn try_from(value: IsolationInput) -> Result<Self, Self::Error> {
-        Self::new(value.nonce, value.device, value.inode)
+        let mut domain = Self::new(value.nonce, value.device, value.inode)?;
+        domain.renderer_isolation = value.renderer_isolation;
+        Ok(domain)
     }
 }
 
@@ -57,13 +94,19 @@ impl TryFrom<IsolationInput> for RuntimeIsolationDomain {
 pub struct RuntimeOwner {
     id: Uuid,
     ownership_token: Uuid,
+    history_protocol: HistoryRuntimeProtocol,
 }
 
 impl RuntimeOwner {
-    pub(super) const fn new(id: Uuid, ownership_token: Uuid) -> Self {
+    pub(super) const fn new(
+        id: Uuid,
+        ownership_token: Uuid,
+        history_protocol: HistoryRuntimeProtocol,
+    ) -> Self {
         Self {
             id,
             ownership_token,
+            history_protocol,
         }
     }
     pub const fn id(&self) -> Uuid {
@@ -72,6 +115,11 @@ impl RuntimeOwner {
     /// Adapter comparison material; never log it or expose it in responses.
     pub const fn ownership_token(&self) -> Uuid {
         self.ownership_token
+    }
+
+    /// Validated by the owning adapter's registration path, never request data.
+    pub const fn history_protocol(&self) -> HistoryRuntimeProtocol {
+        self.history_protocol
     }
 }
 
@@ -362,6 +410,46 @@ impl ApplicationControlState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[rstest::rstest]
+    #[case::legacy(None, false)]
+    #[case::explicit_parent(Some("parent_only"), false)]
+    #[case::inherited(Some("inherited_lock_v1"), true)]
+    fn isolation_descriptor_preserves_original_renderer_coverage(
+        #[case] coverage: Option<&str>,
+        #[case] protected: bool,
+    ) {
+        let parent = RuntimeIsolationDomain::new(Uuid::new_v4(), 1, 2).unwrap();
+        let mut encoded = serde_json::to_value(&parent).unwrap();
+        assert!(
+            encoded.get("renderer_isolation").is_none(),
+            "legacy encoding stays unchanged"
+        );
+        if let Some(coverage) = coverage {
+            encoded["renderer_isolation"] = serde_json::json!(coverage);
+        }
+        let restored: RuntimeIsolationDomain = serde_json::from_value(encoded).unwrap();
+        assert!(parent.same_lock(&restored));
+        assert_eq!(restored.excludes_renderers(), protected);
+        assert_eq!(
+            serde_json::from_value::<RuntimeIsolationDomain>(
+                serde_json::to_value(&restored).unwrap()
+            )
+            .unwrap(),
+            restored
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::future("inherited_lock_v2")]
+    #[case::unsupported("unknown")]
+    fn unknown_renderer_isolation_protocol_is_rejected(#[case] coverage: &str) {
+        let mut encoded =
+            serde_json::to_value(RuntimeIsolationDomain::new(Uuid::new_v4(), 1, 2).unwrap())
+                .unwrap();
+        encoded["renderer_isolation"] = serde_json::json!(coverage);
+        assert!(serde_json::from_value::<RuntimeIsolationDomain>(encoded).is_err());
+    }
 
     #[rstest::rstest]
     #[case::missing_incarnation(Uuid::nil(), 0)]

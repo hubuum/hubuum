@@ -1,4 +1,5 @@
-use diesel::sql_types::{Integer, Text};
+use diesel::QueryableByName;
+use diesel::sql_types::{Integer, Jsonb, Nullable, Text};
 use diesel_async::SimpleAsyncConnection;
 use hubuum_domain::{IdentityReference, ResourceIdentity};
 use rstest::rstest;

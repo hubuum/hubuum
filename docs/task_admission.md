@@ -73,7 +73,9 @@ historical references are known.
 
 All limits are positive integers bounded by signed 64-bit storage. Byte and
 count limits have distinct private-field newtypes. The policy must contain each
-of the seven task kinds exactly once. The per-task cumulative input-byte ceiling
+of the eight declared task kinds exactly once, including the gated
+`history_expiry` kind. Production workers advertise the seven enabled kinds;
+expiry admission and scheduling remain disabled. The per-task cumulative input-byte ceiling
 is initially 1 TiB. A queued retry that would exceed it remains admitted but
 cannot claim; an administrator can raise the ceiling or cancel the work.
 
@@ -144,6 +146,12 @@ checkpoint and a fresh opaque wait token while clearing the execution lease.
 Cancellation, an expired deadline, committed effects, and unsupported task kinds
 cannot create a wait. In particular, remote-call dispatch never becomes safely
 replayable through this API.
+
+The gated `history_expiry` executor can also wait, using only its already
+committed version-1 expiry checkpoint. It cannot replace that checkpoint through
+the generic wait API. Its retained membership, exclusions and copy obligations
+survive cancellation; waiting does not prove independent protection or physical
+removal. Production workers and submission remain disabled for this kind.
 
 Checkpoints contain a format name, a positive format version, and an object
 payload. The complete UTF-8 encoding is limited to 64 KiB; format names contain

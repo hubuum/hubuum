@@ -69,6 +69,9 @@ for path in "$@"; do
 
   case "$path" in
     src/models/task.rs | src/api/handlers/meta.rs | \
+      src/models/history_lifecycle.rs | src/api/v1/handlers/history_lifecycle.rs | \
+      crates/hubuum-storage-core/src/history_lifecycle.rs | crates/hubuum-storage-core/src/history_lifecycle/* | \
+      crates/hubuum-storage-core/src/record_identity.rs | crates/hubuum-storage-core/src/logical_identity.rs | \
       crates/hubuum-storage-core/src/api_request_admission.rs | src/middlewares/api_request_admission.rs | \
       src/models/class_fields.rs | src/models/class_fields/* | src/api/v1/handlers/classes/field_discovery.rs | \
       src/api/v1/handlers/auth.rs | src/models/auth_session.rs | src/models/credential_activity.rs | \
@@ -76,6 +79,7 @@ for path in "$@"; do
       src/config/running.rs | src/api/v1/handlers/runtime_config.rs | src/models/query_usage.rs | src/models/credential_approval.rs | \
       src/models/runtime_settings.rs | src/models/runtime_settings/* | src/api/v1/handlers/client_config.rs | \
       src/api/v1/handlers/credential_approvals.rs | crates/hubuum-events-core/src/* | \
+      crates/hubuum-domain/src/task_kind.rs | \
       crates/hubuum-domain/src/relation_label.rs | crates/hubuum-domain/src/relation_limit.rs | \
       crates/hubuum-domain/src/template_alias.rs)
       openapi=true
@@ -286,6 +290,11 @@ for path in "$@"; do
       scripts/test-openapi-compatibility.sh)
       code=true
       openapi=true
+      ;;
+    tests/python/integration/history_expiry.py | tests/restore_contract/history_expiry_qualification.rs | tests/restore_contract/history_expiry_qualification/*)
+      code=true
+      rust=true
+      container=true
       ;;
     tests/python/integration/event_transports.py | tests/python/integration/rust_tests.py | src/tests/*)
       code=true

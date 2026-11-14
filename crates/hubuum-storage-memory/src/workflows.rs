@@ -859,7 +859,9 @@ impl TaskExecutionStorage for MemoryStorage {
                 .tasks
                 .get_mut(&task_id.id())
                 .expect("selected task remains present");
-            if task.kind == StorageTaskKind::SchemaValidation && has_schema_work {
+            if (task.kind == StorageTaskKind::SchemaValidation && has_schema_work)
+                || task.kind == StorageTaskKind::HistoryExpiry
+            {
                 task.status = StorageTaskStatus::Queued;
                 task.lease_expires_at = None;
                 task.claim_token = None;
@@ -869,7 +871,7 @@ impl TaskExecutionStorage for MemoryStorage {
                     task_id,
                     StorageTaskEventInput::new(
                         "queued",
-                        "Schema validation resumed from durable checkpoint after lease expiry",
+                        "Internal work resumed from durable checkpoint after lease expiry",
                     ),
                 )?;
                 continue;
@@ -1002,6 +1004,7 @@ impl TaskExecutionStorage for MemoryStorage {
         let produces_output = !matches!(
             &payload,
             StorageTaskCompletionPayload::Import
+                | StorageTaskCompletionPayload::HistoryExpiry
                 | StorageTaskCompletionPayload::Reindex
                 | StorageTaskCompletionPayload::SchemaValidation
         );
@@ -1042,8 +1045,33 @@ impl TaskExecutionStorage for MemoryStorage {
             *guard = state;
             return Ok(stopped);
         }
+        if stored.kind == StorageTaskKind::HistoryExpiry {
+            let evidence = state
+                .logical_identities
+                .record(StorageIdentityTarget::Task(lease.task_id()))?;
+            let checkpoint =
+                HistoryExpiryTaskCheckpoint::from_task(&stored.projection()?, &evidence)
+                    .map_err(invalid_contract_value)?;
+            checkpoint
+                .validate_completion(&state.history_lifecycle_snapshot()?)
+                .map_err(invalid_contract_value)?;
+            if status.as_status() != StorageTaskStatus::Succeeded || !checkpoint.finished() {
+                return Err(StorageError::invalid_input(
+                    "History expiry task cannot complete while its admitted batch remains pending",
+                ));
+            }
+            if counts.processed() != checkpoint.removed_count() as i32
+                || counts.succeeded() != checkpoint.removed_count() as i32
+                || counts.failed() != 0
+            {
+                return Err(StorageError::invalid_input(
+                    "History expiry completion counts differ from exact receipts",
+                ));
+            }
+        }
         match payload {
             StorageTaskCompletionPayload::Import
+            | StorageTaskCompletionPayload::HistoryExpiry
             | StorageTaskCompletionPayload::Reindex
             | StorageTaskCompletionPayload::SchemaValidation => {}
             StorageTaskCompletionPayload::RemoteCall(artifact) => {
@@ -1459,12 +1487,16 @@ impl RestoreStorage for MemoryStorage {
         )?;
         replacement.credential_approvals = state.credential_approvals.clone();
         replacement.api_requests = state.api_requests.clone();
+        replacement.history_publications = state.history_publications.clone();
+
         replacement.history_archive = state.history_archive.clone();
         replacement.deletion_control = state.deletion_control.clone();
+        replacement.history_lifecycle = state.history_lifecycle.clone();
         replacement.task_control = state.task_control.clone();
         replacement.task_reapplication = None;
         replacement.application_control = ApplicationControlState::initial(&state.deletion_control);
-        replacement.pending_restore = !state.deletion_control.intents().is_empty()
+        replacement.pending_restore = state.history_lifecycle.authority().revision().value() != 0
+            || !state.deletion_control.intents().is_empty()
             || !matches!(
                 state.task_control.activation(),
                 TaskReceiptActivation::Disabled

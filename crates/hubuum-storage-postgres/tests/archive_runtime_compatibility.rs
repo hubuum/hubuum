@@ -20,6 +20,8 @@ const UP: &str =
     include_str!("../migrations/2026-11-11-000001_archive_runtime_compatibility/up.sql");
 const DOWN: &str =
     include_str!("../migrations/2026-11-11-000001_archive_runtime_compatibility/down.sql");
+const LIFECYCLE_DOWN: &str =
+    include_str!("../migrations/2026-11-03-000005_history_lifecycle/down.sql");
 const ROLLBACK: &str = "Rollback-only archive compatibility fixture";
 // These cases alter one shared function in the runner's separate restore
 // database. Serialize only these migration fixtures; production concurrency
@@ -121,20 +123,28 @@ async fn compatibility_migration_only_changes_unversioned_legacy_guards(
     let mut observed = None;
     let result = with_transaction(&fixture.admin, async |connection| {
         become_owner(connection).await?;
-        if versioned {
-            connection.batch_execute("ALTER TABLE hubuum_control.runtime_registrations ADD COLUMN history_protocol integer NOT NULL DEFAULT 0").await?;
-        } else if upgrade {
-            connection.batch_execute(DOWN).await?;
+        if !versioned {
+            connection.batch_execute(LIFECYCLE_DOWN).await?;
+            if upgrade {
+                connection.batch_execute(DOWN).await?;
+            }
         }
         let before = definition(connection).await?;
-        connection.batch_execute(if upgrade { UP } else { DOWN }).await?;
+        connection
+            .batch_execute(if upgrade { UP } else { DOWN })
+            .await?;
         let after = definition(connection).await?;
         connection.batch_execute("SAVEPOINT entry_check").await?;
-        let allowed = entry(connection, &permit).await.map_err(|error| error.to_string());
-        connection.batch_execute("ROLLBACK TO SAVEPOINT entry_check").await?;
+        let allowed = entry(connection, &permit)
+            .await
+            .map_err(|error| error.to_string());
+        connection
+            .batch_execute("ROLLBACK TO SAVEPOINT entry_check")
+            .await?;
         observed = Some((before, after, allowed));
         Err::<(), _>(PostgresStorageError::invalid_input(ROLLBACK))
-    }).await;
+    })
+    .await;
     fixture
         .backend
         .unregister_runtime(registration)
@@ -159,6 +169,33 @@ async fn compatibility_migration_only_changes_unversioned_legacy_guards(
 }
 
 #[tokio::test]
+async fn lifecycle_rollback_preserves_archive_entry_at_the_synchronized_checkpoint() {
+    let _serial = MIGRATION_FIXTURE.lock().await;
+    let fixture = Fixture::new();
+    let registration = fixture.backend.register_runtime().await.unwrap();
+    let permit = fixture
+        .backend
+        .capture_application_execution(Some(registration.owner()))
+        .await
+        .unwrap();
+    let mut allowed = None;
+    let result = with_transaction(&fixture.admin, async |connection| {
+        become_owner(connection).await?;
+        connection.batch_execute(LIFECYCLE_DOWN).await?;
+        allowed = Some(entry(connection, &permit).await?);
+        Err::<(), _>(PostgresStorageError::invalid_input(ROLLBACK))
+    })
+    .await;
+    fixture
+        .backend
+        .unregister_runtime(registration)
+        .await
+        .unwrap();
+    assert_eq!(result.unwrap_err().to_string(), ROLLBACK);
+    assert_eq!(allowed, Some(true));
+}
+
+#[tokio::test]
 async fn unversioned_archive_guard_rejects_unknown_future_checkpoints() {
     let _serial = MIGRATION_FIXTURE.lock().await;
     let fixture = Fixture::new();
@@ -171,6 +208,7 @@ async fn unversioned_archive_guard_rejects_unknown_future_checkpoints() {
     let mut rejection = None;
     let result = with_transaction(&fixture.admin, async |connection| {
         become_owner(connection).await?;
+        connection.batch_execute(LIFECYCLE_DOWN).await?;
         sql_query("INSERT INTO public.__diesel_schema_migrations(version) VALUES($1)")
             .bind::<Text, _>("20990101000001")
             .execute(connection)

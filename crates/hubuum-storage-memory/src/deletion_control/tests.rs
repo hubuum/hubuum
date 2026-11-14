@@ -1,6 +1,6 @@
 use hubuum_storage_core::{
-    DeletionAuditObservation, DeletionAuditProtection, DeletionCheckpointIdentity,
-    DeletionCopyState, StorageRestoreArtifact,
+    DELETION_CONTROL_MAX_RUNTIMES, DeletionAuditObservation, DeletionAuditProtection,
+    DeletionCheckpointIdentity, DeletionCopyState, StorageRestoreArtifact,
 };
 use rstest::rstest;
 
@@ -9,7 +9,13 @@ use super::*;
 pub(super) async fn fixture(
     closed: bool,
 ) -> (MemoryStorage, HotObjectHistoryDeletion, MemoryHistoryEntry) {
-    let storage = MemoryStorage::new();
+    fixture_on(MemoryStorage::new(), closed).await
+}
+
+pub(crate) async fn fixture_on(
+    storage: MemoryStorage,
+    closed: bool,
+) -> (MemoryStorage, HotObjectHistoryDeletion, MemoryHistoryEntry) {
     let class = storage
         .create_class(
             StorageClassCreate::builder("history", CollectionId::new(1).unwrap(), "").build(),
@@ -479,6 +485,7 @@ async fn runtime_registration_capacity_never_evicts_an_owner() {
             .insert(
                 registration.id(),
                 MemoryRuntimeRegistration {
+                    history_protocol: HistoryRuntimeProtocol::Legacy,
                     ownership_token: registration.ownership_token(),
                     isolation: None,
                     drained: None,
@@ -515,6 +522,7 @@ async fn runtime_unregister_requires_ownership() {
         .insert(
             id,
             MemoryRuntimeRegistration {
+                history_protocol: HistoryRuntimeProtocol::Legacy,
                 ownership_token: Uuid::new_v4(),
                 isolation: None,
                 drained: None,

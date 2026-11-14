@@ -1,5 +1,6 @@
 use super::*;
 use crate::tests::asserts::expect_legacy_task;
+use chrono::Utc;
 use hubuum_storage_core::{
     StorageTask, StorageTaskCancellationChange, StorageTaskCancellationRequest,
     StorageTaskExecutionAdmission, TaskAdmissionPolicy, TaskByteLimit, TaskCapacityLimit,
@@ -9,6 +10,91 @@ use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId, TaskWorkerKinds
 use hubuum_task_core::{TaskCancellationReason, TaskExecutionLimit, TaskStopReason};
 use rstest::rstest;
 use tokio::time::{sleep, timeout};
+
+#[derive(Clone, Copy)]
+enum CleanupCase {
+    Original,
+    WrongClaim,
+    Callback,
+}
+
+#[rstest]
+#[case::original(CleanupCase::Original)]
+#[case::foreign_claim(CleanupCase::WrongClaim)]
+#[case::nested_callback(CleanupCase::Callback)]
+#[tokio::test]
+async fn stopped_task_cleanup_uses_only_the_exact_original_binding(
+    #[case] case: CleanupCase,
+    #[values(TaskStopReason::Cancelled, TaskStopReason::DeadlineExceeded)] reason: TaskStopReason,
+) {
+    use hubuum_storage_core::artifacts::{
+        ArtifactIdentity, ArtifactLimits, ArtifactReservation, Destination, DestinationId,
+        TaskArtifactCleanup,
+    };
+    use hubuum_task_core::TaskExecutionContext;
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let fixture = Fixture::new(environment, StorageTaskKind::Backup).await;
+        let lease = fixture.claim().await;
+        let store = fixture.backend.artifact_store();
+        let destination =
+            Destination::new(DestinationId::generate(), prefix("exact_cleanup")).unwrap();
+        store.register_destination(&destination).await.unwrap();
+        let identity = ArtifactIdentity::new(destination.id());
+        let limits = ArtifactLimits::builder()
+            .artifact_bytes(1024)
+            .blocks(1)
+            .build()
+            .unwrap();
+        store.stage(&identity, limits).await.unwrap();
+        store
+            .bind_task(
+                &identity,
+                &lease,
+                ArtifactReservation::new(*uuid::Uuid::new_v4().as_bytes(), 0, 1024 * 1024).unwrap(),
+                Utc::now() + chrono::Duration::hours(1),
+            )
+            .await
+            .unwrap();
+        let (execution, stop) = TaskExecutionContext::new(Duration::from_secs(60)).unwrap();
+        stop.request_stop(reason);
+        let scope = StorageExecutionScope::default().with_task_execution(Some(execution));
+        assert!(
+            fixture
+                .backend
+                .run_in_scope(scope.clone(), store.abort(&identity))
+                .await
+                .is_err()
+        );
+        let original = matches!(case, CleanupCase::Original);
+        let cleanup_lease = match case {
+            CleanupCase::WrongClaim => StorageTaskLease::new(
+                lease.task_id(),
+                StorageTaskClaimToken::new(uuid::Uuid::new_v4().to_string()),
+            ),
+            _ => lease,
+        };
+        let scope = if matches!(case, CleanupCase::Callback) {
+            scope.with_storage_callback()
+        } else {
+            scope
+        };
+        let result = fixture
+            .backend
+            .run_in_scope(
+                scope,
+                store.abort_task(&TaskArtifactCleanup::new(identity.clone(), cleanup_lease)),
+            )
+            .await;
+        // A rejected capability must leave the original attempt writable; a
+        // confirmed abort must fence even an otherwise admitted late writer.
+        let late = store.append(&identity, 0, b"late output").await;
+        store.abort(&identity).await.unwrap();
+        fixture.cleanup().await;
+        assert_eq!(result.is_ok(), original);
+        assert_eq!(late.is_err(), original);
+    }
+}
 
 #[tokio::test]
 async fn recovered_deletion_authority_prevents_memory_task_claims() {

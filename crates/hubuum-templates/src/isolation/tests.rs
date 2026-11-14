@@ -2,6 +2,7 @@
 //! input. PID files let assertions check OS reaping instead of trusting counters.
 #![cfg(unix)]
 
+use std::os::fd::AsRawFd;
 use std::path::Path;
 
 use rstest::rstest;
@@ -9,6 +10,40 @@ use tempfile::TempDir;
 use tokio::time::{sleep, timeout};
 
 use super::*;
+
+#[tokio::test]
+async fn cargo_worker_path_can_be_outside_test_executable_directory() {
+    let marker = Path::new("cargo-worker-child");
+    if marker.is_file() {
+        validate_syntax("{{ value }}", TemplateLimits::new(32, 1000))
+            .await
+            .unwrap();
+        shutdown_template_workers().await.unwrap();
+        return;
+    }
+
+    let directory = TempDir::new().unwrap();
+    std::fs::write(directory.path().join(marker), []).unwrap();
+    let worker = directory.path().join("worker in separate build directory");
+    std::fs::copy(worker_executable().unwrap(), &worker).unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "isolation::tests::cargo_worker_path_can_be_outside_test_executable_directory",
+        ])
+        .current_dir(directory.path())
+        .env("CARGO_BIN_EXE_hubuum-template-worker", worker)
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 #[tokio::test]
 async fn lost_supervisor_cannot_confirm_shutdown() {
@@ -22,6 +57,7 @@ async fn lost_supervisor_cannot_confirm_shutdown() {
         stopping,
         stopped,
         uncertain: Arc::new(AtomicBool::new(false)),
+        process_isolation: Mutex::new(None),
     };
 
     assert!(!runtime.is_idle());
@@ -30,7 +66,7 @@ async fn lost_supervisor_cannot_confirm_shutdown() {
 
 #[tokio::test]
 async fn unfinished_supervisor_job_prevents_idle_and_clean_shutdown() {
-    let runtime = WorkerRuntime::start().unwrap();
+    let runtime = WorkerRuntime::start(None).unwrap();
     let completion = WorkerCompletion {
         uncertain: Arc::clone(&runtime.uncertain),
         complete: false,
@@ -47,9 +83,22 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_isolation(false)
+    }
+    fn with_isolation(isolated: bool) -> Self {
+        let directory = TempDir::new().unwrap();
+        let pin = isolated.then(|| {
+            let file = isolation_file(&directory.path().join("isolation.lock"));
+            // SAFETY: the runtime owns this descriptor through shutdown.
+            assert_eq!(
+                unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) },
+                0
+            );
+            Arc::new(file)
+        });
         Self {
-            runtime: WorkerRuntime::start().unwrap(),
-            directory: TempDir::new().unwrap(),
+            runtime: WorkerRuntime::start(pin).unwrap(),
+            directory,
         }
     }
     fn submit(
@@ -58,24 +107,7 @@ impl Fixture {
         input: String,
         duration: Duration,
     ) -> oneshot::Receiver<Result<Vec<RenderedTemplate>, TemplateError>> {
-        let started = Instant::now();
-        let capacity = self.runtime.admit(started).unwrap();
-        let (response, receiver) = oneshot::channel();
-        let job = Job {
-            spool_pins: None,
-            encoded: input,
-            max_response_bytes: 1024,
-            expected_results: 1,
-            started,
-            deadline: started + duration,
-            response,
-            capacity,
-            span: tracing::Span::none(),
-            dispatcher: tracing::dispatcher::get_default(Clone::clone),
-            command,
-        };
-        assert!(self.runtime.jobs.try_send(job).is_ok());
-        receiver
+        submit_to(&self.runtime, command, input, duration)
     }
     fn sleeping(
         &self,
@@ -125,6 +157,33 @@ impl Drop for Fixture {
         let _ = self.runtime.stopping.send(true);
     }
 }
+fn submit_to(
+    runtime: &WorkerRuntime,
+    command: Command,
+    input: String,
+    duration: Duration,
+) -> oneshot::Receiver<Result<Vec<RenderedTemplate>, TemplateError>> {
+    let started = Instant::now();
+    let capacity = runtime.admit(started).unwrap();
+    let (response, receiver) = oneshot::channel();
+    let job = Job {
+        spool_pins: None,
+        process_isolation: runtime.process_isolation.lock().unwrap().clone(),
+        encoded: input,
+        max_response_bytes: 1024,
+        expected_results: 1,
+        started,
+        deadline: started + duration,
+        response,
+        capacity,
+        span: tracing::Span::none(),
+        dispatcher: tracing::dispatcher::get_default(Clone::clone),
+        command,
+    };
+    assert!(runtime.jobs.try_send(job).is_ok());
+    receiver
+}
+
 fn shell(script: &str) -> Command {
     let mut command = Command::new("/bin/sh");
     command.env_clear().arg("-c").arg(script);
@@ -144,6 +203,207 @@ fn assert_reaped(pid: i32) {
 }
 fn error(result: Result<Vec<RenderedTemplate>, TemplateError>) -> String {
     result.err().expect("operation must fail").to_string()
+}
+
+fn isolation_file(path: &Path) -> File {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .unwrap()
+}
+
+fn exclusive(file: &File) -> bool {
+    // SAFETY: the caller owns the live descriptor. Success is the actual kernel
+    // exclusion witness; elapsed time and missing PID/registration are not.
+    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
+}
+
+async fn wait_for_exclusion(file: &File) {
+    // Another concurrent fork may briefly copy the descriptor before CLOEXEC
+    // closes it. Completion requires actual kernel exclusion, never a delay.
+    timeout(Duration::from_secs(5), async {
+        while !exclusive(file) {
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("kernel exclusion must become available after all inherited descriptors close");
+}
+
+#[tokio::test]
+#[ignore = "subprocess fixture for process-isolation tests"]
+async fn process_isolation_fixture() {
+    let root = std::env::current_dir().unwrap();
+    let case = std::fs::read_to_string(root.join("isolation-case")).unwrap();
+    if case == "low" {
+        // SAFETY: this isolated fixture process owns its otherwise unused stdin.
+        assert_eq!(unsafe { libc::close(libc::STDIN_FILENO) }, 0);
+    }
+    let file = isolation_file(&root.join("isolation.lock"));
+    if case == "low" {
+        assert_eq!(file.as_raw_fd(), 0);
+    }
+    if case == "late" {
+        TemplateExecution::new("fixture", "ok", TemplateLimits::new(32, 1000))
+            .render(&serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(configure_template_process_isolation(file).is_err());
+    } else {
+        configure_template_process_isolation(file).unwrap();
+        match case.as_str() {
+            "same" | "low" => {
+                configure_template_process_isolation(isolation_file(&root.join("isolation.lock")))
+                    .unwrap()
+            }
+            "foreign" => assert!(
+                configure_template_process_isolation(isolation_file(&root.join("foreign.lock")))
+                    .is_err()
+            ),
+            "orphan" => {
+                let runtime = RUNTIME.get().unwrap().as_ref().unwrap();
+                let receiver = submit_to(
+                    runtime,
+                    shell("echo $$ > renderer.pid; exec sleep 60"),
+                    String::new(),
+                    Duration::from_secs(60),
+                );
+                std::future::pending::<()>().await;
+                drop(receiver);
+            }
+            _ => panic!("unknown subprocess case"),
+        }
+        TemplateExecution::new("fixture", "ok", TemplateLimits::new(32, 1000))
+            .render(&serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(!exclusive(&isolation_file(&root.join("isolation.lock"))));
+    }
+    shutdown_template_workers().await.unwrap();
+    wait_for_exclusion(&isolation_file(&root.join("isolation.lock"))).await;
+}
+
+#[rstest]
+#[case::same_file("same")]
+#[case::closed_stdin("low")]
+#[case::different_file("foreign")]
+#[case::after_execution("late")]
+#[tokio::test]
+async fn process_isolation_must_be_fixed_before_first_execution(#[case] case: &str) {
+    let directory = TempDir::new().unwrap();
+    std::fs::write(directory.path().join("isolation-case"), case).unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "isolation::tests::process_isolation_fixture",
+            "--ignored",
+        ])
+        .current_dir(directory.path())
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn orphan_renderer_retains_exclusion_after_parent_is_killed() {
+    let directory = TempDir::new().unwrap();
+    std::fs::write(directory.path().join("isolation-case"), "orphan").unwrap();
+    let mut parent = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "isolation::tests::process_isolation_fixture",
+            "--ignored",
+        ])
+        .current_dir(directory.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let pid = timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(pid) = std::fs::read_to_string(directory.path().join("renderer.pid"))
+                && let Ok(pid) = pid.trim().parse::<i32>()
+            {
+                break pid;
+            }
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    struct Renderer(i32);
+    impl Drop for Renderer {
+        fn drop(&mut self) {
+            // SAFETY: the fixed fixture above spawned this PID and keeps it
+            // asleep until the test kills it, including assertion failures.
+            unsafe {
+                libc::kill(self.0, libc::SIGKILL);
+            }
+        }
+    }
+    let renderer = Renderer(pid);
+    parent.kill().await.unwrap();
+    parent.wait().await.unwrap();
+    let file = isolation_file(&directory.path().join("isolation.lock"));
+    let retained = !exclusive(&file);
+    drop(renderer);
+    wait_for_exclusion(&file).await;
+    assert!(
+        retained,
+        "parent death must not retire its live renderer descendant"
+    );
+}
+
+#[tokio::test]
+async fn real_renderer_retains_inherited_lock_until_actual_exit() {
+    let directory = TempDir::new().unwrap();
+    let file = isolation_file(&directory.path().join("isolation.lock"));
+    // SAFETY: this descriptor remains live through fork/exec below.
+    assert_eq!(
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) },
+        0
+    );
+    let mut command = Command::new(worker_executable().unwrap());
+    inherit_process_isolation(&mut command, &file);
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let _input = child.stdin.take().unwrap();
+    drop(file);
+    let recovery = isolation_file(&directory.path().join("isolation.lock"));
+    let retained = !exclusive(&recovery);
+    child.kill().await.unwrap();
+    child.wait().await.unwrap();
+    assert!(retained);
+    wait_for_exclusion(&recovery).await;
+}
+
+#[tokio::test]
+async fn uncertain_shutdown_retains_the_process_isolation_pin() {
+    let fixture = Fixture::with_isolation(true);
+    drop(WorkerCompletion {
+        uncertain: fixture.runtime.uncertain.clone(),
+        complete: false,
+    });
+    assert!(fixture.runtime.shutdown().await.is_err());
+    assert!(!exclusive(&isolation_file(
+        &fixture.directory.path().join("isolation.lock")
+    )))
 }
 
 #[tokio::test]
@@ -184,8 +444,11 @@ async fn saturation_rejects_excess_work_without_blocking_the_caller() {
 #[case::waiting_for_output(0)]
 #[case::blocked_input_pipe(2 * 1024 * 1024)]
 #[tokio::test]
-async fn cancellation_reaps_the_child_before_releasing_capacity(#[case] input_bytes: usize) {
-    let fixture = Fixture::new();
+async fn cancellation_reaps_the_child_before_releasing_capacity(
+    #[case] input_bytes: usize,
+    #[values(false, true)] isolated: bool,
+) {
+    let fixture = Fixture::with_isolation(isolated);
     let result = fixture.sleeping(
         "cancelled",
         "x".repeat(input_bytes),
@@ -196,7 +459,18 @@ async fn cancellation_reaps_the_child_before_releasing_capacity(#[case] input_by
     drop(result);
     fixture.idle().await;
     assert_reaped(pid);
+    if isolated {
+        assert!(!exclusive(&isolation_file(
+            &fixture.directory.path().join("isolation.lock")
+        )));
+    }
     fixture.runtime.shutdown().await.unwrap();
+    if isolated {
+        wait_for_exclusion(&isolation_file(
+            &fixture.directory.path().join("isolation.lock"),
+        ))
+        .await;
+    }
 }
 
 #[tokio::test]

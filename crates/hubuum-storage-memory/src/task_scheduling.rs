@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Duration, Utc};
 use hubuum_domain::{PrincipalIdentity, TaskId};
 use hubuum_storage_core::{
-    StorageError, StorageTaskClaimRequest, StorageTaskKind, StorageTaskLease, StorageTaskStatus,
-    TaskSchedulingMode, TaskSchedulingSnapshot, TaskSharedCapacityReason, TaskWorkerId,
-    TaskWorkerKinds,
+    HistoryExpiryTaskCheckpoint, StorageError, StorageIdentityTarget, StorageTaskClaimRequest,
+    StorageTaskKind, StorageTaskLease, StorageTaskStatus, TaskSchedulingMode,
+    TaskSchedulingSnapshot, TaskSharedCapacityReason, TaskWorkerId, TaskWorkerKinds,
 };
 
 use super::MemoryState;
@@ -43,7 +43,9 @@ impl ScheduledTask {
 fn internal(kind: StorageTaskKind) -> bool {
     matches!(
         kind,
-        StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation
+        StorageTaskKind::Reindex
+            | StorageTaskKind::SchemaValidation
+            | StorageTaskKind::HistoryExpiry
     )
 }
 
@@ -218,6 +220,15 @@ impl MemoryState {
         for task in self.tasks.values().filter(|task| {
             task.status == StorageTaskStatus::Queued
                 && request.kinds().contains(task.kind)
+                && (task.kind != StorageTaskKind::HistoryExpiry
+                    || self
+                        .logical_identities
+                        .record(StorageIdentityTarget::Task(task.id))
+                        .is_ok_and(|identity| {
+                            task.projection().is_ok_and(|stored| {
+                                HistoryExpiryTaskCheckpoint::from_task(&stored, &identity).is_ok()
+                            })
+                        }))
                 && self.task_admission_claimable(task)
                 && self.task_details_visible(task.id)
         }) {

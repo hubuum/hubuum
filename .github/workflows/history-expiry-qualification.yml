@@ -1,0 +1,329 @@
+name: History expiry qualification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      binary_run_id:
+        description: Successful build run to reuse only when Rust inputs and build recipe match
+        required: false
+        type: string
+      measurement_run_id:
+        description: Completed shape measurements to aggregate after verifying source and job provenance
+        required: false
+        type: string
+
+concurrency:
+  group: history-expiry-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: >-
+      inputs.measurement_run_id == '' && inputs.binary_run_id == '' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (contains(github.event.pull_request.labels.*.name, 'ci:validate') &&
+       ((github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+        github.event.label.name == 'ci:validate')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable 2026-10-22
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: history-expiry-qualification
+          cache-workspace-crates: true
+      - name: Build the real worker integration driver and administrator
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libssl-dev libpq-dev
+          mkdir -p target
+          cargo test --locked --release --test restore_roundtrip --no-run \
+            --features embedded-migrations,integration-test-support,tls-rustls,tls-openssl \
+            --message-format=json > target/history-expiry-build.jsonl
+          cargo test --locked --release --lib --no-run \
+            --features embedded-migrations,integration-test-support,tls-rustls,tls-openssl \
+            --message-format=json > target/history-checkpoint-build.jsonl
+          python3 - <<'PY'
+          import json, pathlib, shutil
+          for manifest, target, destination in [
+              ('history-expiry-build.jsonl', 'restore_roundtrip', 'history-expiry-driver'),
+              ('history-checkpoint-build.jsonl', 'hubuum', 'history-checkpoint-driver'),
+          ]:
+              records = [json.loads(line) for line in pathlib.Path('target', manifest).read_text().splitlines()]
+              binaries = [row['executable'] for row in records if row.get('reason') == 'compiler-artifact'
+                          and row.get('executable') and row['target']['name'] == target]
+              assert len(binaries) == 1
+              shutil.copy2(binaries[0], pathlib.Path('target/release', destination))
+          PY
+          cargo build --locked --release --bin hubuum-admin \
+            --features embedded-migrations,integration-test-support,tls-rustls,tls-openssl
+          {
+            git rev-parse HEAD
+            rustc -Vv
+            cargo -V
+            echo 'release opt-level=3; LTO=false; embedded-migrations,integration-test-support,tls-rustls,tls-openssl'
+            sha256sum Cargo.lock target/release/history-expiry-driver target/release/history-checkpoint-driver target/release/hubuum-admin
+          } > target/history-expiry-build.txt
+          tar -C target/release -czf target/history-expiry-binaries.tar.gz history-expiry-driver history-checkpoint-driver hubuum-admin
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: history-expiry-binaries
+          path: |
+            target/history-expiry-binaries.tar.gz
+            target/history-expiry-build.txt
+          retention-days: 7
+
+  measure:
+    needs: [build, reuse]
+    if: ${{ !cancelled() && inputs.measurement_run_id == '' && (needs.build.result == 'success' || needs.reuse.result == 'success') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [local, shared]
+        shape: [rows, bytes, large_row, oversized, authority]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: history-expiry-binaries
+          path: target
+      - name: Restore binaries and record runner resources
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes postgresql-client
+          mkdir -p target/release
+          tar -xzf target/history-expiry-binaries.tar.gz -C target/release
+          {
+            python3 --version
+            lscpu
+            free -b
+            df -h .
+            docker version
+          } > target/history-expiry-runner.txt
+      - name: Measure warm-up and five fresh repeats for every shape
+        env:
+          HISTORY_PROFILE: ${{ matrix.profile }}
+          HISTORY_SHAPE: ${{ matrix.shape }}
+        run: >-
+          sudo "$(command -v python3)" -I -S tests/python/run.py integration history-expiry
+          --profile "$HISTORY_PROFILE" --shape "$HISTORY_SHAPE" --binary target/release/history-expiry-driver
+          --publisher-binary target/release/history-checkpoint-driver
+          --admin-binary target/release/hubuum-admin --output target/history-expiry-report
+      - name: Package readable measurements without private runtime material
+        if: always()
+        run: |
+          sudo "$(command -v python3)" -I -S - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, str(Path('tests/python').resolve()))
+          from integration.history_expiry import package_measurements
+          package_measurements(Path('target/history-expiry-report'), Path('target/history-expiry-evidence.tar.gz'))
+          PY
+      - name: Retain raw measurements including failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: history-expiry-${{ matrix.profile }}-${{ matrix.shape }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: target/history-expiry-evidence.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    needs: measure
+    if: ${{ !cancelled() && (needs.measure.result == 'success' || inputs.measurement_run_id != '') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [local, shared]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - name: Verify measurement source and all ten completed shape jobs
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MEASUREMENT_RUN_ID: ${{ inputs.measurement_run_id || github.run_id }}
+        run: |
+          python3 -I -S - <<'PY'
+          import json, os, pathlib, re, subprocess, sys
+          sys.path.insert(0, str(pathlib.Path('tests/python').resolve()))
+          from integration.history_expiry import SHAPES, verify_binary_reuse
+          repo = os.environ['GITHUB_REPOSITORY']
+          run_id = os.environ['MEASUREMENT_RUN_ID']
+          if not re.fullmatch(r'[0-9]+', run_id):
+              raise ValueError('Measurement run must be a numeric run ID')
+          def gh(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path], text=True))
+          current = gh(f'repos/{repo}/actions/runs/{os.environ["GITHUB_RUN_ID"]}')
+          source = gh(f'repos/{repo}/actions/runs/{run_id}')
+          if (source['workflow_id'] != current['workflow_id'] or source['head_branch'] != current['head_branch']
+              or source['repository']['full_name'] != repo or source['head_repository']['full_name'] != repo):
+              raise ValueError('Measurements must come from the same repository, branch and workflow')
+          jobs = gh(f'repos/{repo}/actions/runs/{run_id}/jobs?per_page=100')['jobs']
+          expected = {f'measure ({profile}, {shape})' for profile in ('local', 'shared') for shape in SHAPES}
+          measured = [job for job in jobs if job['name'].startswith('measure (')]
+          if len(measured) != len(expected) or {job['name'] for job in measured} != expected or any(job['conclusion'] != 'success' for job in measured):
+              raise ValueError('Every local/shared shape job must have succeeded')
+          sha = source['head_sha']
+          if not re.fullmatch(r'[0-9a-f]{40}', sha):
+              raise ValueError('Invalid measurement source commit')
+          subprocess.run(['gh', 'auth', 'setup-git', '--hostname', 'github.com'], check=True)
+          subprocess.run(['git', 'fetch', '--depth=1', 'origin', sha], check=True)
+          changed = subprocess.check_output(['git', 'diff', '--name-only', sha, 'HEAD'], text=True).splitlines()
+          workflow = '.github/workflows/history-expiry-qualification.yml'
+          allowed = {workflow, 'docs/storage_adapter_sdk.md', 'tests/python/unit/deployment/test_history_expiry.py'}
+          if set(changed) - allowed:
+              raise ValueError('Measurement reuse requires unchanged driver, fixture and production inputs')
+          original = subprocess.check_output(['git', 'show', f'{sha}:{workflow}'], text=True)
+          verify_binary_reuse(changed, original, pathlib.Path(workflow).read_text())
+          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          if head != current['head_sha']:
+              raise ValueError('Aggregation checkout differs from its workflow commit')
+          pathlib.Path('target').mkdir(exist_ok=True)
+          pathlib.Path('target/aggregation-provenance.json').write_text(json.dumps({
+              'measurement_run_id': int(run_id), 'measurement_commit': sha,
+              'aggregation_commit': head, 'changed_non_rust_paths': changed,
+              'shape_jobs': {job['name']: job['id'] for job in measured}}, indent=2) + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'source_sha={sha}\n')
+          PY
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: history-expiry-${{ matrix.profile }}-*-${{ steps.evidence.outputs.source_sha }}
+          run-id: ${{ inputs.measurement_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+          path: target/history-expiry-shards
+      - name: Verify complete shape coverage and recompute raw evidence
+        run: |
+          python3 -I -S - <<'PY'
+          from pathlib import Path
+          import shutil, sys, tarfile
+          sys.path.insert(0, str(Path('tests/python').resolve()))
+          from integration.history_expiry import aggregate_measurements, package_measurements
+          roots = []
+          for artifact in sorted(Path('target/history-expiry-shards').iterdir()):
+              with tarfile.open(artifact / 'history-expiry-evidence.tar.gz') as archive:
+                  for member in archive.getmembers():
+                      if not member.isfile() or member.name.startswith('/') or '..' in Path(member.name).parts:
+                          raise ValueError('Expected packaged regular measurement files')
+                  archive.extractall(artifact, filter='data')
+              roots.append(artifact / 'history-expiry-report')
+          output = Path('target/history-expiry-report')
+          summary = aggregate_measurements(roots, output)
+          if not summary['h1_h4_worker_qualified']:
+              raise ValueError('Complete profile did not qualify')
+          shutil.copyfile('target/aggregation-provenance.json', output / 'aggregation-provenance.json')
+          package_measurements(output, Path('target/history-expiry-evidence.tar.gz'))
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: history-expiry-${{ matrix.profile }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: target/history-expiry-evidence.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  reuse:
+    if: github.event_name == 'workflow_dispatch' && inputs.measurement_run_id == '' && inputs.binary_run_id != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify original build provenance and unchanged Rust inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BINARY_RUN_ID: ${{ inputs.binary_run_id }}
+        run: |
+          python3 -I -S - <<'PY'
+          import json, os, pathlib, re, subprocess, sys
+          sys.path.insert(0, str(pathlib.Path('tests/python').resolve()))
+          from integration.history_expiry import verify_binary_reuse
+          repo = os.environ['GITHUB_REPOSITORY']
+          run_id = os.environ['BINARY_RUN_ID']
+          if not re.fullmatch(r'[0-9]+', run_id):
+              raise ValueError('Binary source run must be a numeric run ID')
+          def gh(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path], text=True))
+          current = gh(f'repos/{repo}/actions/runs/{os.environ["GITHUB_RUN_ID"]}')
+          source = gh(f'repos/{repo}/actions/runs/{run_id}')
+          if (source['workflow_id'] != current['workflow_id'] or source['head_branch'] != current['head_branch']
+              or source['repository']['full_name'] != repo or source['head_repository']['full_name'] != repo):
+              raise ValueError('Binary source must be the same repository, branch and workflow')
+          jobs = gh(f'repos/{repo}/actions/runs/{run_id}/jobs?per_page=100')['jobs']
+          builds = [job for job in jobs if job['name'] == 'build']
+          if len(builds) != 1 or builds[0]['conclusion'] != 'success':
+              raise ValueError('The original binary build must have succeeded')
+          source_sha = source['head_sha']
+          if not re.fullmatch(r'[0-9a-f]{40}', source_sha):
+              raise ValueError('Invalid original source commit')
+          subprocess.run(['gh', 'auth', 'setup-git', '--hostname', 'github.com'], check=True)
+          subprocess.run(['git', 'fetch', '--depth=1', 'origin', source_sha], check=True)
+          changed = subprocess.check_output(['git', 'diff', '--name-only', source_sha, 'HEAD'], text=True).splitlines()
+          path = '.github/workflows/history-expiry-qualification.yml'
+          original = subprocess.check_output(['git', 'show', f'{source_sha}:{path}'], text=True)
+          verify_binary_reuse(changed, original, pathlib.Path(path).read_text())
+          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          if head != current['head_sha']:
+              raise ValueError('Driver checkout differs from its workflow commit')
+          pathlib.Path('target').mkdir(exist_ok=True)
+          pathlib.Path('target/history-expiry-reuse.json').write_text(json.dumps({
+              'binary_run_id': int(run_id), 'binary_commit': source_sha,
+              'driver_commit': head, 'changed_non_rust_paths': changed}, indent=2) + '\n')
+          PY
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: history-expiry-binaries
+          run-id: ${{ inputs.binary_run_id }}
+          github-token: ${{ github.token }}
+          path: target
+      - name: Check binary manifest source and lockfile digest
+        run: |
+          python3 -I -S - <<'PY'
+          import hashlib, json, pathlib
+          source = json.loads(pathlib.Path('target/history-expiry-reuse.json').read_text())
+          lines = pathlib.Path('target/history-expiry-build.txt').read_text().splitlines()
+          if lines[0] != source['binary_commit']:
+              raise ValueError('Binary manifest has the wrong source commit')
+          digest = hashlib.sha256(pathlib.Path('Cargo.lock').read_bytes()).hexdigest()
+          if digest + '  Cargo.lock' not in lines:
+              raise ValueError('Binary manifest has a different Cargo.lock')
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: history-expiry-binaries
+          path: |
+            target/history-expiry-binaries.tar.gz
+            target/history-expiry-build.txt
+            target/history-expiry-reuse.json
+          retention-days: 7

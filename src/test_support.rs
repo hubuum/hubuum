@@ -31,6 +31,67 @@ use hubuum_storage_postgres::{PostgresPool, PostgresStorage};
 pub use crate::logger::test_support::JsonLogWriter;
 pub use crate::middlewares::rate_limit::LOGIN_RATE_LIMIT_TEST_LOCK;
 
+/// Bind a qualification-only online runtime to the ordinary local authorization
+/// backend and independently protected history repository.
+pub fn history_expiry_qualification_context(
+    storage: StorageHandle,
+    owner: hubuum_storage_core::RuntimeOwner,
+    options: crate::config::ControlRecoveryOptions,
+) -> (StorageHandle, crate::permissions::AppContext) {
+    let storage = storage.with_runtime_owner(owner);
+    let permissions = std::sync::Arc::new(crate::permissions::LocalPermissionBackend::new(
+        storage.clone(),
+        "admin".into(),
+    ));
+    (
+        storage.clone(),
+        crate::permissions::AppContext::new(storage, permissions).with_history_retention(options),
+    )
+}
+
+/// Run one explicitly opted-in expiry iteration through the real worker.
+/// The production STANDARD kind set and runtime protocol remain unchanged.
+pub async fn qualify_history_expiry_iteration(
+    context: &crate::permissions::AppContext,
+) -> Result<bool, ApiError> {
+    crate::tasks::qualify_history_expiry_iteration(context).await
+}
+
+/// Compose a separate qualification process without modifying its database.
+/// Pool limits are supplied explicitly by the resource fixture.
+pub fn history_expiry_qualification_storage(pool: PostgresPool) -> StorageHandle {
+    StorageHandle::postgres(pool)
+}
+
+/// Include the ordinary HTTP router, middleware and driver in measured workers.
+/// The test owns the returned server and must drain it before unregistering.
+pub async fn start_history_expiry_qualification_api(
+    context: &crate::permissions::AppContext,
+) -> std::io::Result<(actix_web::dev::Server, std::net::SocketAddr)> {
+    let mut config = crate::config::get_config()
+        .map_err(|error| std::io::Error::other(error.to_string()))?
+        .clone();
+    config.bind_ip = "127.0.0.1".into();
+    config.port = 0;
+    config.runtime_role = crate::config::RuntimeRole::Api;
+    config.actix_workers = 2;
+    config.tls_cert_path = None;
+    config.tls_key_path = None;
+    let backup = crate::backups::BackupSettings::new(
+        config.backup_output_retention_hours,
+        config
+            .backup_budget()
+            .map_err(|error| std::io::Error::other(error.to_string()))?,
+    )
+    .map_err(std::io::Error::other)?;
+    let restore = crate::restores::RestoreSettings::new(
+        config.restore_stage_retention_minutes,
+        config.restore_max_upload_bytes,
+    )
+    .map_err(std::io::Error::other)?;
+    crate::application::start_http_role(&config, context, &backup, &restore, None).await
+}
+
 static TEST_TRACING_BASELINE: OnceLock<()> = OnceLock::new();
 
 fn ensure_test_tracing_baseline() {
@@ -448,6 +509,9 @@ pub fn persisted_test_task_request(
     submitted_by: i32,
 ) -> Result<hubuum_storage_postgres::test_support::TestTaskCreate, ApiError> {
     let kind = match kind {
+        crate::models::TaskKind::HistoryExpiry => {
+            hubuum_storage_core::StorageTaskKind::HistoryExpiry
+        }
         crate::models::TaskKind::Import => hubuum_storage_core::StorageTaskKind::Import,
         crate::models::TaskKind::Export => hubuum_storage_core::StorageTaskKind::Export,
         crate::models::TaskKind::Backup => hubuum_storage_core::StorageTaskKind::Backup,
@@ -600,7 +664,10 @@ fn restore_contract_storage(
 }
 
 mod recovery;
-pub use recovery::{RestoreContractFixture, capture_backup_document};
+pub use recovery::{
+    RestoreContractFixture, capture_backup_document, create_history_remapping_object,
+    history_application_context, history_population_as_of, prepare_history_read_fixture,
+};
 
 /// Serialize all consumers of the runner-owned destructive restore database.
 /// Cargo runs test binaries sequentially; callers within each binary share this
@@ -617,4 +684,17 @@ pub fn restore_test_migration_database_url() -> String {
 pub fn restore_test_runtime_database_url() -> String {
     std::env::var("HUBUUM_RESTORE_TEST_DATABASE_URL")
         .expect("The test runner must provide isolated runtime restore authority")
+}
+
+/// Separate archive fixture authority; retained publication owners must not
+/// contaminate ordinary backup inputs or destructive restore certification.
+pub fn archive_test_migration_database_url() -> String {
+    std::env::var("HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL")
+        .expect("The test runner must provide isolated archive fixture authority")
+}
+
+/// Runtime role for the isolated archive fixture database.
+pub fn archive_test_runtime_database_url() -> String {
+    std::env::var("HUBUUM_ARCHIVE_TEST_DATABASE_URL")
+        .expect("The test runner must provide isolated archive fixture storage")
 }
