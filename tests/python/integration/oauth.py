@@ -178,7 +178,7 @@ class Fixture(BaseFixture):
         links = Forms(page).links
         assert len(links) == 1, "Provider redirect missing"
         url, status, page = browser.follow(links[0])
-        assert status == 200 and "Approve this request?" in page, "OAuth callback failed"
+        assert status == 200 and "Approve this request?" in page, f"OAuth callback failed (status {status})"
         browser.submit(url, page, {"decision": "approve"})
 
     def qualify(self):

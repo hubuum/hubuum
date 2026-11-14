@@ -400,6 +400,54 @@ impl OAuthProviderDefinition {
     }
 }
 
+/// Persisted browser identity namespace, preserving either the exact OIDC
+/// issuer or the canonical OAuth endpoint/pointer/subject-type tuple.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct BrowserIdentityNamespace(String);
+
+impl BrowserIdentityNamespace {
+    pub fn from_identity(identity: &crate::ExternalIdentity) -> Self {
+        Self(identity.namespace().to_owned())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for BrowserIdentityNamespace {
+    type Error = AuthenticationConfigurationError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.len() > 8 * 1024 {
+            return Err(AuthenticationConfigurationError(
+                "Identity namespace exceeds its limit",
+            ));
+        }
+        if AuthenticationEndpoint::try_from(value.clone()).is_ok() {
+            return Ok(Self(value));
+        }
+        let components: (AuthenticationEndpoint, String, OAuthSubjectType) =
+            serde_json::from_str(&value).map_err(|_| {
+                AuthenticationConfigurationError("Invalid browser identity namespace")
+            })?;
+        validate_pointer(&components.1)?;
+        if serde_json::to_string(&components).expect("namespace tuple is serializable") != value {
+            return Err(AuthenticationConfigurationError(
+                "OAuth identity namespace must be canonical",
+            ));
+        }
+        Ok(Self(value))
+    }
+}
+
+impl From<BrowserIdentityNamespace> for String {
+    fn from(value: BrowserIdentityNamespace) -> Self {
+        value.0
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "AuthorizationConnectionInput")]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
