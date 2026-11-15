@@ -40,6 +40,24 @@ impl BrowserAdapter {
             Self::OAuth(_) => Err(ProtocolError::Configuration),
         }
     }
+    pub(super) fn accept(
+        &self,
+        pending: PendingLogin,
+        state: &str,
+        issuer: Option<&str>,
+        code: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<AcceptedCallback, ProtocolError> {
+        match (self, pending) {
+            (Self::Oidc(_), PendingLogin::Oidc(pending)) => pending
+                .accept(state, issuer, code, error)
+                .map(AcceptedCallback::Oidc),
+            (Self::OAuth(adapter), PendingLogin::OAuth(pending)) => adapter
+                .accept(pending, state, issuer, code, error)
+                .map(AcceptedCallback::OAuth),
+            _ => Err(ProtocolError::Denied),
+        }
+    }
     pub(super) async fn exchange(
         &self,
         accepted: AcceptedCallback,
@@ -113,22 +131,6 @@ impl PendingLogin {
         serde_json::from_slice(secret.expose())
             .or_else(|_| hubuum_auth_oidc::PendingLogin::restore(secret).map(Self::Oidc))
             .map_err(|_| ProtocolError::Denied)
-    }
-    pub(super) fn accept(
-        self,
-        state: &str,
-        issuer: Option<&str>,
-        code: Option<&str>,
-        error: Option<&str>,
-    ) -> Result<AcceptedCallback, ProtocolError> {
-        match self {
-            Self::Oidc(pending) => pending
-                .accept(state, issuer, code, error)
-                .map(AcceptedCallback::Oidc),
-            Self::OAuth(pending) => pending
-                .accept(state, issuer, code, error)
-                .map(AcceptedCallback::OAuth),
-        }
     }
 }
 pub(super) enum AcceptedCallback {
@@ -212,18 +214,17 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let pending = PendingLogin::restore(&secret).unwrap();
-        assert!(matches!(
-            pending
-                .accept(
-                    "original-state",
-                    Some("https://identity.example/realm"),
-                    Some("code"),
-                    None
-                )
-                .unwrap(),
-            AcceptedCallback::Oidc(_)
-        ));
+        let PendingLogin::Oidc(pending) = PendingLogin::restore(&secret).unwrap() else {
+            panic!("Expected the accepted OIDC pending format");
+        };
+        pending
+            .accept(
+                "original-state",
+                Some("https://identity.example/realm"),
+                Some("code"),
+                None,
+            )
+            .unwrap();
     }
 
     #[test]

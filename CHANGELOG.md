@@ -123,6 +123,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- **Breaking (GitHub callback validation):** GitHub OAuth callbacks now require
+  the pinned RFC 9207 issuer `https://github.com/login/oauth`, allowing current
+  GitHub sign-in responses while rejecting issuer substitution and omission
+  before code exchange. Upgrade the API/worker replicas and begin fresh sign-ins
+  for failed or expired interactions. No database or encrypted-state migration
+  is required.
+
 - Authentication interactions consistently use application UTC for lifecycle
   checks and cleanup, preserve ordered actor/target locks for approvals, and
   report removed BFF registrations as changed configuration. Normalized return

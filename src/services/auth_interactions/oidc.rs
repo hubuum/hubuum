@@ -301,8 +301,9 @@ pub async fn callback(
             .await?,
         )
         .map_err(error)?;
-        let accepted = pending
-            .accept(input.state, input.issuer, input.code, input.error)
+        let adapter = adapter(context, &selected).await?;
+        let accepted = adapter
+            .accept(pending, input.state, input.issuer, input.code, input.error)
             .map_err(error)?;
         let scope =
             IdentityScopeName::new(selected.name()).map_err(|_| InteractionError::Invalid)?;
@@ -324,8 +325,7 @@ pub async fn callback(
             None => return Err(InteractionError::Unsupported.into()),
         }
         .map_err(|_| InteractionError::Invalid)?;
-        let authentication = adapter(context, &selected)
-            .await?
+        let authentication = adapter
             .exchange(accepted, &provider_context)
             .await
             .map_err(error)?;

@@ -66,6 +66,15 @@ headers cannot be overridden in the built-in profile. GitHub API requests use
 version `2026-03-10`. Enterprise deployments need separate explicit qualification;
 changing these pinned endpoints is rejected.
 
+GitHub callbacks must include the exact authorization-server issuer
+`iss=https://github.com/login/oauth`. Missing or different issuers are rejected
+before code exchange, including alternate spellings, trailing slashes, queries
+and fragments. The configured profile and encrypted pending state also bind the
+callback and client definition. Generic JSON profiles have no issuer contract
+and reject an `iss` parameter; providers requiring issuer support need an explicit
+profile. See [GitHub's issuer](https://docs.github.com/en/apps/github-authentication-discovery-endpoints#issuer)
+and [RFC 9207](https://www.rfc-editor.org/rfc/rfc9207.html#section-2.4).
+
 The local administrator starts a `provider_verification` interaction against the
 candidate and completes a real GitHub sign-in. The preview does not provision a
 user or issue a session. Activate only after that preview succeeds, using its
@@ -156,9 +165,11 @@ credentials to CI or commit them. Reports retain image/source identities and
 sanitized case results without tokens, callback URLs or user profile data.
 
 Synthetic success does not establish GitHub compatibility. Record the authorized
-real-login report and immutable source/image evidence in issue #578 before
-claiming full compatibility. The maintainer has explicitly deferred the real-login
-gate for this implementation; GitHub fixture coverage is not a live qualification. Cross-repository acceptance and promotion to main remain separate.
+real-login report and immutable source/image evidence in issue #581, with a link
+back to implementation issue #578, before claiming full compatibility. The
+maintainer transferred this live-provider gate to ecosystem qualification;
+GitHub fixture coverage is not a live qualification. Cross-repository acceptance
+and promotion to main remain separate.
 
 Protocol references: [GitHub OAuth authorization and PKCE](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps),
 [authenticated user](https://docs.github.com/en/rest/users/users#get-the-authenticated-user),

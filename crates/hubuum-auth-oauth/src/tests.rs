@@ -68,8 +68,14 @@ async fn code_exchange_and_authenticated_profile_are_bound(#[case] github: bool)
     let challenge = parameters["code_challenge"].clone();
     let state = pending.state().to_owned();
     let pending = PendingLogin::restore(&pending.protectable().unwrap()).unwrap();
-    let accepted = pending
-        .accept(&state, None, Some("fixture-code"), None)
+    let accepted = adapter
+        .accept(
+            pending,
+            &state,
+            github.then_some(GITHUB_ISSUER),
+            Some("fixture-code"),
+            None,
+        )
         .unwrap();
     let calls = std::cell::Cell::new(0);
     let client = |request: oauth2::HttpRequest| {
@@ -186,10 +192,70 @@ fn username_changes_preserve_identity() {
 }
 
 #[rstest]
-#[case::wrong_state("wrong", None, Some("code"), None)]
+#[case::github_pinned(true, Some("https://github.com/login/oauth"), true)]
+#[case::github_missing(true, None, false)]
+#[case::github_wrong_host(true, Some("https://attacker.example/login/oauth"), false)]
+#[case::github_wrong_path(true, Some("https://github.com"), false)]
+#[case::github_trailing_slash(true, Some("https://github.com/login/oauth/"), false)]
+#[case::github_query(true, Some("https://github.com/login/oauth?issuer=github"), false)]
+#[case::github_fragment(true, Some("https://github.com/login/oauth#issuer"), false)]
+#[case::github_http(true, Some("http://github.com/login/oauth"), false)]
+#[case::generic_without_issuer(false, None, true)]
+#[case::generic_github_issuer(false, Some("https://github.com/login/oauth"), false)]
+#[case::generic_own_issuer(false, Some("https://other.example"), false)]
+fn callback_issuer_matches_profile(
+    #[case] github: bool,
+    #[case] issuer: Option<&str>,
+    #[case] accepted: bool,
+) {
+    let (adapter, context) = fixture(github);
+    let (_, pending) = adapter.begin(context.binding().id()).unwrap();
+    let state = pending.state().to_owned();
+    let pending = PendingLogin::restore(&pending.protectable().unwrap()).unwrap();
+    assert_eq!(
+        adapter
+            .accept(pending, &state, issuer, Some("code"), None)
+            .is_ok(),
+        accepted
+    );
+}
+
+#[rstest]
+#[case::different_profile(false)]
+#[case::different_callback(true)]
+fn callback_must_match_the_configured_adapter(#[case] same_profile: bool) {
+    let (original, context) = fixture(true);
+    let (_, pending) = original.begin(context.binding().id()).unwrap();
+    let state = pending.state().to_owned();
+    let receiver = OAuthAdapter::new(
+        definition(same_profile),
+        SecretValue::new(b"secret".to_vec()).unwrap(),
+        if same_profile {
+            "https://hubuum.example/callback/another-provider"
+        } else {
+            "https://hubuum.example/callback/provider"
+        },
+        false,
+    )
+    .unwrap();
+    assert!(
+        receiver
+            .accept(
+                pending,
+                &state,
+                same_profile.then_some(GITHUB_ISSUER),
+                Some("code"),
+                None,
+            )
+            .is_err()
+    );
+}
+
+#[rstest]
+#[case::wrong_state("wrong", Some(GITHUB_ISSUER), Some("code"), None)]
 #[case::issuer("actual", Some("https://attacker.example"), Some("code"), None)]
-#[case::missing_code("actual", None, None, None)]
-#[case::error("actual", None, Some("code"), Some("access_denied"))]
+#[case::missing_code("actual", Some(GITHUB_ISSUER), None, None)]
+#[case::error("actual", Some(GITHUB_ISSUER), Some("code"), Some("access_denied"))]
 fn callback_requires_correlated_success(
     #[case] state: &str,
     #[case] issuer: Option<&str>,
@@ -200,8 +266,9 @@ fn callback_requires_correlated_success(
     let (_, pending) = adapter.begin(context.binding().id()).unwrap();
     let actual = pending.state().to_owned();
     assert!(
-        pending
+        adapter
             .accept(
+                pending,
                 if state == "actual" { &actual } else { state },
                 issuer,
                 code,
@@ -367,7 +434,9 @@ async fn exchange_rejects_provider_failures(
     let (adapter, context) = fixture(true);
     let (_, pending) = adapter.begin(context.binding().id()).unwrap();
     let state = pending.state().to_owned();
-    let accepted = pending.accept(&state, None, Some("code"), None).unwrap();
+    let accepted = adapter
+        .accept(pending, &state, Some(GITHUB_ISSUER), Some("code"), None)
+        .unwrap();
     let client = |_: oauth2::HttpRequest| {
         std::future::ready(Ok(http::Response::builder()
             .status(status)
