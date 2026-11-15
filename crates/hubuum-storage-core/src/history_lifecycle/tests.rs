@@ -4,6 +4,23 @@ use hubuum_domain::VersionIdentity;
 use rstest::rstest;
 use uuid::Uuid;
 
+#[rstest]
+#[case(r#"{}"#, r#"{}"#)]
+#[case(
+    r#"{"items":[1,2],"nested":{"ok":true}}"#,
+    r#"{"items": [1, 2], "nested": {"ok": true}}"#
+)]
+#[case(
+    r#"{"name":"é, : \" \\ \n","empty":[]}"#,
+    r#"{"name": "é, : \" \\ \n", "empty": []}"#
+)]
+fn retained_budgets_include_only_structural_json_spacing(
+    #[case] compact: &str,
+    #[case] retained: &str,
+) {
+    assert_eq!(retained_json_len(compact.as_bytes()), retained.len());
+}
+
 fn at(seconds: i64) -> DateTime<Utc> {
     DateTime::from_timestamp(seconds, 0).unwrap()
 }

@@ -45,6 +45,28 @@ fn invalid(message: &str) -> StorageValidationError {
     StorageValidationError::invalid(message)
 }
 
+/// Retained lifecycle budgets include a space after each JSON separator, as in
+/// PostgreSQL's jsonb text representation. The wire encoding stays compact.
+/// Input must be compact JSON emitted by serde_json; punctuation inside strings
+/// (including escaped quotes and backslashes) does not add storage overhead.
+fn retained_json_len(bytes: &[u8]) -> usize {
+    let mut size = bytes.len();
+    let mut quoted = false;
+    let mut escaped = false;
+    for &byte in bytes {
+        if escaped {
+            escaped = false;
+        } else if quoted && byte == b'\\' {
+            escaped = true;
+        } else if byte == b'"' {
+            quoted = !quoted;
+        } else if !quoted && matches!(byte, b',' | b':') {
+            size += 1;
+        }
+    }
+    size
+}
+
 macro_rules! decimal {
     ($name:ident, $max:expr) => {
         #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]

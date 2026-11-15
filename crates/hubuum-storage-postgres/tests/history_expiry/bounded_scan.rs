@@ -908,6 +908,73 @@ async fn cumulative_native_byte_limit_defers_individually_bounded_rows() {
     }
 }
 
+#[tokio::test]
+async fn native_json_manifest_limit_defers_without_losing_members() {
+    let _guard = CONTROL_LOCK.lock().await;
+    let family = StorageIdentityHistoryKind::Object;
+    let (fixture, _, collection) = expiry_fixture(family, 32).await;
+    with_transaction(&fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+        // Names exercise UTF-8, escaped quotes/backslashes and punctuation that
+        // must not be counted as JSON separators. Real triggers close each row.
+        let prefix = "expiry_\",:é\\_".repeat(2);
+        sql_query("INSERT INTO public.hubuumobject(name,description,collection_id,hubuum_class_id) SELECT $2||lpad(i::text,4,'0'),repeat('x',32),$1,c.id FROM generate_series(1,1100) i CROSS JOIN public.hubuumclass c WHERE c.collection_id=$1")
+            .bind::<Integer, _>(collection)
+            .bind::<Text, _>(&prefix)
+            .execute(connection)
+            .await?;
+        sql_query("UPDATE public.hubuumobject SET description='after' WHERE collection_id=$1 AND starts_with(name,$2)")
+            .bind::<Integer, _>(collection)
+            .bind::<Text, _>(&prefix)
+            .execute(connection)
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+    let expected = payload_versions(&fixture, &[collection], 32).await;
+    let runtime = fixture
+        .storage
+        .register_history_runtime(None)
+        .await
+        .unwrap();
+    let (outcome, admitted) = {
+        let mut run = BoundedRun::new(&fixture, &runtime, family, 1000)
+            .await
+            .unwrap();
+        let outcome = run.pass().await;
+        (outcome, run.admitted)
+    };
+    fixture.storage.unregister_runtime(runtime).await.unwrap();
+    with_transaction(&fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+        sql_query("DELETE FROM hubuum_control.history_expiry_members WHERE intent_uuid=ANY($1)")
+            .bind::<Array<SqlUuid>, _>(&admitted)
+            .execute(connection)
+            .await?;
+        Ok::<_, PostgresStorageError>(())
+    })
+    .await
+    .unwrap();
+    cleanup_expiry_fixture(fixture, collection, Uuid::nil()).await;
+    let members = outcome.expect("Each selected prefix must fit PostgreSQL's JSON byte limit");
+    assert!(expected.len() >= 1100, "Fixture must exceed a single batch");
+    assert!(
+        admitted.len() >= 2,
+        "The pass must resume after a byte stop"
+    );
+    for target in expected {
+        assert_eq!(
+            members
+                .iter()
+                .filter(|member| member.target() == target)
+                .count(),
+            1,
+            "Every deferred version must be admitted exactly once"
+        );
+    }
+}
+
 struct RestoredCopy {
     source_table: &'static str,
     position: &'static str,

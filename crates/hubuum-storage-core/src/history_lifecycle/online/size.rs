@@ -320,8 +320,8 @@ impl HistoryExpirySizeSelection {
             authorizations,
         )?;
         let encoded_bytes = serde_json::to_vec(&member)
-            .map_err(|_| invalid("Cannot encode oldest expiry membership"))?
-            .len();
+            .map(|bytes| retained_json_len(&bytes))
+            .map_err(|_| invalid("Cannot encode oldest expiry membership"))?;
         // The full retained member includes both endpoint witnesses. Reserve
         // decimal growth and fixed heap allocation before retaining the prefix.
         let metadata_bytes = encoded_bytes + growth + 512;

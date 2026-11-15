@@ -637,8 +637,8 @@ impl HistoryExpiryManifest {
             ));
         }
         if serde_json::to_vec(self)
+            .map(|bytes| retained_json_len(&bytes))
             .map_err(|_| invalid("Cannot encode expiry manifest"))?
-            .len()
             > Self::MAX_BYTES
         {
             return Err(invalid("Expiry manifest exceeds its encoded byte bound"));
@@ -698,15 +698,15 @@ impl HistoryExpirySelectionBudget {
             return Ok(Self(0));
         }
         let intent_bytes = serde_json::to_vec(&HistoryExpiryIntent::new(manifest.clone()))
-            .map_err(|_| invalid("Cannot encode expiry intent header"))?
-            .len();
+            .map(|bytes| retained_json_len(&bytes))
+            .map_err(|_| invalid("Cannot encode expiry intent header"))?;
         let overhead = intent_bytes - manifest_bytes
-            + usize::from(!journal.is_empty())
+            + 2 * usize::from(!journal.is_empty())
             + HistoryExpiryJournal::CANCELLATION_RESERVE_BYTES;
         let pending = journal.completion_reserve_bytes();
         let journal_bytes = serde_json::to_vec(journal.intents())
-            .map_err(|_| invalid("Cannot encode retained expiry journal"))?
-            .len();
+            .map(|bytes| retained_json_len(&bytes))
+            .map_err(|_| invalid("Cannot encode retained expiry journal"))?;
         let journal_budget =
             HistoryExpiryJournal::MAX_BYTES.saturating_sub(journal_bytes + pending + overhead);
         let revision = authority.revision().value();
@@ -717,7 +717,7 @@ impl HistoryExpirySelectionBudget {
         )?;
         let revision_growth = next_revision.value().to_string().len() - revision.to_string().len();
         let control_budget = HistoryLifecycleControl::MAX_BYTES.saturating_sub(
-            control.encode()?.len()
+            retained_json_len(&control.encode()?)
                 + (authority.pending_hold_completions() + authority.pending_size_completions())
                     * HistoryLifecycleControl::HOLD_COMPLETION_RESERVE_BYTES
                 + pending
@@ -766,8 +766,8 @@ impl<'a> HistoryExpirySelection<'a> {
             members: Vec::new(),
         };
         let retained_bytes = serde_json::to_vec(&manifest)
-            .map_err(|_| invalid("Cannot encode expiry manifest"))?
-            .len();
+            .map(|bytes| retained_json_len(&bytes))
+            .map_err(|_| invalid("Cannot encode expiry manifest"))?;
         if retained_bytes > HistoryExpiryManifest::MAX_BYTES {
             return Err(invalid(
                 "Expiry manifest header exceeds its encoded byte bound",
@@ -833,13 +833,13 @@ impl<'a> HistoryExpirySelection<'a> {
         )?;
         let next_input = self.manifest.input_bytes + input_bytes.value();
         let member_bytes = serde_json::to_vec(&member)
-            .map_err(|_| invalid("Cannot encode exact expiry membership"))?
-            .len();
-        // Fixed manifest fields are immutable; only membership commas and the
+            .map(|bytes| retained_json_len(&bytes))
+            .map_err(|_| invalid("Cannot encode exact expiry membership"))?;
+        // Fixed manifest fields are immutable; only membership separators and the
         // decimal input-byte total change. Count each encoded member once.
         let next_retained = self.retained_bytes
             + member_bytes
-            + usize::from(!self.manifest.members.is_empty())
+            + 2 * usize::from(!self.manifest.members.is_empty())
             + next_input.to_string().len()
             - self.manifest.input_bytes.to_string().len();
         if next_retained > HistoryExpiryManifest::MAX_BYTES {

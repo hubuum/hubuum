@@ -337,6 +337,9 @@ row can substitute for these proofs.
 
 The online model bounds selected membership to 1000 rows
 and 16 MiB measured full-row input, with a 1 MiB encoded membership envelope.
+Retained manifest, journal and control byte budgets include the spaces after
+JSON separators used by PostgreSQL's `jsonb` text representation, including
+reserved completion capacity. Wire JSON remains compact.
 It preserves anchors and exact UUIDs, retains compact governing-policy references
 into the immutable catalog, re-evaluates eligibility against captured authority, and rejects duplicate/open
 membership. Retained intent modeling preserves exclusions on cancellation and

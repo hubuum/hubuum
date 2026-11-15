@@ -80,7 +80,7 @@ impl HistoryLifecycleControl {
             * Self::HOLD_COMPLETION_RESERVE_BYTES
             + self.authority.expiry().completion_reserve_bytes()
             + self.authority.pending_size_completions() * Self::HOLD_COMPLETION_RESERVE_BYTES;
-        if bytes.len() + completion_reserve > Self::MAX_BYTES {
+        if retained_json_len(&bytes) + completion_reserve > Self::MAX_BYTES {
             return Err(invalid(
                 "History control capacity must preserve reserved hold completion space",
             ));

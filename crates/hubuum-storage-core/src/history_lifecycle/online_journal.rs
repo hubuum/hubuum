@@ -49,8 +49,8 @@ impl HistoryExpiryJournal {
     }
     fn validate_capacity(&self) -> Result<(), StorageValidationError> {
         if serde_json::to_vec(&self.0)
+            .map(|bytes| retained_json_len(&bytes))
             .map_err(|_| invalid("Cannot encode retained expiry journal"))?
-            .len()
             + self.completion_reserve_bytes()
             > Self::MAX_BYTES
         {
