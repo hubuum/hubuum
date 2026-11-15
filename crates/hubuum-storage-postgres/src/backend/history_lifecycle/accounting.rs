@@ -1,4 +1,5 @@
 use super::*;
+use diesel::result::Error as DieselError;
 use futures_util::TryStreamExt;
 use hubuum_domain::PrincipalIdentity;
 
@@ -79,7 +80,7 @@ pub(super) async fn fold_on(
         "op='D'"
     };
     sql_query("SELECT set_config('statement_timeout', CASE WHEN current_setting('statement_timeout')::INTERVAL=INTERVAL '0' THEN '5000' ELSE GREATEST(1,FLOOR(LEAST(EXTRACT(EPOCH FROM current_setting('statement_timeout')::INTERVAL)*1000,5000)))::BIGINT::TEXT END,true)")
-            .execute(connection).await?;
+            .execute(connection).await.map_err(unavailable_query)?;
     // Only identity metadata crosses the adapter boundary. All retained rows
     // count, including open, held, dependency-protected and excluded copies.
     let query = format!(
@@ -88,8 +89,9 @@ pub(super) async fn fold_on(
     {
         let mut rows = sql_query(query)
             .load_stream::<AccountingRow>(connection)
-            .await?;
-        while let Some(row) = rows.try_next().await? {
+            .await
+            .map_err(unavailable_query)?;
+        while let Some(row) = rows.try_next().await.map_err(unavailable_query)? {
             let raw = row.logical_identity.ok_or_else(|| {
                 PostgresStorageError::unavailable(
                     "History accounting has unresolved or oversized identity",
@@ -119,12 +121,113 @@ pub(super) async fn fold_on(
     Ok(())
 }
 
+fn unavailable_query(error: DieselError) -> PostgresStorageError {
+    // Preserve adapter diagnostics without exposing raw database errors.
+    let error = PostgresStorageError::from(error);
+    PostgresStorageError::unavailable(format!(
+        "Complete history accounting is unavailable: {error}"
+    ))
+}
+
+#[cfg(all(test, feature = "integration-test-support"))]
+mod qualification;
+
 #[cfg(all(test, feature = "integration-test-support"))]
 mod tests {
     use super::*;
-    use crate::test_support::integration_test_pool;
+    use crate::test_support::{
+        database_role_tests_enabled, integration_test_database_roles,
+        integration_test_migration_pool, integration_test_pool,
+    };
 
     use diesel_async::SimpleAsyncConnection;
+    use std::time::{Duration, Instant};
+
+    #[derive(QueryableByName)]
+    struct DependencyIndex {
+        #[diesel(sql_type = Text)]
+        predicate: String,
+        #[diesel(sql_type = Text)]
+        identity: String,
+    }
+
+    #[rstest::rstest]
+    #[case(StorageIdentityHistoryKind::Collection)]
+    #[case(StorageIdentityHistoryKind::Class)]
+    #[case(StorageIdentityHistoryKind::Object)]
+    #[case(StorageIdentityHistoryKind::ClassRelation)]
+    #[case(StorageIdentityHistoryKind::ObjectRelation)]
+    #[case(StorageIdentityHistoryKind::ExportTemplate)]
+    #[case(StorageIdentityHistoryKind::RemoteTarget)]
+    #[case(StorageIdentityHistoryKind::ComputedDefinitions)]
+    #[tokio::test]
+    async fn native_interval_families_index_open_copy_dependencies(
+        #[case] family: StorageIdentityHistoryKind,
+    ) {
+        let pool = integration_test_pool(1);
+        let (table, _) = expiry::source(family);
+        let index = crate::with_connection(&pool, async |connection| {
+            sql_query("SELECT pg_get_expr(i.indpred,i.indrelid) AS predicate,pg_get_indexdef(i.indexrelid,1,true) AS identity FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE i.indrelid=to_regclass($1) AND c.relname=$2")
+                .bind::<Text, _>(format!("public.{table}"))
+                .bind::<Text, _>(format!("{table}_open_dependency"))
+                .get_result::<DependencyIndex>(connection).await.map_err(PostgresStorageError::from)
+        }).await.unwrap();
+        assert_eq!(index.predicate, "(valid_to IS NULL)");
+        assert!(index.identity.contains("subject,identity,identity"));
+    }
+
+    #[tokio::test]
+    async fn native_census_preserves_an_inherited_timeout_and_reports_unavailability() {
+        let pool = integration_test_pool(2);
+        let backend = PostgresStorage::unobserved(pool.clone());
+        let before = backend.capture_history_lifecycle().await.unwrap();
+        let permit = StorageExecutionPermit::new(
+            None,
+            ApplicationFence::new(
+                before.fence().incarnation(),
+                before.fence().deletion_revision().value() as i64,
+            )
+            .unwrap(),
+        );
+        let owner_pool = integration_test_migration_pool(1);
+        let result = backend.runtime().with_history_control_transaction(permit, async |connection| {
+            connection.batch_execute("SAVEPOINT census_timeout_fixture").await?;
+            let snapshot = capture_on(connection).await?;
+            let key = HistoryPolicyKey::new(StorageIdentityHistoryKind::Collection, HistoryPolicyScope::Deployment)?;
+            let proposal = HistoryPolicyChange::new(key, snapshot.control().authority().policies().current_revision(key), HistoryPolicyBinding::Expire {
+                trigger: HistoryExpiryTrigger::LogicalSize { upper_logical_bytes: HistoryLogicalBytes::new(1)?, lower_logical_bytes: HistoryLogicalBytes::new(0)? },
+                minimum_age_seconds: HistoryRetentionSeconds::new(0)?,
+            }, HistoryPolicyApplication::Prospective)?;
+            let applied = commit_on(connection, snapshot.control().apply(HistoryPolicyApplyRequest::new(proposal, None), PrincipalIdentity::generate(), snapshot.fence(), snapshot.observed_at()).map_err(|_| PostgresStorageError::invalid_input("Invalid census timeout fixture policy"))?).await?;
+            let policy = HistoryPolicyReference::from(applied.control().authority().policies().records().last().unwrap());
+            let mut census = HistorySizeCensus::new(applied.clone(), &policy)?;
+            let mut blocker = owner_pool.get().await.unwrap();
+            blocker.batch_execute("BEGIN").await.unwrap();
+            if database_role_tests_enabled() {
+                sql_query("SELECT set_config('role',$1,true)")
+                    .bind::<Text, _>(integration_test_database_roles().owner().as_str())
+                    .execute(&mut blocker)
+                    .await
+                    .unwrap();
+            }
+            blocker
+                .batch_execute("LOCK TABLE public.collections_history IN ACCESS EXCLUSIVE MODE")
+                .await
+                .unwrap();
+            connection.batch_execute("SAVEPOINT census_attempt; SET LOCAL statement_timeout='5ms'").await?;
+            let started = Instant::now();
+            let error = fold_on(connection, key.family(), &mut census).await.unwrap_err();
+            let elapsed = started.elapsed();
+            blocker.batch_execute("ROLLBACK").await?;
+            connection.batch_execute("ROLLBACK TO SAVEPOINT census_attempt; RELEASE SAVEPOINT census_attempt").await?;
+            assert_eq!(error.kind(), StorageErrorKind::Unavailable);
+            assert!(elapsed < Duration::from_secs(1), "An inherited five-millisecond timeout must not become five seconds: {elapsed:?}");
+            assert_eq!(capture_on(connection).await?.control(), applied.control());
+            connection.batch_execute("ROLLBACK TO SAVEPOINT census_timeout_fixture").await?;
+            Ok::<_, PostgresStorageError>(())
+        }).await;
+        result.unwrap();
+    }
 
     #[tokio::test]
     async fn native_refresh_retains_one_pressure_transition_and_noop_is_exact() {

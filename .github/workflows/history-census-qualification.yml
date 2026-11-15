@@ -1,0 +1,99 @@
+name: History census qualification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+
+concurrency:
+  group: history-census-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'labeled' && github.event.label.name != 'ci:history-census' && github.run_id || 'measure' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.pull_request.labels.*.name, 'ci:history-census') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'ci:history-census'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable 2026-10-22
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: history-census-qualification
+          cache-workspace-crates: true
+      - name: Build the native probe and production administrator
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes libssl-dev libpq-dev
+          cargo test --locked --release -p hubuum-storage-postgres --lib --no-run \
+            --features integration-test-support,embedded-migrations --message-format=json > census-build.jsonl
+          python3 - <<'PY'
+          import json, pathlib, shutil
+          rows = [json.loads(line) for line in pathlib.Path('census-build.jsonl').read_text().splitlines()]
+          binaries = [row['executable'] for row in rows if row.get('reason') == 'compiler-artifact'
+                      and row.get('executable') and row['target']['name'] == 'hubuum_storage_postgres']
+          assert len(binaries) == 1
+          shutil.copy2(binaries[0], 'target/release/history-census-driver')
+          PY
+          cargo build --locked --release --bin hubuum-admin \
+            --features embedded-migrations,integration-test-support,tls-rustls,tls-openssl
+          {
+            git rev-parse HEAD
+            rustc -Vv
+            cargo -V
+            sha256sum Cargo.lock target/release/history-census-driver target/release/hubuum-admin
+          } > census-build.txt
+          tar -C target/release -czf census-binaries.tar.gz history-census-driver hubuum-admin
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: history-census-binaries
+          path: |
+            census-binaries.tar.gz
+            census-build.txt
+          retention-days: 14
+
+  measure:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [local, shared]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: history-census-binaries
+          path: census-build
+      - name: Measure seven census envelopes with one warm-up and five fresh runs
+        run: |
+          mkdir census-build/bin
+          tar -xzf census-build/census-binaries.tar.gz -C census-build/bin
+          chmod +x census-build/bin/*
+          python3 -I -S tests/python/run.py integration history-census \
+            --binary census-build/bin/history-census-driver \
+            --admin-binary census-build/bin/hubuum-admin \
+            --profile '${{ matrix.profile }}' --output census-report
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: history-census-${{ matrix.profile }}
+          path: |
+            census-report/
+            census-build/census-build.txt
+          retention-days: 14

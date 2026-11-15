@@ -829,6 +829,23 @@ END
 $function$;
 REVOKE ALL ON FUNCTION public.hubuum_history_expiry_dependency(TEXT,JSONB) FROM PUBLIC;
 
+-- Dependency checks must search open copies without walking every closed
+-- version for each member of a bounded admission page. Keep unknown subjects
+-- in this index as well: unresolved open copies remain conservative blockers.
+DO $open_dependencies$
+DECLARE source TEXT;
+BEGIN
+    FOREACH source IN ARRAY ARRAY[
+        'collections_history','hubuumclass_history','hubuumobject_history',
+        'hubuumclass_relation_history','hubuumobject_relation_history',
+        'export_templates_history','remote_targets_history','computed_field_history'
+    ] LOOP
+        EXECUTE format('CREATE INDEX %I ON public.%I ((logical_identity #>> ''{subject,identity,identity}'')) WHERE valid_to IS NULL',
+            source || '_open_dependency',source); -- hubuum-compat: bounded-transactional-index
+    END LOOP;
+END
+$open_dependencies$;
+
 -- Separate from policy/hold CAS: exact predecessor, one immutable new intent,
 -- native source correspondence and the fleet fence are required together.
 -- Rust validates policy/hold decisions while holding these same authority locks.

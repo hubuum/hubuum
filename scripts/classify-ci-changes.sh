@@ -291,7 +291,9 @@ for path in "$@"; do
       code=true
       openapi=true
       ;;
-    tests/python/integration/history_expiry.py | tests/restore_contract/history_expiry_qualification.rs | tests/restore_contract/history_expiry_qualification/*)
+    tests/python/integration/history_expiry.py | tests/python/integration/history_census.py | \
+      .github/workflows/history-census-qualification.yml | \
+      tests/restore_contract/history_expiry_qualification.rs | tests/restore_contract/history_expiry_qualification/*)
       code=true
       rust=true
       container=true

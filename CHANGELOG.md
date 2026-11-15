@@ -463,6 +463,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Gated history expiry counts PostgreSQL JSON separator overhead in retained
   manifest, journal and control budgets. Large batches stop before the native
   byte limit and continue from the deferred row while preserving completion space.
+- Administrator history accounting reports unavailable when its bounded native
+  census query fails or times out, preserving shorter inherited timeouts and
+  leaving no partial pressure or audit facts.
+- Gated history expiry uses indexed open-copy dependency checks so large closed
+  histories do not starve independently eligible age cleanup after accounting
+  reaches its census budget.
 
 - History control writes pin application authority before history authority,
   avoiding a deadlock between runtime registration and a later control commit.

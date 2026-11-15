@@ -81,21 +81,27 @@ fn selection(
             .observe(Some(row), HistoryLogicalBytes::new(100).unwrap(), 10)
             .unwrap();
     }
-    let request = HistoryExpiryAdmissionRequest::new(
+    HistoryExpirySizeSelection::new(request(snapshot), census.finish_family().unwrap()).unwrap()
+}
+fn request(snapshot: &HistoryLifecycleSnapshot) -> HistoryExpiryAdmissionRequest {
+    HistoryExpiryAdmissionRequest::new(
         Uuid::new_v4(),
         Uuid::new_v4(),
         HistoryExpiryOrigin::Manual {
             principal: PrincipalIdentity::generate(),
         },
         HistoryLifecycleScan::new(
-            HistoryPolicyKey::new(family, HistoryPolicyScope::Deployment).unwrap(),
+            HistoryPolicyKey::new(
+                StorageIdentityHistoryKind::ClassSchema,
+                HistoryPolicyScope::Deployment,
+            )
+            .unwrap(),
             1000,
         )
         .unwrap(),
         snapshot.fence(),
     )
-    .unwrap();
-    HistoryExpirySizeSelection::new(request, census.finish_family().unwrap()).unwrap()
+    .unwrap()
 }
 fn plan(
     snapshot: &HistoryLifecycleSnapshot,
@@ -271,6 +277,49 @@ fn a_foreign_second_pass_row_invalidates_complete_selection() {
     .unwrap();
     assert!(selection.observe(foreign, 100, 10, true).is_err());
     assert!(selection.finish().is_err());
+}
+
+#[rstest]
+#[case(32, true)]
+#[case(33, false)]
+fn two_passes_share_the_actual_metadata_budget(#[case] count: usize, #[case] complete: bool) {
+    let (snapshot, examples) = fixture();
+    let family = StorageIdentityHistoryKind::ClassSchema;
+    let rows = (0..count)
+        .map(|_| {
+            HistoryExpiryCandidate::new(
+                family,
+                crate::StorageRecordIdentity::new(
+                    ResourceIdentity::generate(),
+                    hubuum_domain::VersionIdentity::generate(),
+                ),
+                Some(HistoryRetentionAnchor::SchemaEvent(at(20))),
+                examples[0].attributions().to_vec(),
+                false,
+            )
+            .unwrap()
+            .with_native_interval(at(20), None)
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let mut census = HistorySizeCensus::for_family(snapshot.clone(), family).unwrap();
+    for row in &rows {
+        census
+            .observe(
+                Some(row),
+                HistoryLogicalBytes::new(100).unwrap(),
+                1024 * 1024,
+            )
+            .unwrap();
+    }
+    let mut selection =
+        HistoryExpirySizeSelection::new(request(&snapshot), census.finish_family().unwrap())
+            .unwrap();
+    let result = rows
+        .into_iter()
+        .try_for_each(|row| selection.observe(row, 100, 1024 * 1024, true));
+    assert_eq!(result.is_ok(), complete);
+    assert_eq!(selection.finish().is_ok(), complete);
 }
 
 #[test]

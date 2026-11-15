@@ -239,6 +239,72 @@ fn incomplete_or_ambiguous_census_fails_closed(#[case] mode: &str) {
     assert!(result.is_err());
     assert!(census.finish().is_err());
 }
+
+#[rstest]
+#[case(false)]
+#[case(true)]
+fn complete_row_limit_is_inclusive_and_the_next_row_invalidates_the_census(#[case] overflow: bool) {
+    let (snapshot, policy) = fixture(StorageIdentityHistoryKind::Object);
+    let mut census = HistorySizeCensus::new(snapshot, &policy).unwrap();
+    for _ in 0..HistorySizeCensus::MAX_ROWS {
+        census
+            .observe(
+                Some(&row(policy.key().family(), None)),
+                HistoryLogicalBytes::new(1).unwrap(),
+                1,
+            )
+            .unwrap();
+    }
+    if overflow {
+        assert!(
+            census
+                .observe(
+                    Some(&row(policy.key().family(), None)),
+                    HistoryLogicalBytes::new(1).unwrap(),
+                    1,
+                )
+                .is_err()
+        );
+        assert!(census.finish().is_err());
+    } else {
+        let accounting = census.finish().unwrap();
+        assert_eq!(accounting.scanned_rows, "100000");
+        assert_eq!(accounting.pressure.measured_bytes().value(), 100_000);
+    }
+}
+
+#[rstest]
+#[case(false)]
+#[case(true)]
+fn complete_metadata_limit_is_inclusive_and_the_next_byte_invalidates_the_census(
+    #[case] overflow: bool,
+) {
+    let (snapshot, policy) = fixture(StorageIdentityHistoryKind::Object);
+    let mut census = HistorySizeCensus::new(snapshot, &policy).unwrap();
+    for _ in 0..64 {
+        census
+            .observe(
+                Some(&row(policy.key().family(), None)),
+                HistoryLogicalBytes::new(1).unwrap(),
+                1024 * 1024,
+            )
+            .unwrap();
+    }
+    if overflow {
+        assert!(
+            census
+                .observe(
+                    Some(&row(policy.key().family(), None)),
+                    HistoryLogicalBytes::new(1).unwrap(),
+                    1,
+                )
+                .is_err()
+        );
+        assert!(census.finish().is_err());
+    } else {
+        assert_eq!(census.finish().unwrap().scanned_rows, "64");
+    }
+}
 #[test]
 fn retrospective_attribution_does_not_charge_old_versions_to_a_new_prospective_rule() {
     let (snapshot, policy) = fixture(StorageIdentityHistoryKind::Object);

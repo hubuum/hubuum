@@ -944,6 +944,7 @@ pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
     "src/tasks/tests/artifact_pipeline.rs",
     "src/tests/permissions/live_treetop_parity.rs",
     "crates/hubuum-storage-postgres/src/test_support.rs",
+    "crates/hubuum-storage-postgres/src/backend/history_lifecycle/accounting/qualification.rs",
     "crates/hubuum-scale-benchmark/src/lifecycle_process.rs",
     "crates/hubuum-artifacts/src/s3/tests.rs",
     "crates/hubuum-artifacts/benches/s3_artifact_storage_criterion.rs",

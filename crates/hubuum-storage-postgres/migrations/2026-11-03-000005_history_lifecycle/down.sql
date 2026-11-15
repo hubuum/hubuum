@@ -30,6 +30,19 @@ BEGIN
 END
 $rollback_guard$;
 
+DO $open_dependencies$
+DECLARE source TEXT;
+BEGIN
+    FOREACH source IN ARRAY ARRAY[
+        'collections_history','hubuumclass_history','hubuumobject_history',
+        'hubuumclass_relation_history','hubuumobject_relation_history',
+        'export_templates_history','remote_targets_history','computed_field_history'
+    ] LOOP
+        EXECUTE format('DROP INDEX public.%I',source || '_open_dependency');
+    END LOOP;
+END
+$open_dependencies$;
+
 -- No retained eighth-kind work exists after the rollback guard above.
 SELECT singleton FROM hubuum_control.task_policy WHERE singleton FOR UPDATE;
 UPDATE hubuum_control.task_policy SET revision=revision+1,

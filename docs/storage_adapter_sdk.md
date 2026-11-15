@@ -161,6 +161,25 @@ RSS evidence before publishing the 36-run profile. The logical-size shape exerci
 the actual worker, independent protection and signed restore/replay. It retains
 the existing 1000-examined-row profile ceiling, memory and CPU limits; it does not
 establish worst-case 100,000-row accounting or steady-state lag acceptance.
+The separate `History census qualification` workflow uses the temporary
+`ci:history-census` label for seven native component probes, with one warm-up and
+five fresh measured processes per probe on each database resource profile.
+It tests supported censuses, the inclusive 100,000-row and 64-MiB metadata bounds,
+and row, individual-identity and cumulative-metadata overflow. Boundary probes
+may report complete accounting or explicit unavailability under the five-second
+clock; overflow must never return a complete gauge. Supported probes must finish
+completely. Each attempt must terminate within ten seconds, leave no partial
+authority after transaction rollback and release its control gates. Raw 20-ms
+RSS/high-water traces and enforced 512-MiB/two-CPU limits accompany each report.
+The 100,001-row probe also requires size-only admission to select nothing and
+age-or-size admission to select independently eligible age members, without size
+witnesses or pressure changes. Each admission has its own ten-second liveness
+bound. A one-second terminal sampling grace is excluded from operation timings.
+These are native component measurements, without the combined HTTP/worker
+baseline, overlapping policies, held copies or pending reservations. The finite
+tests cover those behaviors at smaller censuses; neither result alone
+qualifies the combined maximum-census worker envelope. Remove the investigation
+label after recording the tested commit and results.
 Restore/replay must preserve
 first receipts and release quarantine. P6 sustained-load acceptance remains #561.
 
