@@ -219,9 +219,8 @@ fn callback_requires_correlated_success(
     #[case] error: Option<&str>,
 ) {
     let pending = PendingLogin {
-        state: "state".into(),
+        code_state: serde_json::from_value(json!({"state":"state","verifier":"verifier"})).unwrap(),
         nonce: "nonce".into(),
-        verifier: "verifier".into(),
         issuer: "https://id.example/realm".into(),
         client_id: "hubuum".into(),
         callback: "https://hubuum.example/callback".into(),

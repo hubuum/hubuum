@@ -2,7 +2,8 @@
 //! fence these transitions with the current provider revision and session state.
 use chrono::{DateTime, Duration, Utc};
 use hubuum_domain::{
-    InteractionBinding, InteractionPurpose, PrincipalId, VerifiedExternalAuthentication,
+    BrowserIdentityNamespace, InteractionBinding, InteractionPurpose, PrincipalId,
+    VerifiedExternalAuthentication,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -61,7 +62,7 @@ impl std::fmt::Debug for StorageEncryptedUpstreamCredential {
 pub struct StorageRetainedAuthentication {
     binding: InteractionBinding,
     scope: String,
-    namespace: String,
+    namespace: BrowserIdentityNamespace,
     subject: String,
     credential: StorageEncryptedUpstreamCredential,
 }
@@ -70,19 +71,14 @@ pub struct StorageRetainedAuthentication {
 struct RetainedInput {
     binding: InteractionBinding,
     scope: String,
-    namespace: String,
+    namespace: BrowserIdentityNamespace,
     subject: String,
     credential: StorageEncryptedUpstreamCredential,
 }
 impl TryFrom<RetainedInput> for StorageRetainedAuthentication {
     type Error = StorageValidationError;
     fn try_from(value: RetainedInput) -> Result<Self, Self::Error> {
-        validate_identity(
-            &value.binding,
-            &value.scope,
-            &value.namespace,
-            &value.subject,
-        )?;
+        validate_identity(&value.binding, &value.scope, &value.subject)?;
         Ok(Self {
             binding: value.binding,
             scope: value.scope,
@@ -109,7 +105,7 @@ impl StorageRetainedAuthentication {
         Ok(Self {
             binding: authentication.binding().clone(),
             scope: identity.scope().as_str().into(),
-            namespace: identity.namespace().into(),
+            namespace: BrowserIdentityNamespace::from_identity(identity),
             subject: identity.subject().as_str().into(),
             credential,
         })
@@ -126,7 +122,7 @@ pub struct StorageUpstreamSession {
     principal: PrincipalId,
     binding: InteractionBinding,
     scope: String,
-    namespace: String,
+    namespace: BrowserIdentityNamespace,
     subject: String,
     credential: Option<StorageEncryptedUpstreamCredential>,
     lease: Option<(Uuid, DateTime<Utc>)>,
@@ -138,7 +134,7 @@ struct SessionInput {
     principal: PrincipalId,
     binding: InteractionBinding,
     scope: String,
-    namespace: String,
+    namespace: BrowserIdentityNamespace,
     subject: String,
     credential: Option<StorageEncryptedUpstreamCredential>,
     lease: Option<(Uuid, DateTime<Utc>)>,
@@ -146,12 +142,7 @@ struct SessionInput {
 impl TryFrom<SessionInput> for StorageUpstreamSession {
     type Error = StorageValidationError;
     fn try_from(value: SessionInput) -> Result<Self, Self::Error> {
-        validate_identity(
-            &value.binding,
-            &value.scope,
-            &value.namespace,
-            &value.subject,
-        )?;
+        validate_identity(&value.binding, &value.scope, &value.subject)?;
         if value.session.is_nil()
             || value.credential.is_some() && value.lease.is_some()
             || value.lease.is_some_and(|(id, _)| id.is_nil())
@@ -178,7 +169,6 @@ impl std::fmt::Debug for StorageUpstreamSession {
 fn validate_identity(
     binding: &InteractionBinding,
     scope: &str,
-    namespace: &str,
     subject: &str,
 ) -> Result<(), StorageValidationError> {
     if binding.authority().purpose() != InteractionPurpose::Login
@@ -189,7 +179,6 @@ fn validate_identity(
     }
     hubuum_domain::IdentityScopeName::new(scope).map_err(|_| invalid())?;
     hubuum_domain::ExternalSubject::new(subject).map_err(|_| invalid())?;
-    hubuum_domain::AuthenticationEndpoint::try_from(namespace.to_owned()).map_err(|_| invalid())?;
     Ok(())
 }
 
@@ -226,7 +215,7 @@ impl StorageUpstreamSession {
         &self.scope
     }
     pub fn namespace(&self) -> &str {
-        &self.namespace
+        self.namespace.as_str()
     }
     pub fn subject(&self) -> &str {
         &self.subject
@@ -271,7 +260,7 @@ impl StorageUpstreamSession {
         if !self.accepts(claim, now)
             || proof.binding() != &self.binding
             || proof.identity().scope().as_str() != self.scope
-            || proof.identity().namespace() != self.namespace
+            || proof.identity().namespace() != self.namespace.as_str()
             || proof.identity().subject().as_str() != self.subject
             || proof.verified_at() > now
             || proof.verified_at() < claim.deadline - Duration::seconds(30)

@@ -21,6 +21,27 @@ fn endpoints_require_unambiguous_verified_https(#[case] value: &str, #[case] val
     );
 }
 
+#[rstest]
+#[case::oidc("https://identity.example/realm", true)]
+#[case::oauth(r#"["https://identity.example/user","/account/id","string"]"#, true)]
+#[case::noncanonical(
+    r#"[ "https://identity.example/user", "/account/id", "string" ]"#,
+    false
+)]
+#[case::bad_endpoint(r#"["http://identity.example/user","/id","integer"]"#, false)]
+#[case::bad_pointer(r#"["https://identity.example/user","id","integer"]"#, false)]
+#[case::bad_type(r#"["https://identity.example/user","/id","float"]"#, false)]
+#[case::unstructured("company", false)]
+fn persisted_browser_namespaces_preserve_protocol_identity(
+    #[case] value: &str,
+    #[case] valid: bool,
+) {
+    assert_eq!(
+        BrowserIdentityNamespace::try_from(value.to_owned()).is_ok(),
+        valid
+    );
+}
+
 #[test]
 fn oidc_definition_round_trips_without_changing_issuer() {
     let value = oidc();

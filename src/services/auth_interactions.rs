@@ -61,7 +61,11 @@ async fn providers(
     if let Some(configuration) = snapshot.authentication() {
         for provider in configuration.providers().iter().filter(|provider| {
             provider.enabled()
-                && provider.kind() == hubuum_storage_core::StorageAuthenticationProviderKind::Oidc
+                && matches!(
+                    provider.kind(),
+                    hubuum_storage_core::StorageAuthenticationProviderKind::Oidc
+                        | hubuum_storage_core::StorageAuthenticationProviderKind::Oauth
+                )
         }) {
             let binding = StorageProviderIdentityBinding::from_provider(provider)
                 .map_err(|_| InteractionError::ProviderUnavailable)?;
@@ -80,7 +84,13 @@ async fn providers(
                 id: InteractionProviderId::external(binding.id())
                     .map_err(|_| InteractionError::ProviderUnavailable)?,
                 scope,
-                kind: PasswordProviderKind::Oidc,
+                kind: if provider.kind()
+                    == hubuum_storage_core::StorageAuthenticationProviderKind::Oauth
+                {
+                    PasswordProviderKind::Oauth
+                } else {
+                    PasswordProviderKind::Oidc
+                },
                 binding: Some(binding),
             });
         }
@@ -148,12 +158,15 @@ pub async fn methods(context: &AppContext) -> Result<AuthenticationMethods, ApiE
                 provider_id: provider.id,
                 name: provider.scope.as_str().to_owned(),
                 kind: provider.kind,
-                interaction: if provider.kind == PasswordProviderKind::Oidc {
+                interaction: if matches!(
+                    provider.kind,
+                    PasswordProviderKind::Oidc | PasswordProviderKind::Oauth
+                ) {
                     PasswordInteractionMode::Browser
                 } else {
                     PasswordInteractionMode::Credentials
                 },
-                fresh_authentication: true,
+                fresh_authentication: provider.kind != PasswordProviderKind::Oauth,
                 browser_available,
             })
             .collect(),
@@ -242,6 +255,10 @@ pub async fn begin(
                     == hubuum_storage_core::StorageAuthenticationProviderKind::Oidc
                 {
                     PasswordProviderKind::Oidc
+                } else if provider.kind()
+                    == hubuum_storage_core::StorageAuthenticationProviderKind::Oauth
+                {
+                    PasswordProviderKind::Oauth
                 } else {
                     PasswordProviderKind::Ldap
                 },
@@ -272,9 +289,17 @@ pub async fn begin(
             (revision, provider)
         }
     };
+    if provider.kind == PasswordProviderKind::Oauth
+        && authority.purpose() == hubuum_domain::InteractionPurpose::CredentialApproval
+    {
+        return Err(InteractionError::Unsupported.into());
+    }
     let browser_settings = browser::settings(context)?;
     let browser_mode = input.interaction_mode == PasswordInteractionMode::Browser
-        || provider.kind == PasswordProviderKind::Oidc
+        || matches!(
+            provider.kind,
+            PasswordProviderKind::Oidc | PasswordProviderKind::Oauth
+        )
         || input.delivery == InteractionDelivery::Bff;
     if browser_mode {
         browser_settings.origin()?;

@@ -583,9 +583,20 @@ impl AuthProviderRegistry {
                 continue;
             }
             if definition.kind() != StorageAuthenticationProviderKind::Ldap {
-                return Err(ApiError::ServiceUnavailable(
-                    "Enabled browser authentication requires a qualified provider adapter".into(),
-                ));
+                if definition.browser_definition().is_none() {
+                    return Err(ApiError::ServiceUnavailable(
+                        "Validated browser provider definition required".into(),
+                    ));
+                }
+                status.credential_configured =
+                    definition.configuration().is_some_and(|configuration| {
+                        configuration.get("protected_credential").is_some()
+                    });
+                status.available = status.credential_configured;
+                registry
+                    .statuses
+                    .insert(definition.name().to_owned(), status);
+                continue;
             }
             let configuration = if definition.configuration().is_some() {
                 runtime_provider_configuration(definition).await
@@ -1944,6 +1955,46 @@ mod tests {
         )
         .await;
         assert_eq!(result.is_ok(), adopt);
+    }
+
+    #[rstest]
+    #[case::oidc(true)]
+    #[case::oauth(false)]
+    #[tokio::test]
+    async fn enabled_browser_provider_is_not_a_password_provider(#[case] oidc: bool) {
+        let mut configuration = if oidc {
+            serde_json::json!({"issuer":"https://identity.example/realm", "client_id":"hubuum", "client_authentication":"client_secret_basic", "scopes":["openid"], "signing_algorithms":["RS256"]})
+        } else {
+            serde_json::json!({"profile":"json_user", "authorization_endpoint":"https://identity.example/authorize", "token_endpoint":"https://identity.example/token", "profile_endpoint":"https://identity.example/user", "client_id":"hubuum", "client_authentication":"client_secret_post", "scopes":[], "subject_pointer":"/id", "subject_type":"string", "name_pointer":"/name"})
+        };
+        configuration["membership"] = serde_json::json!({"mode":"local_only", "refresh_interval_seconds":300, "max_stale_seconds":900});
+        configuration["admission"] = serde_json::json!({"mode":"existing_only"});
+        configuration["protected_credential"] = serde_json::json!({"alias":"company"});
+        let provider = StorageAuthenticationProvider::try_new(
+            "company",
+            if oidc {
+                StorageAuthenticationProviderKind::Oidc
+            } else {
+                StorageAuthenticationProviderKind::Oauth
+            },
+            configuration,
+        )
+        .unwrap()
+        .with_id(uuid::Uuid::new_v4())
+        .unwrap();
+        let registry = AuthProviderRegistry::from_runtime_providers(
+            &StorageAuthenticationProviders::try_new(vec![provider]).unwrap(),
+            &AuthProvidersConfig { ldap: Vec::new() },
+        )
+        .await
+        .unwrap();
+        assert!(registry.provider("company").is_err());
+        assert!(
+            registry
+                .provider_statuses()
+                .iter()
+                .any(|status| status.name == "company" && status.enabled && status.available)
+        );
     }
 
     #[tokio::test]

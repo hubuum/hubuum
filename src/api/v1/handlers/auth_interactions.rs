@@ -95,8 +95,8 @@ pub async fn methods(context: AppContext, req: HttpRequest) -> Result<impl Respo
 /// bearer; provider verification additionally requires a local recovery administrator.
 /// The complete JSON request must fit 64 KiB. Larger credential imports use the
 /// direct credential-approval API. Hosted provider verification completes the
-/// final pending LDAP identity check; verify other providers through the direct
-/// candidate verification endpoint first.
+/// pending LDAP, OIDC or OAuth identity check after the candidate's connection
+/// and trust checks pass. OAuth does not support fresh credential approval.
 #[utoipa::path(post, path = "/api/v1/auth/interactions", tag = "auth", security((), ("bearer_auth" = [])), request_body = InteractionBeginRequest, responses(
     (status = 201, description = "Purpose-bound interaction created; secret is returned once", body = InteractionBegun),
     (status = 400, description = "Invalid purpose/delivery fields or transport", body = ApiErrorResponse),

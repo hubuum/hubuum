@@ -1,4 +1,6 @@
 //! Validated, non-secret configuration shared across authentication boundaries.
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -257,6 +259,8 @@ pub struct OAuthProviderDefinition {
     subject_pointer: String,
     subject_type: OAuthSubjectType,
     name_pointer: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    profile_headers: BTreeMap<String, String>,
     membership: ProviderMembership,
     admission: ProviderAdmission,
 }
@@ -273,6 +277,8 @@ struct OAuthDefinitionInput {
     subject_pointer: String,
     subject_type: OAuthSubjectType,
     name_pointer: String,
+    #[serde(default)]
+    profile_headers: BTreeMap<String, String>,
     membership: ProviderMembership,
     admission: ProviderAdmission,
 }
@@ -281,8 +287,34 @@ impl TryFrom<OAuthDefinitionInput> for OAuthProviderDefinition {
     fn try_from(value: OAuthDefinitionInput) -> Result<Self, Self::Error> {
         validate_text(&value.client_id, 255)?;
         validate_strings(&value.scopes, 32, 128)?;
+        if value.scopes.iter().any(|scope| {
+            !scope.bytes().all(|byte| {
+                byte == b'!' || (b'#'..=b'[').contains(&byte) || (b']'..=b'~').contains(&byte)
+            })
+        }) {
+            return Err(AuthenticationConfigurationError(
+                "OAuth scopes must be individual ASCII scope tokens",
+            ));
+        }
         validate_pointer(&value.subject_pointer)?;
         validate_pointer(&value.name_pointer)?;
+        if value.profile_headers.len() > 8 {
+            return Err(AuthenticationConfigurationError("Too many profile headers"));
+        }
+        for (name, value) in &value.profile_headers {
+            if !(matches!(name.as_str(), "accept" | "user-agent") || name.starts_with("x-"))
+                || name.len() > 64
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+                || name.starts_with("x-forwarded-")
+            {
+                return Err(AuthenticationConfigurationError(
+                    "Unsupported profile header",
+                ));
+            }
+            validate_text(value, 512)?;
+        }
         value.membership.validate(false)?;
         value.admission.validate()?;
         if value.profile == OAuthProfile::Github
@@ -291,6 +323,9 @@ impl TryFrom<OAuthDefinitionInput> for OAuthProviderDefinition {
                 || value.profile_endpoint.as_str() != "https://api.github.com/user"
                 || value.subject_pointer != "/id"
                 || value.subject_type != OAuthSubjectType::Integer
+                || value.name_pointer != "/login"
+                || !matches!(value.membership, ProviderMembership::LocalOnly { .. })
+                || !value.profile_headers.is_empty()
                 || value.client_authentication != ProviderClientAuthentication::ClientSecretPost)
         {
             return Err(AuthenticationConfigurationError(
@@ -308,12 +343,26 @@ impl TryFrom<OAuthDefinitionInput> for OAuthProviderDefinition {
             subject_pointer: value.subject_pointer,
             subject_type: value.subject_type,
             name_pointer: value.name_pointer,
+            profile_headers: value.profile_headers,
             membership: value.membership,
             admission: value.admission,
         })
     }
 }
 impl OAuthProviderDefinition {
+    pub fn profile(&self) -> &OAuthProfile {
+        &self.profile
+    }
+    pub fn client_authentication(&self) -> &ProviderClientAuthentication {
+        &self.client_authentication
+    }
+    pub fn scopes(&self) -> &[String] {
+        &self.scopes
+    }
+    pub fn profile_headers(&self) -> &BTreeMap<String, String> {
+        &self.profile_headers
+    }
+
     pub fn subject_pointer(&self) -> &str {
         &self.subject_pointer
     }
@@ -348,6 +397,54 @@ impl OAuthProviderDefinition {
             &self.subject_type,
         ))
         .expect("OAuth identity components are serializable")
+    }
+}
+
+/// Persisted browser identity namespace, preserving either the exact OIDC
+/// issuer or the canonical OAuth endpoint/pointer/subject-type tuple.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct BrowserIdentityNamespace(String);
+
+impl BrowserIdentityNamespace {
+    pub fn from_identity(identity: &crate::ExternalIdentity) -> Self {
+        Self(identity.namespace().to_owned())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for BrowserIdentityNamespace {
+    type Error = AuthenticationConfigurationError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.len() > 8 * 1024 {
+            return Err(AuthenticationConfigurationError(
+                "Identity namespace exceeds its limit",
+            ));
+        }
+        if AuthenticationEndpoint::try_from(value.clone()).is_ok() {
+            return Ok(Self(value));
+        }
+        let components: (AuthenticationEndpoint, String, OAuthSubjectType) =
+            serde_json::from_str(&value).map_err(|_| {
+                AuthenticationConfigurationError("Invalid browser identity namespace")
+            })?;
+        validate_pointer(&components.1)?;
+        if serde_json::to_string(&components).expect("namespace tuple is serializable") != value {
+            return Err(AuthenticationConfigurationError(
+                "OAuth identity namespace must be canonical",
+            ));
+        }
+        Ok(Self(value))
+    }
+}
+
+impl From<BrowserIdentityNamespace> for String {
+    fn from(value: BrowserIdentityNamespace) -> Self {
+        value.0
     }
 }
 

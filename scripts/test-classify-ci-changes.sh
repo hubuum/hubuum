@@ -54,6 +54,8 @@ for auth_contract_input in docs/authentication/openapi.proposed.json docs/authen
 done
 
 for oidc_input in tests/python/integration/keycloak.py tests/python/unit/tooling/test_keycloak_fixture.py \
+  tests/python/integration/oauth.py tests/python/unit/tooling/test_oauth_fixture.py \
+  crates/hubuum-auth-oauth/src/lib.rs crates/hubuum-auth-core/src/protocol/transport.rs \
   crates/hubuum-auth-oidc/tests/fixtures/signing.pem; do
   oidc_output="$(bash "$classifier" "$oidc_input")"
   assert_flag "$oidc_output" code true

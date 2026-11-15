@@ -300,7 +300,7 @@ pub async fn provider_start(
     ("code"=Option<String>, Query, description="Authorization code on success"),
     ("iss"=Option<String>, Query, description="Exact authorization-response issuer"),
     ("error"=Option<String>, Query, description="Provider error on denial")
-), responses((status=303, description="OIDC identity verified; explicit Hubuum approval is required"), (status=401, description="Invalid, expired or replayed callback")))]
+), responses((status=303, description="Provider identity verified; explicit Hubuum approval is required"), (status=401, description="Invalid, expired or replayed callback")))]
 #[get("/callbacks/{provider_id}")]
 pub async fn oidc_callback(
     context: AppContext,

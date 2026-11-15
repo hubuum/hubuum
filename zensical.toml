@@ -67,6 +67,7 @@ nav = [
       { "Security configuration candidates" = "security_candidates.md" },
       { "Authentication interactions" = "authentication_interactions.md" },
       { "Keycloak OIDC" = "authentication/keycloak.md" },
+      { "OAuth and GitHub login" = "authentication/oauth.md" },
       { "PostgreSQL roles" = "database_roles.md" },
       { "Backup & restore" = "backup-restore.md" },
       { "Verify release artifacts" = "supply-chain-security.md" },

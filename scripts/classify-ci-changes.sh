@@ -120,7 +120,8 @@ for path in "$@"; do
   esac
 
   case "$path" in
-    tests/python/integration/keycloak.py | tests/python/unit/tooling/test_keycloak_fixture.py)
+    tests/python/integration/keycloak.py | tests/python/unit/tooling/test_keycloak_fixture.py | \
+      tests/python/integration/oauth.py | tests/python/unit/tooling/test_oauth_fixture.py)
       code=true
       container=true
       artifacts=true
