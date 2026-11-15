@@ -928,6 +928,11 @@ async fn native_json_manifest_limit_defers_without_losing_members() {
             .bind::<Text, _>(&prefix)
             .execute(connection)
             .await?;
+        // Previous cases churn these tables before this bulk fixture. Exercise
+        // the byte envelope with current expression-index statistics.
+        connection
+            .batch_execute("ANALYZE public.hubuumobject; ANALYZE public.hubuumobject_history")
+            .await?;
         Ok::<_, PostgresStorageError>(())
     })
     .await
