@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 type Client = BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
+const GITHUB_ISSUER: &str = "https://github.com/login/oauth";
 
 pub struct OAuthAdapter {
     definition: OAuthProviderDefinition,
@@ -95,6 +96,30 @@ impl OAuthAdapter {
                 callback: self.callback.as_str().to_owned(),
             },
         ))
+    }
+
+    pub fn accept(
+        &self,
+        pending: PendingLogin,
+        state: &str,
+        issuer: Option<&str>,
+        code: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<AcceptedCallback, OAuthError> {
+        // Match RFC 9207 issuers exactly. Generic profiles have no configured
+        // issuer contract; GitHub's documented issuer is pinned to its profile.
+        let issuer_matches = matches!(
+            (self.definition.profile(), issuer),
+            (OAuthProfile::Github, Some(GITHUB_ISSUER)) | (OAuthProfile::JsonUser, None)
+        );
+        if !issuer_matches
+            || pending.definition_digest != definition_digest(&self.definition)
+            || pending.callback != self.callback.as_str()
+        {
+            return Err(OAuthError::Denied);
+        }
+        let code = pending.code_state.accept(state, code, error)?;
+        Ok(AcceptedCallback { pending, code })
     }
 
     pub async fn exchange(
@@ -433,24 +458,6 @@ impl PendingLogin {
     }
     pub fn restore(secret: &SecretValue) -> Result<Self, OAuthError> {
         serde_json::from_slice(secret.expose()).map_err(|_| OAuthError::Denied)
-    }
-    pub fn accept(
-        self,
-        state: &str,
-        issuer: Option<&str>,
-        code: Option<&str>,
-        error: Option<&str>,
-    ) -> Result<AcceptedCallback, OAuthError> {
-        // Profiles have no issuer contract. Unique provider callback URLs and
-        // encrypted definition binding prevent mix-up without trusting `iss`.
-        if issuer.is_some() {
-            return Err(OAuthError::Denied);
-        }
-        let code = self.code_state.accept(state, code, error)?;
-        Ok(AcceptedCallback {
-            pending: self,
-            code,
-        })
     }
 }
 pub struct AcceptedCallback {
