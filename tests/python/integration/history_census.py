@@ -34,6 +34,13 @@ def assess(report, resources):
             and fallback["age_size_witnesses"] == 0 and fallback["pressure_unchanged"] is True
             and 0 < fallback["size_only_us"] < 10_000_000
             and 0 < fallback["age_or_size_us"] < 10_000_000)),
+        "retained_scope_pass": (shape != "rows_over" or (
+            fallback.get("overlapping_size_sources") == 2
+            and fallback.get("held_copies") == 2 and fallback.get("held_closed_copies") == 1
+            and fallback.get("pending_size_members") == 1
+            and all(fallback.get(key) is True for key in (
+                "governing_partition_verified", "pending_preserved",
+                "held_and_pending_unselected", "holds_preserved")))),
         "boundary_pass": ((shape != "supported" or report["source_rows"] == 1000)
                           and (shape != "identity" or report["largest_identity_bytes"] == 1024 ** 2)
                           and (shape != "identity_over" or report["largest_identity_bytes"] == 1024 ** 2 + 1)

@@ -35,20 +35,35 @@ class CensusAcceptanceTests(unittest.TestCase):
         self.assertFalse(all(assess(report, {**resources, "peak_hwm_bytes": CEILING + 1}).values()))
         self.assertFalse(all(assess(report, {**resources, "rss_trace_verified": False}).values()))
 
-    def test_row_overflow_requires_productive_independent_age_fallback(self):
+    def test_row_overflow_requires_independent_age_and_retained_scope_evidence(self):
         report = {"shape": "rows_over", "outcome": {"status": "unavailable"},
                   "elapsed_us": 100, "control_unchanged": True, "gate_released": True,
                   "kernel_peak_rss_bytes": 100, "source_rows": 100_001,
                   "metadata_bytes": 1000,
                   "fallback": {"size_only_members": 0, "age_members": 1,
                                "age_size_witnesses": 0, "pressure_unchanged": True,
-                               "size_only_us": 100, "age_or_size_us": 100}}
+                               "size_only_us": 100, "age_or_size_us": 100,
+                               "overlapping_size_sources": 2, "held_copies": 2, "held_closed_copies": 1,
+                               "pending_size_members": 1, "governing_partition_verified": True,
+                               "pending_preserved": True, "held_and_pending_unselected": True,
+                               "holds_preserved": True}}
         resources = {"rss_trace_verified": True, "samples": 2,
                      "peak_rss_bytes": 100, "peak_hwm_bytes": 100}
         self.assertTrue(all(assess(report, resources).values()))
-        for key, value in (("size_only_members", 1), ("age_members", 0),
-                           ("age_size_witnesses", 1), ("pressure_unchanged", False),
-                           ("age_or_size_us", 10_000_000)):
+        for key, value, check in (
+                ("size_only_members", 1, "age_fallback_pass"),
+                ("age_members", 0, "age_fallback_pass"),
+                ("age_size_witnesses", 1, "age_fallback_pass"),
+                ("pressure_unchanged", False, "age_fallback_pass"),
+                ("age_or_size_us", 10_000_000, "age_fallback_pass"),
+                ("overlapping_size_sources", 1, "retained_scope_pass"),
+                ("held_copies", 0, "retained_scope_pass"),
+                ("held_closed_copies", 0, "retained_scope_pass"),
+                ("pending_size_members", 0, "retained_scope_pass"),
+                ("governing_partition_verified", False, "retained_scope_pass"),
+                ("pending_preserved", False, "retained_scope_pass"),
+                ("held_and_pending_unselected", False, "retained_scope_pass"),
+                ("holds_preserved", False, "retained_scope_pass")):
             with self.subTest(key=key):
                 changed = {**report, "fallback": {**report["fallback"], key: value}}
-                self.assertFalse(assess(changed, resources)["age_fallback_pass"])
+                self.assertFalse(assess(changed, resources)[check])

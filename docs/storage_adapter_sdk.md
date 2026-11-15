@@ -171,13 +171,16 @@ clock; overflow must never return a complete gauge. Supported probes must finish
 completely. Each attempt must terminate within ten seconds, leave no partial
 authority after transaction rollback and release its control gates. Raw 20-ms
 RSS/high-water traces and enforced 512-MiB/two-CPU limits accompany each report.
-The 100,001-row probe also requires size-only admission to select nothing and
-age-or-size admission to select independently eligible age members, without size
-witnesses or pressure changes. Each admission has its own ten-second liveness
+The 100,001-row probe retains overlapping deployment/collection size sources, an
+active hold and an existing size-selected member before exhausting accounting.
+Its initial complete accounting charges the held copy to the specific source
+without double charging the deployment source. Exhaustion must preserve original
+pressure receipts, pending membership and holds. Size-only admission selects
+nothing; age-or-size admission selects independently eligible age members without
+size witnesses, pending-copy reselection or held-copy selection. Each admission has its own ten-second liveness
 bound. A one-second terminal sampling grace is excluded from operation timings.
 These are native component measurements, without the combined HTTP/worker
-baseline, overlapping policies, held copies or pending reservations. The finite
-tests cover those behaviors at smaller censuses; neither result alone
+baseline or maximum-count policy, hold and pending-journal populations. Neither result alone
 qualifies the combined maximum-census worker envelope. Remove the investigation
 label after recording the tested commit and results.
 Restore/replay must preserve
