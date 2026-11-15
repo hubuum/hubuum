@@ -164,6 +164,8 @@ establish worst-case 100,000-row accounting or steady-state lag acceptance.
 The separate `History census qualification` workflow uses the temporary
 `ci:history-census` label for seven native component probes, with one warm-up and
 five fresh measured processes per probe on each database resource profile.
+Every process receives a fresh clone of the migrated baseline database, so
+rolled-back bulk fixtures cannot contaminate later probes with dead tuples.
 It tests supported censuses, the inclusive 100,000-row and 64-MiB metadata bounds,
 and row, individual-identity and cumulative-metadata overflow. Boundary probes
 may report complete accounting or explicit unavailability under the five-second

@@ -1,14 +1,25 @@
 """Qualify the native accounting component under bounded Linux resources."""
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 from integration.history_expiry import CEILING, measured_resources
 from integration.scheduling_benchmark import Fixture
 
 TEST = "backend::history_lifecycle::accounting::qualification::maximum_native_census"
 SHAPES = ("supported", "rows", "rows_over", "identity", "identity_over", "metadata", "metadata_over")
+
+
+@contextmanager
+def fresh_database(fixture, name):
+    fixture.sql("postgres", f"CREATE DATABASE {name} TEMPLATE template_fixture")
+    try:
+        yield fixture.url(name)
+    finally:
+        fixture.sql("postgres", f"DROP DATABASE {name} WITH (FORCE)")
 
 
 def assess(report, resources):
@@ -60,6 +71,7 @@ def run(args):
     manifest = {"profile": args.profile, "shapes": SHAPES,
                 "process_model": "native PostgreSQL accounting component; no HTTP/worker baseline",
                 "database_login": "isolated fixture owner; split-role timeout covered by Rust suite",
+                "database_isolation": "fresh migrated-template clone per process",
                 "binary_sha256": digest(args.binary), "admin_sha256": digest(args.admin_binary),
                 "memory_limit_bytes": CEILING, "cpu_limit": 2, "sample_interval_ms": 20,
                 "warmup_runs_per_shape": 1, "measured_runs_per_shape": 5,
@@ -73,12 +85,21 @@ def run(args):
         for shape in SHAPES:
             for repeat in range(6):
                 name = f"{shape}-{repeat}"
-                environment = {"HUBUUM_DATABASE_URL": url, "HUBUUM_MIGRATION_DATABASE_URL": url,
-                               "HUBUUM_DATABASE_ROLE_TESTS": "false",
-                               "HUBUUM_TEST_HISTORY_QUALIFICATION_SHAPE": shape,
-                               "HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT": f"/reports/{name}.json"}
-                log = fixture.binary(args.binary, [TEST, "--exact", "--ignored", "--nocapture"],
-                                     name, worker=True, environment=environment, retain_samples=True)
+                with fresh_database(fixture, f"census_{shape}_{repeat}") as database_url:
+                    environment = {"HUBUUM_DATABASE_URL": database_url,
+                                   "HUBUUM_MIGRATION_DATABASE_URL": database_url,
+                                   "HUBUUM_DATABASE_ROLE_TESTS": "false",
+                                   "HUBUUM_TEST_HISTORY_QUALIFICATION_SHAPE": shape,
+                                   "HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT": f"/reports/{name}.json"}
+                    try:
+                        log = fixture.binary(args.binary, [TEST, "--exact", "--ignored", "--nocapture"],
+                                             name, worker=True, environment=environment, retain_samples=True)
+                    except (RuntimeError, subprocess.TimeoutExpired):
+                        logs = subprocess.run(["docker", "logs", fixture.containers[0]],
+                                              capture_output=True, text=True, timeout=30, check=False)
+                        (args.output / f"{name}-postgres.log").write_text(
+                            (logs.stdout + logs.stderr).replace(fixture.password, "[fixture password]"))
+                        raise
                 (args.output / f"{name}.log").write_text(log)
                 report = json.loads((args.output / f"{name}.json").read_text())
                 if report["shape"] != shape:

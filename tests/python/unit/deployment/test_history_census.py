@@ -1,10 +1,27 @@
 """Acceptance rejects incomplete, over-budget and misclassified census evidence."""
+from contextlib import nullcontext
 import unittest
+from unittest.mock import Mock, call
 
-from integration.history_census import CEILING, assess
+from integration.history_census import CEILING, assess, fresh_database
 
 
 class CensusAcceptanceTests(unittest.TestCase):
+    def test_each_probe_drops_its_database_even_after_failure(self):
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                fixture = Mock()
+                fixture.url.return_value = "fixture-url"
+                with self.assertRaises(RuntimeError) if failed else nullcontext():
+                    with fresh_database(fixture, "census_supported_0") as url:
+                        self.assertEqual(url, "fixture-url")
+                        if failed:
+                            raise RuntimeError("probe failed")
+                fixture.sql.assert_has_calls([
+                    call("postgres", "CREATE DATABASE census_supported_0 TEMPLATE template_fixture"),
+                    call("postgres", "DROP DATABASE census_supported_0 WITH (FORCE)"),
+                ])
+
     def test_exhaustion_cannot_publish_complete_accounting(self):
         resources = {"rss_trace_verified": True, "samples": 2,
                      "peak_rss_bytes": 100, "peak_hwm_bytes": 100}
