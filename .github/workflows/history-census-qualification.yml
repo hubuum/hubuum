@@ -85,7 +85,7 @@ jobs:
           mkdir census-build/bin
           tar -xzf census-build/census-binaries.tar.gz -C census-build/bin
           chmod +x census-build/bin/*
-          python3 -I -S tests/python/run.py integration history-census \
+          sudo "$(command -v python3)" -I -S tests/python/run.py integration history-census \
             --binary census-build/bin/history-census-driver \
             --admin-binary census-build/bin/hubuum-admin \
             --profile '${{ matrix.profile }}' --output census-report
