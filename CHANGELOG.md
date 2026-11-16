@@ -123,6 +123,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Hosted LDAP interactions now display their password form after runtime provider
+  activation. Provider resolution preserves revision and immutable identity fences
+  without requiring an OIDC/OAuth adapter for LDAP sign-in or fresh approval.
 - Runtime authentication discovery now advertises OAuth activation alongside
   LDAP and OIDC. Provider setup guides and production qualification use encrypted,
   write-only runtime client secrets without per-provider deployment aliases;
