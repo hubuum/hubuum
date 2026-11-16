@@ -13,7 +13,7 @@ use hubuum_storage_core::StorageEncryptedUpstreamCredential;
 use hubuum_storage_core::StorageRuntimeSettingsValue;
 use hubuum_storage_core::StorageUpstreamSession;
 use hubuum_storage_core::{
-    RuntimeSettingsStorage, StorageAuthenticationProvider, StorageBrowserProviderDefinition,
+    StorageAuthenticationProvider, StorageBrowserProviderDefinition,
     StorageExternalInteractionAuthentication, StorageInteractionAction,
     StorageInteractionAuthorization, StorageInteractionOutcome,
     StorageProtectedAuthenticationState,
@@ -118,22 +118,7 @@ async fn provider(
             .cloned()
             .ok_or_else(|| InteractionError::ConfigurationChanged.into());
     }
-    super::external::provider_context(context, binding).await?;
-    storage_handle(context)
-        .load_runtime_settings()
-        .await
-        .map_err(super::storage_error)?
-        .authentication()
-        .and_then(|providers| {
-            providers
-                .providers()
-                .iter()
-                .find(|provider| {
-                    provider.id() == binding.provider().external_id() && provider.enabled()
-                })
-                .cloned()
-        })
-        .ok_or_else(|| InteractionError::ConfigurationChanged.into())
+    super::external::provider_configuration(context, binding).await
 }
 
 fn state_digest(state: &str) -> InteractionDigest {

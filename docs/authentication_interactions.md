@@ -44,6 +44,10 @@ use the dedicated secret-protected revocation operation after response loss.
 
 ## Hosted browser flow
 
+Runtime-activated LDAP providers use Hubuum's hosted password form for sign-in and
+fresh approval. Selecting that form validates the current provider revision and
+immutable identity namespace; it does not require an OIDC/OAuth redirect adapter.
+
 Browser transport is opt-in. Configure the public origin and optional exact BFF
 return registrations in deployment settings:
 

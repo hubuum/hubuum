@@ -116,6 +116,82 @@ async fn activation_with_real_password_approval_is_single_use() {
 }
 
 #[actix_web::test]
+async fn activated_ldap_uses_hosted_passwords_instead_of_a_browser_adapter() {
+    use hubuum_domain::{
+        InteractionAuthority, InteractionBinding, InteractionClientId, InteractionId,
+        InteractionProviderId,
+    };
+    use hubuum_storage_core::StorageAuthenticationProviders;
+
+    let backend = StorageHandle::memory();
+    let user = password_admin(&backend).await;
+    // Disabled definitions can be activated without contacting an LDAP server.
+    // Activation still establishes the same immutable namespace as a live test.
+    let (status, candidate) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post().uri(CANDIDATES).set_json(json!({
+            "group": "authentication", "expected_revision": 1,
+            "providers": [{"name": "hosted_directory", "kind": "ldap", "source": "runtime", "enabled": false,
+                "configuration": {"scope": "hosted_directory", "url": "ldaps://directory.example",
+                    "user_base_dn": "ou=people,dc=example", "user_filter": "(uid={username})",
+                    "subject_attribute": "entryUUID", "group_attributes": [], "group_rules": []}}]
+        })),
+    ).await;
+    assert_eq!(status, http::StatusCode::CREATED, "{candidate}");
+    let (status, approval) = send_json(&backend, &user.raw_token,
+        test::TestRequest::post().uri("/api/v1/iam/credential-approvals").set_json(json!({
+            "password": PASSWORD, "operation": {"kind": "activate_security_candidate",
+                "candidate_id": candidate["id"], "group": "authentication", "expected_revision": 1}
+        }))).await;
+    assert_eq!(status, http::StatusCode::CREATED, "{approval}");
+    let (status, activated) = send_json(&backend, &user.raw_token,
+        test::TestRequest::post().uri(&format!("{CANDIDATES}/{}/activate", candidate["id"].as_str().unwrap()))
+            .insert_header(("X-Hubuum-Credential-Approval", approval["approval"].as_str().unwrap()))
+            .set_json(json!({"expected_revision": 1, "verification_receipt": candidate["verification_receipt"]}))).await;
+    assert_eq!(status, http::StatusCode::OK, "{activated}");
+    let providers = backend
+        .load_runtime_settings()
+        .await
+        .unwrap()
+        .authentication()
+        .unwrap()
+        .providers()
+        .iter()
+        .cloned()
+        .map(|provider| provider.with_enabled(true))
+        .collect();
+    let revision = commit(
+        &backend,
+        StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authentication(
+            StorageAuthenticationProviders::try_new(providers).unwrap(),
+        )),
+    )
+    .await;
+    let binding = InteractionBinding::try_new(
+        InteractionId::new(uuid::Uuid::new_v4()).unwrap(),
+        InteractionProviderId::external(
+            candidate["providers"][0]["provider_id"]
+                .as_str()
+                .unwrap()
+                .parse()
+                .unwrap(),
+        )
+        .unwrap(),
+        InteractionClientId::new("hosted-password-test").unwrap(),
+        revision,
+        InteractionAuthority::login(),
+    )
+    .unwrap();
+
+    assert!(
+        !crate::services::auth_interactions::oidc::available(context(&backend).get_ref(), &binding)
+            .await
+            .unwrap()
+    );
+}
+
+#[actix_web::test]
 async fn candidate_status_is_bound_to_the_initiating_credential() {
     let backend = StorageHandle::memory();
     let user = admin(&backend).await;

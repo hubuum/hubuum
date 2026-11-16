@@ -10,22 +10,22 @@ use hubuum_domain::{
     InteractionBrowserBinding, InteractionLifecycle,
 };
 use hubuum_storage_core::{
-    ExternalIdentityStorage, RuntimeSettingsStorage, StorageBrowserProviderDefinition,
-    StorageExternalInteractionAuthentication, StorageExternalPrincipalState,
-    StorageInteractionAction, StorageInteractionAuthorization, StorageInteractionView,
-    StorageProviderIdentityBinding, StorageRuntimeSettingsGroup,
+    ExternalIdentityStorage, RuntimeSettingsStorage, StorageAuthenticationProvider,
+    StorageBrowserProviderDefinition, StorageExternalInteractionAuthentication,
+    StorageExternalPrincipalState, StorageInteractionAction, StorageInteractionAuthorization,
+    StorageInteractionView, StorageProviderIdentityBinding, StorageRuntimeSettingsGroup,
 };
 
 use crate::errors::{ApiError, InteractionError};
 use crate::permissions::AppContext;
 use crate::storage::{StorageHandle, storage_handle};
 
-/// Resolve an enabled provider from the exact revision carried by the interaction.
-/// Browser definitions currently originate only from runtime security candidates.
-pub async fn provider_context(
+/// Resolve the enabled definition under its revision and immutable namespace.
+/// Password providers also need this fence when choosing their hosted form.
+pub(super) async fn provider_configuration(
     context: &AppContext,
     binding: &InteractionBinding,
-) -> Result<ExternalAuthenticationContext, ApiError> {
+) -> Result<StorageAuthenticationProvider, ApiError> {
     let storage = storage_handle(context);
     storage
         .applied_runtime_settings()
@@ -62,6 +62,17 @@ pub async fn provider_context(
     {
         return Err(InteractionError::ConfigurationChanged.into());
     }
+    Ok(provider.clone())
+}
+
+/// Browser adapters require the stronger protocol-specific context after the
+/// common definition has been resolved. LDAP retains its password transport.
+pub async fn provider_context(
+    context: &AppContext,
+    binding: &InteractionBinding,
+) -> Result<ExternalAuthenticationContext, ApiError> {
+    let provider = provider_configuration(context, binding).await?;
+    let scope = IdentityScopeName::new(provider.name()).map_err(|_| InteractionError::Invalid)?;
     match provider.browser_definition() {
         Some(StorageBrowserProviderDefinition::Oidc(definition)) => {
             ExternalAuthenticationContext::oidc(binding.clone(), scope, definition)
