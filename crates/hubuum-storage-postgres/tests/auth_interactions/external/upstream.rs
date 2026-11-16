@@ -200,6 +200,22 @@ async fn fresh_authentication_replaces_retained_credential_before_operation_comp
     let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
     let principal = f.retained_login().await;
     let command = f.fresh_retention_command(principal).await;
+    let StorageInteractionAction::AuthenticateExternal { authentication, .. } = command.action()
+    else {
+        panic!("external authentication");
+    };
+    let StorageExternalInteractionAuthentication::ApprovalWithCredential { approval, .. } =
+        authentication.as_ref()
+    else {
+        panic!("fresh credential");
+    };
+    let resolved = f
+        .backend
+        .upstream_approval_session(approval.proof().clone())
+        .await
+        .unwrap()
+        .expect("same eligible session");
+    assert_eq!(resolved.session(), approval.session());
     f.backend.advance_auth_interaction(command).await.unwrap();
     assert_eq!(
         f.upstream_claim(principal).await.credential().ciphertext(),
