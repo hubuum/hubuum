@@ -427,6 +427,14 @@ impl ServiceAccountStorage for PostgresStorage {
 
 #[async_trait]
 impl ExternalIdentityStorage for PostgresStorage {
+    async fn upstream_approval_session(
+        &self,
+        proof: hubuum_domain::FreshExternalAuthentication,
+    ) -> Result<Option<hubuum_storage_core::StorageUpstreamApproval>, StorageError> {
+        crate::operations::upstream_authentication::approval_session(self.runtime(), proof)
+            .await
+            .map_err(StorageError::from)
+    }
     async fn fail_upstream_renewal(
         &self,
         claim: hubuum_storage_core::StorageUpstreamClaim,

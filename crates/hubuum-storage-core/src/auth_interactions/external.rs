@@ -14,6 +14,10 @@ pub enum StorageExternalInteractionAuthentication {
         credential: crate::StorageEncryptedUpstreamCredential,
     },
     Approval(FreshExternalAuthentication),
+    ApprovalWithCredential {
+        approval: Box<crate::StorageUpstreamApproval>,
+        credential: crate::StorageEncryptedUpstreamCredential,
+    },
 }
 
 impl StorageExternalInteractionAuthentication {
@@ -25,6 +29,7 @@ impl StorageExternalInteractionAuthentication {
                 ..
             } => proof,
             Self::Approval(proof) => proof.authentication(),
+            Self::ApprovalWithCredential { approval, .. } => approval.proof().authentication(),
         }
     }
 
@@ -41,6 +46,10 @@ impl StorageExternalInteractionAuthentication {
             Self::Approval(proof) => proof
                 .authenticated_at()
                 .min(proof.authentication().verified_at()),
+            Self::ApprovalWithCredential { approval, .. } => approval
+                .proof()
+                .authenticated_at()
+                .min(approval.proof().authentication().verified_at()),
         }
     }
 
@@ -70,6 +79,13 @@ impl StorageExternalInteractionAuthentication {
                     binding.authority().purpose() != InteractionPurpose::Login
                 }
                 Self::Approval(fresh) => {
+                    fresh.started_at() != record.lifecycle().created_at()
+                        || binding.authority().purpose() != InteractionPurpose::CredentialApproval
+                        || now - self.authenticated_at()
+                            > Duration::seconds(crate::CREDENTIAL_APPROVAL_LIFETIME_SECONDS)
+                }
+                Self::ApprovalWithCredential { approval, .. } => {
+                    let fresh = approval.proof();
                     fresh.started_at() != record.lifecycle().created_at()
                         || binding.authority().purpose() != InteractionPurpose::CredentialApproval
                         || now - self.authenticated_at()
@@ -105,6 +121,20 @@ impl StorageExternalInteractionAuthentication {
             Self::Approval(proof) => {
                 if existing
                     != proof
+                        .authentication()
+                        .binding()
+                        .authority()
+                        .actor()
+                        .map(|actor| actor.principal_id())
+                    || existing.is_none()
+                {
+                    return Err(invalid());
+                }
+            }
+            Self::ApprovalWithCredential { approval, .. } => {
+                if existing
+                    != approval
+                        .proof()
                         .authentication()
                         .binding()
                         .authority()

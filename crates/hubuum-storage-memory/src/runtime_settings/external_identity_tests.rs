@@ -594,6 +594,66 @@ async fn fresh_approval_completion_requires_live_actor_and_exact_operation(
 }
 
 impl Fixture {
+    async fn fresh_retention_command(&self, principal: PrincipalId) -> StorageInteractionCommand {
+        let actor = self
+            .backend
+            .create_token(StorageTokenCreate::new(
+                principal,
+                StorageTokenDigest::legacy_unidentified("fresh-retention-origin"),
+                StorageTokenIssuancePolicy::try_new(24, 24).unwrap(),
+                EventContext::system(),
+            ))
+            .await
+            .unwrap()
+            .into_value();
+        let attempt = self
+            .start_for(InteractionAuthority::approval(
+                InteractionActor::new(principal, actor.id()),
+                digest(),
+            ))
+            .await;
+        let context = ExternalAuthenticationContext::oidc(
+            attempt.binding.clone(),
+            IdentityScopeName::new(self.provider.name()).unwrap(),
+            &self.definition,
+        )
+        .unwrap();
+        let StorageExternalInteractionAuthentication::Login(proof) =
+            self.authentication(&attempt, "alice", "alice", json!(["/team"]))
+        else {
+            panic!("proof")
+        };
+        let fresh = FreshExternalAuthenticationRequest::new(
+            context,
+            proof.identity().clone(),
+            attempt.started_at,
+            0,
+        )
+        .unwrap()
+        .verify(proof.clone(), Some(proof.verified_at()), Utc::now())
+        .unwrap();
+        let approval = self
+            .backend
+            .upstream_approval_session(fresh)
+            .await
+            .unwrap()
+            .expect("retained session");
+        StorageInteractionCommand::new(
+            StorageInteractionAuthorization::Claim(attempt.claim),
+            StorageInteractionAction::AuthenticateExternal {
+                authentication: Box::new(
+                    StorageExternalInteractionAuthentication::ApprovalWithCredential {
+                        approval: Box::new(approval),
+                        credential: hubuum_storage_core::StorageEncryptedUpstreamCredential::new(
+                            "fresh-encrypted-token".into(),
+                        )
+                        .unwrap(),
+                    },
+                ),
+                approval: None,
+            },
+        )
+    }
     async fn retained_session(&self) -> (Attempt, PrincipalId) {
         use hubuum_storage_core::StorageEncryptedUpstreamCredential;
         let attempt = self.start().await;
@@ -637,6 +697,59 @@ impl Fixture {
         };
         (attempt, issued.into_value().principal_id())
     }
+}
+
+#[rstest]
+#[case::rejected_refresh(false)]
+#[case::successful_refresh(true)]
+#[tokio::test]
+async fn fresh_authentication_fences_old_memory_refresh(#[case] success: bool) {
+    use hubuum_storage_core::{
+        StorageEncryptedUpstreamCredential, StorageUpstreamClaimOutcome, StorageUpstreamRenewal,
+    };
+    let f = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
+    let (attempt, principal) = f.retained_session().await;
+    let StorageUpstreamClaimOutcome::Claim(old) = f
+        .backend
+        .claim_upstream_credential(principal)
+        .await
+        .unwrap()
+    else {
+        panic!("claim")
+    };
+    let StorageExternalInteractionAuthentication::Login(proof) =
+        f.authentication(&attempt, "alice", "alice", json!([]))
+    else {
+        panic!("proof")
+    };
+    let command = f.fresh_retention_command(principal).await;
+    f.backend.advance_auth_interaction(command).await.unwrap();
+    let stale = if success {
+        f.backend
+            .finish_upstream_renewal(
+                StorageUpstreamRenewal::new(
+                    *old,
+                    proof,
+                    Some(StorageEncryptedUpstreamCredential::new("stale".into()).unwrap()),
+                )
+                .unwrap(),
+            )
+            .await
+    } else {
+        f.backend
+            .fail_upstream_renewal(*old, StorageExternalSyncFailure::Rejected)
+            .await
+    };
+    assert!(stale.is_err());
+    let StorageUpstreamClaimOutcome::Claim(new) = f
+        .backend
+        .claim_upstream_credential(principal)
+        .await
+        .unwrap()
+    else {
+        panic!("fresh claim")
+    };
+    assert_eq!(new.credential().ciphertext(), "fresh-encrypted-token");
 }
 
 #[tokio::test]

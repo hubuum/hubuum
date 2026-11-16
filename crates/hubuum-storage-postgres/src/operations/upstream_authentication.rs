@@ -5,10 +5,11 @@ use chrono::Utc;
 use diesel::sql_types::{BigInt, Integer, Jsonb, Nullable, Text, Uuid as SqlUuid};
 use diesel::{OptionalExtension, QueryableByName, sql_query};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::FreshExternalAuthentication;
 use hubuum_domain::PrincipalId;
 use hubuum_storage_core::{
-    SessionRevocation, StorageExternalInteractionAuthentication, StorageUpstreamClaimOutcome,
-    StorageUpstreamRenewal, StorageUpstreamSession,
+    SessionRevocation, StorageExternalInteractionAuthentication, StorageUpstreamApproval,
+    StorageUpstreamClaimOutcome, StorageUpstreamRenewal, StorageUpstreamSession,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -98,6 +99,62 @@ pub async fn claim(
             Ok(outcome)
         })
         .await
+}
+pub async fn approval_session(
+    runtime: &PostgresRuntime,
+    proof: FreshExternalAuthentication,
+) -> Result<Option<StorageUpstreamApproval>, PostgresStorageError> {
+    runtime
+        .with_transaction(async move |connection| {
+            let revision = revision(connection).await?;
+            let principal = proof
+                .authentication()
+                .binding()
+                .authority()
+                .actor()
+                .ok_or_else(invalid)?
+                .principal_id();
+            lock_principal(connection, principal).await?;
+            eligible(connection, principal, revision, None)
+                .await?
+                .map(|record| StorageUpstreamApproval::new(&record, proof).map_err(|_| invalid()))
+                .transpose()
+        })
+        .await
+}
+
+pub(super) async fn retain_approval(
+    connection: &mut PostgresConnection,
+    authentication: &StorageExternalInteractionAuthentication,
+    revision: i64,
+) -> Result<(), PostgresStorageError> {
+    let StorageExternalInteractionAuthentication::ApprovalWithCredential {
+        approval,
+        credential,
+    } = authentication
+    else {
+        return Ok(());
+    };
+    let principal = approval
+        .proof()
+        .authentication()
+        .binding()
+        .authority()
+        .actor()
+        .ok_or_else(invalid)?
+        .principal_id();
+    let mut record = eligible(
+        connection,
+        principal,
+        revision,
+        Some(approval.session().value()),
+    )
+    .await?
+    .ok_or_else(invalid)?;
+    record
+        .reauthenticated(approval, credential.clone(), Utc::now())
+        .map_err(|_| invalid())?;
+    save(connection, &record).await
 }
 pub async fn finish(
     runtime: &PostgresRuntime,

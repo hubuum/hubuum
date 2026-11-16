@@ -1,11 +1,116 @@
 use super::*;
 use hubuum_domain::VerifiedExternalAuthentication;
+use hubuum_domain::{FreshExternalAuthenticationRequest, InteractionActor};
 
 fn encrypted(value: &str) -> StorageEncryptedUpstreamCredential {
     StorageEncryptedUpstreamCredential::new(value.into()).unwrap()
 }
 
 impl ExternalFixture {
+    async fn fresh_retention_command(&self, principal: PrincipalId) -> StorageInteractionCommand {
+        let actor = self
+            .backend
+            .create_token(StorageTokenCreate::new(
+                principal,
+                StorageTokenDigest::legacy_unidentified("fresh-retention-origin"),
+                StorageTokenIssuancePolicy::try_new(24, 24).unwrap(),
+                EventContext::system(),
+            ))
+            .await
+            .unwrap()
+            .into_value();
+        let binding = InteractionBinding::try_new(
+            InteractionId::new(Uuid::new_v4()).unwrap(),
+            InteractionProviderId::external(self.provider.id()).unwrap(),
+            InteractionClientId::new("fresh-retention").unwrap(),
+            ResourceRevision::INITIAL,
+            InteractionAuthority::approval(
+                InteractionActor::new(principal, actor.id()),
+                interaction_digest(),
+            ),
+        )
+        .unwrap();
+        let secret = interaction_digest();
+        let access =
+            StorageInteractionAccess::new(binding.id(), binding.client().clone(), secret.clone());
+        let now = Utc::now();
+        let lifecycle = InteractionLifecycle::try_new(
+            binding.clone(),
+            InteractionMode::Credentials,
+            now,
+            now + Duration::minutes(5),
+        )
+        .unwrap();
+        let started = lifecycle.created_at();
+        self.backend
+            .create_auth_interaction(
+                StorageInteractionCreate::builder(lifecycle, secret)
+                    .provider(self.provider.clone())
+                    .actor(StorageInteractionActorLease::approval(
+                        started + Duration::minutes(10),
+                    ))
+                    .try_build()
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let StorageInteractionOutcome::Claim(claim) = self
+            .backend
+            .advance_auth_interaction(StorageInteractionCommand::new(
+                StorageInteractionAuthorization::Redemption(access),
+                StorageInteractionAction::Claim(Uuid::new_v4()),
+            ))
+            .await
+            .unwrap()
+        else {
+            panic!("claim")
+        };
+        let context = ExternalAuthenticationContext::oidc(
+            binding,
+            IdentityScopeName::new("company").unwrap(),
+            &self.definition,
+        )
+        .unwrap();
+        let proof = context
+            .verified_oidc(
+                self.definition.issuer().as_str(),
+                ExternalIdentityProfile::new(
+                    ExternalSubject::new("alice").unwrap(),
+                    Some("alice".into()),
+                    None,
+                )
+                .unwrap(),
+                MembershipClaims::Complete {
+                    source: MembershipClaimSource::IdToken,
+                    document: &json!({"groups":["/team"]}),
+                },
+                Utc::now(),
+            )
+            .unwrap();
+        let fresh =
+            FreshExternalAuthenticationRequest::new(context, proof.identity().clone(), started, 0)
+                .unwrap()
+                .verify(proof.clone(), Some(proof.verified_at()), Utc::now())
+                .unwrap();
+        let approval = self
+            .backend
+            .upstream_approval_session(fresh)
+            .await
+            .unwrap()
+            .expect("retained session");
+        StorageInteractionCommand::new(
+            StorageInteractionAuthorization::Claim(claim),
+            StorageInteractionAction::AuthenticateExternal {
+                authentication: Box::new(
+                    StorageExternalInteractionAuthentication::ApprovalWithCredential {
+                        approval: Box::new(approval),
+                        credential: encrypted("fresh-encrypted-token"),
+                    },
+                ),
+                approval: None,
+            },
+        )
+    }
     async fn retained_login(&self) -> PrincipalId {
         let (interaction, claim) = self.start(&self.backend).await;
         let command = self.command(&claim, "alice", "alice", json!(["/team"]));
@@ -88,6 +193,68 @@ impl ExternalFixture {
         )
         .unwrap()
     }
+}
+
+#[tokio::test]
+async fn fresh_authentication_replaces_retained_credential_before_operation_completion() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let principal = f.retained_login().await;
+    let command = f.fresh_retention_command(principal).await;
+    f.backend.advance_auth_interaction(command).await.unwrap();
+    assert_eq!(
+        f.upstream_claim(principal).await.credential().ciphertext(),
+        "fresh-encrypted-token"
+    );
+    f.database.cleanup().await;
+}
+
+#[rstest::rstest]
+#[case::rejected_refresh(false)]
+#[case::successful_refresh(true)]
+#[tokio::test]
+async fn fresh_authentication_fences_old_refresh_completion(#[case] success: bool) {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let principal = f.retained_login().await;
+    let old = f.upstream_claim(principal).await;
+    let proof = f.renewal_proof(&old, "alice");
+    let command = f.fresh_retention_command(principal).await;
+    f.backend.advance_auth_interaction(command).await.unwrap();
+    let stale = if success {
+        f.backend
+            .finish_upstream_renewal(
+                StorageUpstreamRenewal::new(old, proof, Some(encrypted("stale"))).unwrap(),
+            )
+            .await
+    } else {
+        f.backend
+            .fail_upstream_renewal(old, StorageExternalSyncFailure::Rejected)
+            .await
+    };
+    assert!(stale.is_err());
+    assert_eq!(
+        f.upstream_claim(principal).await.credential().ciphertext(),
+        "fresh-encrypted-token"
+    );
+    f.database.cleanup().await;
+}
+
+#[rstest::rstest]
+#[case::logout("UPDATE auth_sessions SET revoked_at=now(),revocation_reason='fixture'")]
+#[case::configuration(
+    "UPDATE runtime_settings SET revision=revision+1 WHERE setting_group='authentication'"
+)]
+#[case::expired_session(
+    "UPDATE auth_sessions SET authenticated_at=now()-interval '2 hours',idle_expires_at=now()-interval '1 hour'"
+)]
+#[tokio::test]
+async fn fresh_retention_rechecks_live_session_fences(#[case] change: &str) {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let principal = f.retained_login().await;
+    let command = f.fresh_retention_command(principal).await;
+    f.database.owner(change).await.unwrap();
+    let outcome = f.backend.advance_auth_interaction(command).await;
+    assert!(!matches!(outcome, Ok(StorageInteractionOutcome::View(_))));
+    f.database.cleanup().await;
 }
 
 #[tokio::test]

@@ -554,9 +554,16 @@ impl Authentication {
         self,
         request: FreshExternalAuthenticationRequest,
     ) -> Result<FreshExternalAuthentication, OidcError> {
-        request
+        self.fresh_with_credentials(request).map(|(proof, _)| proof)
+    }
+    pub fn fresh_with_credentials(
+        self,
+        request: FreshExternalAuthenticationRequest,
+    ) -> Result<(FreshExternalAuthentication, Option<RetainedCredentials>), OidcError> {
+        let proof = request
             .verify(self.authentication, self.auth_time, Utc::now())
-            .map_err(|_| OidcError::Denied)
+            .map_err(|_| OidcError::Denied)?;
+        Ok((proof, self.credentials))
     }
 }
 

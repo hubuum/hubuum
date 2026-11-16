@@ -2,8 +2,8 @@
 //! fence these transitions with the current provider revision and session state.
 use chrono::{DateTime, Duration, Utc};
 use hubuum_domain::{
-    BrowserIdentityNamespace, InteractionBinding, InteractionPurpose, PrincipalId,
-    VerifiedExternalAuthentication,
+    BrowserIdentityNamespace, FreshExternalAuthentication, InteractionBinding, InteractionPurpose,
+    PrincipalId, VerifiedExternalAuthentication,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -270,6 +270,75 @@ impl StorageUpstreamSession {
         self.credential = credential;
         self.lease = None;
         Ok(())
+    }
+
+    /// A fresh verified grant supersedes any in-flight refresh of the old grant.
+    /// Keep the original login binding so stored ciphertext and renewal proofs
+    /// retain their existing session identity and serialized representation.
+    pub fn reauthenticated(
+        &mut self,
+        approval: &StorageUpstreamApproval,
+        credential: StorageEncryptedUpstreamCredential,
+        now: DateTime<Utc>,
+    ) -> Result<(), StorageValidationError> {
+        let resolved = StorageUpstreamApproval::new(self, approval.proof.clone())?;
+        if resolved.session != approval.session
+            || resolved.binding != approval.binding
+            || approval.proof.authentication().verified_at() > now
+        {
+            return Err(invalid());
+        }
+        self.credential = Some(credential);
+        self.lease = None;
+        Ok(())
+    }
+}
+
+/// An existing session resolved against a fresh proof of the same immutable
+/// provider identity. It exposes only the binding needed to encrypt its new
+/// credential; the adapter rechecks live session/revision fences before saving.
+#[derive(Clone, Debug)]
+pub struct StorageUpstreamApproval {
+    session: AuthSessionId,
+    binding: InteractionBinding,
+    proof: FreshExternalAuthentication,
+}
+impl StorageUpstreamApproval {
+    pub fn new(
+        session: &StorageUpstreamSession,
+        proof: FreshExternalAuthentication,
+    ) -> Result<Self, StorageValidationError> {
+        let authentication = proof.authentication();
+        let binding = authentication.binding();
+        let identity = authentication.identity();
+        if binding.authority().purpose() != InteractionPurpose::CredentialApproval
+            || binding
+                .authority()
+                .actor()
+                .map(|actor| actor.principal_id())
+                != Some(session.principal)
+            || binding.provider() != session.binding.provider()
+            || binding.revision() != session.binding.revision()
+            || identity.scope().as_str() != session.scope
+            || identity.namespace() != session.namespace.as_str()
+            || identity.subject().as_str() != session.subject
+        {
+            return Err(invalid());
+        }
+        Ok(Self {
+            session: session.session(),
+            binding: session.binding.clone(),
+            proof,
+        })
+    }
+    pub fn session(&self) -> AuthSessionId {
+        self.session
+    }
+    pub fn binding(&self) -> &InteractionBinding {
+        &self.binding
+    }
+    pub fn proof(&self) -> &FreshExternalAuthentication {
+        &self.proof
     }
 }
 

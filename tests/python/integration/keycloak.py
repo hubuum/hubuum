@@ -456,6 +456,12 @@ class Fixture:
         mfa_session = self.complete(mfa)
         assert getattr(mfa_browser, "otp_completed", False) and mfa_session["access_token"]
         self.passed("real Keycloak password plus TOTP")
+        # Select a retained grant from the same browser SSO session that will
+        # reauthenticate. An unrelated newer login would mask stale retention.
+        ordinary = self.begin()
+        self.authorize(ordinary, browser)
+        self.session = self.complete(ordinary)
+        time.sleep(2)
         principal = int(self.sql("SELECT id FROM principals WHERE name='alice' AND provider_managed"))
         operation = {"kind": "create_token", "principal_id": principal, "token": {"name": "qualified-pat",
             "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).replace(tzinfo=None).isoformat()}}
@@ -471,6 +477,16 @@ class Fixture:
         self.pat = json.loads(raw)["token"]
         assert self.browser.request(token_url, operation["token"], headers=token_headers)[0] == 403, "Approval reused"
         self.passed("existing SSO must reauthenticate for operation-bound approval")
+        time.sleep(6)
+        self.api("/api/v1/auth/validate", token=self.session["access_token"])
+        self.api("/api/v1/auth/validate", token=self.pat)
+        self.passed("fresh approval preserves ordinary session and PAT through due upstream renewal")
+        denied = self.begin(token=self.session["access_token"], purpose="credential_approval", operation=operation)
+        self.authorize(denied, browser, decision="deny")
+        assert self.complete(denied, expected=(403,))["reason"] == "access_denied"
+        time.sleep(6)
+        self.api("/api/v1/auth/validate", token=self.session["access_token"])
+        self.passed("denied protected operation preserves newly authenticated upstream continuity")
         before = self.provider_api("/keys")["active"]["RS256"]
         realm_id = self.provider_api("")["id"]
         self.provider_api("/components", {"name": "fixture-rotated", "parentId": realm_id,
