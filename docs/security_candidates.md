@@ -123,6 +123,13 @@ when removing an unused credential. LDAP bind passwords retain their existing
 write-only runtime inputs. Aliases are an optional alternative for credentials
 managed by deployment secret sources.
 
+For LDAP, omitting both `bind_password` and `bind_password_ref` preserves the
+existing encrypted password or reference during metadata edits. To select a new
+reference, send `bind_password: null` and the new `bind_password_ref`; to replace
+it with an encrypted password, send its write-only `bind_password` and
+`bind_password_ref: null`. Set both fields to `null` to clear the bind credential.
+Stored aliases are never returned to clients.
+
 Runtime Treetop configuration requires HTTPS, verified certificates, bounded
 connect/request timeouts, no proxies or redirects, and a registered trust profile.
 `system` uses system roots; `deployment` additionally uses the configured Treetop
