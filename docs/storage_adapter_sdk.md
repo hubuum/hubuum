@@ -154,13 +154,24 @@ qualification.
 Finite H1/H4 qualification runs each shape on a separate isolated CI runner, with
 one warm-up and five fresh measurements per shape. Every shape retains the same
 30-minute phase bounds, four-hour job limit and worker/database resource caps.
-A shape report cannot qualify the complete profile. Aggregation requires all six
+A shape report cannot qualify the complete profile. Aggregation requires all seven
 shapes, identical settings and binary provenance, and recomputes acceptance and raw
-RSS evidence before publishing the 36-run profile. The logical-size shape exercises
+RSS evidence before publishing the 42-run profile. The logical-size shape exercises
 65 updates per scope, protected size witnesses and oldest-first ordering through
 the actual worker, independent protection and signed restore/replay. It retains
 the existing 1000-examined-row profile ceiling, memory and CPU limits; it does not
-establish worst-case 100,000-row accounting or steady-state lag acceptance.
+establish steady-state lag acceptance. The additional `census` shape provisions
+400 real child collections through ordinary native history triggers, then
+closes 251 versions of each. Its 100,800 filler versions keep the family above
+the census row ceiling throughout execution. Combined HTTP/worker replicas must
+report unavailable accounting for every original task, select only independent
+age membership and preserve the unselected filler versions, active hold and
+pressure state through signed full-history restore/replay. The fixture must stay
+within recovery's existing 1,000-current/open-row and 1-MiB exposure bounds;
+larger current inventories remain quarantined. The temporary
+`ci:history-envelope` label measures just this shape on both profiles; this
+focused result cannot qualify the complete profile. Maximum metadata and
+maximum-count authority populations remain separate combined-envelope gates.
 The separate `History census qualification` workflow uses the temporary
 `ci:history-census` label for seven native component probes, with one warm-up and
 five fresh measured processes per probe on each database resource profile.

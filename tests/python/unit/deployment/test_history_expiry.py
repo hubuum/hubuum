@@ -46,6 +46,27 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                 broken["batches"][0][field] = value
                 self.assertFalse(assess(broken, resources)["size_selection_pass"])
 
+    def test_census_requires_complete_fallback_and_preserved_population(self):
+        report, resources = self.fixture()
+        report["shape"] = "census"
+        report["batches"][0]["size_authorized_rows"] = 0
+        report["census"] = {"source_rows":100900, "filler":{"rows":100800,"closed":100400,"versions":"fingerprint"},
+                            "exposure_rows":820,"exposure_bytes":300000,
+                            "fallback_tasks":1,"expected_tasks":1,"age_only":True,
+                            "pressure_unchanged":True,"holds_preserved":True,
+                            "filler_preserved":True,"restored_filler_preserved":True}
+        self.assertTrue(all(assess(report, resources).values()))
+        for field, value in (("source_rows",100000), ("exposure_rows",1001), ("exposure_bytes",1024**2+1),
+                             ("fallback_tasks",0), ("expected_tasks",2),
+                             ("age_only",False), ("pressure_unchanged",False), ("holds_preserved",False),
+                             ("filler_preserved",False), ("restored_filler_preserved",False)):
+            with self.subTest(field=field):
+                broken = copy.deepcopy(report)
+                broken["census"][field] = value
+                self.assertFalse(assess(broken, resources)["census_fallback_pass"])
+        report["batches"][0]["size_authorized_rows"] = 1
+        self.assertFalse(assess(report, resources)["census_fallback_pass"])
+
     def test_complete_evidence_passes(self):
         self.assertTrue(all(assess(*self.fixture()).values()))
 
@@ -102,6 +123,13 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                                   oversized_reported_rows=1, backup_rejected_oversized=True)
                 elif shape == "logical_size":
                     report["batches"][0].update(size_authorized_rows=1000, oldest_first=True)
+                elif shape == "census":
+                    report["batches"][0]["size_authorized_rows"] = 0
+                    report["census"] = {"source_rows":100900,"filler":{"rows":100800,"closed":100400,"versions":"fingerprint"},
+                                        "exposure_rows":820,"exposure_bytes":300000,
+                                        "fallback_tasks":1,"expected_tasks":1,"age_only":True,
+                                        "pressure_unchanged":True,"holds_preserved":True,
+                                        "filler_preserved":True,"restored_filler_preserved":True}
                 elif shape == "authority":
                     report.pop("replica_reports")
                     report["maximum_composite_verified"] = True
@@ -183,7 +211,8 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
     def test_aggregation_dispatch_requires_successful_unchanged_measurement_provenance(self):
         workflow = (ROOT / ".github/workflows/history-expiry-qualification.yml").read_text()
         aggregate = workflow.split("\n  aggregate:\n")[1].split("\n  reuse:\n")[0]
-        self.assertIn("if: ${{ !cancelled() && (needs.measure.result == 'success' || inputs.measurement_run_id != '') }}", aggregate)
+        self.assertIn("inputs.shape != 'census' && (!contains(github.event.pull_request.labels.*.name, 'ci:history-envelope') || contains(github.event.pull_request.labels.*.name, 'ci:validate'))", aggregate)
+        self.assertIn("(needs.measure.result == 'success' || inputs.measurement_run_id != '')", aggregate)
         step = aggregate.split("- name: Verify measurement source and all completed shape jobs")[1]
         script = textwrap.dedent(step.split("<<'PY'\n")[1].split("\n          PY")[0])
         for invalid in (None, "driver", "production", "missing", "failed", "branch", "recipe"):

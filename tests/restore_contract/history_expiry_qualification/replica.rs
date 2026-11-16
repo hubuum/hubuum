@@ -188,6 +188,16 @@ async fn task_observations(
 #[ignore = "explicit Linux shared-process resource and slow-consumer qualification"]
 async fn qualified_history_expiry_replica() {
     assert_eq!(std::env::consts::OS, "linux");
+    run_replica().await;
+}
+
+#[actix_web::test]
+#[ignore = "explicit uncapped native preflight; not Linux resource qualification"]
+async fn native_history_expiry_replica_preflight() {
+    run_replica().await;
+}
+
+async fn run_replica() {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
         .with_ansi(false)
@@ -362,7 +372,7 @@ async fn qualified_history_expiry_replica() {
     handle.stop(true).await;
     server.await.unwrap().unwrap();
     storage.unregister_runtime(registration).await.unwrap();
-    let report = json!({"replica":index, "slots":slots, "initial_claimed_slots":slots, "http_workers":2,
+    let report = json!({"replica":index,"platform":std::env::consts::OS, "slots":slots, "initial_claimed_slots":slots, "http_workers":2,
         "claimed_iterations":claimed_iterations, "slow_consumer_blocked":slow_consumer_blocked,
         "slow_consumer_retired":true, "oversized_reported_rows":oversized_reported_rows,
         "max_scanned_source_rows":max_scanned_source_rows,

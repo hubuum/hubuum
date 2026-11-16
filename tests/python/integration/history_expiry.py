@@ -20,7 +20,7 @@ TEST = "restore_contract::history_expiry_qualification::qualified_history_expiry
 PUBLISHER_TEST = "services::deletion_recovery::repository::size_tests::maximum_composite_checkpoint_resource_probe"
 REPLICA_TEST = "restore_contract::history_expiry_qualification::replica::qualified_history_expiry_replica"
 CEILING = 512 * 1024 ** 2
-SHAPES = ("rows", "bytes", "large_row", "oversized", "logical_size", "authority")
+SHAPES = ("rows", "bytes", "large_row", "oversized", "logical_size", "census", "authority")
 
 
 def verify_binary_reuse(changed_paths, original_workflow, current_workflow):
@@ -131,6 +131,19 @@ def assess(report, resources):
         checks["size_selection_pass"] = bool(batches) and all(
             batch.get("size_authorized_rows") == batch["rows"]
             and batch.get("oldest_first") is True for batch in batches)
+    if report["shape"] == "census":
+        census = report.get("census", {})
+        checks["census_fallback_pass"] = (
+            census.get("source_rows", 0) > 100_000
+            and census.get("filler", {}).get("rows") == 100800
+            and census.get("filler", {}).get("closed") == 100400
+            and 0 < census.get("exposure_rows", 0) <= 1000
+            and 0 < census.get("exposure_bytes", 0) <= 1024 ** 2
+            and bool(census.get("filler", {}).get("versions"))
+            and census.get("fallback_tasks") == census.get("expected_tasks") == report["slots"] * report["replicas"]
+            and all(census.get(field) is True for field in (
+                "age_only", "pressure_unchanged", "holds_preserved", "filler_preserved", "restored_filler_preserved"))
+            and all(batch.get("size_authorized_rows") == 0 for batch in batches))
     if report["shape"] == "oversized":
         checks["oversized_outcome_pass"] = (report["backup_rejected_oversized"]
             and report["oversized_preserved_rows"] == report["oversized_deferred_rows"]

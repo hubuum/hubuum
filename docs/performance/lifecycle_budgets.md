@@ -144,6 +144,21 @@ reject unexpected child processes. Build features and binary digests accompany
 the results. These finite runs do not establish P6's steady-state lag or orphan
 cleanup target, which remains explicitly deferred to #561.
 
+The `census` shape additionally keeps 100,800 unselected collection-history
+versions (100,400 closed and 400 open) beside the ordinary scoped workload.
+The versions come from normal native writes on distinct resources. Every original
+age-or-size task must record unavailable size accounting, admit age-only members
+and finish under the existing phase bounds. The combined processes retain the
+same HTTP slow-consumer, slot, pool, CPU and memory requirements. Signed
+full-history restore must preserve the filler version fingerprint, original
+removal receipts, active hold and unchanged pressure state. Current/open exposure
+must remain within the existing 1,000-row/1-MiB recovery budget; no limit is raised.
+Larger live inventories still require explicit reconciliation under quarantine.
+The narrow
+`ci:history-envelope` label measures this row-census shape only; it does not
+qualify the seven-shape profile or the combined maximum-metadata and
+maximum-count authority envelopes.
+
 ## Performance targets
 
 Use five fresh runs after declared warm-up; report all samples and median/p95

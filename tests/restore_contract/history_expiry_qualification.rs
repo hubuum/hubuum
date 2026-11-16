@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::time::Instant;
 
+mod census;
 mod replica;
 
 #[derive(QueryableByName)]
@@ -29,9 +30,15 @@ async fn native_input(pool: &PostgresPool, resource: ResourceIdentity) -> BTreeM
 fn high_water(who: libc::c_int) -> u64 {
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
     // SAFETY: getrusage initializes the valid out-pointer on success. Linux
-    // reports ru_maxrss in KiB. Only SELF/CHILDREN constants are used below.
+    // reports ru_maxrss in KiB; native macOS preflights report bytes.
+    // Only SELF/CHILDREN constants are used below.
     assert_eq!(unsafe { libc::getrusage(who, usage.as_mut_ptr()) }, 0);
-    u64::try_from(unsafe { usage.assume_init() }.ru_maxrss).unwrap() * 1024
+    let peak = u64::try_from(unsafe { usage.assume_init() }.ru_maxrss).unwrap();
+    if cfg!(target_os = "macos") {
+        peak
+    } else {
+        peak * 1024
+    }
 }
 
 #[tokio::test]
@@ -42,6 +49,12 @@ async fn qualified_history_expiry_worker() {
         "linux",
         "Resource qualification requires Linux kernel high-water evidence"
     );
+    measure().await;
+}
+
+#[tokio::test]
+#[ignore = "explicit uncapped native preflight; not Linux resource qualification"]
+async fn native_history_expiry_preflight() {
     measure().await;
 }
 
@@ -67,6 +80,7 @@ async fn measure() {
         "large_row" => (4, 4 * 1024 * 1024 - 8192),
         "oversized" => (2, 17 * 1024 * 1024),
         "logical_size" => (65, 32 * 1024),
+        "census" => (65, 128),
         _ => panic!("Unknown qualification shape"),
     };
     let pool = postgres_test_pool_with_timeout(&database_url(), 2, 0);
@@ -142,7 +156,16 @@ async fn measure() {
                 .policies()
                 .current_revision(key),
             HistoryPolicyBinding::Expire {
-                trigger: if shape == "logical_size" {
+                trigger: if shape == "census" {
+                    HistoryExpiryTrigger::AgeOrSize {
+                        age: HistoryAgeRule::new(HistoryRetentionSeconds::new(0).unwrap(), None),
+                        size: HistorySizeRule::new(
+                            HistoryLogicalBytes::new(1).unwrap(),
+                            HistoryLogicalBytes::new(0).unwrap(),
+                        )
+                        .unwrap(),
+                    }
+                } else if shape == "logical_size" {
                     HistoryExpiryTrigger::LogicalSize {
                         upper_logical_bytes: HistoryLogicalBytes::new(1).unwrap(),
                         lower_logical_bytes: HistoryLogicalBytes::new(0).unwrap(),
@@ -201,6 +224,11 @@ async fn measure() {
             .await
             .unwrap();
         (collection.id().id(), token)
+    };
+    let census = if shape == "census" {
+        Some(census::prepare(&fixture, &pool).await)
+    } else {
+        None
     };
     let backup = if shape == "oversized" {
         assert!(
@@ -284,6 +312,11 @@ async fn measure() {
         .as_u64()
         .unwrap();
     let completed = storage.capture_history_lifecycle().await.unwrap();
+    let census_evidence = if let Some(census) = &census {
+        Some(census.verify(&pool, &tasks, &completed).await)
+    } else {
+        None
+    };
     let mut batches = Vec::new();
     let mut oversized_deferred_rows = 0;
     let mut oversized_preserved_rows = 0;
@@ -319,6 +352,12 @@ async fn measure() {
                 .iter()
                 .filter(|member| !member.size_authorizations().is_empty())
                 .count();
+            if shape == "census" {
+                assert_eq!(
+                    size_authorized_rows, 0,
+                    "Unavailable accounting cannot authorize size cleanup"
+                );
+            }
             let oldest_first = intent.manifest().members().windows(2).all(|pair| {
                 let key = |member: &HistoryExpiryMember| {
                     (
@@ -335,8 +374,8 @@ async fn measure() {
                 "size_authorized_rows":size_authorized_rows, "oldest_first":oldest_first}));
         }
         assert!(
-            shape != "logical_size" || scope_batches > 0,
-            "Every size scope must admit protected size-authorized membership"
+            !matches!(shape.as_str(), "logical_size" | "census") || scope_batches > 0,
+            "Every measured scope must admit productive membership"
         );
         oversized_deferred_rows += input
             .values()
@@ -365,6 +404,9 @@ async fn measure() {
             .await
             .unwrap();
         let replayed = storage.capture_history_lifecycle().await.unwrap();
+        if let Some(census) = &census {
+            census.verify_restored(&pool, &replayed).await;
+        }
         (
             Some(replayed.control().authority().expiry() == &receipts),
             Some(
@@ -380,7 +422,7 @@ async fn measure() {
     };
     let replay_seconds = replay_started.elapsed().as_secs_f64();
     eprintln!("Qualification stage: shape={shape} replay_seconds={replay_seconds}");
-    let report = json!({"shape":shape, "slots":slots, "replicas":replicas, "measured_at":Utc::now(), "batches":batches,
+    let report = json!({"shape":shape, "platform":std::env::consts::OS,"slots":slots, "replicas":replicas, "measured_at":Utc::now(), "batches":batches,
         "fixture_seconds":fixture_seconds, "worker_seconds":worker_seconds, "replay_seconds":replay_seconds,
         "oversized_deferred_rows":oversized_deferred_rows,
         "oversized_preserved_rows":oversized_preserved_rows, "backup_rejected_oversized":shape == "oversized",
@@ -389,6 +431,10 @@ async fn measure() {
         "kernel_peak_rss_bytes":replica_reports.iter().map(|report| report["kernel_peak_rss_bytes"].as_u64().unwrap()).max().unwrap(),
         "kernel_child_peak_rss_bytes":high_water(libc::RUSAGE_CHILDREN), "replica_reports":replica_reports,
         "replay_preserved_receipts":replay_preserved_receipts, "quarantine_released":quarantine_released});
+    let mut report = report;
+    if let Some(evidence) = census_evidence {
+        report["census"] = evidence;
+    }
     std::fs::write(destination, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }

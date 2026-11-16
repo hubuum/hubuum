@@ -5,6 +5,11 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
   workflow_dispatch:
     inputs:
+      shape:
+        description: Measure the full profile or only the combined row-census envelope
+        type: choice
+        options: [all, census]
+        default: all
       binary_run_id:
         description: Successful build run to reuse only when Rust inputs and build recipe match
         required: false
@@ -26,9 +31,10 @@ jobs:
     if: >-
       inputs.measurement_run_id == '' && inputs.binary_run_id == '' &&
       (github.event_name == 'workflow_dispatch' ||
-       (contains(github.event.pull_request.labels.*.name, 'ci:validate') &&
+       ((contains(github.event.pull_request.labels.*.name, 'ci:validate') ||
+         contains(github.event.pull_request.labels.*.name, 'ci:history-envelope')) &&
        ((github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
-        github.event.label.name == 'ci:validate')))
+        github.event.label.name == 'ci:validate' || github.event.label.name == 'ci:history-envelope')))
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -93,7 +99,7 @@ jobs:
       fail-fast: false
       matrix:
         profile: [local, shared]
-        shape: [rows, bytes, large_row, oversized, logical_size, authority]
+        shape: ${{ fromJSON((inputs.shape == 'census' || (contains(github.event.pull_request.labels.*.name, 'ci:history-envelope') && !contains(github.event.pull_request.labels.*.name, 'ci:validate'))) && '["census"]' || '["rows","bytes","large_row","oversized","logical_size","census","authority"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -149,7 +155,7 @@ jobs:
 
   aggregate:
     needs: measure
-    if: ${{ !cancelled() && (needs.measure.result == 'success' || inputs.measurement_run_id != '') }}
+    if: ${{ !cancelled() && inputs.shape != 'census' && (!contains(github.event.pull_request.labels.*.name, 'ci:history-envelope') || contains(github.event.pull_request.labels.*.name, 'ci:validate')) && (needs.measure.result == 'success' || inputs.measurement_run_id != '') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
