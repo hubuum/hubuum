@@ -9,6 +9,7 @@ use hubuum_domain::{
     IdentityScopeName, InteractionBinding, InteractionDigest, InteractionId, InteractionPurpose,
 };
 use hubuum_secrets::SecretValue;
+use hubuum_storage_core::ExternalIdentityStorage;
 use hubuum_storage_core::StorageEncryptedUpstreamCredential;
 use hubuum_storage_core::StorageRuntimeSettingsValue;
 use hubuum_storage_core::StorageUpstreamSession;
@@ -335,9 +336,33 @@ pub async fn callback(
             {
                 let fresh =
                     super::external::fresh_approval_request(context, claim.lifecycle(), 1).await?;
-                StorageExternalInteractionAuthentication::Approval(
-                    authentication.fresh(fresh).map_err(error)?,
-                )
+                let (proof, credentials) = authentication.fresh(fresh).map_err(error)?;
+                if retain_credentials(&selected) {
+                    let credentials = credentials.ok_or(InteractionError::Unsupported)?;
+                    if let Some(approval) = storage_handle(context)
+                        .upstream_approval_session(proof.clone())
+                        .await?
+                    {
+                        let ciphertext = protect(
+                            approval.binding(),
+                            &format!(
+                                "upstream:{}",
+                                proof.authentication().identity().subject().as_str()
+                            ),
+                            credentials.protectable().map_err(error)?,
+                        )
+                        .await?;
+                        StorageExternalInteractionAuthentication::ApprovalWithCredential {
+                            approval: Box::new(approval),
+                            credential: StorageEncryptedUpstreamCredential::new(ciphertext)
+                                .map_err(|_| InteractionError::Invalid)?,
+                        }
+                    } else {
+                        StorageExternalInteractionAuthentication::Approval(proof)
+                    }
+                } else {
+                    StorageExternalInteractionAuthentication::Approval(proof)
+                }
             } else {
                 let (proof, credentials) = authentication.into_parts();
                 if retain_credentials(&selected) {

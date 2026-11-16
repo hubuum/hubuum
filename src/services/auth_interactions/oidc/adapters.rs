@@ -186,9 +186,11 @@ impl Authentication {
     pub(super) fn fresh(
         self,
         request: FreshExternalAuthenticationRequest,
-    ) -> Result<FreshExternalAuthentication, ProtocolError> {
+    ) -> Result<(FreshExternalAuthentication, Option<RetainedCredentials>), ProtocolError> {
         match self {
-            Self::Oidc(value) => value.fresh(request),
+            Self::Oidc(value) => value
+                .fresh_with_credentials(request)
+                .map(|(proof, credentials)| (proof, credentials.map(RetainedCredentials::Oidc))),
             Self::OAuth(_) => Err(ProtocolError::Configuration),
         }
     }

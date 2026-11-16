@@ -540,7 +540,8 @@ Update all ten SDK dependencies to exactly `0.11.0` together. This is a breaking
 adapter contract: `ExternalIdentityStorage` now owns lookup of immutable external
 identities and the complete retained upstream credential lifecycle. Implement
 `find_external_identity`, `claim_upstream_credential`, `finish_upstream_renewal`,
-`fail_upstream_renewal` and `upstream_logout_credentials` on every backend.
+`fail_upstream_renewal`, `upstream_logout_credentials` and
+`upstream_approval_session` on every backend.
 
 Persist encrypted `StorageRetainedAuthentication` with an authenticated login,
 then transfer it atomically to the issued session as `StorageUpstreamSession`.
@@ -552,6 +553,17 @@ Claiming an upstream credential removes it before network I/O and grants one
 30-second lease. Commit a `StorageUpstreamRenewal` only against that lease, the
 same live session/principal/provider revision and immutable external identity.
 Membership reconciliation and replacement credentials must commit atomically.
+Resolve fresh OIDC proofs with `upstream_approval_session` into a private-fielded
+`StorageUpstreamApproval` before encrypting the new grant against the original
+login binding. Handle `ApprovalWithCredential` in the fenced external
+authentication transaction: recheck the eligible session and provider revision,
+reconcile the verified identity, then call `StorageUpstreamSession::reauthenticated`
+and save the replacement atomically. Its cleared lease must fence both successful
+and rejected late renewals of the old grant. Do not issue a new ordinary session
+or operation approval at this stage. The existing session serialization and
+ciphertext binding remain unchanged; the separate user decision still controls
+the protected operation. This required capability is part of the unreleased
+0.11 breaking adapter contract.
 Never retry an ambiguous refresh with a consumed token. Reject stale failures
 that arrive after a newer successful login. Preserve a bounded last-success
 snapshot on temporary failure; definitive rejection invalidates external

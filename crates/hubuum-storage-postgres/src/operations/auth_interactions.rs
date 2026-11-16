@@ -315,6 +315,7 @@ pub async fn advance(
                     if !bound.valid { return Err(invalid()); }
                     let proof = authentication.prepare(&record, claim, approval.clone(), at).map_err(|_| invalid())?;
                     let (admitted,user) = super::external_identity::synchronize_interaction(connection, authentication).await?;
+                    super::upstream_authentication::retain_approval(connection, authentication, revision.get()).await?;
                     record.retain_upstream(authentication).map_err(|_| invalid())?;
                     let authenticated = admitted.interaction_authentication(proof,user).map_err(|_| invalid())?;
                     StorageInteractionCommand::new(command.authorization().clone(), StorageInteractionAction::Authenticate {

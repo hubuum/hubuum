@@ -683,6 +683,22 @@ impl ServiceAccountStorage for StorageHandle {
 
 #[async_trait]
 impl ExternalIdentityStorage for StorageHandle {
+    async fn upstream_approval_session(
+        &self,
+        proof: hubuum_domain::FreshExternalAuthentication,
+    ) -> Result<Option<hubuum_storage_core::StorageUpstreamApproval>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExternalIdentity,
+            "upstream_approval_session",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .upstream_approval_session(proof)
+                    .await)
+            },
+        )
+        .await
+    }
     async fn fail_upstream_renewal(
         &self,
         claim: StorageUpstreamClaim,

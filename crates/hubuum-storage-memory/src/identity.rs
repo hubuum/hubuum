@@ -990,6 +990,31 @@ impl ServiceAccountStorage for MemoryStorage {
 
 #[async_trait]
 impl ExternalIdentityStorage for MemoryStorage {
+    async fn upstream_approval_session(
+        &self,
+        proof: hubuum_domain::FreshExternalAuthentication,
+    ) -> Result<Option<hubuum_storage_core::StorageUpstreamApproval>, StorageError> {
+        let state = self.state.read().await;
+        let principal = proof
+            .authentication()
+            .binding()
+            .authority()
+            .actor()
+            .ok_or_else(|| StorageError::authentication_required("Approval actor missing"))?
+            .principal_id();
+        state
+            .upstream_sessions
+            .iter()
+            .filter(|(_, record)| {
+                record.principal() == principal && state.upstream_eligible(record, Utc::now())
+            })
+            .max_by_key(|(id, _)| (state.sessions.get(id).map(|session| session.absolute), **id))
+            .map(|(_, record)| {
+                hubuum_storage_core::StorageUpstreamApproval::new(record, proof)
+                    .map_err(invalid_contract_value)
+            })
+            .transpose()
+    }
     async fn fail_upstream_renewal(
         &self,
         claim: StorageUpstreamClaim,

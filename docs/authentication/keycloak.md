@@ -139,7 +139,14 @@ logout API performs local logout and best-effort token revocation.
 
 Credential approval uses `max_age=0` and a signed `auth_time` at or after the
 interaction start, with one second of clock skew. Existing SSO, a new token
-`iat`, consent and Hubuum refresh do not establish freshness. Configure MFA in
+`iat`, consent and Hubuum refresh do not establish freshness. When retention is
+enabled, a successful fresh authentication replaces the credential on an
+existing eligible session of the same immutable provider identity. This happens
+before the separate approval decision: denying the operation does not discard
+the new grant and strand the ordinary session on an older authentication time.
+The replacement fences an in-flight renewal of the old grant, creates no new
+Hubuum session, and preserves strict issuer, subject, nonce and authentication
+time checks on subsequent refreshes. Configure MFA in
 Keycloak's browser authentication flow. This initial profile does not infer
 assurance from unspecified `acr` or `amr` values.
 

@@ -1780,6 +1780,12 @@ pub enum StorageExternalSyncFailure {
 /// External-provider identity refresh and reconciliation.
 #[async_trait]
 pub trait ExternalIdentityStorage: Send + Sync {
+    /// Resolve an eligible retained session for this fresh proof without leasing
+    /// or exposing its old credential. Replacement commits with the interaction.
+    async fn upstream_approval_session(
+        &self,
+        proof: hubuum_domain::FreshExternalAuthentication,
+    ) -> Result<Option<crate::StorageUpstreamApproval>, StorageError>;
     /// Atomically remove the recoverable token and lease its single renewal attempt.
     async fn claim_upstream_credential(
         &self,

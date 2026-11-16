@@ -123,6 +123,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- OIDC fresh credential approval now keeps the newly verified encrypted refresh
+  credential on an existing eligible session. Keycloak reauthentication no
+  longer causes the next due eligibility check to reject the older grant's
+  changed authentication time. Denying the protected operation still preserves
+  authenticated session continuity, without issuing another session or approval.
+  **Breaking for storage adapter authors:** the unreleased 0.11 SDK contract
+  requires `ExternalIdentityStorage::upstream_approval_session` and atomic
+  `ApprovalWithCredential` handling. Rebuild complete adapters together; existing
+  encrypted session records need no migration.
+
 - Hosted LDAP interactions now display their password form after runtime provider
   activation. Provider resolution preserves revision and immutable identity fences
   without requiring an OIDC/OAuth adapter for LDAP sign-in or fresh approval.

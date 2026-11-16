@@ -280,6 +280,25 @@ impl MemoryState {
                         Some(fact.verified_at()),
                     )?
                     .into_value();
+                if let StorageExternalInteractionAuthentication::ApprovalWithCredential {
+                    approval,
+                    credential,
+                } = authentication.as_ref()
+                {
+                    let record = self
+                        .upstream_sessions
+                        .get(&approval.session().value())
+                        .cloned()
+                        .ok_or_else(invalid)?;
+                    if !self.upstream_eligible(&record, now) {
+                        return Err(invalid());
+                    }
+                    self.upstream_sessions
+                        .get_mut(&approval.session().value())
+                        .ok_or_else(invalid)?
+                        .reauthenticated(approval, credential.clone(), now)
+                        .map_err(|_| invalid())?;
+                }
                 let authentication = admitted
                     .interaction_authentication(proof, user)
                     .map_err(|_| invalid())?;

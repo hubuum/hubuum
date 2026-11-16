@@ -566,6 +566,12 @@ impl ServiceAccountStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl ExternalIdentityStorage for CompleteExternalAdapter {
+    async fn upstream_approval_session(
+        &self,
+        proof: FreshExternalAuthentication,
+    ) -> Result<Option<hubuum_storage_core::StorageUpstreamApproval>, StorageError> {
+        fixture_result()
+    }
     async fn fail_upstream_renewal(
         &self,
         claim: StorageUpstreamClaim,
