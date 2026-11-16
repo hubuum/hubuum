@@ -1,7 +1,10 @@
 //! Bounded native admission and exact protected removal.
 use super::*;
 use diesel::OptionalExtension;
+use diesel::result::Error as DieselError;
 use diesel_async::SimpleAsyncConnection;
+#[cfg(test)]
+mod query_budget_tests;
 mod size;
 
 #[derive(QueryableByName)]
@@ -108,7 +111,8 @@ pub(crate) async fn admit_on(
         "SELECT coalesce(max({position}),0)::bigint AS position FROM public.{table}"
     ))
     .get_result::<SourcePosition>(connection)
-    .await?
+    .await
+    .map_err(unavailable_source_read)?
     .position;
     let mut window = request.scan_window(u64::try_from(upper).map_err(|error| {
         PostgresStorageError::invalid_persisted_value("native history scan boundary", error)
@@ -647,7 +651,17 @@ async fn rows(
         )
         .load(connection)
         .await
-        .map_err(Into::into)
+        .map_err(unavailable_source_read)
+}
+
+fn unavailable_source_read(error: DieselError) -> PostgresStorageError {
+    // These bounded reads precede admission writes. Let the service retry a
+    // whole rolled-back attempt under its original lease/deadline; required
+    // audit, membership and checkpoint write failures remain fatal.
+    let error = PostgresStorageError::from(error);
+    PostgresStorageError::unavailable(format!(
+        "History expiry source observation unavailable: {error}"
+    ))
 }
 
 #[cfg(test)]

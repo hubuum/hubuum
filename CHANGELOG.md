@@ -460,6 +460,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Gated history expiry retries unavailable bounded age-source reads under the
+  original task lease and deadline instead of permanently failing the task on a
+  query timeout. Failed reads admit no partial membership or pressure state;
+  required audit and admission-write failures remain fatal.
+
 - Gated history expiry counts PostgreSQL JSON separator overhead in retained
   manifest, journal and control budgets. Large batches stop before the native
   byte limit and continue from the deferred row while preserving completion space.
