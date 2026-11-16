@@ -241,7 +241,6 @@ class Fixture:
             "SSL_CERT_FILE": "/fixture/ca.pem", "HUBUUM_AUTH_RUNTIME_ALLOW_PRIVATE_TARGETS": "true",
             "HUBUUM_AUTH_BROWSER": json.dumps({"origin": self.origin, "return_targets": [
                 {"id": "bff", "client_id": "oidc-qa", "uri": self.origin + "/fixture-callback"}]}),
-            "HUBUUM_OIDC_SECRET_COMPANY": self.client_secret,
             "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF": "fixture",
             "HUBUUM_RUNTIME_SETTINGS_KEY_FIXTURE": secrets.token_hex(16),
             "HUBUUM_TOKEN_HASH_KEY": secrets.token_urlsafe(48),
@@ -379,6 +378,13 @@ class Fixture:
         (self.evidence / "results.json").write_text(json.dumps(self.results, indent=2) + "\n")
         print(f"PASS {name}", flush=True)
 
+    def verify_local_recovery(self):
+        session = self.api("/api/v1/auth/login", {"name": "admin", "password": self.local_password,
+                                               "client_id": "oidc-qa"})
+        self.api("/api/v1/auth/validate", token=session["access_token"])
+        self.api("/api/v1/auth/logout", {}, token=session["access_token"])
+        self.passed("local recovery login remains available after runtime provider activation")
+
     def failed(self, error):
         report = {"stage": self.stage, "error_type": type(error).__name__}
         # Only our controlled assertion/command messages are safe for evidence.
@@ -393,7 +399,8 @@ class Fixture:
             "scopes": ["openid", "profile", "email"], "signing_algorithms": ["RS256"], "retain_refresh_tokens": True,
             "membership": {"mode": "provider_groups", "refresh_interval_seconds": 5, "max_stale_seconds": 15,
                 "claim_source": self.group_source, "claim_pointer": "/groups", "key_mode": "full_path"},
-            "admission": {"mode": "provision_without_grants"}, "credential": {"action": "reference", "alias": "company"}}
+            "admission": {"mode": "provision_without_grants"},
+            "credential": {"action": "replace", "value": self.client_secret}}
         self.provider_definition = {"name": "company", "enabled": True, "source": "runtime", "kind": "oidc", "configuration": definition}
         candidate = self.api("/api/v1/admin/runtime-settings/security-candidates",
             {"group": "authentication", "expected_revision": 1, "providers": [self.provider_definition]}, token=self.admin)
@@ -413,6 +420,7 @@ class Fixture:
             headers={"Authorization": "Bearer " + self.admin, "X-Hubuum-Credential-Approval": approval["approval"]})
         assert status == 200, "Candidate activation failed"
         self.passed("verified candidate activates with fresh local approval")
+        self.verify_local_recovery()
         interaction = self.begin()
         browser, _, prompted = self.authorize(interaction)
         self.session = self.complete(interaction)

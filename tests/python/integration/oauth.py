@@ -130,7 +130,6 @@ class Fixture(BaseFixture):
             "HUBUUM_AUTH_RUNTIME_ALLOW_PRIVATE_TARGETS": "true",
             "HUBUUM_AUTH_BROWSER": json.dumps({"origin": self.origin, "return_targets": [
                 {"id": "bff", "client_id": "oidc-qa", "uri": self.origin + "/fixture-callback"}]}),
-            "HUBUUM_OAUTH_SECRET_COMPANY": self.client_secret,
             "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF": "fixture",
             "HUBUUM_RUNTIME_SETTINGS_KEY_FIXTURE": secrets.token_hex(16),
             "HUBUUM_TOKEN_HASH_KEY": secrets.token_urlsafe(48)})
@@ -197,7 +196,8 @@ class Fixture(BaseFixture):
                 "profile_headers": {"x-profile-version": "2"},
                 "membership": {"mode": "provider_groups", "claim_source": "profile", "claim_pointer": "/roles",
                     "key_mode": "immutable_id", "refresh_interval_seconds": 5, "max_stale_seconds": 15}}
-        definition.update({"admission": {"mode": "provision_without_grants"}, "credential": {"action": "reference", "alias": "company"}})
+        definition.update({"admission": {"mode": "provision_without_grants"},
+                           "credential": {"action": "replace", "value": self.client_secret}})
         provider = {"name": "company", "enabled": True, "source": "runtime", "kind": "oauth", "configuration": definition}
         candidate = self.api("/api/v1/admin/runtime-settings/security-candidates",
             {"group": "authentication", "expected_revision": 1, "providers": [provider]}, token=self.admin)
@@ -217,6 +217,7 @@ class Fixture(BaseFixture):
             headers={"Authorization": "Bearer " + self.admin, "X-Hubuum-Credential-Approval": approval["approval"]})
         assert status == 200, "OAuth activation failed"
         self.passed("verified OAuth activation with fresh local approval")
+        self.verify_local_recovery()
         methods = self.api("/api/v1/auth/methods")["methods"]
         selected = next(method for method in methods if method["provider_id"] == self.provider_id)
         assert selected["kind"] == "oauth" and selected["fresh_authentication"] is False

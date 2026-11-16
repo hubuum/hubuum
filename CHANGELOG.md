@@ -123,6 +123,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Runtime authentication discovery now advertises OAuth activation alongside
+  LDAP and OIDC. Provider setup guides and production qualification use encrypted,
+  write-only runtime client secrets without per-provider deployment aliases;
+  local password recovery remains available after external-provider activation.
+
 - **Breaking (GitHub callback validation):** GitHub OAuth callbacks now require
   the pinned RFC 9207 issuer `https://github.com/login/oauth`, allowing current
   GitHub sign-in responses while rejecting issuer substitution and omission

@@ -22,12 +22,15 @@ any exact BFF return registrations. Those BFF callbacks are separate from the
 OIDC provider callback. Register the Keycloak callback after creating the
 candidate and before its test sign-in.
 
-Supply the client secret through a secret alias, for example a credential
-`reference` resolving `HUBUUM_OIDC_SECRET_COMPANY`, or the `oidc/` mounted-secret
-namespace. Retained protocol state requires the deployment-owned
-`HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF` and its versioned secret source even
-when the client secret itself is a reference. Never place secrets in provider
-URLs or commit them to configuration examples.
+Supply the client secret at runtime with
+`"credential": {"action": "replace", "value": "CLIENT_SECRET"}` in the candidate's
+provider configuration. It is encrypted before persistence; no provider-specific
+environment variable or restart is needed. A credential `reference` resolving
+`HUBUUM_OIDC_SECRET_COMPANY` or the `oidc/` mounted-secret namespace remains an
+optional deployment-managed alternative. Retained protocol state and runtime
+replacement credentials require the deployment-owned
+`HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF` and its versioned secret source.
+Never place secrets in provider URLs or commit real values to examples.
 
 For a private identity service, explicitly enable
 `HUBUUM_AUTH_RUNTIME_ALLOW_PRIVATE_TARGETS=true`. This permits private addresses;

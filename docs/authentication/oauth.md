@@ -14,8 +14,11 @@ Enterprise Server are separate profiles and are not qualified by this adapter.
 Set the app callback to `https://AUTH_ORIGIN/api/v1/auth/callbacks/PROVIDER_UUID`.
 When first registering an app, use a temporary callback on that origin, then
 replace it with the server-issued provider UUID before candidate test sign-in.
-The client secret belongs in the server secret source, never a CLI, BFF or browser.
-See [secret sources](../secret_sources.md) for alias configuration.
+Set the client secret through the write-only runtime `replace` action. Hubuum
+encrypts it using the deployment's runtime-settings key; no provider-specific
+environment variable or restart is needed. Ordinary login clients never receive
+it. A deployment-managed alias remains an optional alternative; see
+[secret sources](../secret_sources.md).
 
 Create an enabled runtime authentication candidate with the following provider.
 An existing provider requires its immutable `provider_id`; omit that field for
@@ -47,7 +50,7 @@ the initial candidate. Preserve the local recovery administrator.
         "max_stale_seconds": 900
       },
       "admission": {"mode": "existing_only"},
-      "credential": {"action": "reference", "alias": "github"}
+      "credential": {"action": "replace", "value": "YOUR_OAUTH_APP_CLIENT_SECRET"}
     }
   }]
 }
