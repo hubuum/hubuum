@@ -1487,6 +1487,34 @@ async fn discovery_documents_every_advertised_field_and_enum_choice() {
     }
 }
 
+#[rstest::rstest]
+#[case::ldap("ldap")]
+#[case::oidc("oidc")]
+#[case::oauth("oauth")]
+#[actix_web::test]
+async fn discovery_advertises_runtime_setup_and_activation_for_supported_authentication(
+    #[case] kind: &str,
+) {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let (status, catalogue) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::get().uri("/api/v1/admin/runtime-settings/schema"),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::OK);
+    for capability in ["configurable_provider_kinds", "activatable_provider_kinds"] {
+        assert!(
+            catalogue["security"][capability]
+                .as_array()
+                .unwrap()
+                .contains(&json!(kind)),
+            "{kind} must be discoverable for runtime {capability}"
+        );
+    }
+}
+
 #[actix_web::test]
 async fn generic_patch_preserves_unedited_requested_settings() {
     let backend = StorageHandle::memory();

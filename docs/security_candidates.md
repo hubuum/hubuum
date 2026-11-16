@@ -5,6 +5,13 @@ compare-and-swap writes, audit history and replica reconciler. A candidate is
 short-lived verification state; it does not change the live configuration.
 Local password login remains enabled.
 
+All supported external provider kinds (`ldap`, `oidc` and `oauth`) can be created,
+tested, activated, updated and disabled at runtime. No per-provider environment
+variable or server restart is required when credentials are supplied through the
+write-only runtime credential inputs. Local accounts and service-account/PAT
+credentials continue to use the existing IAM APIs; local password recovery is
+always available and is not a configurable external provider.
+
 ## Create, verify and activate
 
 Use an unscoped local human administrator with a working password and local
@@ -23,7 +30,9 @@ policy and any proposed authorization policy.
    `provider_id`, `username` and `password`. The response contains `candidate`
    and a bounded `verification` preview of the subject and complete mapped groups.
    Testing creates no principal, membership, token or session. Passwords are
-   never retained. Existing login throttling applies.
+   never retained. Existing login throttling applies. For OIDC and OAuth, use a
+   `provider_verification` browser interaction against the candidate and approve
+   its non-activating identity preview.
 4. After every required check passes, keep the returned `verification_receipt`.
    Request a fresh approval from `POST /api/v1/iam/credential-approvals` using the
    local administrator's password and the exact operation below.
@@ -87,8 +96,9 @@ screened socket is pinned while LDAP verifies TLS against the original hostname.
 OIDC candidates use a real browser sign-in through the shared interaction API,
 with the same PKCE, nonce, state, issuer, signature and browser checks as live
 login. The test previews admission and mapped groups without provisioning or
-issuing a session. See [Keycloak setup](authentication/keycloak.md). OAuth
-activation remains unavailable until its provider adapter is implemented.
+issuing a session. OAuth candidates use the same workflow with the configured
+authenticated-user profile; see [Keycloak setup](authentication/keycloak.md) and
+[OAuth setup](authentication/oauth.md).
 Hosted local/LDAP interactions remain available through the
 [interaction API](authentication_interactions.md).
 Browser credentials use `keep`, `reference`, `replace` or `clear` actions.
@@ -105,6 +115,13 @@ key and are encrypted with provider-specific associated data. Reports, discovery
 and ordinary audit summaries never return aliases, envelopes, passwords or client
 secrets. Candidate approval and activation refresh relevant secret caches so a
 source rotation invalidates an earlier receipt before normal cache expiry.
+
+For example, use `"credential": {"action": "replace", "value": "CLIENT_SECRET"}`
+in an OIDC/OAuth provider configuration to set its secret at runtime. Use `keep`
+for later metadata edits that preserve it, `replace` for rotation and `clear`
+when removing an unused credential. LDAP bind passwords retain their existing
+write-only runtime inputs. Aliases are an optional alternative for credentials
+managed by deployment secret sources.
 
 Runtime Treetop configuration requires HTTPS, verified certificates, bounded
 connect/request timeouts, no proxies or redirects, and a registered trust profile.
