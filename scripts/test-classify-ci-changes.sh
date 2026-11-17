@@ -49,7 +49,9 @@ assert_literal_include_is_code() {
 for expiry_input in .github/workflows/history-expiry-qualification.yml \
   .github/workflows/history-census-qualification.yml tests/python/integration/history_census.py \
   tests/python/integration/history_expiry.py tests/restore_contract/history_expiry_qualification.rs \
-  tests/restore_contract/history_expiry_qualification/replica.rs; do
+  tests/restore_contract/history_expiry_qualification/replica.rs \
+  tests/restore_contract/history_expiry_qualification/metadata.rs \
+  tests/restore_contract/history_expiry_qualification/authority.rs; do
   expiry_output="$(bash "$classifier" "$expiry_input")"
   assert_flag "$expiry_output" code true
   assert_flag "$expiry_output" rust true

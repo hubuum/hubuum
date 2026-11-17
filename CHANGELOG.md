@@ -460,6 +460,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Bound gated history-expiry recovery maintenance to 16 retained intents per
+  worker poll, rotating across the complete journal. Full or busy task admission
+  no longer forces every queue claim to retry all 256 obligations. Existing
+  authority, completion recovery and original deadlines remain enforced.
 - Gated history expiry retries unavailable bounded age-source reads under the
   original task lease and deadline instead of permanently failing the task on a
   query timeout. Failed reads admit no partial membership or pressure state;

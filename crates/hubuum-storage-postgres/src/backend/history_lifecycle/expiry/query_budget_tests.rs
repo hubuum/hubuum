@@ -70,6 +70,9 @@ async fn native_age_page_timeout_is_unavailable_without_partial_admission() {
                 HistoryLifecycleScan::new(key, 1000)?,
                 applied.fence(),
             )?;
+            let upper = sql_query("SELECT coalesce(max(history_id),0)::bigint AS position FROM public.collections_history")
+                .get_result::<SourcePosition>(connection).await?.position;
+            let window = request.scan_window(u64::try_from(upper).unwrap())?;
             let mut blocker = owner_pool.get().await.unwrap();
             blocker.batch_execute("BEGIN").await.unwrap();
             if database_role_tests_enabled() {
@@ -89,7 +92,10 @@ async fn native_age_page_timeout_is_unavailable_without_partial_admission() {
                 .batch_execute("SAVEPOINT age_page_attempt; SET LOCAL statement_timeout='50ms'")
                 .await?;
             let started = Instant::now();
-            let result = admit_on(connection, request).await;
+            // Time the actual read boundary. On a loaded parallel runner, a
+            // 50-ms limit around all of admit_on can expire in an unrelated
+            // control/gate read before reaching this deliberately blocked page.
+            let result = rows(connection, request.scan(), &window).await;
             let elapsed = started.elapsed();
             blocker.batch_execute("ROLLBACK").await?;
             connection
@@ -97,7 +103,7 @@ async fn native_age_page_timeout_is_unavailable_without_partial_admission() {
                     "ROLLBACK TO SAVEPOINT age_page_attempt; RELEASE SAVEPOINT age_page_attempt",
                 )
                 .await?;
-            assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Unavailable);
+            assert_eq!(result.err().expect("The native source page must time out").kind(), StorageErrorKind::Unavailable);
             assert!(
                 elapsed < Duration::from_secs(1),
                 "A shorter inherited timeout must remain binding: {elapsed:?}"

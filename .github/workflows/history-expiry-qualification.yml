@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       shape:
-        description: Measure the full profile or only the combined row-census envelope
+        description: Measure the full profile or one focused combined envelope
         type: choice
-        options: [all, census]
+        options: [all, census, metadata, policy_count, hold_count, pending_count]
         default: all
       binary_run_id:
         description: Successful build run to reuse only when Rust inputs and build recipe match
@@ -99,7 +99,7 @@ jobs:
       fail-fast: false
       matrix:
         profile: [local, shared]
-        shape: ${{ fromJSON((inputs.shape == 'census' || (contains(github.event.pull_request.labels.*.name, 'ci:history-envelope') && !contains(github.event.pull_request.labels.*.name, 'ci:validate'))) && '["census"]' || '["rows","bytes","large_row","oversized","logical_size","census","authority"]') }}
+        shape: ${{ fromJSON(inputs.shape != '' && inputs.shape != 'all' && format('["{0}"]', inputs.shape) || (contains(github.event.pull_request.labels.*.name, 'ci:history-envelope') && !contains(github.event.pull_request.labels.*.name, 'ci:validate')) && '["census"]' || '["rows","bytes","large_row","oversized","logical_size","census","metadata","policy_count","hold_count","pending_count","authority"]') }}
         repeat: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -164,7 +164,7 @@ jobs:
       fail-fast: false
       matrix:
         profile: [local, shared]
-        shape: ${{ fromJSON((inputs.shape == 'census' || (contains(github.event.pull_request.labels.*.name, 'ci:history-envelope') && !contains(github.event.pull_request.labels.*.name, 'ci:validate'))) && '["census"]' || '["rows","bytes","large_row","oversized","logical_size","census","authority"]') }}
+        shape: ${{ fromJSON(inputs.shape != '' && inputs.shape != 'all' && format('["{0}"]', inputs.shape) || (contains(github.event.pull_request.labels.*.name, 'ci:history-envelope') && !contains(github.event.pull_request.labels.*.name, 'ci:validate')) && '["census"]' || '["rows","bytes","large_row","oversized","logical_size","census","metadata","policy_count","hold_count","pending_count","authority"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -220,7 +220,7 @@ jobs:
 
   aggregate:
     needs: measure
-    if: ${{ !cancelled() && inputs.shape != 'census' && (!contains(github.event.pull_request.labels.*.name, 'ci:history-envelope') || contains(github.event.pull_request.labels.*.name, 'ci:validate')) && (needs.measure.result == 'success' || inputs.measurement_run_id != '') }}
+    if: ${{ !cancelled() && (inputs.shape == '' || inputs.shape == 'all') && (!contains(github.event.pull_request.labels.*.name, 'ci:history-envelope') || contains(github.event.pull_request.labels.*.name, 'ci:validate')) && (needs.measure.result == 'success' || inputs.measurement_run_id != '') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -258,7 +258,8 @@ jobs:
           if (source['workflow_id'] != current['workflow_id'] or source['head_branch'] != current['head_branch']
               or source['repository']['full_name'] != repo or source['head_repository']['full_name'] != repo):
               raise ValueError('Measurements must come from the same repository, branch and workflow')
-          jobs = gh(f'repos/{repo}/actions/runs/{run_id}/jobs?per_page=100')['jobs']
+          pages = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/actions/runs/{run_id}/jobs?per_page=100', '--paginate', '--slurp'], text=True))
+          jobs = [job for page in pages for job in page['jobs']]
           provenance = measurement_job_provenance(jobs)
           sha = source['head_sha']
           if not re.fullmatch(r'[0-9a-f]{40}', sha):
@@ -348,7 +349,8 @@ jobs:
           if (source['workflow_id'] != current['workflow_id'] or source['head_branch'] != current['head_branch']
               or source['repository']['full_name'] != repo or source['head_repository']['full_name'] != repo):
               raise ValueError('Binary source must be the same repository, branch and workflow')
-          jobs = gh(f'repos/{repo}/actions/runs/{run_id}/jobs?per_page=100')['jobs']
+          pages = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/actions/runs/{run_id}/jobs?per_page=100', '--paginate', '--slurp'], text=True))
+          jobs = [job for page in pages for job in page['jobs']]
           builds = [job for job in jobs if job['name'] == 'build']
           if len(builds) != 1 or builds[0]['conclusion'] != 'success':
               raise ValueError('The original binary build must have succeeded')

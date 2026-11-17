@@ -10,6 +10,7 @@ struct Plan {
     tasks: Vec<TaskId>,
     collection: i32,
     token: String,
+    protected_keys: Vec<HistoryPolicyKey>,
 }
 
 pub(super) fn runtime_directory(report: &Path) -> PathBuf {
@@ -39,8 +40,8 @@ pub(super) async fn run_replicas(
     destination: &Path,
     root: &Path,
     tasks: &[TaskId],
-    collection: i32,
-    token: String,
+    slow_consumer: (i32, String),
+    protected_keys: &[HistoryPolicyKey],
     replicas: usize,
     storage: &impl HistoryLifecycleStorage,
 ) -> Vec<Value> {
@@ -49,8 +50,9 @@ pub(super) async fn run_replicas(
         &plan,
         serde_json::to_vec(&Plan {
             tasks: tasks.to_vec(),
-            collection,
-            token,
+            collection: slow_consumer.0,
+            token: slow_consumer.1,
+            protected_keys: protected_keys.to_vec(),
         })
         .unwrap(),
     )
@@ -280,8 +282,6 @@ async fn run_replica() {
     std::fs::write(root.join(format!("ready-{index}")), []).unwrap();
     await_file(&root.join("start")).await;
     let started = Instant::now();
-    let mut slow = Some(slow);
-    let mut slow_consumer_blocked = false;
     let mut claimed_iterations = 0;
     // Hold each process at its declared slots before another process can take
     // more queue turns. Every dispatch still uses the production claim path.
@@ -301,6 +301,30 @@ async fn run_replica() {
     for replica in 0..replicas {
         await_file(&root.join(format!("claimed-{replica}"))).await;
     }
+    tokio::time::sleep(Duration::from_secs(3).saturating_sub(started.elapsed())).await;
+    let initial = control.capture_history_lifecycle().await.unwrap();
+    let intents = initial.control().authority().expiry().intents();
+    let protected = intents
+        .iter()
+        .filter(|intent| plan.protected_keys.contains(&intent.manifest().key()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        protected.len(),
+        plan.protected_keys.len(),
+        "Every original scope must admit during the held response"
+    );
+    assert!(
+        protected.iter().all(|intent| intent.removals().is_empty()),
+        "A slow pre-exclusion HTTP response must prevent physical removal of newly excluded copies"
+    );
+    let mut max_pending_intents = intents
+        .iter()
+        .filter(|intent| !intent.is_complete())
+        .count();
+    // Older exclusions may correctly progress despite a newer HTTP response.
+    // Check the new original admissions at their claim barrier, before running
+    // cleanup for the pre-existing journal population or releasing this read.
+    drop(slow);
     let mut database_round_trip_us = Vec::new();
     let mut max_scanned_source_rows = 0;
     let oversized_reported_rows = loop {
@@ -310,20 +334,6 @@ async fn run_replica() {
         .await
         {
             claimed_iterations += u64::from(result.unwrap());
-        }
-        if slow.is_some() && started.elapsed() >= std::time::Duration::from_secs(3) {
-            let snapshot = control.capture_history_lifecycle().await.unwrap();
-            let intents = snapshot.control().authority().expiry().intents();
-            assert!(
-                !intents.is_empty(),
-                "No native admission during slow response"
-            );
-            assert!(
-                intents.iter().all(|intent| intent.removals().is_empty()),
-                "A slow pre-exclusion HTTP response must prevent physical removal"
-            );
-            slow_consumer_blocked = true;
-            drop(slow.take());
         }
         let observations = task_observations(&storage, &scope, &plan.tasks).await;
         max_scanned_source_rows = max_scanned_source_rows.max(observations.max_scanned_source_rows);
@@ -349,6 +359,16 @@ async fn run_replica() {
             .intents()
             .iter()
             .all(|intent| intent.removals().len() == intent.manifest().members().len());
+        max_pending_intents = max_pending_intents.max(
+            retained
+                .control()
+                .authority()
+                .expiry()
+                .intents()
+                .iter()
+                .filter(|intent| !intent.is_complete())
+                .count(),
+        );
         if statuses.iter().all(|status| status.is_terminal()) && all_receipted {
             assert!(
                 statuses
@@ -364,7 +384,6 @@ async fn run_replica() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     };
-    assert!(slow_consumer_blocked);
     assert!(
         claimed_iterations > 0,
         "Both replicas must execute real queued work"
@@ -373,9 +392,10 @@ async fn run_replica() {
     server.await.unwrap().unwrap();
     storage.unregister_runtime(registration).await.unwrap();
     let report = json!({"replica":index,"platform":std::env::consts::OS, "slots":slots, "initial_claimed_slots":slots, "http_workers":2,
-        "claimed_iterations":claimed_iterations, "slow_consumer_blocked":slow_consumer_blocked,
+        "claimed_iterations":claimed_iterations, "slow_consumer_blocked":true,
         "slow_consumer_retired":true, "oversized_reported_rows":oversized_reported_rows,
         "max_scanned_source_rows":max_scanned_source_rows,
+        "max_pending_intents":max_pending_intents,
         "worker_seconds":started.elapsed().as_secs_f64(),
         "database_round_trip_us":database_round_trip_us,
         "kernel_peak_rss_bytes":high_water(libc::RUSAGE_SELF),

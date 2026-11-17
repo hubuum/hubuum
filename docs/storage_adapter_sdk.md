@@ -159,10 +159,11 @@ caps. Each job keeps its four-hour limit, and aggregation also requires every
 complete case to finish within four hours from warm-up start to its final
 measured job's completion, including intermediate queue time. This qualifies
 finite independent runs, not long-lived database-process or churn robustness.
-A shape report cannot qualify the complete profile. Aggregation requires all seven
+A shape report cannot qualify the complete profile. Aggregation requires all eleven
 shapes and all six repetitions, identical settings and binary provenance, and
 recomputes acceptance, per-repetition database limits and raw RSS evidence before
-publishing the 42-run profile. The logical-size shape exercises
+publishing the 66-run profile. Each reported fixture, worker and replay phase
+must finish within its original 30-minute bound. The logical-size shape exercises
 65 updates per scope, protected size witnesses and oldest-first ordering through
 the actual worker, independent protection and signed restore/replay. It retains
 the existing 1000-examined-row profile ceiling, memory and CPU limits; it does not
@@ -176,8 +177,29 @@ pressure state through signed full-history restore/replay. The fixture must stay
 within recovery's existing 1,000-current/open-row and 1-MiB exposure bounds;
 larger current inventories remain quarantined. The temporary
 `ci:history-envelope` label measures just this shape on both profiles; this
-focused result cannot qualify the complete profile. Maximum metadata and
-maximum-count authority populations remain separate combined-envelope gates.
+focused result cannot qualify the complete profile. The `metadata` shape uses
+ordinary export-template triggers to capture 513 closed versions with long
+related-object alias paths. Their combined identities exceed 64 MiB while the
+family remains below 100,000 rows and each identity below 1 MiB. The final current
+version has narrow references, preserving the unchanged recovery exposure bound.
+Both combined shapes require the original tasks to report unavailable accounting,
+make age-only progress and preserve held filler, pressure and first receipts
+through signed full-history restore. A focused `metadata` dispatch measures only
+that component. The `policy_count` and `hold_count` cases retain 4,096 policy
+revisions or 2,048 live holds (including reserved terminal capacity), respectively,
+while normal HTTP/worker expiry and signed replay preserve those facts. These are
+separate admissible populations under the shared 4-MiB control budget, not a claim
+that every independent maximum fits simultaneously. The `pending_count` case
+admits native one-member obligations after taking the pre-expiry backup, then
+requires the original worker admissions to fill the journal to 256 pending
+intents. The initial claim barrier checks that the held HTTP responses prevent
+removal from the newly admitted original scopes; older exclusions may correctly
+progress despite those newer reads. Recovery maintenance rotates over at most
+16 retained intents per queue poll, including completed intents whose original
+task may still need finalization. Real recovery tasks must finish every retained obligation before workers
+stop; full restore must preserve the resulting first receipts and release
+quarantine. Focused dispatches qualify only their selected component. Aggregation
+fetches every job page before accepting complete source and timing provenance.
 The separate `History census qualification` workflow uses the temporary
 `ci:history-census` label for seven native component probes, with one warm-up and
 five fresh measured processes per probe on each database resource profile.

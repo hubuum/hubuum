@@ -21,7 +21,8 @@ TEST = "restore_contract::history_expiry_qualification::qualified_history_expiry
 PUBLISHER_TEST = "services::deletion_recovery::repository::size_tests::maximum_composite_checkpoint_resource_probe"
 REPLICA_TEST = "restore_contract::history_expiry_qualification::replica::qualified_history_expiry_replica"
 CEILING = 512 * 1024 ** 2
-SHAPES = ("rows", "bytes", "large_row", "oversized", "logical_size", "census", "authority")
+SHAPES = ("rows", "bytes", "large_row", "oversized", "logical_size", "census", "metadata",
+          "policy_count", "hold_count", "pending_count", "authority")
 
 
 def measurement_job_provenance(jobs):
@@ -143,11 +144,14 @@ def assess(report, resources):
                     and 0 < report["kernel_peak_rss_bytes"] <= CEILING
                     and report["kernel_child_peak_rss_bytes"] == 0)
     if report["shape"] == "authority":
-        return {"h1_pass": h1, "maximum_composite_pass": report["maximum_composite_verified"]}
+        return {"h1_pass": h1, "maximum_composite_pass": report["maximum_composite_verified"],
+                "bounded_liveness_pass": 0 < report.get("publisher_fixture_seconds", 0) < 1800}
     batches = report["batches"]
     scanned = report.get("max_scanned_source_rows", 0)
     checks = {
         "h1_pass": h1,
+        "bounded_liveness_pass": all(0 < report.get(stage, 0) < 1800
+                                     for stage in ("fixture_seconds", "worker_seconds", "replay_seconds")),
         "h4_pass": (type(scanned) is int and 0 < scanned <= 1000
                     and bool(batches)
                     and all(0 < batch["rows"] <= 1000
@@ -164,12 +168,28 @@ def assess(report, resources):
         checks["size_selection_pass"] = bool(batches) and all(
             batch.get("size_authorized_rows") == batch["rows"]
             and batch.get("oldest_first") is True for batch in batches)
-    if report["shape"] == "census":
+    if report["shape"] in ("policy_count", "hold_count", "pending_count"):
+        population = report.get("authority_population", {})
+        maximum = (population.get("policy_revisions") == 4096 if report["shape"] == "policy_count" else
+                   population.get("live_holds") == 2048 if report["shape"] == "hold_count" else
+                   population.get("max_pending_intents") == population.get("final_intents") == 256
+                   and population.get("initial_pending_intents") == 256 - report["slots"] * report["replicas"])
+        control_bytes = (population.get("before_control_bytes"), population.get("after_control_bytes"))
+        checks["authority_population_pass"] = maximum and all(
+            type(size) is int and 0 < size <= 4 * 1024**2 for size in control_bytes) and all(
+            population.get(field) is True for field in ("policies_preserved", "holds_preserved", "pending_completed"))
+    if report["shape"] in ("census", "metadata"):
         census = report.get("census", {})
+        filler = census.get("filler", {})
+        exhausted = ((census.get("source_rows", 0) > 100_000
+                      and filler.get("rows") == 100800 and filler.get("closed") == 100400)
+                     if report["shape"] == "census" else
+                     (0 < census.get("source_rows", 0) <= 100_000
+                      and filler.get("rows") == 514 and filler.get("closed") == 513
+                      and filler.get("metadata_bytes", 0) > 64 * 1024**2
+                      and 0 < filler.get("largest_identity_bytes", 0) <= 1024**2))
         checks["census_fallback_pass"] = (
-            census.get("source_rows", 0) > 100_000
-            and census.get("filler", {}).get("rows") == 100800
-            and census.get("filler", {}).get("closed") == 100400
+            exhausted
             and 0 < census.get("exposure_rows", 0) <= 1000
             and 0 < census.get("exposure_bytes", 0) <= 1024 ** 2
             and bool(census.get("filler", {}).get("versions"))

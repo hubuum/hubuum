@@ -9,7 +9,9 @@ use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::time::Instant;
 
+mod authority;
 mod census;
+mod metadata;
 mod replica;
 
 #[derive(QueryableByName)]
@@ -20,9 +22,22 @@ struct NativeInput {
     input_bytes: i64,
 }
 
-async fn native_input(pool: &PostgresPool, resource: ResourceIdentity) -> BTreeMap<String, u64> {
+async fn native_input(pool: &PostgresPool, key: HistoryPolicyKey) -> BTreeMap<String, u64> {
+    let HistoryPolicyScope::Collection { identity: resource } = key.scope() else {
+        unreachable!("fixture collection scope")
+    };
+    let (table, path) = match key.family() {
+        StorageIdentityHistoryKind::Collection => {
+            ("collections_history", "{subject,identity,identity}")
+        }
+        StorageIdentityHistoryKind::ExportTemplate => (
+            "export_templates_history",
+            "{references,/collection_id,reference,identity}",
+        ),
+        _ => unreachable!("fixture history family"),
+    };
     with_connection(pool, async |connection| {
-        diesel::sql_query("SELECT logical_identity #>> '{subject,version}' AS version,octet_length(to_jsonb(h.*)::text)::bigint AS input_bytes FROM public.collections_history h WHERE logical_identity #>> '{subject,identity,identity}'=$1 AND valid_to IS NOT NULL")
+        diesel::sql_query(format!("SELECT logical_identity #>> '{{subject,version}}' AS version,octet_length(to_jsonb(h.*)::text)::bigint AS input_bytes FROM public.{table} h WHERE logical_identity #>> '{path}'=$1 AND valid_to IS NOT NULL"))
             .bind::<Text,_>(resource.to_string()).load::<NativeInput>(connection).await
     }).await.unwrap().into_iter().map(|row| (row.version, u64::try_from(row.input_bytes).unwrap())).collect()
 }
@@ -80,7 +95,7 @@ async fn measure() {
         "large_row" => (4, 4 * 1024 * 1024 - 8192),
         "oversized" => (2, 17 * 1024 * 1024),
         "logical_size" => (65, 32 * 1024),
-        "census" => (65, 128),
+        "census" | "metadata" | "policy_count" | "hold_count" | "pending_count" => (65, 128),
         _ => panic!("Unknown qualification shape"),
     };
     let pool = postgres_test_pool_with_timeout(&database_url(), 2, 0);
@@ -143,7 +158,11 @@ async fn measure() {
             .unwrap()
             .resource();
         let key = HistoryPolicyKey::new(
-            StorageIdentityHistoryKind::Collection,
+            if shape == "metadata" {
+                StorageIdentityHistoryKind::ExportTemplate
+            } else {
+                StorageIdentityHistoryKind::Collection
+            },
             HistoryPolicyScope::Collection { identity: resource },
         )
         .unwrap();
@@ -156,7 +175,7 @@ async fn measure() {
                 .policies()
                 .current_revision(key),
             HistoryPolicyBinding::Expire {
-                trigger: if shape == "census" {
+                trigger: if matches!(shape.as_str(), "census" | "metadata") {
                     HistoryExpiryTrigger::AgeOrSize {
                         age: HistoryAgeRule::new(HistoryRetentionSeconds::new(0).unwrap(), None),
                         size: HistorySizeRule::new(
@@ -196,22 +215,26 @@ async fn measure() {
             .await
             .unwrap();
         let payload = "x".repeat(payload_bytes);
-        for update in 0..updates {
-            fixture
-                .update_collection_description(
-                    collection.id(),
-                    if (shape == "oversized" && update == 1)
-                        || (shape == "large_row" && update % 2 == 1)
-                    {
-                        "closed oversized source".into()
-                    } else {
-                        format!("{update}:{payload}")
-                    },
-                )
-                .await
-                .unwrap();
+        if shape == "metadata" {
+            metadata::source(&pool, collection.id().id(), updates).await;
+        } else {
+            for update in 0..updates {
+                fixture
+                    .update_collection_description(
+                        collection.id(),
+                        if (shape == "oversized" && update == 1)
+                            || (shape == "large_row" && update % 2 == 1)
+                        {
+                            "closed oversized source".into()
+                        } else {
+                            format!("{update}:{payload}")
+                        },
+                    )
+                    .await
+                    .unwrap();
+            }
         }
-        sources.push((key, native_input(&pool, resource).await));
+        sources.push((key, native_input(&pool, key).await));
     }
     let slow_consumer = {
         let admin = hubuum::tests::create_test_admin(&pool).await;
@@ -225,8 +248,16 @@ async fn measure() {
             .unwrap();
         (collection.id().id(), token)
     };
-    let census = if shape == "census" {
-        Some(census::prepare(&fixture, &pool).await)
+    let census = if matches!(shape.as_str(), "census" | "metadata") {
+        Some(census::prepare(&fixture, &pool, sources[0].0.family()).await)
+    } else {
+        None
+    };
+    let authority = if matches!(
+        shape.as_str(),
+        "policy_count" | "hold_count" | "pending_count"
+    ) {
+        Some(authority::prepare(&fixture, &shape, slots * replicas).await)
     } else {
         None
     };
@@ -264,6 +295,9 @@ async fn measure() {
     let mut tasks = Vec::new();
     bound
         .run_in_scope(scope.clone(), async {
+            if let Some(population) = &authority {
+                authority::admit_pending(&bound, population.pending_keys()).await;
+            }
             for (key, _) in &sources {
                 let snapshot = bound.capture_history_lifecycle().await.unwrap();
                 let policy = snapshot
@@ -296,12 +330,13 @@ async fn measure() {
     let fixture_seconds = preparing.elapsed().as_secs_f64();
     eprintln!("Qualification stage: shape={shape} fixture_seconds={fixture_seconds}");
     let started = Instant::now();
+    let protected_keys = sources.iter().map(|(key, _)| *key).collect::<Vec<_>>();
     let replica_reports = replica::run_replicas(
         &destination,
         &root,
         &tasks,
-        slow_consumer.0,
-        slow_consumer.1,
+        slow_consumer,
+        &protected_keys,
         replicas,
         storage,
     )
@@ -312,6 +347,9 @@ async fn measure() {
         .as_u64()
         .unwrap();
     let completed = storage.capture_history_lifecycle().await.unwrap();
+    let authority_evidence = authority
+        .as_ref()
+        .map(|population| population.verify(&completed, &replica_reports, &shape));
     let census_evidence = if let Some(census) = &census {
         Some(census.verify(&pool, &tasks, &completed).await)
     } else {
@@ -352,7 +390,7 @@ async fn measure() {
                 .iter()
                 .filter(|member| !member.size_authorizations().is_empty())
                 .count();
-            if shape == "census" {
+            if matches!(shape.as_str(), "census" | "metadata") {
                 assert_eq!(
                     size_authorized_rows, 0,
                     "Unavailable accounting cannot authorize size cleanup"
@@ -374,7 +412,7 @@ async fn measure() {
                 "size_authorized_rows":size_authorized_rows, "oldest_first":oldest_first}));
         }
         assert!(
-            !matches!(shape.as_str(), "logical_size" | "census") || scope_batches > 0,
+            !matches!(shape.as_str(), "logical_size" | "census" | "metadata") || scope_batches > 0,
             "Every measured scope must admit productive membership"
         );
         oversized_deferred_rows += input
@@ -382,10 +420,7 @@ async fn measure() {
             .filter(|bytes| **bytes > 16 * 1024 * 1024)
             .count();
         if shape == "oversized" {
-            let HistoryPolicyScope::Collection { identity } = key.scope() else {
-                unreachable!("fixture collection scope")
-            };
-            let remaining = native_input(&pool, identity).await;
+            let remaining = native_input(&pool, *key).await;
             for (version, bytes) in input.iter().filter(|(_, bytes)| **bytes > 16 * 1024 * 1024) {
                 assert_eq!(
                     remaining.get(version),
@@ -406,6 +441,9 @@ async fn measure() {
         let replayed = storage.capture_history_lifecycle().await.unwrap();
         if let Some(census) = &census {
             census.verify_restored(&pool, &replayed).await;
+        }
+        if let Some(population) = &authority {
+            population.verify(&replayed, &replica_reports, &shape);
         }
         (
             Some(replayed.control().authority().expiry() == &receipts),
@@ -434,6 +472,9 @@ async fn measure() {
     let mut report = report;
     if let Some(evidence) = census_evidence {
         report["census"] = evidence;
+    }
+    if let Some(evidence) = authority_evidence {
+        report["authority_population"] = evidence;
     }
     std::fs::write(destination, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     std::fs::remove_dir_all(root).unwrap();

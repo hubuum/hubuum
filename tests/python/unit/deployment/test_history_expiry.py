@@ -20,7 +20,8 @@ from support import ROOT
 
 class HistoryExpiryQualificationTests(unittest.TestCase):
     def fixture(self):
-        report = {"shape": "rows", "batches": [{"rows": 1000, "removed_rows": 1000,
+        report = {"shape": "rows", "fixture_seconds": 1, "worker_seconds": 1, "replay_seconds": 1,
+                 "publisher_fixture_seconds": 1, "batches": [{"rows": 1000, "removed_rows": 1000,
                  "input_bytes": 1_000_000, "native_input_bytes": 1_000_000}],
                  "kernel_peak_rss_bytes": 100_000_000, "kernel_child_peak_rss_bytes": 0,
                  "replay_preserved_receipts": True, "quarantine_released": True,
@@ -70,6 +71,56 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
 
     def test_complete_evidence_passes(self):
         self.assertTrue(all(assess(*self.fixture()).values()))
+
+    def test_metadata_exhaustion_requires_its_native_budget_and_preserved_population(self):
+        report, resources = self.fixture()
+        report.update(shape="metadata", census={"source_rows":778,
+            "filler":{"rows":514,"closed":513,"versions":"fingerprint",
+                      "metadata_bytes":67_500_000,"largest_identity_bytes":132000},
+            "exposure_rows":10,"exposure_bytes":4000,"fallback_tasks":1,"expected_tasks":1,
+            "age_only":True,"pressure_unchanged":True,"holds_preserved":True,
+            "filler_preserved":True,"restored_filler_preserved":True})
+        report["batches"][0]["size_authorized_rows"] = 0
+        self.assertTrue(all(assess(report, resources).values()))
+        for field, value in (("rows",513), ("closed",512), ("metadata_bytes",64*1024**2),
+                             ("largest_identity_bytes",1024**2+1)):
+            with self.subTest(field=field):
+                broken = copy.deepcopy(report)
+                broken["census"]["filler"][field] = value
+                self.assertFalse(assess(broken, resources)["census_fallback_pass"])
+        report["census"]["source_rows"] = 100001
+        self.assertFalse(assess(report, resources)["census_fallback_pass"])
+
+    def test_each_measured_phase_requires_its_original_liveness_bound(self):
+        for field in ("fixture_seconds", "worker_seconds", "replay_seconds", "publisher_fixture_seconds"):
+            for value in (None, 0, 1800, float("nan")):
+                with self.subTest(field=field, value=value):
+                    report, resources = self.fixture()
+                    if field == "publisher_fixture_seconds":
+                        report.update(shape="authority", maximum_composite_verified=True)
+                    if value is None:
+                        del report[field]
+                    else:
+                        report[field] = value
+                    self.assertFalse(assess(report, resources)["bounded_liveness_pass"])
+
+    def test_authority_populations_require_the_declared_capacity_and_preserved_facts(self):
+        for shape, field, maximum in (("policy_count", "policy_revisions",4096),
+                                      ("hold_count", "live_holds",2048),
+                                      ("pending_count", "max_pending_intents",256)):
+            with self.subTest(shape=shape):
+                report, resources = self.fixture()
+                report.update(shape=shape, authority_population={"policy_revisions":4096,"live_holds":2048,
+                    "initial_pending_intents":255,"max_pending_intents":256,"final_intents":256,
+                    "before_control_bytes":2_000_000,"after_control_bytes":2_100_000,
+                    "policies_preserved":True,"holds_preserved":True,"pending_completed":True})
+                self.assertTrue(all(assess(report, resources).values()))
+                for key, value in ((field,maximum-1), ("policies_preserved",False),
+                                   ("before_control_bytes",4*1024**2+1), ("after_control_bytes",0),
+                                   ("holds_preserved",False), ("pending_completed",False)):
+                    broken = copy.deepcopy(report)
+                    broken["authority_population"][key] = value
+                    self.assertFalse(assess(broken, resources)["authority_population_pass"])
 
     def test_row_boundary_counts_scanned_sources_before_eligibility_filtering(self):
         report, resources = self.fixture()
@@ -124,16 +175,24 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                                   oversized_reported_rows=1, backup_rejected_oversized=True)
                 elif shape == "logical_size":
                     report["batches"][0].update(size_authorized_rows=1000, oldest_first=True)
-                elif shape == "census":
+                elif shape in ("census", "metadata"):
                     report["batches"][0]["size_authorized_rows"] = 0
                     report["census"] = {"source_rows":100900,"filler":{"rows":100800,"closed":100400,"versions":"fingerprint"},
                                         "exposure_rows":820,"exposure_bytes":300000,
                                         "fallback_tasks":1,"expected_tasks":1,"age_only":True,
                                         "pressure_unchanged":True,"holds_preserved":True,
                                         "filler_preserved":True,"restored_filler_preserved":True}
+                    if shape == "metadata":
+                        report["census"].update(source_rows=778, filler={"rows":514,"closed":513,
+                            "versions":"fingerprint","metadata_bytes":67_500_000,"largest_identity_bytes":132000})
                 elif shape == "authority":
                     report.pop("replica_reports")
                     report["maximum_composite_verified"] = True
+                elif shape in ("policy_count", "hold_count", "pending_count"):
+                    report["authority_population"] = {"policy_revisions":4096,"live_holds":2048,
+                        "initial_pending_intents":255,"max_pending_intents":256,"final_intents":256,
+                        "before_control_bytes":2_000_000,"after_control_bytes":2_100_000,
+                        "policies_preserved":True,"holds_preserved":True,"pending_completed":True}
                 name = f"{shape}-{repeat}"
                 process = name if shape == "authority" else name + "-replica-0"
                 (root / (process + "-container.json")).write_text(json.dumps({"resources": {
@@ -205,8 +264,8 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
             output = parent / "combined"
             summary = aggregate_repetitions(fragments, output)
             self.assertTrue(summary["h1_h4_worker_qualified"])
-            self.assertEqual(summary["measured_runs"], 35)
-            self.assertEqual(len(list(output.glob("*-final-database-resources.txt"))), 42)
+            self.assertEqual(summary["measured_runs"], 5 * len(SHAPES))
+            self.assertEqual(len(list(output.glob("*-final-database-resources.txt"))), 6 * len(SHAPES))
 
     def test_repetition_aggregation_rejects_missing_duplicate_or_unproved_evidence(self):
         for invalid in ("missing", "duplicate", "build", "settings", "sample", "raw", "database",
@@ -267,7 +326,7 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
         jobs = self.repetition_jobs()
         jobs[-1]["completed_at"] = "2026-11-17T04:00:00Z"
         proof = measurement_job_provenance(jobs)
-        self.assertEqual(len(proof["shape_jobs"]), 84)
+        self.assertEqual(len(proof["shape_jobs"]), 12 * len(SHAPES))
         self.assertEqual(proof["case_window_seconds"]["shared/authority"], 14400)
         jobs[-1]["completed_at"] = "2026-11-17T04:00:01Z"
         with self.assertRaises(ValueError):
@@ -364,7 +423,8 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
     def test_aggregation_dispatch_requires_successful_unchanged_measurement_provenance(self):
         workflow = (ROOT / ".github/workflows/history-expiry-qualification.yml").read_text()
         aggregate = workflow.split("\n  aggregate:\n")[1].split("\n  reuse:\n")[0]
-        self.assertIn("inputs.shape != 'census' && (!contains(github.event.pull_request.labels.*.name, 'ci:history-envelope') || contains(github.event.pull_request.labels.*.name, 'ci:validate'))", aggregate)
+        self.assertIn("(inputs.shape == '' || inputs.shape == 'all')", aggregate)
+        self.assertIn("(!contains(github.event.pull_request.labels.*.name, 'ci:history-envelope') || contains(github.event.pull_request.labels.*.name, 'ci:validate'))", aggregate)
         self.assertIn("(needs.measure.result == 'success' || inputs.measurement_run_id != '')", aggregate)
         step = aggregate.split("- name: Verify measurement source and all completed shape jobs")[1]
         script = textwrap.dedent(step.split("<<'PY'\n")[1].split("\n          PY")[0])
@@ -395,7 +455,7 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                 def command(arguments, **kwargs):
                     if arguments[0] == "gh":
                         endpoint = arguments[2]
-                        return json.dumps({"jobs": jobs} if "/jobs?" in endpoint else
+                        return json.dumps([{"jobs":jobs[:100]},{"jobs":jobs[100:]}] if "/jobs?" in endpoint else
                                           current if endpoint.endswith("/43") else source)
                     if arguments[1] == "diff":
                         return "\n".join(changed)

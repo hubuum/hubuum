@@ -1,6 +1,7 @@
 //! Gated expiry task execution. Admission and exact removal receipts are
 //! independently protected before removal and task completion respectively.
 use std::future::Future;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use hubuum_domain::PrincipalId;
@@ -53,9 +54,7 @@ pub(crate) async fn submit_manual(
 /// The shared adapter path coalesces with manual work and retained cleanup.
 pub(crate) async fn submit_periodic(context: &AppContext) -> Result<(), ApiError> {
     use std::collections::BTreeMap;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
-    const PER_PASS: usize = 16;
     let storage = storage_handle(context);
     let snapshot = crate::tasks::history::run(&storage, async {
         Ok(storage.capture_history_lifecycle().await?)
@@ -74,15 +73,13 @@ pub(crate) async fn submit_periodic(context: &AppContext) -> Result<(), ApiError
     if roots.is_empty() {
         return Ok(());
     }
-    let start = NEXT.fetch_add(PER_PASS, Ordering::Relaxed);
     let application = ApplicationFence::new(
         snapshot.fence().incarnation(),
         snapshot.fence().deletion_revision().value() as i64,
     )
     .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
-    for offset in 0..roots.len().min(PER_PASS) {
+    for root in bounded_pass(&roots, &NEXT) {
         crate::tasks::control::checkpoint()?;
-        let root = roots[start.wrapping_add(offset) % roots.len()];
         let scan = HistoryLifecycleScan::new(root.proposal().key(), 1000)
             .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
         let request = HistoryExpiryTaskSubmission::periodic(scan, application, root)
@@ -94,15 +91,31 @@ pub(crate) async fn submit_periodic(context: &AppContext) -> Result<(), ApiError
     Ok(())
 }
 
+/// Keep producer/recovery maintenance from monopolizing a queue poll. Rotation
+/// advances even when a particular retained owner is busy or capacity is full.
+fn bounded_pass<'a, T>(items: &'a [T], next: &AtomicUsize) -> impl Iterator<Item = &'a T> {
+    const PER_PASS: usize = 16;
+    let start = if items.is_empty() {
+        0
+    } else {
+        next.fetch_add(PER_PASS, Ordering::Relaxed) % items.len()
+    };
+    items[start..]
+        .iter()
+        .chain(items[..start].iter())
+        .take(PER_PASS)
+}
+
 /// Called only by an expiry-capable qualified worker. The retained journal is
 /// bounded (256 batches), and each adapter serializes one batch with its owner.
 pub(crate) async fn recover_pending(context: &AppContext) -> Result<(), ApiError> {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
     let storage = storage_handle(context);
     let snapshot = crate::tasks::history::run(&storage, async {
         Ok(storage.capture_history_lifecycle().await?)
     })
     .await?;
-    for intent in snapshot.control().authority().expiry().intents() {
+    for intent in bounded_pass(snapshot.control().authority().expiry().intents(), &NEXT) {
         crate::tasks::control::checkpoint()?;
         if let Err(error) = storage
             .recover_history_expiry_task(intent.manifest().identity())
@@ -344,6 +357,7 @@ async fn authorize_selection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
     use std::future::ready;
     use std::sync::Arc;
 
@@ -357,6 +371,36 @@ mod tests {
     use hubuum_task_core::TaskStopReason;
     use rstest::rstest;
     use uuid::Uuid;
+
+    #[rstest]
+    #[case::empty(0)]
+    #[case::single(1)]
+    #[case::one_pass(16)]
+    #[case::wrap(17)]
+    #[case::full_journal(256)]
+    fn maintenance_passes_are_bounded_and_revisit_every_retained_entry(#[case] count: usize) {
+        let items = (0..count).collect::<Vec<_>>();
+        let next = AtomicUsize::new(0);
+        let mut visited = BTreeSet::new();
+        for _ in 0..count.div_ceil(16).max(1) {
+            let pass = bounded_pass(&items, &next).copied().collect::<Vec<_>>();
+            assert!(pass.len() <= 16);
+            assert_eq!(pass.iter().collect::<BTreeSet<_>>().len(), pass.len());
+            visited.extend(pass);
+        }
+        assert_eq!(visited, items.iter().copied().collect());
+    }
+
+    #[test]
+    fn maintenance_rotation_remains_bounded_when_the_process_cursor_wraps() {
+        let items = (0..17).collect::<Vec<_>>();
+        let next = AtomicUsize::new(usize::MAX);
+        let pass = bounded_pass(&items, &next)
+            .copied()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(pass.len(), 16);
+        assert!(pass.into_iter().all(|index| index < items.len()));
+    }
 
     #[rstest]
     #[case::busy(false)]
