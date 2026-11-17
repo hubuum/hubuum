@@ -53,6 +53,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Rendering tests use Cargo's reported template-worker path, supporting the
+  relocated test executables introduced by Cargo 1.100.
+
 - Shared login reservations retain their original expiry when runtime rate-limit
   windows change, so in-flight failures still count toward the captured policy.
 - Shared login lockouts keep their expiry when overlapping requests finish under
