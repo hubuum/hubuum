@@ -91,3 +91,54 @@ review is explicitly recorded. Keep full milestone criteria open until all
 required native/security/provider evidence is accepted. Current qualification
 reports and unresolved limitations belong to #581; this manifest alone does not
 establish acceptance or authorize main/stable promotion.
+
+## Recorded automated matrix
+
+The [sanitized result ledger](ecosystem-qualification.json) records **255 passing
+checks across 16 client/profile runs**, with zero failures. Qualified coordinator
+source is `93aac99c656d29187b6494d3386447a03f246591`; accepted server source is
+`8e6e8344c458765af556890572593775ca4fd9a0`. Each record pins the owning source/tree,
+consumer, controller, manifest, actual server image and original fixture target.
+Fixture overrides preserve the unchanged OpenAPI and 48-case corpus hashes.
+
+| Native product | Passing checks | Modes/profiles |
+| --- | --- | --- |
+| Rust SDK | 60 | Async/blocking; both Keycloak profiles and synthetic OAuth |
+| Python SDK | 66 | Sync/async; both Keycloak profiles and synthetic OAuth |
+| Release CLI | 54 | LDAPS, both Keycloak profiles, synthetic OAuth; local/remote terminal behavior |
+| Frontend | 75 | Actual local/LDAPS/OAuth/Keycloak administration and login UI; real Treetop operations |
+
+The full required Rust suite on this coordinator source passed **7,030 tests,
+zero failures** (41 existing ignores), and the complete standard-library Python
+suite passed **344 tests**. Strict all-target Clippy, rustfmt, unchanged regenerated
+OpenAPI, CI classification, Markdown and strict documentation rendering pass.
+An initial disposable dotenv setup attempt stopped before tests; its wrapper was
+corrected and the complete run passed. Its database, credentials and environment
+link were removed. No failing tests are waived. Final source CI/candidate review
+is required before accepting this qualification-tool delivery.
+
+## Security evidence ownership
+
+| Area | Evidence owner and scope |
+| --- | --- |
+| Source/image and wire compatibility | The source manifest, accepted cross-repository candidates and 255-check native ledger |
+| Candidate receipts, revisions, locks and concurrent completion | Rust API/browser and complete storage-contract tests; native preview/activation plus accepted server #599's 20-check LDAP credential-intent matrix |
+| Replay/mix-up, CSRF/open redirects, polling and response loss | Rust interaction/session/approval tests, accepted BFF #196 security/loss qualification and release CLI cancellation/terminal checks |
+| Group removal, stale claims, deprovisioning and signing-key rotation | Accepted #599 real Keycloak production-image qualification: 19 checks per ID-token/UserInfo profile, plus Rust contracts and native membership checks |
+| Deployment, restore and monitoring | Accepted #599's exact-image deployment/backup/restore and alert/lifecycle reports; 28 correctness and 37 benchmark jobs, 25 targets without regressions or overrides |
+| Real native GitHub | Pending new authorized App and actual native sign-ins; the prior #595 11-check result covers its server fixture only |
+
+Representative Rust sources are `tests/api_identity_suite/auth_interactions.rs`,
+`tests/api_identity_suite/sessions.rs`,
+`tests/api_identity_suite/credential_approvals.rs`,
+`src/api/v1/handlers/auth_interactions/browser/tests.rs`, and the complete storage
+contracts in `src/tests/storage_contract/auth_interactions.rs` and
+`src/tests/storage_contract/runtime_settings/security_candidates.rs`. Provider
+integration belongs to `tests/python/integration/keycloak.py` and `oauth.py`.
+These owners retain exhaustive domain/concurrency assertions; the coordinator
+selects qualified fixtures and runs the owning native products.
+
+The ledger explicitly keeps native GitHub and milestone acceptance false.
+Synthetic OAuth, public GitHub-labelled wire UI and an earlier server-only real
+login do not complete that requirement. Keep #581's global acceptance criteria
+open and #582/main/stable promotion gated until the remaining evidence is accepted.

@@ -1,0 +1,561 @@
+{
+  "scope": "Automated native matrix against accepted server599; implementing-agent qualification, not independent approval or milestone acceptance",
+  "coordinator_source": "93aac99c656d29187b6494d3386447a03f246591",
+  "coordinator_sha256": "932891ac837d76f49a57629e03f41cf3d2ae0f4c0ddecca5a0e3d40062242355",
+  "manifest_sha256": "6a65b1e4435dea0eadffb833723e747579369841747b618560bea1d9b1886b0a",
+  "server_source": "8e6e8344c458765af556890572593775ca4fd9a0",
+  "server_tree": "e591c2a501649ebf205cf6753a9e6be4c2766ccc",
+  "server_integration_commit": "540a511e0936abeb6a73aee2c94c5e25eba210b9",
+  "client_sources": {
+    "rust": {
+      "source": "53649969ed2816a1f99a4d7033da5c06ce7cb27c",
+      "tree": "d1947ff1f82e2ba4d75bd21d7e30e7e1c16aa91c",
+      "consumer_sha256": "f499825a7064a0d118285af04517123eec4e54dbd412107ab642403d108cf058",
+      "accepted_pr": 151
+    },
+    "python": {
+      "source": "7d76b19a03cd049ce70f89577c990e8a74ce3787",
+      "tree": "e12a0cd41aad547e5b2c0c1e265f137fa44c6ed2",
+      "consumer_sha256": "014f47f90127fcf5faf9d280323688ea5924262018fb5b6e0d5ef09cf0d2174b",
+      "accepted_pr": 99
+    },
+    "cli": {
+      "source": "ffb4e6f25b462e413609367225e64673a3814449",
+      "tree": "2118b942d078d2198d61272d64cf3b6cec8c829f",
+      "consumer_sha256": "418825f7eac94b97f591d113dfc183c601aff8de0a6b921f514dc40e1b22225c",
+      "accepted_pr": 167
+    },
+    "frontend": {
+      "source": "760665ada7e5a7e25f2538fcb5e1df454969a6ba",
+      "tree": "515b68798c70bb2b6154bd39f8578970bcb8979e",
+      "consumer_sha256": "ba7073582822078d8c90bca3facacc46690bc5366fab4b815aeef9148cd6e854",
+      "accepted_pr": 210
+    }
+  },
+  "automated_passed": true,
+  "profiles": [
+    {
+      "client": "rust",
+      "profile": "id_token",
+      "passed": true,
+      "count": 20,
+      "checks": {
+        "async": [
+          "local administrator session is available before external setup",
+          "candidate preview leaves six identity/session tables unchanged",
+          "runtime encrypted configuration, non-login preview and exact fresh-approved activation",
+          "browser login adopts ordinary rotating session and retains principal and family",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "repeat browser login resolves the same immutable principal",
+          "local recovery remains available after runtime activation"
+        ],
+        "blocking": [
+          "local administrator session is available before external setup",
+          "candidate preview leaves six identity/session tables unchanged",
+          "runtime encrypted configuration, non-login preview and exact fresh-approved activation",
+          "browser login adopts ordinary rotating session and retains principal and family",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "repeat browser login resolves the same immutable principal",
+          "local recovery remains available after runtime activation"
+        ]
+      },
+      "report_sha256": "f3935119c5477387d8d7ef1753b94e6eba731dc152a851651436f51dea4fa259",
+      "owning_report_sha256": "58e1f1efd860dc04272a4dafb0aff7ca65bfeb9ed99f26c3495700c69df602dd",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.15.2",
+      "original_fixture_server_source": "ad0c2c40bed5b0328f56f1327e10ffe7f9aac09a"
+    },
+    {
+      "client": "rust",
+      "profile": "userinfo",
+      "passed": true,
+      "count": 20,
+      "checks": {
+        "async": [
+          "local administrator session is available before external setup",
+          "candidate preview leaves six identity/session tables unchanged",
+          "runtime encrypted configuration, non-login preview and exact fresh-approved activation",
+          "browser login adopts ordinary rotating session and retains principal and family",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "repeat browser login resolves the same immutable principal",
+          "local recovery remains available after runtime activation"
+        ],
+        "blocking": [
+          "local administrator session is available before external setup",
+          "candidate preview leaves six identity/session tables unchanged",
+          "runtime encrypted configuration, non-login preview and exact fresh-approved activation",
+          "browser login adopts ordinary rotating session and retains principal and family",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "repeat browser login resolves the same immutable principal",
+          "local recovery remains available after runtime activation"
+        ]
+      },
+      "report_sha256": "dbc1429699eb391144bc5a1e6f5a0ca060cf214c8c7a5fd33e6a5154aa9e8a08",
+      "owning_report_sha256": "8970a5912dfd63fa2da1a58947717ee54593f9396f2f2df8565d47ee9c834f71",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.15.2",
+      "original_fixture_server_source": "ad0c2c40bed5b0328f56f1327e10ffe7f9aac09a"
+    },
+    {
+      "client": "rust",
+      "profile": "oauth",
+      "passed": true,
+      "count": 20,
+      "checks": {
+        "async": [
+          "local administrator session is available before external setup",
+          "candidate preview leaves six identity/session tables unchanged",
+          "runtime encrypted configuration, non-login preview and exact fresh-approved activation",
+          "browser login adopts ordinary rotating session and retains principal and family",
+          "OAuth fresh approval is explicitly unsupported",
+          "local logout revokes external session",
+          "OAuth fresh approval is explicitly unsupported",
+          "local logout revokes external session",
+          "repeat browser login resolves the same immutable principal",
+          "local recovery remains available after runtime activation"
+        ],
+        "blocking": [
+          "local administrator session is available before external setup",
+          "candidate preview leaves six identity/session tables unchanged",
+          "runtime encrypted configuration, non-login preview and exact fresh-approved activation",
+          "browser login adopts ordinary rotating session and retains principal and family",
+          "OAuth fresh approval is explicitly unsupported",
+          "local logout revokes external session",
+          "OAuth fresh approval is explicitly unsupported",
+          "local logout revokes external session",
+          "repeat browser login resolves the same immutable principal",
+          "local recovery remains available after runtime activation"
+        ]
+      },
+      "report_sha256": "23cc5c7f7331aef6b63e0ceeb240283f3242252238a765109c744ef5747e0191",
+      "owning_report_sha256": "4f6ad9384cb49068116ff7947f5b3f9c6483432b96615e402cc13b1a865d201e",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.15.2",
+      "original_fixture_server_source": "ad0c2c40bed5b0328f56f1327e10ffe7f9aac09a"
+    },
+    {
+      "client": "python",
+      "profile": "id_token",
+      "passed": true,
+      "count": 22,
+      "checks": {
+        "sync": [
+          "local administrator session is available before external setup",
+          "candidate preview leaves six identity/session tables unchanged",
+          "runtime encrypted configuration, non-login preview and exact fresh-approved activation",
+          "session renewal preserves the exact issued family",
+          "browser login adopts an ordinary rotating session and retains principal",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "repeat browser login resolves the same immutable principal",
+          "local recovery remains available after runtime activation"
+        ],
+        "async": [
+          "local administrator session is available before external setup",
+          "candidate preview leaves six identity/session tables unchanged",
+          "runtime encrypted configuration, non-login preview and exact fresh-approved activation",
+          "session renewal preserves the exact issued family",
+          "browser login adopts an ordinary rotating session and retains principal",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "repeat browser login resolves the same immutable principal",
+          "local recovery remains available after runtime activation"
+        ]
+      },
+      "report_sha256": "a6428518e98d3298c9a2f9b9e8d1448516b779847a63aa77f22a025617fe0cc2",
+      "owning_report_sha256": "0b52c2a25ec35df6fefcb2a285f24d22ef2af5caaa99ec8fbe36de205d1a5f52",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.14.10",
+      "original_fixture_server_source": "ad0c2c40bed5b0328f56f1327e10ffe7f9aac09a"
+    },
+    {
+      "client": "python",
+      "profile": "userinfo",
+      "passed": true,
+      "count": 22,
+      "checks": {
+        "sync": [
+          "local administrator session is available before external setup",
+          "candidate preview leaves six identity/session tables unchanged",
+          "runtime encrypted configuration, non-login preview and exact fresh-approved activation",
+          "session renewal preserves the exact issued family",
+          "browser login adopts an ordinary rotating session and retains principal",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "repeat browser login resolves the same immutable principal",
+          "local recovery remains available after runtime activation"
+        ],
+        "async": [
+          "local administrator session is available before external setup",
+          "candidate preview leaves six identity/session tables unchanged",
+          "runtime encrypted configuration, non-login preview and exact fresh-approved activation",
+          "session renewal preserves the exact issued family",
+          "browser login adopts an ordinary rotating session and retains principal",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "OIDC exact-operation fresh approval retains originating credential",
+          "local logout revokes external session",
+          "repeat browser login resolves the same immutable principal",
+          "local recovery remains available after runtime activation"
+        ]
+      },
+      "report_sha256": "e2712ba4a35b604087b83a71125f610a1003e6c79a56036cf1333cdd071dc460",
+      "owning_report_sha256": "5bbaeb5ed285c17e2181d281dee73181edbfec2646a7593219d79d934da5ade4",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.14.10",
+      "original_fixture_server_source": "ad0c2c40bed5b0328f56f1327e10ffe7f9aac09a"
+    },
+    {
+      "client": "python",
+      "profile": "oauth",
+      "passed": true,
+      "count": 22,
+      "checks": {
+        "sync": [
+          "local administrator session is available before external setup",
+          "candidate preview leaves six identity/session tables unchanged",
+          "runtime encrypted configuration, non-login preview and exact fresh-approved activation",
+          "session renewal preserves the exact issued family",
+          "browser login adopts an ordinary rotating session and retains principal",
+          "OAuth fresh approval is explicitly unsupported",
+          "local logout revokes external session",
+          "OAuth fresh approval is explicitly unsupported",
+          "local logout revokes external session",
+          "repeat browser login resolves the same immutable principal",
+          "local recovery remains available after runtime activation"
+        ],
+        "async": [
+          "local administrator session is available before external setup",
+          "candidate preview leaves six identity/session tables unchanged",
+          "runtime encrypted configuration, non-login preview and exact fresh-approved activation",
+          "session renewal preserves the exact issued family",
+          "browser login adopts an ordinary rotating session and retains principal",
+          "OAuth fresh approval is explicitly unsupported",
+          "local logout revokes external session",
+          "OAuth fresh approval is explicitly unsupported",
+          "local logout revokes external session",
+          "repeat browser login resolves the same immutable principal",
+          "local recovery remains available after runtime activation"
+        ]
+      },
+      "report_sha256": "1a408edf88ebd32e276e5ce9a96d789aeb030eafe3cdfba9562a46b9d92a01ed",
+      "owning_report_sha256": "e616f68a31e1552b37b51e526dd29fc875935c217d964e9be86a69d8d5900bed",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.14.10",
+      "original_fixture_server_source": "ad0c2c40bed5b0328f56f1327e10ffe7f9aac09a"
+    },
+    {
+      "client": "cli",
+      "profile": "ldap",
+      "passed": true,
+      "count": 10,
+      "checks": [
+        "local administrator uses ordinary persisted session before runtime setup",
+        "runtime candidate preview leaves six identity/session tables unchanged",
+        "write-only encrypted runtime configuration activates with exact fresh local approval",
+        "provider CLI login installs an ordinary persisted session",
+        "process restart and due renewal preserve principal/family and rotate access",
+        "immutable external principal supports manual grants and managed groups stay read-only",
+        "LDAP password freshness approves the exact current-principal credential operation",
+        "stale desired revision fails without replay or approval downgrade",
+        "runtime disable/re-enable keeps encrypted credentials, immutable identity and local recovery",
+        "local recovery remains available after LDAP runtime lifecycle"
+      ],
+      "report_sha256": "b89ac9dc3771f99b5e5a9a0ddde7a169a85c52f58b4761fac5fdf141226abc3c",
+      "owning_report_sha256": "8c6ef42ced15c5255611b7edadd18fee71f908ebb46b7fb3c0fcdd0d857970b7",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.15.2",
+      "original_fixture_server_source": "ad0c2c40bed5b0328f56f1327e10ffe7f9aac09a"
+    },
+    {
+      "client": "cli",
+      "profile": "id_token",
+      "passed": true,
+      "count": 15,
+      "checks": [
+        "local administrator uses ordinary persisted session before runtime setup",
+        "runtime candidate preview leaves six identity/session tables unchanged",
+        "write-only encrypted runtime configuration activates with exact fresh local approval",
+        "provider CLI login installs an ordinary persisted session",
+        "process restart and due renewal preserve principal/family and rotate access",
+        "immutable external principal supports manual grants and managed groups stay read-only",
+        "OIDC exact-operation fresh approval targets the current immutable principal",
+        "external session logout clears the matching persisted family",
+        "browser denial is terminal and does not persist a session",
+        "Ctrl-C cancels the pending remote-browser interaction with exact cleanup",
+        "noninteractive commands require explicit remote completion and never launch a browser",
+        "local terminal browser hook receives only the public URL and no Hubuum environment",
+        "stale desired revision fails without replay or approval downgrade",
+        "runtime disable/re-enable keeps encrypted credentials, immutable identity and local recovery",
+        "local recovery remains available after provider activation and cancellation"
+      ],
+      "report_sha256": "d291141a9367f488b5762bf40ddbc5236d2fac1b0f708b3848a945013c271059",
+      "owning_report_sha256": "de24b521a62b8937553edd289acb70dab4812919346856af19c79515d5edef45",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.15.2",
+      "original_fixture_server_source": "ad0c2c40bed5b0328f56f1327e10ffe7f9aac09a"
+    },
+    {
+      "client": "cli",
+      "profile": "userinfo",
+      "passed": true,
+      "count": 15,
+      "checks": [
+        "local administrator uses ordinary persisted session before runtime setup",
+        "runtime candidate preview leaves six identity/session tables unchanged",
+        "write-only encrypted runtime configuration activates with exact fresh local approval",
+        "provider CLI login installs an ordinary persisted session",
+        "process restart and due renewal preserve principal/family and rotate access",
+        "immutable external principal supports manual grants and managed groups stay read-only",
+        "OIDC exact-operation fresh approval targets the current immutable principal",
+        "external session logout clears the matching persisted family",
+        "browser denial is terminal and does not persist a session",
+        "Ctrl-C cancels the pending remote-browser interaction with exact cleanup",
+        "noninteractive commands require explicit remote completion and never launch a browser",
+        "local terminal browser hook receives only the public URL and no Hubuum environment",
+        "stale desired revision fails without replay or approval downgrade",
+        "runtime disable/re-enable keeps encrypted credentials, immutable identity and local recovery",
+        "local recovery remains available after provider activation and cancellation"
+      ],
+      "report_sha256": "91590ceee7f7fc9dd178b6f1af871320524d34a534b5503c28601f084ad2abf4",
+      "owning_report_sha256": "cd1af00296ae980f462af03b3ff61af52fec8ee961239077cd69670d9ddeb284",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.15.2",
+      "original_fixture_server_source": "ad0c2c40bed5b0328f56f1327e10ffe7f9aac09a"
+    },
+    {
+      "client": "cli",
+      "profile": "oauth",
+      "passed": true,
+      "count": 14,
+      "checks": [
+        "local administrator uses ordinary persisted session before runtime setup",
+        "runtime candidate preview leaves six identity/session tables unchanged",
+        "write-only encrypted runtime configuration activates with exact fresh local approval",
+        "provider CLI login installs an ordinary persisted session",
+        "process restart and due renewal preserve principal/family and rotate access",
+        "immutable external principal supports manual grants and managed groups stay read-only",
+        "OAuth fresh approval remains an explicit unsupported capability",
+        "external session logout clears the matching persisted family",
+        "Ctrl-C cancels the pending remote-browser interaction with exact cleanup",
+        "noninteractive commands require explicit remote completion and never launch a browser",
+        "local terminal browser hook receives only the public URL and no Hubuum environment",
+        "stale desired revision fails without replay or approval downgrade",
+        "runtime disable/re-enable keeps encrypted credentials, immutable identity and local recovery",
+        "local recovery remains available after provider activation and cancellation"
+      ],
+      "report_sha256": "e2e66d9741bf4873ca80b2405f9ef020db822a66063a889e1911b8f6497354c3",
+      "owning_report_sha256": "f67f1e3b690b151502198e93b5ed5d468303aaeb98875647e4c555cb3adcd55f",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.15.2",
+      "original_fixture_server_source": "ad0c2c40bed5b0328f56f1327e10ffe7f9aac09a"
+    },
+    {
+      "client": "frontend",
+      "profile": "local",
+      "passed": true,
+      "count": 7,
+      "checks": [
+        "ordinary local administrator login persists privately before external setup",
+        "actual local or LDAP password login preserves the intended local return without a browser-provider downgrade",
+        "the product UI receives only a Secure HttpOnly SameSite cookie",
+        "the actual approval dialog displays the frozen operation and completes it once through the supported authentication method",
+        "one issued proof token is found and explicitly revoked without exposing its value in reports",
+        "browser storage contains no interaction, session or approval credential",
+        "product logout destroys the matching frontend login"
+      ],
+      "report_sha256": "9f5d728226188f4075c8f335edb1cfa573b6d48406983d95ab90e959b8f15838",
+      "owning_report_sha256": "291dcde3f28b12c0eb416a497f64e9d81699630c00dd07e8218e88d79115d962",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.15.2",
+      "original_fixture_server_source": "8e6e8344c458765af556890572593775ca4fd9a0"
+    },
+    {
+      "client": "frontend",
+      "profile": "ldap",
+      "passed": true,
+      "count": 13,
+      "checks": [
+        "ordinary local administrator login persists privately before external setup",
+        "product administration preview leaves all six persistent identity, membership, session and credential counts unchanged",
+        "actual local recovery login opens provider administration before external setup",
+        "actual provider form creates an inactive encrypted runtime candidate without displaying stored credentials or aliases",
+        "actual provider test renders identity and groups with no provisioning, membership, session or retained-credential writes",
+        "actual activation review uses a private receipt and fresh local approval for the exact candidate and revision",
+        "actual local recovery login remains available after runtime provider activation and browser storage contains no authority",
+        "actual local or LDAP password login preserves the intended local return without a browser-provider downgrade",
+        "the product UI receives only a Secure HttpOnly SameSite cookie",
+        "the actual approval dialog displays the frozen operation and completes it once through the supported authentication method",
+        "one issued proof token is found and explicitly revoked without exposing its value in reports",
+        "browser storage contains no interaction, session or approval credential",
+        "product logout destroys the matching frontend login"
+      ],
+      "report_sha256": "0a75bce3652318590074f90ce2af490ebaaf6e4590ffd1bea9515782ae28395b",
+      "owning_report_sha256": "47283b2bd4e697a0af4597e1b0ec52921dd593d7a878ab81c971468eb24cf1f3",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.15.2",
+      "original_fixture_server_source": "8e6e8344c458765af556890572593775ca4fd9a0"
+    },
+    {
+      "client": "frontend",
+      "profile": "id_token",
+      "passed": true,
+      "count": 15,
+      "checks": [
+        "ordinary local administrator login persists privately before external setup",
+        "product administration preview leaves all six persistent identity, membership, session and credential counts unchanged",
+        "actual local recovery login opens provider administration before external setup",
+        "actual provider form creates an inactive encrypted runtime candidate without displaying stored credentials or aliases",
+        "actual provider test renders identity and groups with no provisioning, membership, session or retained-credential writes",
+        "actual activation review uses a private receipt and fresh local approval for the exact candidate and revision",
+        "actual local recovery login remains available after runtime provider activation and browser storage contains no authority",
+        "actual login UI opens the server-owned provider flow and requires explicit approval before the intended local return",
+        "the product UI receives only a Secure HttpOnly SameSite cookie",
+        "the actual approval dialog displays the frozen operation and completes it once through the supported authentication method",
+        "one issued proof token is found and explicitly revoked without exposing its value in reports",
+        "separate concurrent tabs keep exact operations isolated: one approval mints once while denial in the other mints nothing, and both preserve the ordinary session",
+        "the ordinary session retains the same principal after a due upstream eligibility refresh following concurrent approval and denial",
+        "browser storage contains no interaction, session or approval credential",
+        "product logout destroys the matching frontend login"
+      ],
+      "report_sha256": "c4a79cda5153a0ad4967a0490045300565e336347c7539abb895916962f09e6d",
+      "owning_report_sha256": "14e6aa28f69c8881c43f049dbcea7617531b6b96ba6c992f86c52628d8227180",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.15.2",
+      "original_fixture_server_source": "8e6e8344c458765af556890572593775ca4fd9a0"
+    },
+    {
+      "client": "frontend",
+      "profile": "userinfo",
+      "passed": true,
+      "count": 15,
+      "checks": [
+        "ordinary local administrator login persists privately before external setup",
+        "product administration preview leaves all six persistent identity, membership, session and credential counts unchanged",
+        "actual local recovery login opens provider administration before external setup",
+        "actual provider form creates an inactive encrypted runtime candidate without displaying stored credentials or aliases",
+        "actual provider test renders identity and groups with no provisioning, membership, session or retained-credential writes",
+        "actual activation review uses a private receipt and fresh local approval for the exact candidate and revision",
+        "actual local recovery login remains available after runtime provider activation and browser storage contains no authority",
+        "actual login UI opens the server-owned provider flow and requires explicit approval before the intended local return",
+        "the product UI receives only a Secure HttpOnly SameSite cookie",
+        "the actual approval dialog displays the frozen operation and completes it once through the supported authentication method",
+        "one issued proof token is found and explicitly revoked without exposing its value in reports",
+        "separate concurrent tabs keep exact operations isolated: one approval mints once while denial in the other mints nothing, and both preserve the ordinary session",
+        "the ordinary session retains the same principal after a due upstream eligibility refresh following concurrent approval and denial",
+        "browser storage contains no interaction, session or approval credential",
+        "product logout destroys the matching frontend login"
+      ],
+      "report_sha256": "d9888c3b58055ef47b323db7e76cbd8991e8dcd954a07a12fb328d86da11e028",
+      "owning_report_sha256": "4add77a065214e28bcfa565235993de431da22ff51b6b5879d06e03822361e82",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.15.2",
+      "original_fixture_server_source": "8e6e8344c458765af556890572593775ca4fd9a0"
+    },
+    {
+      "client": "frontend",
+      "profile": "oauth",
+      "passed": true,
+      "count": 13,
+      "checks": [
+        "ordinary local administrator login persists privately before external setup",
+        "product administration preview leaves all six persistent identity, membership, session and credential counts unchanged",
+        "actual local recovery login opens provider administration before external setup",
+        "actual provider form creates an inactive encrypted runtime candidate without displaying stored credentials or aliases",
+        "actual provider test renders identity and groups with no provisioning, membership, session or retained-credential writes",
+        "actual activation review uses a private receipt and fresh local approval for the exact candidate and revision",
+        "actual local recovery login remains available after runtime provider activation and browser storage contains no authority",
+        "actual login UI opens the server-owned provider flow and requires explicit approval before the intended local return",
+        "the product UI receives only a Secure HttpOnly SameSite cookie",
+        "unsupported OAuth freshness is explained without password input, new interaction or protected mutation replay",
+        "the ordinary OAuth session retains the same principal after due eligibility renewal and explicit unsupported-freshness handling",
+        "browser storage contains no interaction, session or approval credential",
+        "product logout destroys the matching frontend login"
+      ],
+      "report_sha256": "25d38d23355cf9a2ab52865791c8611b8d0cd32f3abb6c236a17be0051506cae",
+      "owning_report_sha256": "3035078d83ad4c1ab8c3cccd0947e0ad62f99583294b844d0d035c24504d9e68",
+      "server_image": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+      "runtime_python": "3.15.2",
+      "original_fixture_server_source": "8e6e8344c458765af556890572593775ca4fd9a0"
+    },
+    {
+      "client": "frontend",
+      "profile": "treetop",
+      "passed": true,
+      "count": 12,
+      "checks": [
+        "immutable real Treetop loads the pinned schema before strict deny policies; uploads remain disabled",
+        "authorization candidate preparation leaves all six persistent identity, membership, session and credential counts unchanged",
+        "authorization candidate preparation leaves all six persistent identity, membership, session and credential counts unchanged",
+        "authorization candidate preparation leaves all six persistent identity, membership, session and credential counts unchanged",
+        "unreachable runtime Treetop preflight leaves live Local authorization and revision unchanged",
+        "a real deny policy cannot activate or remove the existing local recovery path",
+        "real Treetop connectivity and recovery checks prepare an inactive candidate, then exact local approval activates revision two",
+        "runtime Treetop ownership and the private ordinary session survive server and frontend process restart",
+        "policy outage fails protected access closed without changing the requested backend; remote-policy recovery uses the documented offline administrator command",
+        "real policy service reconnect restores administrator access and actual local password login without changing the requested backend or revision",
+        "switching back to Local is a separate verified and freshly approved runtime change",
+        "reviewed release restores deployment ownership and remains applied across restart"
+      ],
+      "report_sha256": "c8a450518d4fb7783934392864da57d675a56cd5db708b26cc769ee14670712d",
+      "owning_report_sha256": "0a15f1c42a6f62c8b6f83a0a4524eef0855728cd66ab3550ff9a709a8b769f3b",
+      "server_image": "sha256:200dc29e4c5ba5cb0825ea14836e95650ef0e0a11e173020e98d3ab1d1dc66fd",
+      "runtime_python": "3.15.2",
+      "original_fixture_server_source": "8e6e8344c458765af556890572593775ca4fd9a0"
+    }
+  ],
+  "total": 255,
+  "failed": 0,
+  "native_real_github": {
+    "accepted": false,
+    "status": "pending authorized new disposable App and actual native sign-ins; prior595 server-fixture result is separately scoped"
+  },
+  "milestone_accepted": false,
+  "main_stable_promotion": false,
+  "limitations": [
+    "Remote Treetop outages can block new-login audit snapshots; documented offline recovery applies.",
+    "The read API does not enumerate independent per-membership source history.",
+    "Upstream GitHub token invalidation has not been independently probed.",
+    "CLI stable promotion still requires a released SDK dependency."
+  ],
+  "repository_checks": {
+    "rust": {
+      "passed": 7030,
+      "failed": 0,
+      "ignored": 41,
+      "source": "93aac99c656d29187b6494d3386447a03f246591",
+      "log_sha256": "191ba7262c1f9f52dbdfd61d13cd1831fe0d14baa1fd1ca8a52de84cc1d071fa",
+      "disposable_database_and_environment_removed": true
+    },
+    "python": {
+      "passed": 344,
+      "failed": 0,
+      "log_sha256": "8a238212821597fb87589b0c6955cf2c419392bd891dca354097cc529dfbe16f"
+    },
+    "strict_all_target_clippy": "passed in pre-commit hook; existing Cargo manifest homepage advisory is separate from Rust lint results",
+    "rustfmt": "passed",
+    "openapi": "regenerated unchanged",
+    "markdown_files": 134,
+    "classification": "passed",
+    "documentation": "22 tooling tests plus strict rendered navigation/links passed",
+    "final_ci": "pending final documentation/evidence source"
+  }
+}
