@@ -35,6 +35,22 @@ An exception has this shape:
 }
 ```
 
+### Temporary Chrono maintenance exception
+
+Until **2026-12-17**, owner **@terjekv** accepts
+[RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543), which
+reports Chrono as unmaintained across all versions. The advisory identifies no
+specific vulnerability and offers no patched version.
+
+Chrono remains in use for PostgreSQL mappings, timestamp serialization and public
+SDK types while a maintained replacement is evaluated. Review `time` and `jiff`
+against timestamp precision, existing API/event formats and SDK compatibility,
+then remove or explicitly reassess this exception before expiry. CI rejects the
+exception after its expiry date. The registry entry in
+`.github/supply-chain-exceptions.json` records the accepted rationale and owner;
+`deny.toml` ignores only this advisory. Other Chrono advisories and unrelated
+dependency vulnerabilities remain subject to the existing blocking policy.
+
 ## Immutable build inputs
 
 GitHub Actions are pinned to full commit SHAs with their readable release name

@@ -12,7 +12,8 @@ version = 2
 yanked = "deny"
 unmaintained = "workspace"
 unused-ignored-advisory = "deny"
-ignore = []
+# Temporary maintenance exception; owner and expiry are enforced by the registry.
+ignore = ["RUSTSEC-2026-0543"]
 
 [licenses]
 confidence-threshold = 0.93
