@@ -23,6 +23,11 @@ vulnerability exception must be present in both the tool-specific policy and
 `.github/supply-chain-exceptions.json`. Each metadata entry requires a reason,
 owner, and ISO 8601 expiry date. CI rejects expired or unmatched entries.
 
+The main workspace audit also rejects unused advisory exceptions. The separate
+fuzz workspace shares this policy, but permits the `advisory-not-detected` lint
+because root-only exceptions can fall outside its workspace dependency scope.
+Matching advisory errors remain blocking in both audits.
+
 An exception has this shape:
 
 ```json
