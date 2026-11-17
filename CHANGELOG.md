@@ -132,6 +132,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   requires `ExternalIdentityStorage::upstream_approval_session` and atomic
   `ApprovalWithCredential` handling. Rebuild complete adapters together; existing
   encrypted session records need no migration.
+- Runtime LDAP metadata edits preserve an existing write-only bind credential
+  reference when both credential inputs are omitted. Explicit replacement or
+  clearing still takes precedence, and stored aliases remain redacted.
 
 - Hosted LDAP interactions now display their password form after runtime provider
   activation. Provider resolution preserves revision and immutable identity fences

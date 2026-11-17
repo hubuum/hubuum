@@ -202,19 +202,24 @@ pub(crate) async fn protect_runtime_authentication_settings(
                 "Authentication provider '{name}' must use the same LDAP scope"
             )));
         }
-        let previous_envelope = current
+        let previous_configuration = current
             .and_then(|current| {
                 current
                     .providers()
                     .iter()
                     .find(|provider| provider.name() == name && provider.kind() == kind)
             })
-            .and_then(|provider| {
-                provider
-                    .configuration()
-                    .and_then(|config| config.get(RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD))
-            })
+            .and_then(StorageAuthenticationProvider::configuration);
+        let previous_envelope = previous_configuration
+            .and_then(|config| config.get(RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD))
             .cloned();
+        if !config.contains_key("bind_password")
+            && !config.contains_key("bind_password_ref")
+            && let Some(reference) =
+                previous_configuration.and_then(|config| config.get("bind_password_ref"))
+        {
+            config.insert("bind_password_ref".to_string(), reference.clone());
+        }
         match config.remove("bind_password") {
             Some(serde_json::Value::String(password)) => {
                 if password.is_empty() {
@@ -2120,6 +2125,41 @@ mod tests {
         assert_eq!(configured.ldap.group_filters, ["admins"]);
         assert_eq!(configured.ldap.group_rules[0].name, "admins");
         assert_eq!(configured.refresh_ttl_seconds, Some(30));
+    }
+
+    #[rstest]
+    #[case::omitted(serde_json::json!({"scope":"corporate"}), Some("directory_bind"))]
+    #[case::new_reference(serde_json::json!({"scope":"corporate", "bind_password":null, "bind_password_ref":"replacement_bind"}), Some("replacement_bind"))]
+    #[case::clear_reference(serde_json::json!({"scope":"corporate", "bind_password_ref":null}), None)]
+    #[case::clear_password(serde_json::json!({"scope":"corporate", "bind_password":null}), None)]
+    #[tokio::test]
+    async fn runtime_ldap_credential_edits_preserve_explicit_intent(
+        #[case] configuration: serde_json::Value,
+        #[case] expected: Option<&str>,
+    ) {
+        let current = StorageAuthenticationProviders::try_new(vec![
+            StorageAuthenticationProvider::try_new(
+                "corporate",
+                StorageAuthenticationProviderKind::Ldap,
+                serde_json::json!({"scope":"corporate", "bind_password_ref":"directory_bind"}),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let providers = protect_runtime_authentication_settings(
+            vec![runtime_request(configuration, true, false)],
+            Some(&current),
+            &AuthProvidersConfig { ldap: Vec::new() },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            providers.providers()[0]
+                .configuration()
+                .and_then(|configuration| configuration.get("bind_password_ref"))
+                .and_then(serde_json::Value::as_str),
+            expected
+        );
     }
 
     #[tokio::test]
