@@ -68,6 +68,7 @@ nav = [
       { "Authentication interactions" = "authentication_interactions.md" },
       { "Keycloak OIDC" = "authentication/keycloak.md" },
       { "OAuth and GitHub login" = "authentication/oauth.md" },
+      { "Cross-native qualification" = "authentication/ecosystem_qualification.md" },
       { "PostgreSQL roles" = "database_roles.md" },
       { "Backup & restore" = "backup-restore.md" },
       { "Verify release artifacts" = "supply-chain-security.md" },
