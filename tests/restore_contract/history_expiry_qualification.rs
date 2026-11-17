@@ -95,7 +95,8 @@ async fn measure() {
         "large_row" => (4, 4 * 1024 * 1024 - 8192),
         "oversized" => (2, 17 * 1024 * 1024),
         "logical_size" => (65, 32 * 1024),
-        "census" | "metadata" | "policy_count" | "hold_count" | "pending_count" => (65, 128),
+        "census" | "metadata" | "policy_count" | "hold_count" | "pending_count"
+        | "inventory_rows" | "inventory_metadata" => (65, 128),
         _ => panic!("Unknown qualification shape"),
     };
     let pool = postgres_test_pool_with_timeout(&database_url(), 2, 0);
@@ -158,7 +159,7 @@ async fn measure() {
             .unwrap()
             .resource();
         let key = HistoryPolicyKey::new(
-            if shape == "metadata" {
+            if matches!(shape.as_str(), "metadata" | "inventory_metadata") {
                 StorageIdentityHistoryKind::ExportTemplate
             } else {
                 StorageIdentityHistoryKind::Collection
@@ -215,7 +216,7 @@ async fn measure() {
             .await
             .unwrap();
         let payload = "x".repeat(payload_bytes);
-        if shape == "metadata" {
+        if matches!(shape.as_str(), "metadata" | "inventory_metadata") {
             metadata::source(&pool, collection.id().id(), updates).await;
         } else {
             for update in 0..updates {
@@ -248,8 +249,11 @@ async fn measure() {
             .unwrap();
         (collection.id().id(), token)
     };
-    let census = if matches!(shape.as_str(), "census" | "metadata") {
-        Some(census::prepare(&fixture, &pool, sources[0].0.family()).await)
+    let census = if matches!(
+        shape.as_str(),
+        "census" | "metadata" | "inventory_rows" | "inventory_metadata"
+    ) {
+        Some(census::prepare(&fixture, &pool, sources[0].0.family(), &shape).await)
     } else {
         None
     };
@@ -390,7 +394,10 @@ async fn measure() {
                 .iter()
                 .filter(|member| !member.size_authorizations().is_empty())
                 .count();
-            if matches!(shape.as_str(), "census" | "metadata") {
+            if matches!(
+                shape.as_str(),
+                "census" | "metadata" | "inventory_rows" | "inventory_metadata"
+            ) {
                 assert_eq!(
                     size_authorized_rows, 0,
                     "Unavailable accounting cannot authorize size cleanup"
@@ -412,7 +419,10 @@ async fn measure() {
                 "size_authorized_rows":size_authorized_rows, "oldest_first":oldest_first}));
         }
         assert!(
-            !matches!(shape.as_str(), "logical_size" | "census" | "metadata") || scope_batches > 0,
+            !matches!(
+                shape.as_str(),
+                "logical_size" | "census" | "metadata" | "inventory_rows" | "inventory_metadata"
+            ) || scope_batches > 0,
             "Every measured scope must admit productive membership"
         );
         oversized_deferred_rows += input
@@ -471,7 +481,11 @@ async fn measure() {
         "replay_preserved_receipts":replay_preserved_receipts, "quarantine_released":quarantine_released});
     let mut report = report;
     if let Some(evidence) = census_evidence {
-        report["census"] = evidence;
+        report[if matches!(shape.as_str(), "inventory_rows" | "inventory_metadata") {
+            "inventory"
+        } else {
+            "census"
+        }] = evidence;
     }
     if let Some(evidence) = authority_evidence {
         report["authority_population"] = evidence;

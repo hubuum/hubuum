@@ -18,6 +18,7 @@ pub(crate) use expiry::require_reapplied_on as require_history_expiry_reapplied_
 use hubuum_storage_core::*;
 use serde::Deserialize;
 use serde_json::Value;
+use std::time::{Duration as StdDuration, Instant};
 use uuid::Uuid;
 
 use super::PostgresStorage;
@@ -253,10 +254,21 @@ pub(crate) async fn require_history_exposure_safe_on(
         .get_result::<Setting>(connection)
         .await?
         .value;
-    // Reduce an existing timeout; never expand a caller's tighter bound.
-    sql_query("SELECT set_config('statement_timeout',CASE WHEN $1::INTERVAL=INTERVAL '0' THEN $2::TEXT ELSE GREATEST(1,FLOOR(LEAST(EXTRACT(EPOCH FROM $1::INTERVAL)*1000,$2)))::BIGINT::TEXT END,true)")
+    // One clock covers projection repair and every inventory page. Preserve a
+    // caller's tighter timeout rather than granting each page a fresh clock.
+    #[derive(QueryableByName)]
+    struct Timeout {
+        #[diesel(sql_type=BigInt)]
+        milliseconds: i64,
+    }
+    let milliseconds = sql_query("SELECT CASE WHEN $1::INTERVAL=INTERVAL '0' THEN $2 ELSE GREATEST(1,FLOOR(LEAST(EXTRACT(EPOCH FROM $1::INTERVAL)*1000,$2)))::BIGINT END AS milliseconds")
         .bind::<Text,_>(&previous).bind::<BigInt,_>(i64::from(HistoryRecoveryExposureBudget::MAX_STATEMENT_MILLISECONDS))
-        .execute(connection).await?;
+        .get_result::<Timeout>(connection).await?.milliseconds;
+    let milliseconds = u64::try_from(milliseconds).map_err(|_| {
+        PostgresStorageError::unavailable("Invalid history exposure timeout; keep quarantine")
+    })?;
+    let deadline = Instant::now() + StdDuration::from_millis(milliseconds);
+    bound_exposure_statement(connection, deadline).await?;
     // Reconcile the derived read projection before exposure. The existing
     // owner-only function restores missing original membership and refuses
     // conflicting/ahead facts; it never rewrites authority or its clocks.
@@ -271,9 +283,8 @@ pub(crate) async fn require_history_exposure_safe_on(
         remote_targets_history,
     };
     use StorageIdentityHistoryKind as Family;
-    let mut budget = HistoryRecoveryExposureBudget::default();
     macro_rules! observe {
-        ($family:ident, $table:ident, $order:expr, $filter:expr) => {
+        ($family:ident, $table:ident, $order:expr, $cursor:ty, $position:ident, $after:expr, $filter:expr) => {
             if journal.intents().iter().any(|intent| {
                 intent
                     .manifest()
@@ -281,45 +292,88 @@ pub(crate) async fn require_history_exposure_safe_on(
                     .iter()
                     .any(|member| member.family() == Family::$family)
             }) {
-                let bytes = || {
-                    case_when(
-                        $table::logical_identity.is_null(),
-                        0_i32.into_sql::<Integer>(),
-                    )
-                    .otherwise(
-                        octet_length($table::logical_identity.cast::<Nullable<Text>>())
-                            .assume_not_null(),
-                    )
-                };
-                let within_budget = sum(bytes())
-                    .window_order($order)
-                    .assume_not_null()
-                    .le(budget.remaining_bytes() as i64);
-                let rows = $table::table
-                    .filter($filter)
-                    .order($order)
-                    .limit(i64::from(budget.remaining_rows()) + 1)
-                    .select((
-                        case_when(within_budget, $table::logical_identity).otherwise(None::<Value>),
-                        bytes(),
-                    ))
-                    .load::<(Option<Value>, i32)>(connection)
-                    .await?;
-                observe_exposure_identities(journal, &mut budget, Family::$family, rows)?;
+                let mut after: Option<$cursor> = None;
+                loop {
+                    bound_exposure_statement(connection, deadline).await?;
+                    let mut query = $table::table.filter($filter).into_boxed();
+                    if let Some($position) = after {
+                        query = query.filter($after);
+                    }
+                    let bytes = || {
+                        case_when(
+                            $table::logical_identity.is_null(),
+                            0_i32.into_sql::<Integer>(),
+                        )
+                        .otherwise(
+                            octet_length($table::logical_identity.cast::<Nullable<Text>>())
+                                .assume_not_null(),
+                        )
+                    };
+                    let within_budget = sum(bytes())
+                        .window_order($order)
+                        .assume_not_null()
+                        .le(HistoryRecoveryExposureBudget::MAX_BYTES as i64);
+                    let rows = query
+                        .order($order)
+                        .limit(i64::from(HistoryRecoveryExposureBudget::MAX_ROWS))
+                        .select((
+                            $order,
+                            case_when(within_budget, $table::logical_identity)
+                                .otherwise(None::<Value>),
+                            bytes(),
+                        ))
+                        .load::<($cursor, Option<Value>, i32)>(connection)
+                        .await?;
+                    if rows.is_empty() {
+                        break;
+                    }
+                    let mut budget = HistoryRecoveryExposureBudget::default();
+                    for (position, identity, bytes) in rows {
+                        if !observe_exposure_identity(
+                            journal,
+                            &mut budget,
+                            Family::$family,
+                            identity,
+                            bytes,
+                        )? {
+                            break;
+                        }
+                        after = Some(position);
+                    }
+                }
             }
         };
+        ($family:ident, $table:ident, $order:expr, $cursor:ty, $filter:expr) => {
+            observe!(
+                $family,
+                $table,
+                $order,
+                $cursor,
+                position,
+                $order.gt(position),
+                $filter
+            );
+        };
         ($family:ident, $current:ident, $history:ident) => {
-            observe!($family, $current, $current::id, true.into_sql::<Bool>());
+            observe!(
+                $family,
+                $current,
+                $current::id,
+                i32,
+                true.into_sql::<Bool>()
+            );
             observe!(
                 $family,
                 $history,
                 $history::history_id,
+                i64,
                 $history::valid_to.is_null().and($history::op.ne("D"))
             );
         };
     }
-    // Complete current/open inventory for all nine families. Tombstones remain
-    // closed deletion events. Each query transfers at most the remaining budget.
+    // Traverse every affected current/open inventory under the application lock.
+    // Each page transfers at most 1000 identities and 1 MiB; a deferred identity
+    // is revisited on the next page. No page or cursor alone proves completion.
     observe!(Collection, collections, collections_history);
     observe!(Class, hubuumclass, hubuumclass_history);
     observe!(Object, hubuumobject, hubuumobject_history);
@@ -339,6 +393,7 @@ pub(crate) async fn require_history_exposure_safe_on(
         ComputedDefinitions,
         computed_field_history,
         computed_field_history::history_id,
+        i64,
         computed_field_history::valid_to.is_null()
     );
     observe!(
@@ -348,8 +403,16 @@ pub(crate) async fn require_history_exposure_safe_on(
             class_schema_revisions::class_id,
             class_schema_revisions::revision
         ),
+        (i32, i64),
+        position,
+        class_schema_revisions::class_id
+            .gt(position.0)
+            .or(class_schema_revisions::class_id
+                .eq(position.0)
+                .and(class_schema_revisions::revision.gt(position.1))),
         true.into_sql::<Bool>()
     );
+    bound_exposure_statement(connection, deadline).await?;
     sql_query("SELECT set_config('statement_timeout',$1,true)")
         .bind::<Text, _>(previous)
         .execute(connection)
@@ -357,32 +420,54 @@ pub(crate) async fn require_history_exposure_safe_on(
     Ok(control)
 }
 
-fn observe_exposure_identities(
+async fn bound_exposure_statement(
+    connection: &mut PostgresConnection,
+    deadline: Instant,
+) -> Result<(), PostgresStorageError> {
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .ok_or_else(|| {
+            PostgresStorageError::unavailable(
+                "History exposure verification timed out; keep quarantine",
+            )
+        })?;
+    sql_query("SELECT set_config('statement_timeout',$1,true)")
+        .bind::<Text, _>(remaining.as_millis().max(1).to_string())
+        .execute(connection)
+        .await?;
+    Ok(())
+}
+
+fn observe_exposure_identity(
     journal: &HistoryExpiryJournal,
     budget: &mut HistoryRecoveryExposureBudget,
     family: StorageIdentityHistoryKind,
-    rows: Vec<(Option<Value>, i32)>,
-) -> Result<(), PostgresStorageError> {
-    for (identity, bytes) in rows {
-        let bytes = usize::try_from(bytes).map_err(|_| {
-            PostgresStorageError::unavailable("Invalid exposure identity length; keep quarantine")
-        })?;
-        budget
-            .observe(bytes)
-            .map_err(|error| PostgresStorageError::unavailable(error.to_string()))?;
-        let evidence = identity
-            .map(serde_json::from_value::<StorageIdentityEvidence>)
-            .transpose()
-            .map_err(|error| {
-                PostgresStorageError::invalid_persisted_value("current exposure identity", error)
-            })?;
-        if journal.excludes_evidence(family, evidence.as_ref()) {
-            return Err(PostgresStorageError::unavailable(
-                "Current or protected-open copy carries expired or unresolved history ancestry; keep quarantine for explicit reconciliation",
-            ));
-        }
+    identity: Option<Value>,
+    bytes: i32,
+) -> Result<bool, PostgresStorageError> {
+    let bytes = usize::try_from(bytes).map_err(|_| {
+        PostgresStorageError::unavailable("Invalid exposure identity length; keep quarantine")
+    })?;
+    if bytes > budget.remaining_bytes()
+        && budget.remaining_rows() != HistoryRecoveryExposureBudget::MAX_ROWS
+    {
+        return Ok(false);
     }
-    Ok(())
+    budget
+        .observe(bytes)
+        .map_err(|error| PostgresStorageError::unavailable(error.to_string()))?;
+    let evidence = identity
+        .map(serde_json::from_value::<StorageIdentityEvidence>)
+        .transpose()
+        .map_err(|error| {
+            PostgresStorageError::invalid_persisted_value("current exposure identity", error)
+        })?;
+    if journal.excludes_evidence(family, evidence.as_ref()) {
+        return Err(PostgresStorageError::unavailable(
+            "Current or protected-open copy carries expired or unresolved history ancestry; keep quarantine for explicit reconciliation",
+        ));
+    }
+    Ok(true)
 }
 
 pub(crate) async fn capture_on(
@@ -1047,11 +1132,37 @@ mod scan_tests {
     #[case::unretired_publication("publication", true)]
     #[case::missing_projection("missing_projection", false)]
     #[case::conflicting_projection("conflicting_projection", true)]
+    #[case::paged_clean("paged_clean", false)]
+    #[case::paged_current("paged_current", true)]
+    #[case::paged_open("paged_open", true)]
+    #[case::paged_unknown("paged_unknown", true)]
+    #[case::metadata_clean("metadata_clean", false)]
+    #[case::metadata_current("metadata_current", true)]
+    #[case::metadata_open("metadata_open", true)]
+    #[case::metadata_unknown("metadata_unknown", true)]
+    #[case::metadata_oversized("metadata_oversized", true)]
     #[tokio::test]
     async fn restored_descendant_exposure_gate_preserves_copies_and_quarantine(
         #[case] mode: &str,
         #[case] blocked: bool,
     ) {
+        let metadata = mode.starts_with("metadata_");
+        let paged = mode.starts_with("paged_");
+        let mode = mode.strip_prefix("paged_").unwrap_or(mode);
+        let mode = mode.strip_prefix("metadata_").unwrap_or(mode);
+        let (family, current_table, history_table) = if metadata {
+            (
+                StorageIdentityHistoryKind::ExportTemplate,
+                "export_templates",
+                "export_templates_history",
+            )
+        } else {
+            (
+                StorageIdentityHistoryKind::Collection,
+                "collections",
+                "collections_history",
+            )
+        };
         use crate::test_support::{
             IsolatedRestoreTarget, RESTORE_TEST_LOCK, database_role_tests_enabled,
             integration_test_database_roles, integration_test_database_url,
@@ -1101,17 +1212,35 @@ mod scan_tests {
             connection.batch_execute("SELECT id FROM hubuum_control.deletion_authority WHERE id=1 FOR UPDATE;
                 SELECT id FROM hubuum_control.application_control WHERE id=1 FOR UPDATE;
                 SELECT id FROM hubuum_control.history_lifecycle_control WHERE id=1 FOR UPDATE").await?;
+            if paged {
+                // Native keys put the later target beyond the first page in
+                // both current and protected-open inventories.
+                sql_query("INSERT INTO public.collections(name,description,parent_collection_id) SELECT $1||n::text,'exposure prefix',root.id FROM public.collections root CROSS JOIN generate_series(1,1001) n WHERE root.parent_collection_id IS NULL")
+                    .bind::<Text,_>(format!("history_exposure_prefix_{}_",Uuid::new_v4().simple())).execute(connection).await?;
+            }
             let created = sql_query("INSERT INTO public.collections(name,description,parent_collection_id)
                 SELECT $1,'exposure original',id FROM public.collections WHERE parent_collection_id IS NULL RETURNING id")
                 .bind::<Text,_>(format!("history_exposure_{}",Uuid::new_v4().simple())).get_result::<Created>(connection).await?;
             sql_query("UPDATE public.collections SET description='exposure current' WHERE id=$1")
                 .bind::<Integer,_>(created.id).execute(connection).await?;
-            let version_query = "SELECT logical_identity,valid_from,valid_to,octet_length(to_jsonb(h)::TEXT)::BIGINT AS input_bytes FROM public.collections_history h WHERE id=$1 AND op='I'";
-            let closed = sql_query(version_query).bind::<Integer,_>(created.id).get_result::<Version>(connection).await?;
+            let source_id = if metadata {
+                let class=sql_query("INSERT INTO public.hubuumclass(collection_id,name,description) VALUES($1,$2,'exposure reference') RETURNING id")
+                    .bind::<Integer,_>(created.id).bind::<Text,_>(format!("exposure_class_{}",Uuid::new_v4())).get_result::<Created>(connection).await?;
+                let width=if mode=="oversized" {1048576} else {131072};
+                sql_query("INSERT INTO public.export_templates(collection_id,name,description,content_type,template,kind,include) SELECT $1,$2||n::text,'wide prefix','text/plain','fixture','fragment',jsonb_build_object('related_objects',jsonb_build_object(repeat('x',$3),jsonb_build_object('class_id',$4))) FROM generate_series(1,16) n")
+                    .bind::<Integer,_>(created.id).bind::<Text,_>(format!("exposure_prefix_{}_",Uuid::new_v4()))
+                    .bind::<Integer,_>(width).bind::<Integer,_>(class.id).execute(connection).await?;
+                let template=sql_query("INSERT INTO public.export_templates(collection_id,name,description,content_type,template,kind) VALUES($1,'source','original','text/plain','fixture','fragment') RETURNING id")
+                    .bind::<Integer,_>(created.id).get_result::<Created>(connection).await?;
+                sql_query("UPDATE public.export_templates SET description='current' WHERE id=$1").bind::<Integer,_>(template.id).execute(connection).await?;
+                template.id
+            } else {created.id};
+            let version_query = format!("SELECT logical_identity,valid_from,valid_to,octet_length(to_jsonb(h)::TEXT)::BIGINT AS input_bytes FROM public.{history_table} h WHERE id=$1 AND op='I'");
+            let closed = sql_query(&version_query).bind::<Integer,_>(source_id).get_result::<Version>(connection).await?;
             let until = closed.valid_to.unwrap();
             let captured = capture_on(connection).await?;
             let empty = HistoryLifecycleSnapshot::new(HistoryLifecycleControl::empty(),captured.fence().incarnation(),captured.fence().deletion_revision(),closed.valid_from-chrono::Duration::seconds(1))?;
-            let key = HistoryPolicyKey::new(StorageIdentityHistoryKind::Collection,HistoryPolicyScope::Deployment)?;
+            let key = HistoryPolicyKey::new(family,HistoryPolicyScope::Deployment)?;
             let principal = hubuum_domain::PrincipalIdentity::generate();
             let policy = HistoryPolicyChange::new(key,HistoryPolicyRevision::new(0)?,HistoryPolicyBinding::Expire {
                 trigger: HistoryExpiryTrigger::Age { age_seconds: HistoryRetentionSeconds::new(0)?,deleted_age_seconds:None },
@@ -1121,7 +1250,7 @@ mod scan_tests {
                 .map_err(|error| PostgresStorageError::invalid_input(format!("Invalid exposure fixture policy: {error:?}")))?;
             let selected = HistoryLifecycleSnapshot::new(applied.next().clone(),empty.fence().incarnation(),empty.fence().deletion_revision(),captured.observed_at())?;
             let source: StorageIdentityEvidence = serde_json::from_value(closed.logical_identity.clone()).unwrap();
-            let candidate = HistoryExpiryCandidate::from_evidence(StorageIdentityHistoryKind::Collection,&source,Some(HistoryRetentionAnchor::Closed(until)),false)?.unwrap()
+            let candidate = HistoryExpiryCandidate::from_evidence(family,&source,Some(HistoryRetentionAnchor::Closed(until)),false)?.unwrap()
                 .with_native_interval(closed.valid_from,Some(until))?;
             let mut selection = HistoryExpirySelection::new(Uuid::new_v4(),HistoryExpiryOrigin::Manual {principal},HistoryLifecycleScan::new(key,1)?,&selected)?;
             assert!(matches!(selection.consider(candidate,HistoryExpiryInputBytes::new(closed.input_bytes as u64)?,&[])?,HistoryExpirySelectionOutcome::Selected));
@@ -1139,8 +1268,8 @@ mod scan_tests {
                     .bind::<SqlUuid,_>(retained_intent.identity()).execute(connection).await?;
             }
             sql_query("SELECT public.hubuum_rotate_application_for_restore()").execute(connection).await?;
-            let live = sql_query("SELECT logical_identity FROM public.collections WHERE id=$1")
-                .bind::<Integer,_>(created.id).get_result::<Evidence>(connection).await?;
+            let live = sql_query(format!("SELECT logical_identity FROM public.{current_table} WHERE id=$1"))
+                .bind::<Integer,_>(source_id).get_result::<Evidence>(connection).await?;
             let live: StorageIdentityEvidence = serde_json::from_value(live.logical_identity).unwrap();
             let clean = live.at_restore_baseline(derived())?;
             let collision = source.at_restore_baseline(derived())?;
@@ -1162,10 +1291,10 @@ mod scan_tests {
             // Use the real trusted restore identity branch; no source ancestry
             // or original event/closure clock is rewritten by the exposure gate.
             connection.batch_execute("SELECT set_config('hubuum.restore_history','on',true),set_config('hubuum.restore_identities','on',true)").await?;
-            sql_query("UPDATE public.collections SET logical_identity=$2 WHERE id=$1")
-                .bind::<Integer,_>(created.id).bind::<Jsonb,_>(serde_json::to_value(&current).unwrap()).execute(connection).await?;
-            sql_query("UPDATE public.collections_history SET logical_identity=$2 WHERE id=$1 AND valid_to IS NULL")
-                .bind::<Integer,_>(created.id).bind::<Jsonb,_>(serde_json::to_value(&open).unwrap()).execute(connection).await?;
+            sql_query(format!("UPDATE public.{current_table} SET logical_identity=$2 WHERE id=$1"))
+                .bind::<Integer,_>(source_id).bind::<Jsonb,_>(serde_json::to_value(&current).unwrap()).execute(connection).await?;
+            sql_query(format!("UPDATE public.{history_table} SET logical_identity=$2 WHERE id=$1 AND valid_to IS NULL"))
+                .bind::<Integer,_>(source_id).bind::<Jsonb,_>(serde_json::to_value(&open).unwrap()).execute(connection).await?;
             connection.batch_execute("SELECT set_config('hubuum.restore_history','off',true),set_config('hubuum.restore_identities','off',true); SAVEPOINT exposure_gate_probe").await?;
             let result = require_history_exposure_safe_on(connection).await;
             if mode=="missing_projection" && result.is_ok() {
@@ -1180,15 +1309,15 @@ mod scan_tests {
             }
             // Restore local timeout settings even for a rejected fixture probe.
             connection.batch_execute("ROLLBACK TO SAVEPOINT exposure_gate_probe").await?;
-            assert_eq!(result.is_err(),blocked);
+            assert_eq!(result.is_err(),blocked,"{result:?}");
             if let Err(error)=result {
                 let expected=if mode=="conflicting_projection" {StorageErrorKind::Backend} else {StorageErrorKind::Unavailable};
                 assert_eq!(error.kind(),expected);
             }
             assert!(!sql_query("SELECT public.hubuum_deletion_exposure_allowed() AS committed").get_result::<CommittedRow>(connection).await?.committed);
-            assert_eq!(sql_query(version_query).bind::<Integer,_>(created.id).get_result::<Version>(connection).await?,closed);
-            let unchanged = sql_query("SELECT logical_identity FROM public.collections WHERE id=$1")
-                .bind::<Integer,_>(created.id).get_result::<Evidence>(connection).await?;
+            assert_eq!(sql_query(&version_query).bind::<Integer,_>(source_id).get_result::<Version>(connection).await?,closed);
+            let unchanged = sql_query(format!("SELECT logical_identity FROM public.{current_table} WHERE id=$1"))
+                .bind::<Integer,_>(source_id).get_result::<Evidence>(connection).await?;
             assert_eq!(unchanged.logical_identity,serde_json::to_value(current).unwrap());
             assert_eq!(capture_on(connection).await?.control(),retained.next());
             connection.batch_execute("ROLLBACK TO SAVEPOINT history_exposure_fixture").await?;

@@ -2,6 +2,46 @@ mod accounting;
 mod expiry;
 use super::*;
 use serde_json::Value;
+use std::time::{Duration as StdDuration, Instant};
+
+enum HistoryCopyScan {
+    Bounded,
+    Recovery(Instant),
+}
+
+impl HistoryCopyScan {
+    fn finish(&self) -> Result<(), StorageError> {
+        if let Self::Recovery(started) = self
+            && started.elapsed()
+                >= StdDuration::from_millis(u64::from(
+                    HistoryRecoveryExposureBudget::MAX_STATEMENT_MILLISECONDS,
+                ))
+        {
+            return Err(StorageError::unavailable(
+                "History exposure verification timed out; keep quarantine",
+            ));
+        }
+        Ok(())
+    }
+
+    fn observe(
+        &self,
+        budget: &mut HistoryRecoveryExposureBudget,
+        observe: impl Fn(&mut HistoryRecoveryExposureBudget) -> Result<(), StorageValidationError>,
+    ) -> Result<(), StorageError> {
+        self.finish()?;
+        let result = observe(budget);
+        if matches!(self, Self::Recovery(_)) && result.is_err() {
+            // Retry the deferred identity against a fresh page. An identity
+            // exceeding a whole page still fails without weakening its bound.
+            *budget = HistoryRecoveryExposureBudget::default();
+            observe(budget).map_err(|error| StorageError::unavailable(error.to_string()))?;
+        } else {
+            result.map_err(|error| StorageError::unavailable(error.to_string()))?;
+        }
+        self.finish()
+    }
+}
 
 #[async_trait]
 impl HistoryLifecycleStorage for MemoryStorage {
@@ -31,6 +71,7 @@ impl HistoryLifecycleStorage for MemoryStorage {
                 "History expiry reapplication requires quarantine",
             ));
         }
+        let recovery_scan = HistoryCopyScan::Recovery(Instant::now());
         guard.require_runtime_drain()?;
         guard.require_history_exposure_safe()?;
         let mut state = guard.clone();
@@ -44,6 +85,7 @@ impl HistoryLifecycleStorage for MemoryStorage {
             request.batch(),
             &snapshot,
             request.protection(),
+            recovery_scan,
         )?;
         *guard = state;
         Ok(removed)
@@ -381,12 +423,11 @@ impl MemoryState {
             &StorageIdentityEvidence,
         ) -> Result<(), StorageError>,
         budget: &mut HistoryRecoveryExposureBudget,
+        scan: &HistoryCopyScan,
         family: StorageIdentityHistoryKind,
         evidence: &StorageIdentityEvidence,
     ) -> Result<(), StorageError> {
-        budget
-            .observe_evidence(evidence)
-            .map_err(|error| StorageError::unavailable(error.to_string()))?;
+        scan.observe(budget, |budget| budget.observe_evidence(evidence))?;
         check(family, evidence)
     }
 
@@ -412,7 +453,7 @@ impl MemoryState {
             .flat_map(|intent| intent.manifest().members())
             .map(HistoryExpiryMember::family)
             .collect::<BTreeSet<_>>();
-        self.require_history_copies_safe(&families, |family, evidence| {
+        self.require_history_copies_safe(&families, HistoryCopyScan::Recovery(Instant::now()), |family, evidence| {
             if journal.excludes_evidence(family, Some(evidence)) {
                 return Err(StorageError::unavailable(
                     "Current or protected-open copy carries expired or unresolved history ancestry; keep quarantine for explicit reconciliation",
@@ -422,14 +463,24 @@ impl MemoryState {
         })
     }
 
-    /// Reuse the same bounded current/open inventory for admission, inspection
-    /// and recovery. Incomplete dependency evidence always protects the copy.
+    /// Admission and inspection retain one bounded inventory page. Recovery
+    /// can verify the complete locked inventory under its original clock.
+    /// Incomplete dependency evidence always protects the copy.
     fn history_candidate_has_dependency(
         &self,
         family: StorageIdentityHistoryKind,
         evidence: &StorageIdentityEvidence,
     ) -> bool {
-        // ponytail: up to 1000 candidates x 1000 inventory rows; index
+        self.history_candidate_has_dependency_with_scan(family, evidence, HistoryCopyScan::Bounded)
+    }
+
+    fn history_candidate_has_dependency_with_scan(
+        &self,
+        family: StorageIdentityHistoryKind,
+        evidence: &StorageIdentityEvidence,
+        scan: HistoryCopyScan,
+    ) -> bool {
+        // ponytail: admission scans up to 1000 candidates x 1000 inventory rows; index
         // dependency identities if measured contention warrants it.
         let Some(target) = evidence
             .subject()
@@ -437,7 +488,7 @@ impl MemoryState {
         else {
             return true;
         };
-        self.require_history_copies_safe(&BTreeSet::from([family]), |family, copy| {
+        self.require_history_copies_safe(&BTreeSet::from([family]), scan, |family, copy| {
             let dependent = if family == StorageIdentityHistoryKind::ClassSchema {
                 copy.references()
                     .get("/class_id")
@@ -467,6 +518,7 @@ impl MemoryState {
     fn require_history_copies_safe(
         &self,
         families: &BTreeSet<StorageIdentityHistoryKind>,
+        scan: HistoryCopyScan,
         mut check: impl FnMut(
             StorageIdentityHistoryKind,
             &StorageIdentityEvidence,
@@ -518,7 +570,13 @@ impl MemoryState {
                                 StorageError::backend_failure(error.to_string())
                             })?,
                         })?;
-                Self::check_history_exposure_copy(&mut check, &mut budget, *family, evidence)?;
+                Self::check_history_exposure_copy(
+                    &mut check,
+                    &mut budget,
+                    &scan,
+                    *family,
+                    evidence,
+                )?;
             }
         }
         if families.iter().any(|family| {
@@ -538,13 +596,12 @@ impl MemoryState {
                     Self::check_history_exposure_copy(
                         &mut check,
                         &mut budget,
+                        &scan,
                         entry.family(),
                         &entry.logical_identity,
                     )?;
                 } else {
-                    budget
-                        .observe(0)
-                        .map_err(|error| StorageError::unavailable(error.to_string()))?;
+                    scan.observe(&mut budget, |budget| budget.observe(0))?;
                 }
             }
         }
@@ -577,17 +634,13 @@ impl MemoryState {
                     ));
                 }
                 if !until.is_null() || operation == "delete" {
-                    budget
-                        .observe(0)
-                        .map_err(|error| StorageError::unavailable(error.to_string()))?;
+                    scan.observe(&mut budget, |budget| budget.observe(0))?;
                     continue;
                 }
                 let raw = row.get("logical_identity").ok_or_else(|| {
                     StorageError::unavailable("Missing open-copy correspondence; keep quarantine")
                 })?;
-                budget
-                    .observe_json(raw)
-                    .map_err(|error| StorageError::unavailable(error.to_string()))?;
+                scan.observe(&mut budget, |budget| budget.observe_json(raw))?;
                 let evidence: StorageIdentityEvidence = serde_json::from_value(raw.clone())
                     .map_err(|_| {
                         StorageError::unavailable(
@@ -608,13 +661,12 @@ impl MemoryState {
                     Self::check_history_exposure_copy(
                         &mut check,
                         &mut budget,
+                        &scan,
                         Family::ComputedDefinitions,
                         evidence,
                     )?;
                 } else {
-                    budget
-                        .observe(0)
-                        .map_err(|error| StorageError::unavailable(error.to_string()))?;
+                    scan.observe(&mut budget, |budget| budget.observe(0))?;
                 }
             }
         }
@@ -633,12 +685,13 @@ impl MemoryState {
                 Self::check_history_exposure_copy(
                     &mut check,
                     &mut budget,
+                    &scan,
                     Family::ClassSchema,
                     evidence,
                 )?;
             }
         }
-        Ok(())
+        scan.finish()
     }
 
     pub(super) fn require_proven_empty_history(
@@ -2986,6 +3039,112 @@ mod online_read_tests {
         install_expiry_read_fixture(&storage, change).await;
         (storage, entry, registration)
     }
+
+    async fn add_exposure_inventory(
+        storage: &MemoryStorage,
+        closed: &MemoryHistoryEntry,
+    ) -> StorageObject {
+        let MemoryHistoryValue::Object(original) = &closed.value else {
+            unreachable!()
+        };
+        let class = storage
+            .resolve_class(StorageClassSelector::Id(original.class_id()))
+            .await
+            .unwrap();
+        let mut last = None;
+        for index in 0..1001 {
+            last = Some(
+                storage
+                    .create_object(
+                        &class,
+                        StorageObjectCreate::new(
+                            format!("exposure_prefix_{index}"),
+                            class.class().collection_id(),
+                            class.class().id(),
+                            serde_json::json!({"value":"current"}),
+                            "",
+                        ),
+                        &EventContext::system(),
+                    )
+                    .await
+                    .unwrap()
+                    .into_value(),
+            );
+        }
+        last.unwrap()
+    }
+
+    #[rstest::rstest]
+    #[case::clean("clean", false)]
+    #[case::late_current("current", true)]
+    #[case::late_open("open", true)]
+    #[tokio::test]
+    async fn exposure_checks_copies_beyond_its_first_page(
+        #[case] mode: &str,
+        #[case] blocked: bool,
+    ) {
+        let (storage, closed, registration, change) = prepared_fixture().await;
+        let last = add_exposure_inventory(&storage, &closed).await;
+        install_expiry_read_fixture(&storage, change).await;
+        {
+            let mut state = storage.state.write_control().await;
+            if mode == "current" {
+                state
+                    .logical_identities
+                    .restore_record(&last, closed.logical_identity.clone());
+            } else if mode == "open" {
+                state
+                    .history
+                    .iter_mut()
+                    .find(|entry| {
+                        entry.value.entity_id() == last.id().id()
+                            && matches!(entry.value, MemoryHistoryValue::Object(_))
+                            && entry.valid_to.is_none()
+                    })
+                    .unwrap()
+                    .logical_identity = closed.logical_identity.clone();
+            }
+            state.application_control =
+                ApplicationControlState::quarantined(state.application_control.fence());
+            let retained = state.history_lifecycle.clone();
+            assert_eq!(state.require_history_exposure_safe().is_err(), blocked);
+            assert_eq!(state.history_lifecycle, retained);
+            assert!(
+                !state
+                    .application_control
+                    .is_released_for(&state.deletion_control)
+            );
+        }
+        storage.unregister_runtime(registration).await.unwrap();
+    }
+    #[tokio::test]
+    async fn quarantined_reapplication_verifies_large_dependency_inventory() {
+        let (storage, closed, registration, change) = prepared_fixture().await;
+        add_exposure_inventory(&storage, &closed).await;
+        install_expiry_read_fixture(&storage, change).await;
+        storage.unregister_runtime(registration).await.unwrap();
+        let fence = {
+            let mut state = storage.state.write_control().await;
+            let fence = state.application_control.fence();
+            state.application_control = ApplicationControlState::quarantined(fence);
+            fence
+        };
+        let snapshot = storage.capture_history_lifecycle().await.unwrap();
+        let intent = &snapshot.control().authority().expiry().intents()[0];
+        let protection = HistoryExposureProtection::new(
+            snapshot.control().authority().clone(),
+            fence,
+            DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
+        );
+        let request = HistoryExpiryReapplication::new(
+            protection,
+            intent.identity(),
+            intent.manifest().members()[0].target(),
+        )
+        .unwrap();
+        assert!(storage.reapply_history_expiry(request).await.unwrap());
+    }
+
     #[rstest::rstest]
     #[case::current_collision("current", true)]
     #[case::protected_open_collision("open", true)]

@@ -22,7 +22,7 @@ PUBLISHER_TEST = "services::deletion_recovery::repository::size_tests::maximum_c
 REPLICA_TEST = "restore_contract::history_expiry_qualification::replica::qualified_history_expiry_replica"
 CEILING = 512 * 1024 ** 2
 SHAPES = ("rows", "bytes", "large_row", "oversized", "logical_size", "census", "metadata",
-          "policy_count", "hold_count", "pending_count", "authority")
+          "policy_count", "hold_count", "pending_count", "inventory_rows", "inventory_metadata", "authority")
 
 
 def measurement_job_provenance(jobs):
@@ -195,6 +195,23 @@ def assess(report, resources):
             and bool(census.get("filler", {}).get("versions"))
             and census.get("fallback_tasks") == census.get("expected_tasks") == report["slots"] * report["replicas"]
             and all(census.get(field) is True for field in (
+                "age_only", "pressure_unchanged", "holds_preserved", "filler_preserved", "restored_filler_preserved"))
+            and all(batch.get("size_authorized_rows") == 0 for batch in batches))
+    if report["shape"] in ("inventory_rows", "inventory_metadata"):
+        inventory = report.get("inventory", {})
+        filler = inventory.get("filler", {})
+        row_shape = report["shape"] == "inventory_rows"
+        checks["inventory_recovery_pass"] = (
+            (inventory.get("exposure_rows", 0) > 1000
+             and 0 < inventory.get("exposure_bytes", 0) <= 1024**2 if row_shape else
+             0 < inventory.get("exposure_rows", 0) <= 1000
+             and inventory.get("exposure_bytes", 0) > 1024**2)
+            and (filler.get("rows"), filler.get("closed")) == ((2402, 1201) if row_shape else (32, 16))
+            and 0 < filler.get("largest_identity_bytes", 0) <= 1024**2
+            and bool(filler.get("versions"))
+            and inventory.get("fallback_tasks") == 0
+            and inventory.get("expected_tasks") == report["slots"] * report["replicas"]
+            and all(inventory.get(field) is True for field in (
                 "age_only", "pressure_unchanged", "holds_preserved", "filler_preserved", "restored_filler_preserved"))
             and all(batch.get("size_authorized_rows") == 0 for batch in batches))
     if report["shape"] == "oversized":

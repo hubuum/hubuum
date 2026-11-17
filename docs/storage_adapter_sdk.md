@@ -159,10 +159,10 @@ caps. Each job keeps its four-hour limit, and aggregation also requires every
 complete case to finish within four hours from warm-up start to its final
 measured job's completion, including intermediate queue time. This qualifies
 finite independent runs, not long-lived database-process or churn robustness.
-A shape report cannot qualify the complete profile. Aggregation requires all eleven
+A shape report cannot qualify the complete profile. Aggregation requires all thirteen
 shapes and all six repetitions, identical settings and binary provenance, and
 recomputes acceptance, per-repetition database limits and raw RSS evidence before
-publishing the 66-run profile. Each reported fixture, worker and replay phase
+publishing the 78-run profile. Each reported fixture, worker and replay phase
 must finish within its original 30-minute bound. The logical-size shape exercises
 65 updates per scope, protected size witnesses and oldest-first ordering through
 the actual worker, independent protection and signed restore/replay. It retains
@@ -174,8 +174,14 @@ the census row ceiling throughout execution. Combined HTTP/worker replicas must
 report unavailable accounting for every original task, select only independent
 age membership and preserve the unselected filler versions, active hold and
 pressure state through signed full-history restore/replay. The fixture must stay
-within recovery's existing 1,000-current/open-row and 1-MiB exposure bounds;
-larger current inventories remain quarantined. The temporary
+within one recovery metadata page. Recovery now traverses larger current/open
+inventories while holding the original application/history authority locks,
+using pages of at most 1,000 identities and 1 MiB. A deferred identity is
+validated on the next page; an identity exceeding a whole page still blocks
+exposure. Projection repair and all pages share one five-second clock, reduced
+to any tighter inherited timeout. Partial traversal, malformed or excluded
+ancestry and timeout leave quarantine intact. No page cursor is completion
+evidence. The temporary
 `ci:history-envelope` label measures just this shape on both profiles; this
 focused result cannot qualify the complete profile. The `metadata` shape uses
 ordinary export-template triggers to capture 513 closed versions with long
@@ -200,6 +206,14 @@ task may still need finalization. Real recovery tasks must finish every retained
 stop; full restore must preserve the resulting first receipts and release
 quarantine. Focused dispatches qualify only their selected component. Aggregation
 fetches every job page before accepting complete source and timing provenance.
+The `inventory_rows` case retains 1,201 current child collections and their open
+versions, exceeding the recovery row-page bound while staying below the metadata
+page bound. The `inventory_metadata` case keeps 16 templates' current/open
+identities wide through ordinary reference-capture triggers, exceeding 1 MiB in
+aggregate while each identity remains below that bound. Each case preserves its
+held closed filler, policies, pressure and original receipts through the real
+HTTP/worker and signed full-history restore/replay paths. These are finite
+qualification cases; broader restore/concurrency and HTTP/QoS gates remain open.
 The separate `History census qualification` workflow uses the temporary
 `ci:history-census` label for seven native component probes, with one warm-up and
 five fresh measured processes per probe on each database resource profile.

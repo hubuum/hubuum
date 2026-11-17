@@ -184,7 +184,14 @@ fn remove_on(
     let member = intent
         .pending_member()
         .expect("incomplete intent has pending membership");
-    remove_member_on(state, member, checkpoint.batch(), &snapshot, protection)?;
+    remove_member_on(
+        state,
+        member,
+        checkpoint.batch(),
+        &snapshot,
+        protection,
+        HistoryCopyScan::Bounded,
+    )?;
     if intent.removals().len() + 1 == intent.manifest().members().len() {
         checkpoint
             .request_receipt_protection()
@@ -259,6 +266,7 @@ pub(super) fn remove_member_on(
     batch: Uuid,
     snapshot: &HistoryLifecycleSnapshot,
     protection: &HistoryExposureProtection,
+    scan: HistoryCopyScan,
 ) -> Result<bool, StorageError> {
     let Some(location) = find_copy(state, member) else {
         if snapshot
@@ -333,7 +341,7 @@ pub(super) fn remove_member_on(
         family,
         &evidence,
         Some(anchor),
-        state.history_candidate_has_dependency(family, &evidence),
+        state.history_candidate_has_dependency_with_scan(family, &evidence, scan),
     )
     .map_err(invalid_contract_value)?
     .ok_or_else(|| StorageError::conflict("History removal identity is unresolved"))?

@@ -460,6 +460,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Gated history recovery can verify larger current/open inventories in bounded
+  metadata pages instead of rejecting the whole inventory after 1,000 rows or
+  1 MiB. All pages share the original scan clock and authority locks; quarantine
+  remains until complete verification, and oversized identities or unresolved
+  ancestry still block exposure. Production expiry activation remains gated.
 - Bound gated history-expiry recovery maintenance to 16 retained intents per
   worker poll, rotating across the complete journal. Full or busy task admission
   no longer forces every queue claim to retry all 256 obligations. Existing

@@ -454,6 +454,15 @@ The adapter still validates the exact deletion and complete unchanged control;
 new first receipts receive fresh independent protection before the next copy.
 Final quarantine release still requires complete protected authority and no
 remaining excluded copies.
+Recovery checks every affected current/open inventory under the application and
+history authority locks. Native-key pages transfer at most 1,000 identities and
+1 MiB each; the first deferred identity is rechecked on the next page. Projection
+repair and all pages retain one five-second clock, respecting tighter inherited
+timeouts. A single oversized identity, missing or malformed correspondence,
+excluded ancestry, incomplete traversal or timeout keeps quarantine intact.
+Completing one page cannot release exposure, and these checks never remove a
+current or protected-open copy. Admission dependency checks retain their existing
+bounded contract.
 Recovery across a changed application incarnation remains a separate qualification
 gate. Production workers do not yet enable this maintenance path.
 

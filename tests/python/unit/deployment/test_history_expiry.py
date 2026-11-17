@@ -104,6 +104,38 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                         report[field] = value
                     self.assertFalse(assess(report, resources)["bounded_liveness_pass"])
 
+    def inventory_evidence(self, shape):
+        rows = shape == "inventory_rows"
+        return {"source_rows":3000 if rows else 400,
+                "filler":{"rows":2402 if rows else 32,"closed":1201 if rows else 16,
+                          "versions":"fingerprint","largest_identity_bytes":400 if rows else 132000},
+                "exposure_rows":2410 if rows else 40,"exposure_bytes":900000 if rows else 4_300_000,
+                "fallback_tasks":0,"expected_tasks":1,"age_only":True,"pressure_unchanged":True,
+                "holds_preserved":True,"filler_preserved":True,"restored_filler_preserved":True}
+
+    def test_large_inventory_requires_full_preserved_recovery_evidence(self):
+        for shape in ("inventory_rows", "inventory_metadata"):
+            with self.subTest(shape=shape):
+                report, resources = self.fixture()
+                report.update(shape=shape, inventory=self.inventory_evidence(shape))
+                report["batches"][0]["size_authorized_rows"] = 0
+                self.assertTrue(all(assess(report, resources).values()))
+                for field, value in (("fallback_tasks",1), ("expected_tasks",2), ("age_only",False),
+                                     ("pressure_unchanged",False), ("holds_preserved",False),
+                                     ("filler_preserved",False), ("restored_filler_preserved",False),
+                                     ("exposure_rows",1000 if shape == "inventory_rows" else 1001),
+                                     ("exposure_bytes",1024**2+1 if shape == "inventory_rows" else 1024**2)):
+                    with self.subTest(field=field):
+                        broken = copy.deepcopy(report)
+                        broken["inventory"][field] = value
+                        self.assertFalse(assess(broken, resources)["inventory_recovery_pass"])
+                for field, value in (("rows",1), ("closed",0), ("versions",""), ("largest_identity_bytes",1024**2+1)):
+                    broken = copy.deepcopy(report)
+                    broken["inventory"]["filler"][field] = value
+                    self.assertFalse(assess(broken, resources)["inventory_recovery_pass"])
+                report["batches"][0]["size_authorized_rows"] = 1
+                self.assertFalse(assess(report, resources)["inventory_recovery_pass"])
+
     def test_authority_populations_require_the_declared_capacity_and_preserved_facts(self):
         for shape, field, maximum in (("policy_count", "policy_revisions",4096),
                                       ("hold_count", "live_holds",2048),
@@ -185,6 +217,9 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                     if shape == "metadata":
                         report["census"].update(source_rows=778, filler={"rows":514,"closed":513,
                             "versions":"fingerprint","metadata_bytes":67_500_000,"largest_identity_bytes":132000})
+                elif shape in ("inventory_rows", "inventory_metadata"):
+                    report["inventory"] = self.inventory_evidence(shape)
+                    report["batches"][0]["size_authorized_rows"] = 0
                 elif shape == "authority":
                     report.pop("replica_reports")
                     report["maximum_composite_verified"] = True

@@ -40,3 +40,19 @@ pub(super) async fn filler(pool: &PostgresPool, collection: i32) {
         Ok::<_, hubuum_storage_postgres::PostgresStorageError>(())
     }).await.unwrap();
 }
+
+pub(super) async fn inventory_filler(pool: &PostgresPool, collection: i32) {
+    with_transaction(pool, async |connection| {
+        let class = diesel::sql_query("INSERT INTO public.hubuumclass(collection_id,name,description) VALUES ($1,$2,'inventory reference') RETURNING id")
+            .bind::<Integer,_>(collection).bind::<Text,_>(format!("inventory_class_{}", Uuid::new_v4()))
+            .get_result::<Created>(connection).await?;
+        diesel::sql_query("INSERT INTO public.export_templates(collection_id,name,description,content_type,template,kind,include) SELECT $1,$2||n::text,'initial','text/plain','fixture','fragment',jsonb_build_object('related_objects',jsonb_build_object(repeat('x',131072),jsonb_build_object('class_id',$3))) FROM generate_series(1,16) n")
+            .bind::<Integer,_>(collection).bind::<Text,_>(format!("inventory_filler_{}_", Uuid::new_v4()))
+            .bind::<Integer,_>(class.id).execute(connection).await?;
+        // Keep both current and open history wide; recovery must validate more
+        // than one metadata page without dropping the held closed versions.
+        diesel::sql_query("UPDATE public.export_templates SET description='wide current' WHERE collection_id=$1")
+            .bind::<Integer,_>(collection).execute(connection).await?;
+        Ok::<_, hubuum_storage_postgres::PostgresStorageError>(())
+    }).await.unwrap();
+}

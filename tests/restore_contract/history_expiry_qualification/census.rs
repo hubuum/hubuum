@@ -40,6 +40,7 @@ pub(super) struct Census {
     fingerprint: Fingerprint,
     before: HistoryLifecycleSnapshot,
     population: Population,
+    requires_fallback: bool,
 }
 
 fn tables(family: StorageIdentityHistoryKind) -> (&'static str, &'static str, &'static str) {
@@ -72,7 +73,9 @@ pub(super) async fn prepare(
     fixture: &RestoreContractFixture,
     pool: &PostgresPool,
     family: StorageIdentityHistoryKind,
+    shape: &str,
 ) -> Census {
+    let inventory = matches!(shape, "inventory_rows" | "inventory_metadata");
     let collection = fixture
         .create_collection(&format!("census_held_{}", Uuid::new_v4()), "initial")
         .await
@@ -91,16 +94,20 @@ pub(super) async fn prepare(
         .resource();
     // Provision genuine closed versions through the production history trigger,
     // without forging identities, intervals, revisions or restore-only writes.
-    // Keep current/open exposure within its existing 1000-row/1-MiB bounds.
     // Provisioning uses only fixture constants and a validated integer parent.
     if family == StorageIdentityHistoryKind::ExportTemplate {
-        metadata::filler(pool, collection.id().id()).await;
+        if inventory {
+            metadata::inventory_filler(pool, collection.id().id()).await;
+        } else {
+            metadata::filler(pool, collection.id().id()).await;
+        }
     } else {
+        let (children, updates) = if inventory { (1201, 1) } else { (400, 251) };
         with_transaction(pool, async |connection| {
-        diesel::sql_query("INSERT INTO public.collections(name,description,parent_collection_id) SELECT $1||n::text,'initial',$2 FROM generate_series(1,400) n")
+        diesel::sql_query("INSERT INTO public.collections(name,description,parent_collection_id) SELECT $1||n::text,'initial',$2 FROM generate_series(1,$3) n")
             .bind::<Text,_>(format!("census_{}_", Uuid::new_v4().simple()))
-            .bind::<Integer,_>(collection.id().id()).execute(connection).await?;
-        diesel::sql_query(format!("DO $fixture$ BEGIN FOR n IN 1..251 LOOP UPDATE public.collections SET description=n::text WHERE parent_collection_id={}; END LOOP; END $fixture$", collection.id().id()))
+            .bind::<Integer,_>(collection.id().id()).bind::<Integer,_>(children).execute(connection).await?;
+        diesel::sql_query(format!("DO $fixture$ BEGIN FOR n IN 1..{updates} LOOP UPDATE public.collections SET description=n::text WHERE parent_collection_id={}; END LOOP; END $fixture$", collection.id().id()))
             .execute(connection).await
     }).await.unwrap();
     }
@@ -128,10 +135,22 @@ pub(super) async fn prepare(
         .unwrap();
     let fingerprint = fingerprint(pool, resource, family).await;
     if family == StorageIdentityHistoryKind::Collection {
-        assert_eq!((fingerprint.rows, fingerprint.closed), (100800, 100400));
+        assert_eq!(
+            (fingerprint.rows, fingerprint.closed),
+            if inventory {
+                (2402, 1201)
+            } else {
+                (100800, 100400)
+            }
+        );
     } else {
-        assert_eq!((fingerprint.rows, fingerprint.closed), (514, 513));
-        assert!(fingerprint.metadata_bytes > HistorySizeCensus::MAX_METADATA_BYTES as i64);
+        assert_eq!(
+            (fingerprint.rows, fingerprint.closed),
+            if inventory { (32, 16) } else { (514, 513) }
+        );
+        if !inventory {
+            assert!(fingerprint.metadata_bytes > HistorySizeCensus::MAX_METADATA_BYTES as i64);
+        }
         assert!(fingerprint.largest_identity_bytes <= 1024 * 1024);
     }
     let (current, history, _) = tables(family);
@@ -142,14 +161,21 @@ pub(super) async fn prepare(
     })
     .await
     .unwrap();
-    assert!(population.exposure_rows <= i64::from(HistoryRecoveryExposureBudget::MAX_ROWS));
-    assert!(population.exposure_bytes <= HistoryRecoveryExposureBudget::MAX_BYTES as i64);
+    assert_eq!(
+        population.exposure_rows > i64::from(HistoryRecoveryExposureBudget::MAX_ROWS),
+        shape == "inventory_rows"
+    );
+    assert_eq!(
+        population.exposure_bytes > HistoryRecoveryExposureBudget::MAX_BYTES as i64,
+        shape == "inventory_metadata"
+    );
     Census {
         family,
         resource,
         fingerprint,
         before,
         population,
+        requires_fallback: !inventory,
     }
 }
 
@@ -166,8 +192,12 @@ impl Census {
         }).await.unwrap().count;
         assert_eq!(
             usize::try_from(warnings).unwrap(),
-            tasks.len(),
-            "Every original task must report exhausted size accounting"
+            if self.requires_fallback {
+                tasks.len()
+            } else {
+                0
+            },
+            "Unavailable accounting warnings must match the measured shape"
         );
         self.verify_restored(pool, after).await;
         json!({"source_rows":self.population.source_rows,"filler":self.fingerprint,

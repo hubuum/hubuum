@@ -640,9 +640,11 @@ impl HistoryExposureProtection {
     }
 }
 
-/// A bounded exposure check must fail closed on incomplete coverage. These
-/// limits bound metadata observation; they are not scale/liveness qualification
-/// and do not authorize removal or turn a partial scan into a recovery proof.
+/// A bounded exposure page must fail closed on incomplete coverage. Recovery
+/// may traverse multiple pages under one locked inventory and original clock;
+/// only complete traversal proves coverage. These limits bound metadata
+/// observation, not total inventory size or scale/liveness qualification.
+/// A page never authorizes removal or proves that recovery is complete.
 #[derive(Default)]
 pub struct HistoryRecoveryExposureBudget {
     rows: u32,
