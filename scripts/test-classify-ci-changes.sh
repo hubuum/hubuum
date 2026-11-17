@@ -989,3 +989,15 @@ done
 restore_fixture_output="$(bash "$classifier" tests/python/integration/rust_tests.py)"
 assert_flag "$restore_fixture_output" code true
 assert_flag "$restore_fixture_output" rust true
+
+# Explicit native consumers use accepted external artifacts; Python owns their
+# source/image/contract guards. Their manifest is a dynamic test input.
+for ecosystem_input in tests/python/integration/ecosystem.py \
+  docs/authentication/ecosystem-source.json \
+  tests/python/unit/tooling/test_authentication_ecosystem.py; do
+  ecosystem_output="$(bash "$classifier" "$ecosystem_input")"
+  assert_flag "$ecosystem_output" code true
+  assert_flag "$ecosystem_output" rust false
+  assert_flag "$ecosystem_output" container false
+  assert_flag "$ecosystem_output" benchmarks false
+done

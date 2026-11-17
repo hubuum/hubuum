@@ -1,0 +1,200 @@
+{
+  "scope": "Initial project-6 cross-native qualification; this manifest is not milestone acceptance",
+  "prerequisites": "All six strict native implementation issues closed completed with accepted artifacts before coordinator implementation",
+  "server": {
+    "project_only": true,
+    "declared_release_target_unchanged": "0.0.22",
+    "accepted_server_source": "8e6e8344c458765af556890572593775ca4fd9a0",
+    "source_openapi_url": "https://raw.githubusercontent.com/hubuum/hubuum/8e6e8344c458765af556890572593775ca4fd9a0/docs/openapi.json",
+    "source_openapi_sha256": "11f894bd8a45abc2f85e80a8ccc9c88062a62b2e1c4f6871d1658fada200b720",
+    "source_fixture_url": "https://raw.githubusercontent.com/hubuum/hubuum/8e6e8344c458765af556890572593775ca4fd9a0/docs/authentication/fixtures.json",
+    "source_fixture_sha256": "027eff028cb1c7252132f1f93225957f548ccb0dd839e2b7e5c291efb872c028",
+    "source_fixture_cases": 48,
+    "candidate_artifact_id": 14287879386,
+    "candidate_archive_sha256": "8b82fb62de8cebf089cb9f358f0b0f814d76011668a5f4fc87d5dcd2c44c4709",
+    "server_pull_request": "https://github.com/hubuum/hubuum/pull/599",
+    "server_merge_state": "squash-merged into project/auth-support",
+    "candidate_tested_commit": "3d80c1552085f68de9b1af33d05c948df4fd184d",
+    "candidate_image_manifest": "sha256:eb246a78d2f32f660e4af33a0273ba274955e54dcc9c9a96d89055f2d9e4b3f7",
+    "candidate_image_config": "sha256:bb57dc1028296d19343a8813fe4b79bdcecdf454767df58d36bea6ac9562a6e0",
+    "source_canonical_spec_sha256": "839c32e8742fe28ba02cb367dcb8fdc8eb35cf971f13f964941f85b488d715e1",
+    "source_live_fixture_sha256": {
+      "tests/python/integration/keycloak.py": "7e40d6b5d5ef70c2a6cd649736d56dd2f6ed8112c1ebd0444abe6b946e21c2a0",
+      "tests/python/integration/oauth.py": "fea7af036d5082f0de2372be9e90e6227449b0dcec2205b267eea84372373b02"
+    },
+    "qualified_server_images": [
+      {
+        "docker_image_id": "sha256:5d8be6932ec997acd98dacfb4aff57eaee48c4cf28579167869d04133ca55442",
+        "manifest": "sha256:daaeef920b62eee0431b48045aaeaa56448def48812f927b2b1e357285a5175b",
+        "config": "sha256:f7f453db1e794b965c17591c4ff3ceb34886643027020116d1fa48a40f94dd24",
+        "platform": "linux/arm64",
+        "source": "8e6e8344c458765af556890572593775ca4fd9a0",
+        "build_flags": "-F tls-rustls -F tls-openssl --locked --release"
+      },
+      {
+        "docker_image_id": "sha256:200dc29e4c5ba5cb0825ea14836e95650ef0e0a11e173020e98d3ab1d1dc66fd",
+        "manifest": "sha256:c0a58775ee5b558e41c1f40ac5e1f4a181a5123e24328c858397966d31fc3cc6",
+        "config": "sha256:55483c9725e64e188164b8dbeddf6b469b883037c34708b8738950f6b075596f",
+        "platform": "linux/arm64",
+        "source": "8e6e8344c458765af556890572593775ca4fd9a0",
+        "build_flags": "-F tls-rustls -F tls-openssl -F permissions-treetop --locked --release"
+      },
+      {
+        "manifest": "sha256:eb246a78d2f32f660e4af33a0273ba274955e54dcc9c9a96d89055f2d9e4b3f7",
+        "config": "sha256:bb57dc1028296d19343a8813fe4b79bdcecdf454767df58d36bea6ac9562a6e0",
+        "platform": "linux/amd64",
+        "source": "3d80c1552085f68de9b1af33d05c948df4fd184d"
+      }
+    ],
+    "server_integration_commit": "540a511e0936abeb6a73aee2c94c5e25eba210b9",
+    "native_qualification": "BFF #196 and browser UI #197 are accepted. Administration #198 passed 63 clean product checks plus 12 real Treetop checks; final frontend CI/candidate acceptance is required. Native real GitHub and full server #581 qualification remain required.",
+    "accepted_bff_foundation": {
+      "pull_request": "https://github.com/hubuum/hubuum-frontend/pull/204",
+      "integration_commit": "3a8dba71b20c7d3a5df06c0f1e75bc7c20ad3543",
+      "source_commit": "63a16029e22f911bb8f872480657cbf62350f316",
+      "tested_commit": "a5d4c5a34fe9814d0a8d6e1df6e2fd0cfc8fb14c",
+      "tree": "8fe93d87be0d451fbc53bbf662b67f4016aa732e",
+      "candidate_artifact_id": 14261258695,
+      "candidate_sha256": "70973d2c4fb4ecfcf5279b2cbbf55f0bce224e3ee22b70c2b70ae95da470b1be",
+      "candidate_expires_at": "2026-12-16T19:33:01Z"
+    },
+    "candidate_expires_at": "2026-12-17T01:12:42Z",
+    "accepted_browser_ui": {
+      "pull_request": "https://github.com/hubuum/hubuum-frontend/pull/209",
+      "integration_commit": "09995e99197fd5ed496e16363cfa498831b00242",
+      "source_commit": "800221c96b6c86c4ea9af48bd66517f83f14ec03",
+      "tested_commit": "6d9363383cdc394102e57884a553f4b4b62557e8",
+      "tree": "b810543a1292a336dc3d365544fa68a90f3b7374",
+      "artifact_id": 14283753294,
+      "archive_sha256": "e141f2017d711e71ac462317360127ece7823d84cacb747c1dd7db8e008b0448",
+      "expires_at": "2026-12-16T23:59:49Z"
+    }
+  },
+  "server_tree": "e591c2a501649ebf205cf6753a9e6be4c2766ccc",
+  "clients": {
+    "rust": {
+      "source": "53649969ed2816a1f99a4d7033da5c06ce7cb27c",
+      "tree": "d1947ff1f82e2ba4d75bd21d7e30e7e1c16aa91c",
+      "issue": 147,
+      "accepted_pr": 151,
+      "profiles": [
+        "id_token",
+        "userinfo",
+        "oauth"
+      ],
+      "consumer_sha256": "f499825a7064a0d118285af04517123eec4e54dbd412107ab642403d108cf058",
+      "drivers": {
+        "default": {
+          "path": "tests/python/integration/authentication.py",
+          "sha256": "3191d8d11b95c067f98d2b268996f598c08bb6efeaeaf5b75863cf0beaa0a67e"
+        }
+      }
+    },
+    "python": {
+      "source": "7d76b19a03cd049ce70f89577c990e8a74ce3787",
+      "tree": "e12a0cd41aad547e5b2c0c1e265f137fa44c6ed2",
+      "issue": 92,
+      "accepted_pr": 99,
+      "profiles": [
+        "id_token",
+        "userinfo",
+        "oauth"
+      ],
+      "consumer_sha256": "014f47f90127fcf5faf9d280323688ea5924262018fb5b6e0d5ef09cf0d2174b",
+      "drivers": {
+        "default": {
+          "path": "tests/integration/authentication.py",
+          "sha256": "c9106f770464eb02178fe4d3cfe42c2f69c47c2c1cc56c6c4cde7db98785fda9"
+        }
+      }
+    },
+    "cli": {
+      "source": "ffb4e6f25b462e413609367225e64673a3814449",
+      "tree": "2118b942d078d2198d61272d64cf3b6cec8c829f",
+      "issue": 159,
+      "accepted_pr": 167,
+      "profiles": [
+        "ldap",
+        "id_token",
+        "userinfo",
+        "oauth"
+      ],
+      "consumer_sha256": "418825f7eac94b97f591d113dfc183c601aff8de0a6b921f514dc40e1b22225c",
+      "drivers": {
+        "default": {
+          "path": "tests/integration/authentication.py",
+          "sha256": "ca863ba9d41b688eebf6b6161faabd324a95248b7eca498c3756960290e02a00"
+        }
+      }
+    },
+    "frontend": {
+      "source": "760665ada7e5a7e25f2538fcb5e1df454969a6ba",
+      "tree": "515b68798c70bb2b6154bd39f8578970bcb8979e",
+      "issue": 198,
+      "accepted_pr": 210,
+      "profiles": [
+        "local",
+        "ldap",
+        "id_token",
+        "userinfo",
+        "oauth",
+        "treetop"
+      ],
+      "consumer_sha256": "ba7073582822078d8c90bca3facacc46690bc5366fab4b815aeef9148cd6e854",
+      "drivers": {
+        "default": {
+          "path": "tests/integration/authentication.py",
+          "sha256": "21381bfc4a8a62cf1f77a88200f04b48634f2c0ee42c2a7fa804e02969701085"
+        },
+        "treetop": {
+          "path": "tests/integration/authorization.py",
+          "sha256": "5aff6a3a078587f98956251eaee01bf6713035d73881e607ba048e4759d89aed"
+        }
+      }
+    }
+  },
+  "runtime_notes": {
+    "rust_consumer": "Rebuilt from clean accepted SDK using Rust1.100.0 and locked project-authentication-tests feature; new binary identity is qualified here, not claimed identical to earlier artifact.",
+    "python": "Run with the accepted Python SDK consumer runtime; coordinator itself imports only the standard library. No server-tool dependency installation is needed.",
+    "frontend": "Pinned Node24.22.3 runtime and already-built accepted-source production standalone application."
+  },
+  "real_native_github": "Requires new authorized disposable OAuth App and actual native sign-ins; synthetic OAuth is not a substitute.",
+  "native_prerequisites": [
+    {
+      "repository": "hubuum-client-rust",
+      "issue": 147,
+      "state": "closed",
+      "state_reason": "completed"
+    },
+    {
+      "repository": "hubuum-client-python",
+      "issue": 92,
+      "state": "closed",
+      "state_reason": "completed"
+    },
+    {
+      "repository": "hubuum-cli",
+      "issue": 159,
+      "state": "closed",
+      "state_reason": "completed"
+    },
+    {
+      "repository": "hubuum-cli",
+      "issue": 160,
+      "state": "closed",
+      "state_reason": "completed"
+    },
+    {
+      "repository": "hubuum-frontend",
+      "issue": 197,
+      "state": "closed",
+      "state_reason": "completed"
+    },
+    {
+      "repository": "hubuum-frontend",
+      "issue": 198,
+      "state": "closed",
+      "state_reason": "completed"
+    }
+  ]
+}
