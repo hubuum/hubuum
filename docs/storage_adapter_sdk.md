@@ -151,12 +151,18 @@ and remains gated with production expiry. Original clocks and receipts survive
 every ownership change; a changed application image requires separate recovery
 qualification.
 
-Finite H1/H4 qualification runs each shape on a separate isolated CI runner, with
-one warm-up and five fresh measurements per shape. Every shape retains the same
-30-minute phase bounds, four-hour job limit and worker/database resource caps.
+Finite H1/H4 qualification runs one warm-up before five fresh measurements per
+shape. Each repetition has its own isolated CI runner and PostgreSQL container;
+the measured repetitions start only after warm-up succeeds. Every repetition
+retains the same workload, 30-minute phase bounds and worker/database resource
+caps. Each job keeps its four-hour limit, and aggregation also requires every
+complete case to finish within four hours from warm-up start to its final
+measured job's completion, including intermediate queue time. This qualifies
+finite independent runs, not long-lived database-process or churn robustness.
 A shape report cannot qualify the complete profile. Aggregation requires all seven
-shapes, identical settings and binary provenance, and recomputes acceptance and raw
-RSS evidence before publishing the 42-run profile. The logical-size shape exercises
+shapes and all six repetitions, identical settings and binary provenance, and
+recomputes acceptance, per-repetition database limits and raw RSS evidence before
+publishing the 42-run profile. The logical-size shape exercises
 65 updates per scope, protected size witnesses and oldest-first ordering through
 the actual worker, independent protection and signed restore/replay. It retains
 the existing 1000-examined-row profile ceiling, memory and CPU limits; it does not

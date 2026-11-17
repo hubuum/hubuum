@@ -91,6 +91,71 @@ jobs:
           retention-days: 7
 
   measure:
+    needs: [build, reuse, warmup]
+    if: ${{ !cancelled() && inputs.measurement_run_id == '' && (needs.build.result == 'success' || needs.reuse.result == 'success') && needs.warmup.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [local, shared]
+        shape: ${{ fromJSON((inputs.shape == 'census' || (contains(github.event.pull_request.labels.*.name, 'ci:history-envelope') && !contains(github.event.pull_request.labels.*.name, 'ci:validate'))) && '["census"]' || '["rows","bytes","large_row","oversized","logical_size","census","authority"]') }}
+        repeat: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: history-expiry-binaries
+          path: target
+      - name: Restore binaries and record runner resources
+        run: |
+          sudo apt-get update --yes
+          sudo apt-get install --yes postgresql-client
+          mkdir -p target/release
+          tar -xzf target/history-expiry-binaries.tar.gz -C target/release
+          {
+            python3 --version
+            lscpu
+            free -b
+            df -h .
+            docker version
+          } > target/history-expiry-runner.txt
+      - name: Measure one fresh repetition
+        env:
+          HISTORY_PROFILE: ${{ matrix.profile }}
+          HISTORY_SHAPE: ${{ matrix.shape }}
+          HISTORY_REPEAT: ${{ matrix.repeat }}
+        run: >-
+          sudo "$(command -v python3)" -I -S tests/python/run.py integration history-expiry
+          --profile "$HISTORY_PROFILE" --shape "$HISTORY_SHAPE" --repeat "$HISTORY_REPEAT" --binary target/release/history-expiry-driver
+          --publisher-binary target/release/history-checkpoint-driver
+          --admin-binary target/release/hubuum-admin --output target/history-expiry-report
+      - name: Package readable measurements without private runtime material
+        if: always()
+        run: |
+          sudo "$(command -v python3)" -I -S - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, str(Path('tests/python').resolve()))
+          from integration.history_expiry import package_measurements
+          package_measurements(Path('target/history-expiry-report'), Path('target/history-expiry-evidence.tar.gz'))
+          PY
+      - name: Retain raw measurements including failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: history-expiry-fragment-${{ matrix.profile }}-${{ matrix.shape }}-${{ matrix.repeat }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: target/history-expiry-evidence.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  warmup:
     needs: [build, reuse]
     if: ${{ !cancelled() && inputs.measurement_run_id == '' && (needs.build.result == 'success' || needs.reuse.result == 'success') }}
     runs-on: ubuntu-24.04
@@ -125,13 +190,13 @@ jobs:
             df -h .
             docker version
           } > target/history-expiry-runner.txt
-      - name: Measure warm-up and five fresh repeats for every shape
+      - name: Warm up one isolated fixture
         env:
           HISTORY_PROFILE: ${{ matrix.profile }}
           HISTORY_SHAPE: ${{ matrix.shape }}
         run: >-
           sudo "$(command -v python3)" -I -S tests/python/run.py integration history-expiry
-          --profile "$HISTORY_PROFILE" --shape "$HISTORY_SHAPE" --binary target/release/history-expiry-driver
+          --profile "$HISTORY_PROFILE" --shape "$HISTORY_SHAPE" --repeat 0 --binary target/release/history-expiry-driver
           --publisher-binary target/release/history-checkpoint-driver
           --admin-binary target/release/hubuum-admin --output target/history-expiry-report
       - name: Package readable measurements without private runtime material
@@ -148,7 +213,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: history-expiry-${{ matrix.profile }}-${{ matrix.shape }}-${{ github.event.pull_request.head.sha || github.sha }}
+          name: history-expiry-fragment-${{ matrix.profile }}-${{ matrix.shape }}-0-${{ github.event.pull_request.head.sha || github.sha }}
           path: target/history-expiry-evidence.tar.gz
           if-no-files-found: error
           retention-days: 30
@@ -181,7 +246,7 @@ jobs:
           python3 -I -S - <<'PY'
           import json, os, pathlib, re, subprocess, sys
           sys.path.insert(0, str(pathlib.Path('tests/python').resolve()))
-          from integration.history_expiry import SHAPES, verify_binary_reuse
+          from integration.history_expiry import measurement_job_provenance, verify_binary_reuse
           repo = os.environ['GITHUB_REPOSITORY']
           run_id = os.environ['MEASUREMENT_RUN_ID']
           if not re.fullmatch(r'[0-9]+', run_id):
@@ -194,10 +259,7 @@ jobs:
               or source['repository']['full_name'] != repo or source['head_repository']['full_name'] != repo):
               raise ValueError('Measurements must come from the same repository, branch and workflow')
           jobs = gh(f'repos/{repo}/actions/runs/{run_id}/jobs?per_page=100')['jobs']
-          expected = {f'measure ({profile}, {shape})' for profile in ('local', 'shared') for shape in SHAPES}
-          measured = [job for job in jobs if job['name'].startswith('measure (')]
-          if len(measured) != len(expected) or {job['name'] for job in measured} != expected or any(job['conclusion'] != 'success' for job in measured):
-              raise ValueError('Every local/shared shape job must have succeeded')
+          provenance = measurement_job_provenance(jobs)
           sha = source['head_sha']
           if not re.fullmatch(r'[0-9a-f]{40}', sha):
               raise ValueError('Invalid measurement source commit')
@@ -217,13 +279,13 @@ jobs:
           pathlib.Path('target/aggregation-provenance.json').write_text(json.dumps({
               'measurement_run_id': int(run_id), 'measurement_commit': sha,
               'aggregation_commit': head, 'changed_non_rust_paths': changed,
-              'shape_jobs': {job['name']: job['id'] for job in measured}}, indent=2) + '\n')
+              **provenance}, indent=2) + '\n')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f'source_sha={sha}\n')
           PY
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: history-expiry-${{ matrix.profile }}-*-${{ steps.evidence.outputs.source_sha }}
+          pattern: history-expiry-fragment-${{ matrix.profile }}-*-${{ steps.evidence.outputs.source_sha }}
           run-id: ${{ inputs.measurement_run_id || github.run_id }}
           github-token: ${{ github.token }}
           path: target/history-expiry-shards
@@ -233,7 +295,7 @@ jobs:
           from pathlib import Path
           import shutil, sys, tarfile
           sys.path.insert(0, str(Path('tests/python').resolve()))
-          from integration.history_expiry import aggregate_measurements, package_measurements
+          from integration.history_expiry import aggregate_repetitions, package_measurements
           roots = []
           for artifact in sorted(Path('target/history-expiry-shards').iterdir()):
               with tarfile.open(artifact / 'history-expiry-evidence.tar.gz') as archive:
@@ -243,7 +305,7 @@ jobs:
                   archive.extractall(artifact, filter='data')
               roots.append(artifact / 'history-expiry-report')
           output = Path('target/history-expiry-report')
-          summary = aggregate_measurements(roots, output)
+          summary = aggregate_repetitions(roots, output)
           if not summary['h1_h4_worker_qualified']:
               raise ValueError('Complete profile did not qualify')
           shutil.copyfile('target/aggregation-provenance.json', output / 'aggregation-provenance.json')

@@ -10,10 +10,11 @@ import statistics
 import subprocess
 from subprocess import SubprocessError
 import tarfile
+import tempfile
 import time
 
 from integration.rust_tests import run_tests
-from integration.scheduling_benchmark import Fixture, percentile
+from integration.scheduling_benchmark import Fixture, database_resources, percentile, timestamp_us
 
 
 TEST = "restore_contract::history_expiry_qualification::qualified_history_expiry_worker"
@@ -21,6 +22,38 @@ PUBLISHER_TEST = "services::deletion_recovery::repository::size_tests::maximum_c
 REPLICA_TEST = "restore_contract::history_expiry_qualification::replica::qualified_history_expiry_replica"
 CEILING = 512 * 1024 ** 2
 SHAPES = ("rows", "bytes", "large_row", "oversized", "logical_size", "census", "authority")
+
+
+def measurement_job_provenance(jobs):
+    """Require every repetition and retain the original four-hour case window."""
+    expected = {(profile, shape, repeat):
+                (f"warmup ({profile}, {shape})" if repeat == 0 else
+                 f"measure ({profile}, {shape}, {repeat})")
+                for profile in ("local", "shared") for shape in SHAPES for repeat in range(6)}
+    measured = [job for job in jobs if job["name"].startswith(("warmup (", "measure ("))]
+    by_name = {job["name"]: job for job in measured}
+    if (len(measured) != len(expected) or set(by_name) != set(expected.values())
+            or len({job["id"] for job in measured}) != len(expected)
+            or any(type(job["id"]) is not int or job["id"] <= 0 for job in measured)
+            or any(job["conclusion"] != "success" for job in measured)):
+        raise ValueError("Every local/shared warm-up and measured repetition must have succeeded")
+    windows = {}
+    for profile in ("local", "shared"):
+        for shape in SHAPES:
+            case = [by_name[expected[profile, shape, repeat]] for repeat in range(6)]
+            try:
+                starts = [timestamp_us(job["started_at"]) for job in case]
+                ends = [timestamp_us(job["completed_at"]) for job in case]
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError("Missing repetition job timing") from error
+            seconds = (max(ends) - starts[0]) / 1_000_000
+            if (any(end < start for start, end in zip(starts, ends))
+                    or any(start < ends[0] for start in starts[1:])
+                    or not 0 < seconds <= 240 * 60):
+                raise ValueError("Repetitions must follow warm-up and finish within four hours")
+            windows[f"{profile}/{shape}"] = seconds
+    return {"shape_jobs": {job["name"]: job["id"] for job in measured},
+            "case_window_seconds": windows}
 
 
 def verify_binary_reuse(changed_paths, original_workflow, current_workflow):
@@ -275,6 +308,16 @@ def summarize(manifest, samples, failures):
                "failures": failures, "selected_shapes_passed": passed,
                "h1_h4_worker_qualified": qualified,
                "full_shared_topology_qualified": manifest["profile"] == "lifecycle-shared-v1" and qualified}
+    if "repetition" in manifest:
+        repeat = manifest["repetition"]
+        summary["fragment_passed"] = (
+            type(repeat) is int and repeat in range(6) and len(manifest["shapes"]) == 1
+            and len(samples) == 1 and not failures
+            and observed == [(manifest["shapes"][0], repeat)]
+            and samples[0]["warmup"] is (repeat == 0)
+            and samples[0]["report"]["shape"] == samples[0]["shape"]
+            and samples[0]["checks"] == assess(samples[0]["report"], samples[0]["resources"])
+            and all(samples[0]["checks"].values()))
     for shape in manifest["shapes"]:
         field = "publisher_fixture_seconds" if shape == "authority" else "worker_seconds"
         seconds = [sample["report"][field] for sample in measured if sample["shape"] == shape]
@@ -282,6 +325,88 @@ def summarize(manifest, samples, failures):
                           "seconds_median": statistics.median(seconds) if seconds else None,
                           "seconds_p95": percentile(seconds, 95) if seconds else None}
     return summary
+
+
+def verify_database_evidence(root, profile):
+    cpus = 2 if profile == "lifecycle-local-v1" else 4
+    limit = cpus * 1024**3
+    limits = json.loads((root / "postgres-container.json").read_text())["limits"]
+    if limits["Memory"] != limit or limits["NanoCpus"] != cpus * 1_000_000_000:
+        raise ValueError("PostgreSQL container limits differ from the selected profile")
+    network = limits.get("NetworkMode")
+    if not isinstance(network, str) or not network or network in {"default", "bridge", "host", "none"}:
+        raise ValueError("Missing isolated PostgreSQL network identity")
+    for phase in ("initial", "final"):
+        observed = database_resources((root / f"{phase}-database-resources.txt").read_text(),
+                                      limit, None, cpus)
+        if observed != json.loads((root / f"{phase}-database-resources.json").read_text()):
+            raise ValueError("PostgreSQL resource summary differs from raw kernel evidence")
+    return network
+
+
+def aggregate_repetitions(inputs, output):
+    """Join complete, isolated repetitions before the existing shape aggregation."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="history-expiry-cohorts-", dir=output.parent) as temporary:
+        groups, networks = {}, set()
+        for root in inputs:
+            manifest = json.loads((root / "manifest.json").read_text())
+            repeat = manifest.get("repetition")
+            if (type(repeat) is not int or repeat not in range(6)
+                    or len(manifest["shapes"]) != 1 or manifest["shapes"][0] not in SHAPES
+                    or manifest["profile"] not in ("lifecycle-local-v1", "lifecycle-shared-v1")
+                    or manifest.get("database_isolation") != "fresh instance per repetition"):
+                raise ValueError("Expected one isolated repetition of one supported shape")
+            shape, = manifest["shapes"]
+            group = groups.setdefault(shape, {})
+            if repeat in group:
+                raise ValueError("Duplicate shape repetition")
+            samples = json.loads((root / "samples.json").read_text())
+            summary = summarize(manifest, samples, [])
+            if not summary["fragment_passed"] or summary != json.loads((root / "summary.json").read_text()):
+                raise ValueError("Repetition fragment is incomplete or failed acceptance")
+            network = verify_database_evidence(root, manifest["profile"])
+            if network in networks:
+                raise ValueError("Repetitions must use distinct isolated database instances")
+            networks.add(network)
+            group[repeat] = (root, manifest, samples[0])
+        if set(groups) != set(SHAPES):
+            raise ValueError("Every shape is required for complete profile qualification")
+        shards = []
+        for shape in SHAPES:
+            group = groups[shape]
+            if set(group) != set(range(6)):
+                raise ValueError("Every shape needs one warm-up and five measured repetitions")
+            destination = Path(temporary) / shape / "history-expiry-report"
+            destination.mkdir(parents=True)
+            common = build = None
+            samples = []
+            for repeat in range(6):
+                root, manifest, sample = group[repeat]
+                settings = {key: value for key, value in manifest.items() if key != "repetition"}
+                source = (root.parent / "history-expiry-build.txt").read_bytes()
+                if common is not None and (settings != common or source != build):
+                    raise ValueError("Repetition fragments use different settings or builds")
+                common, build = settings, source
+                samples.append(sample)
+                name = f"{shape}-{repeat}"
+                for path in root.iterdir():
+                    if path.name in {"manifest.json", "samples.json", "summary.json"}:
+                        continue
+                    if not path.is_file() or path.is_symlink():
+                        raise ValueError("Repetition evidence must contain packaged regular files")
+                    target = path.name if path.name.startswith(name) else name + "-" + path.name
+                    shutil.copyfile(path, destination / target)
+                for extra in ("runner.txt", "reuse.json"):
+                    path = root.parent / ("history-expiry-" + extra)
+                    if path.exists():
+                        shutil.copyfile(path, destination / (name + "-" + extra))
+            (destination.parent / "history-expiry-build.txt").write_bytes(build)
+            for name, value in (("manifest", common), ("samples", samples),
+                                ("summary", summarize(common, samples, []))):
+                (destination / (name + ".json")).write_text(json.dumps(value, indent=2) + "\n")
+            shards.append(destination)
+        return aggregate_measurements(shards, output)
 
 
 def aggregate_measurements(inputs, output):
@@ -355,6 +480,8 @@ def run(args):
         "p6": "deferred to #561; these finite runs do not establish steady-state expiry lag",
         "process_model": "real production worker pipeline in an isolated integration executable",
     }
+    if args.repeat is not None:
+        manifest.update(repetition=args.repeat, database_isolation="fresh instance per repetition")
     (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     samples = []
     failures = []
@@ -362,7 +489,7 @@ def run(args):
         # Migrate the distinct primary used only for fixture-target exclusion.
         fixture.binary(args.admin_binary, ["--migrate", "--database-url", fixture.url("template_fixture")], "primary-migrate")
         for shape in manifest["shapes"]:
-            for repeat in range(6):
+            for repeat in (range(6) if args.repeat is None else (args.repeat,)):
                 name = f"{shape}-{repeat}"
                 destination = args.output / f"{name}.json"
                 binary = args.publisher_binary if shape == "authority" else args.binary
@@ -418,18 +545,22 @@ def run(args):
         fixture.database_evidence("final")
     summary = summarize(manifest, samples, failures)
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    return int(not summary["selected_shapes_passed"])
+    return int(not summary.get("fragment_passed", summary["selected_shapes_passed"]))
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("local", "shared"), required=True)
     parser.add_argument("--shape", choices=SHAPES, help="Measure one shape; complete qualification requires aggregation")
+    parser.add_argument("--repeat", type=int, choices=range(6),
+                        help="Run one repetition fragment (0 is warm-up); aggregation still requires all six")
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--publisher-binary", type=Path, required=True)
     parser.add_argument("--admin-binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.repeat is not None and not args.shape:
+        parser.error("a repetition fragment requires --shape")
     if platform.system() != "Linux" or not Path("/proc/self/status").exists():
         parser.error("qualification requires Linux access to the Docker host PID namespace")
     args.unlimited_cpu = False

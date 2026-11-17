@@ -11,9 +11,10 @@ import threading
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
-from integration.history_expiry import (SHAPES, aggregate_measurements, assess, container_failure_log,
+from integration.history_expiry import (SHAPES, aggregate_measurements, aggregate_repetitions, assess, container_failure_log,
                                        measured_resources, measurement_environment, package_measurements,
-                                       replica_run, run, sample_resources, summarize, verify_binary_reuse)
+                                       measurement_job_provenance, replica_run, run, sample_resources, summarize, verify_binary_reuse)
+from integration.scheduling_benchmark import database_resources
 from support import ROOT
 
 
@@ -86,7 +87,7 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
             binary = root / "binary"
             binary.write_bytes(b"fixture")
             args = Mock(output=root / "report", binary=binary, publisher_binary=binary,
-                        admin_binary=binary, profile="shared", shape=None)
+                        admin_binary=binary, profile="shared", shape=None, repeat=None)
             fixture = MagicMock()
             fixture.__enter__.return_value = fixture
             with patch("integration.history_expiry.Fixture", return_value=fixture), \
@@ -162,6 +163,158 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
             self.assertEqual(summary["measured_runs"], 5 * len(SHAPES))
             self.assertEqual(len(json.loads((parent / "combined/samples.json").read_text())), 6 * len(SHAPES))
 
+    def repetition_fragments(self, parent):
+        fragments = []
+        raw = ("memory_max=2147483648\nmemory_peak=100000000\nmemory_event_max=0\n"
+               "memory_event_oom=0\nmemory_event_oom_kill=0\ncpu_max=200000 100000\ncpu_mask=0-1\n")
+        for root in self.measurement_shards(parent / "serial"):
+            manifest = json.loads((root / "manifest.json").read_text())
+            shape, = manifest["shapes"]
+            samples = json.loads((root / "samples.json").read_text())
+            for repeat in range(6):
+                destination = parent / "fragments" / f"{shape}-{repeat}" / "history-expiry-report"
+                destination.mkdir(parents=True)
+                fragments.append(destination)
+                settings = {**manifest, "repetition": repeat,
+                            "database_isolation": "fresh instance per repetition"}
+                selected = [samples[repeat]]
+                for name, value in (("manifest", settings), ("samples", selected),
+                                    ("summary", summarize(settings, selected, []))):
+                    (destination / (name + ".json")).write_text(json.dumps(value))
+                for path in root.iterdir():
+                    if path.name.startswith(f"{shape}-{repeat}"):
+                        (destination / path.name).write_bytes(path.read_bytes())
+                (destination.parent / "history-expiry-build.txt").write_text("same production build")
+                (destination / "postgres-container.json").write_text(json.dumps({"limits": {
+                    "Memory": 2 * 1024**3, "NanoCpus": 2_000_000_000,
+                    "NetworkMode": f"fixture-{shape}-{repeat}"}}))
+                for phase in ("initial", "final"):
+                    (destination / f"{phase}-database-resources.txt").write_text(raw)
+                    (destination / f"{phase}-database-resources.json").write_text(json.dumps(
+                        database_resources(raw, 2 * 1024**3, None, 2)))
+        return fragments
+
+    def test_repetition_fragments_require_all_runs_and_retain_each_database(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            fragments = self.repetition_fragments(parent)
+            self.assertTrue(all(json.loads((root / "summary.json").read_text())["fragment_passed"]
+                                for root in fragments))
+            self.assertFalse(any(json.loads((root / "summary.json").read_text())["selected_shapes_passed"]
+                                 for root in fragments))
+            output = parent / "combined"
+            summary = aggregate_repetitions(fragments, output)
+            self.assertTrue(summary["h1_h4_worker_qualified"])
+            self.assertEqual(summary["measured_runs"], 35)
+            self.assertEqual(len(list(output.glob("*-final-database-resources.txt"))), 42)
+
+    def test_repetition_aggregation_rejects_missing_duplicate_or_unproved_evidence(self):
+        for invalid in ("missing", "duplicate", "build", "settings", "sample", "raw", "database",
+                        "cpu", "network", "failed", "warmup", "boolean"):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as temporary:
+                parent = Path(temporary)
+                fragments = self.repetition_fragments(parent)
+                root = fragments[0]
+                if invalid == "missing":
+                    fragments.pop()
+                elif invalid == "duplicate":
+                    fragments.append(root)
+                elif invalid == "build":
+                    (root.parent / "history-expiry-build.txt").write_text("other build")
+                elif invalid == "database":
+                    (root / "final-database-resources.txt").unlink()
+                elif invalid == "cpu":
+                    path = root / "final-database-resources.txt"
+                    path.write_text(path.read_text().replace("200000 100000", "400000 100000"))
+                elif invalid == "network":
+                    path = root / "postgres-container.json"
+                    value = json.loads(path.read_text())
+                    other = json.loads((fragments[1] / "postgres-container.json").read_text())
+                    value["limits"]["NetworkMode"] = other["limits"]["NetworkMode"]
+                    path.write_text(json.dumps(value))
+                elif invalid == "raw":
+                    path = next(root.glob("*-rss.jsonl"))
+                    path.write_text(path.read_text().replace("100000000", "99999999"))
+                else:
+                    name = "manifest" if invalid in ("settings", "boolean") else "samples"
+                    path = root / (name + ".json")
+                    value = json.loads(path.read_text())
+                    if invalid == "settings":
+                        value["worker_binary_sha256"] = "other binary"
+                    elif invalid == "boolean":
+                        value["repetition"] = False
+                    elif invalid == "sample":
+                        value[0]["report"]["batches"][0]["rows"] = 999
+                    elif invalid == "failed":
+                        value[0]["checks"]["h1_pass"] = False
+                    elif invalid == "warmup":
+                        value[0]["warmup"] = False
+                    path.write_text(json.dumps(value))
+                with self.assertRaises((ValueError, FileNotFoundError)):
+                    aggregate_repetitions(fragments, parent / "combined")
+
+    def repetition_jobs(self):
+        return [{"name": (f"warmup ({profile}, {shape})" if repeat == 0 else
+                          f"measure ({profile}, {shape}, {repeat})"),
+                 "id": index + 1, "conclusion": "success",
+                 "started_at": "2026-11-17T00:00:00Z" if repeat == 0 else "2026-11-17T00:10:00Z",
+                 "completed_at": "2026-11-17T00:10:00Z" if repeat == 0 else "2026-11-17T00:20:00Z"}
+                for index, (profile, shape, repeat) in enumerate(
+                    (profile, shape, repeat) for profile in ("local", "shared")
+                    for shape in SHAPES for repeat in range(6))]
+
+    def test_repetition_provenance_preserves_the_four_hour_case_boundary(self):
+        jobs = self.repetition_jobs()
+        jobs[-1]["completed_at"] = "2026-11-17T04:00:00Z"
+        proof = measurement_job_provenance(jobs)
+        self.assertEqual(len(proof["shape_jobs"]), 84)
+        self.assertEqual(proof["case_window_seconds"]["shared/authority"], 14400)
+        jobs[-1]["completed_at"] = "2026-11-17T04:00:01Z"
+        with self.assertRaises(ValueError):
+            measurement_job_provenance(jobs)
+
+    def test_repetition_provenance_rejects_missing_failed_or_misordered_jobs(self):
+        for invalid in ("missing", "duplicate", "identity", "failed", "clock", "overlap"):
+            with self.subTest(invalid=invalid):
+                jobs = self.repetition_jobs()
+                if invalid == "missing":
+                    jobs.pop()
+                elif invalid == "duplicate":
+                    jobs[-1]["id"] = jobs[0]["id"]
+                elif invalid == "identity":
+                    jobs[-1]["id"] = "not a job ID"
+                elif invalid == "failed":
+                    jobs[-1]["conclusion"] = "cancelled"
+                elif invalid == "clock":
+                    jobs[-1]["completed_at"] = None
+                elif invalid == "overlap":
+                    jobs[-1]["started_at"] = "2026-11-17T00:09:59Z"
+                with self.assertRaises(ValueError):
+                    measurement_job_provenance(jobs)
+
+    def test_selected_repetition_runs_once_without_qualifying_a_complete_case(self):
+        for repeat in (0, 5):
+            with self.subTest(repeat=repeat), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                binary = root / "binary"
+                binary.write_bytes(b"fixture")
+                args = Mock(output=root / "report", binary=binary, publisher_binary=binary,
+                            admin_binary=binary, profile="local", shape="rows", repeat=repeat)
+                fixture = MagicMock()
+                fixture.__enter__.return_value = fixture
+                report, resources = self.fixture()
+                report["worker_seconds"] = 1
+                def finish(*arguments, **kwargs):
+                    (args.output / f"rows-{repeat}.json").write_text(json.dumps(report))
+                with patch("integration.history_expiry.Fixture", return_value=fixture), \
+                        patch("integration.history_expiry.run_tests", side_effect=finish) as tests, \
+                        patch("integration.history_expiry.sample_resources", return_value=resources):
+                    self.assertEqual(run(args), 0)
+                self.assertEqual(tests.call_count, 1)
+                summary = json.loads((args.output / "summary.json").read_text())
+                self.assertTrue(summary["fragment_passed"])
+                self.assertFalse(summary["selected_shapes_passed"])
+
     def test_aggregation_rejects_incomplete_duplicate_or_mixed_provenance_shards(self):
         for invalid in ("missing", "duplicate", "manifest", "build", "sample", "raw", "failed"):
             with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as temporary:
@@ -225,9 +378,7 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                            "repository": {"full_name": "owner/repo"},
                            "head_repository": {"full_name": "owner/repo"}}
                 source = {**current, "head_sha": "a" * 40}
-                jobs = [{"name": f"measure ({profile}, {shape})", "id": index * len(SHAPES) + position,
-                         "conclusion": "success"} for index, profile in enumerate(("local", "shared"))
-                        for position, shape in enumerate(SHAPES)]
+                jobs = self.repetition_jobs()
                 changed = [".github/workflows/history-expiry-qualification.yml",
                            "tests/python/unit/deployment/test_history_expiry.py"]
                 if invalid == "branch":
@@ -265,7 +416,7 @@ class HistoryExpiryQualificationTests(unittest.TestCase):
                         exec(compile(script, "measurement provenance", "exec"), {})
                         proof = json.loads((root / "target/aggregation-provenance.json").read_text())
                         self.assertEqual(proof["measurement_commit"], source["head_sha"])
-                        self.assertEqual(len(proof["shape_jobs"]), 2 * len(SHAPES))
+                        self.assertEqual(len(proof["shape_jobs"]), 12 * len(SHAPES))
                         self.assertEqual((root / "outputs").read_text(), "source_sha=" + source["head_sha"] + "\n")
 
     def test_packaging_retains_failure_evidence_without_private_runtime_material(self):
