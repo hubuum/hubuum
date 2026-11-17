@@ -86,17 +86,20 @@ class BoundaryTests(unittest.TestCase):
 
 
 class FixtureImportTests(unittest.TestCase):
-    def test_verified_fixture_source_replaces_and_restores_cached_integration(self):
-        original = sys.modules["integration"]
+    def test_verified_fixture_source_replaces_and_restores_cached_packages(self):
+        original = {name: sys.modules[name] for name in ("integration", "support")}
         with tempfile.TemporaryDirectory() as temporary:
             server = Path(temporary)
-            package = server / "tests/python/integration"
-            package.mkdir(parents=True)
-            (package / "__init__.py").write_text("")
-            (package / "verified_fixture.py").write_text("value = 'accepted server fixture'\n")
+            for name in original:
+                package = server / "tests/python" / name
+                package.mkdir(parents=True)
+                (package / "__init__.py").write_text("")
+                (package / "verified_fixture.py").write_text("value = 'accepted server fixture'\n")
             with ecosystem.fixture_imports(server, server / "consumer/driver.py"):
-                fixture = importlib.import_module("integration.verified_fixture")
-                self.assertEqual(Path(fixture.__file__).parent, package)
-                self.assertEqual(fixture.value, "accepted server fixture")
-        self.assertIs(sys.modules["integration"], original)
-        self.assertNotIn("integration.verified_fixture", sys.modules)
+                for name in original:
+                    fixture = importlib.import_module(name + ".verified_fixture")
+                    self.assertEqual(Path(fixture.__file__).parent, server / "tests/python" / name)
+                    self.assertEqual(fixture.value, "accepted server fixture")
+        for name, previous in original.items():
+            self.assertIs(sys.modules[name], previous)
+            self.assertNotIn(name + ".verified_fixture", sys.modules)

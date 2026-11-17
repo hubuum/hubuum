@@ -61,10 +61,10 @@ def qualified_image(image, server):
 
 @contextmanager
 def fixture_imports(server, driver):
-    """Import fixtures from the verified server even when run.py cached integration."""
+    """Import fixtures from the verified server even when run.py cached fixture packages."""
     previous_path = sys.path[:]
     previous = {name: value for name, value in sys.modules.items()
-                if name == "integration" or name.startswith("integration.")}
+                if name.split(".", 1)[0] in ("integration", "support")}
     for name in previous:
         del sys.modules[name]
     sys.path[:0] = [str(driver.parent), str(server / "tests/python")]
@@ -72,7 +72,7 @@ def fixture_imports(server, driver):
         yield
     finally:
         for name in list(sys.modules):
-            if name == "integration" or name.startswith("integration."):
+            if name.split(".", 1)[0] in ("integration", "support"):
                 del sys.modules[name]
         sys.modules.update(previous)
         sys.path[:] = previous_path
