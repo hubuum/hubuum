@@ -560,15 +560,22 @@ authentication transaction: recheck the eligible session and provider revision,
 reconcile the verified identity, then call `StorageUpstreamSession::reauthenticated`
 and save the replacement atomically. Its cleared lease must fence both successful
 and rejected late renewals of the old grant. Do not issue a new ordinary session
-or operation approval at this stage. The existing session serialization and
-ciphertext binding remain unchanged; the separate user decision still controls
-the protected operation. This required capability is part of the unreleased
+or operation approval at this stage. Keep the original login binding for
+ciphertext. The user decides separately whether to approve the protected operation. This required capability is part of the unreleased
 0.11 breaking adapter contract.
 Never retry an ambiguous refresh with a consumed token. Reject stale failures
 that arrive after a newer successful login. Preserve a bounded last-success
 snapshot on temporary failure; definitive rejection invalidates external
-authority and sessions. Logout, configuration changes, deletion, security
-recovery and logical restore destroy retained credentials. Portable backups
+authority and sessions. For `RejectMembership`, check the live interaction
+claim and immutable identity under the current revision before invalidating the
+subject. Candidate previews never invalidate authority. When authentication
+settings change, advance the effective revision only for unchanged enabled
+providers, fence older claims and keep the original login binding for decryption.
+On `UnavailableBeforeSubmission`, restore the claimed grant with bounded backoff.
+Return the issued family's retained grant from `revoke_auth_interaction_session`
+in the local revocation transaction so the server can revoke it after commit.
+Logout, affected provider changes, deletion, security recovery and logical
+restore destroy retained credentials. Portable backups
 exclude both interaction protocol state and upstream credentials.
 
 OIDC definitions add `retain_refresh_tokens`, defaulting to `false`. This setting

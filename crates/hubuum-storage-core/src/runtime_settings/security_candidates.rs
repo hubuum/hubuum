@@ -267,7 +267,7 @@ impl StorageSecurityCandidate {
                     .providers()
                     .iter()
                     .find(|provider| provider.name() == name);
-                matches!((old, new), (Some(old), Some(new)) if old.enabled() && new.enabled() && old.kind() == new.kind() && old.configuration() == new.configuration())
+                matches!((old, new), (Some(old), Some(new)) if old.enabled() && new.enabled() && old == new)
             }
             _ => false,
         }

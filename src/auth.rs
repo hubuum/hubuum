@@ -695,7 +695,16 @@ impl AuthProviderRegistry {
             .into_iter()
             .map(|provider| provider.name.clone())
             .collect::<Vec<_>>();
-        let mut unavailable = self.unavailable.keys().cloned().collect::<Vec<_>>();
+        let mut unavailable = self
+            .unavailable
+            .keys()
+            .filter(|name| {
+                self.statuses
+                    .get(*name)
+                    .is_some_and(|status| status.kind == LDAP_PROVIDER_KIND)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         unavailable.sort_unstable();
         names.extend(unavailable);
         names
@@ -2040,6 +2049,7 @@ mod tests {
         .await
         .unwrap();
         assert!(registry.unavailable.contains_key("company"));
+        assert_eq!(registry.provider_names(), vec![LOCAL_IDENTITY_SCOPE]);
         assert!(registry.provider("company").is_err());
         assert!(
             registry

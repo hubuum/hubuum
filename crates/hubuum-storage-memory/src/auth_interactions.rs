@@ -228,10 +228,27 @@ impl MemoryState {
         let external = matches!(
             command.action(),
             StorageInteractionAction::AuthenticateExternal { .. }
+                | StorageInteractionAction::RejectMembership(_)
         );
         let result = if let Some(error) = self.interaction_fence(&mut record, now) {
             rejected(error)
         } else {
+            if let StorageInteractionAction::RejectMembership(rejection) = command.action()
+                && let Some(principal) = self.identity_principal(rejection.identity())?
+                && rejection
+                    .binding()
+                    .authority()
+                    .actor()
+                    .is_none_or(|actor| actor.principal_id() == principal)
+                && !self.users[&principal.id()]
+                    .last_sync_success_at
+                    .is_some_and(|success| success > rejection.verified_at())
+            {
+                self.external_sync_failure(
+                    principal,
+                    hubuum_storage_core::StorageExternalSyncFailure::Rejected,
+                )?;
+            }
             let command = if let StorageInteractionAction::AuthenticateExternal {
                 authentication,
                 approval,
@@ -464,7 +481,10 @@ impl MemoryState {
         &mut self,
         access: StorageInteractionAccess,
         context: EventContext,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<
+        StorageMutationOutcome<Option<hubuum_storage_core::StorageUpstreamSession>>,
+        StorageError,
+    > {
         let record = self
             .auth_interactions
             .get(&access.id().value())
@@ -477,7 +497,10 @@ impl MemoryState {
                 "Interaction has not issued a session",
             ));
         };
-        self.revoke_sessions(SessionRevocation::Session(AuthSessionId::new(id)), context)
+        let credential = self.upstream_sessions.get(&id).cloned();
+        Ok(self
+            .revoke_sessions(SessionRevocation::Session(AuthSessionId::new(id)), context)?
+            .map(|count| credential.filter(|_| count > 0)))
     }
 
     pub(super) fn purge_interactions(&mut self, limit: usize) -> Result<usize, StorageError> {

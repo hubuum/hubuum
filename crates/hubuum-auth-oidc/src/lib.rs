@@ -71,17 +71,16 @@ impl OidcAdapter {
     pub fn new(
         definition: OidcProviderDefinition,
         secret: SecretValue,
-        callback: &str,
+        callback: &hubuum_domain::BrowserCallbackUrl,
         allow_private_targets: bool,
     ) -> Result<Self, OidcError> {
-        endpoint(callback)?;
         if secret.len() > 16 * 1024 || secret.expose_utf8().is_err() {
             return Err(OidcError::Configuration);
         }
         Ok(Self {
             definition,
             secret,
-            callback: RedirectUrl::new(callback.to_owned())
+            callback: RedirectUrl::new(callback.as_str().to_owned())
                 .map_err(|_| OidcError::Configuration)?,
             transport: Transport::new(allow_private_targets),
         })
@@ -260,6 +259,7 @@ impl OidcAdapter {
         &self,
         retained: RetainedCredentials,
         context: &ExternalAuthenticationContext,
+        submitting: impl Fn() + Sync,
     ) -> Result<Authentication, OidcError> {
         if retained.issuer != self.definition.issuer().as_str()
             || retained.client_id != self.definition.client_id()
@@ -271,7 +271,7 @@ impl OidcAdapter {
             .client
             .exchange_refresh_token(&RefreshToken::new(retained.refresh.clone()))
             .map_err(|_| OidcError::Configuration)?
-            .request_async(&|request| self.transport.send(request))
+            .request_async(&|request| self.transport.send_with_dispatch(request, &submitting))
             .await
             .map_err(token_error)?;
         self.verify_refresh(&discovered, response, retained, context)
@@ -351,7 +351,10 @@ impl OidcAdapter {
                 .is_some_and(|party| party.as_str() != self.definition.client_id())
             || claims.expiration() <= claims.issue_time()
             || expected.is_some_and(|(subject, auth_time)| {
-                subject != claims.subject().as_str() || auth_time != claims.auth_time()
+                subject != claims.subject().as_str()
+                    || claims
+                        .auth_time()
+                        .is_some_and(|supplied| Some(supplied) != auth_time)
             })
         {
             return Err(OidcError::Denied);
@@ -432,14 +435,14 @@ impl OidcAdapter {
         };
         let authentication = context
             .verified_oidc(self.definition.issuer().as_str(), profile, memberships, now)
-            .map_err(|_| OidcError::Denied)?;
+            .map_err(OidcError::from)?;
         let credentials = response.refresh_token().map(|refresh| RetainedCredentials {
             refresh: refresh.secret().to_owned(),
             nonce: nonce.secret().to_owned(),
             subject: claims.subject().as_str().to_owned(),
             issuer: self.definition.issuer().as_str().to_owned(),
             client_id: self.definition.client_id().to_owned(),
-            auth_time: claims.auth_time(),
+            auth_time: expected.map_or_else(|| claims.auth_time(), |(_, original)| original),
         });
         Ok(Authentication {
             authentication,

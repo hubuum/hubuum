@@ -79,10 +79,11 @@ impl BrowserAdapter {
         &self,
         credentials: RetainedCredentials,
         context: &ExternalAuthenticationContext,
+        submitting: impl Fn() + Sync,
     ) -> Result<Authentication, ProtocolError> {
         match (self, credentials) {
             (Self::Oidc(adapter), RetainedCredentials::Oidc(credentials)) => adapter
-                .refresh(credentials, context)
+                .refresh(credentials, context, submitting)
                 .await
                 .map(Authentication::Oidc),
             (Self::OAuth(adapter), RetainedCredentials::OAuth(credentials)) => adapter

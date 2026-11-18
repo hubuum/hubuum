@@ -98,7 +98,7 @@ async fn eligible(
          JOIN authentication_provider_bindings b ON b.provider_id=c.provider_id
          WHERE b.name=i.name AND b.kind=i.provider_kind AND b.kind IN ('oidc','oauth')
            AND b.namespace=c.document->>'namespace' AND i.name=c.document->>'scope'
-           AND p.external_subject=c.document->>'subject' AND c.principal_id=$1 AND c.revision=$2
+           AND p.external_subject=c.document->>'subject' AND c.principal_id=$1 AND COALESCE((c.document->>'current_revision')::bigint,c.revision)=$2
            AND ($3 IS NULL OR c.session_id=$3)
            AND ($4 IS NULL OR c.document->>'credential' IS NOT NULL
                 OR (c.document->'lease'->>1)::timestamptz > $4)
@@ -210,8 +210,12 @@ pub async fn finish(
             let revision = revision(connection).await?;
             let authentication =
                 StorageExternalInteractionAuthentication::Login(request.proof().clone());
-            super::external_identity::lock_interaction_identity(connection, &authentication)
-                .await?;
+            super::external_identity::lock_interaction_identity(
+                connection,
+                request.proof().identity(),
+                request.proof().binding(),
+            )
+            .await?;
             let original = request.claim().session();
             lock_principal(connection, original.principal()).await?;
             let Some(mut record) = eligible(
@@ -242,6 +246,27 @@ pub async fn finish(
         })
         .await
 }
+pub(super) async fn issued_session_credential(
+    connection: &mut PostgresConnection,
+    id: Uuid,
+) -> Result<Option<StorageUpstreamSession>, PostgresStorageError> {
+    // Serialize with renewals before reading the grant that revocation will delete.
+    sql_query("SELECT id FROM principals WHERE id=(SELECT principal_id FROM auth_sessions WHERE id=$1) FOR UPDATE")
+        .bind::<SqlUuid,_>(id).execute(connection).await?;
+    let row = sql_query("SELECT document FROM auth_upstream_credentials WHERE session_id=$1")
+        .bind::<SqlUuid, _>(id)
+        .get_result::<Row>(connection)
+        .await
+        .optional()?;
+    Ok(row.and_then(|row| {
+        decode(row)
+            .inspect_err(|_| {
+                tracing::warn!("Unreadable upstream grant during local session cleanup")
+            })
+            .ok()
+    }))
+}
+
 pub async fn logout_credentials(
     runtime: &PostgresRuntime,
     target: hubuum_storage_core::StorageUpstreamRevocation,
@@ -272,7 +297,7 @@ pub async fn logout_credentials(
 pub async fn fail(
     runtime: &PostgresRuntime,
     claim: hubuum_storage_core::StorageUpstreamClaim,
-    failure: hubuum_storage_core::StorageExternalSyncFailure,
+    failure: hubuum_storage_core::StorageUpstreamFailure,
 ) -> Result<(), PostgresStorageError> {
     runtime
         .with_transaction(async move |connection| {
@@ -305,7 +330,7 @@ pub async fn fail(
                 super::security_candidates::binding_on_connection(connection, original.scope())
                     .await?
                     .ok_or_else(invalid)?;
-            if record.defer_profile_retry(&claim, &provider, failure, now) {
+            if record.defer_credential_retry(&claim, &provider, failure, now) {
                 save(connection, &record).await?;
             } else {
                 sql_query("DELETE FROM auth_upstream_credentials WHERE session_id=$1")
@@ -316,7 +341,7 @@ pub async fn fail(
             super::external_identity::failure_on_connection(
                 connection,
                 original.principal().id(),
-                failure,
+                failure.sync_failure(),
             )
             .await
         })

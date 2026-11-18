@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 mod transport;
 pub use transport::Transport;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ProtocolError {
     #[error("Authentication provider configuration is unsupported")]
     Configuration,
@@ -16,6 +16,19 @@ pub enum ProtocolError {
     InvalidResponse,
     #[error("Authentication was denied or revoked")]
     Denied,
+    #[error("Authenticated subject failed membership validation")]
+    MembershipRejected(Box<hubuum_domain::VerifiedMembershipRejection>),
+}
+
+impl From<hubuum_domain::ExternalAuthenticationError> for ProtocolError {
+    fn from(error: hubuum_domain::ExternalAuthenticationError) -> Self {
+        match error {
+            hubuum_domain::ExternalAuthenticationError::MembershipRejected(evidence) => {
+                Self::MembershipRejected(evidence)
+            }
+            _ => Self::Denied,
+        }
+    }
 }
 
 /// Keep only in encrypted, interaction-bound storage. Storage additionally

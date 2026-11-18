@@ -6,8 +6,6 @@ use hubuum_storage_core::StorageExternalSyncFailure;
 use hubuum_storage_core::StorageUpstreamClaim;
 use hubuum_storage_core::StorageUpstreamClaimOutcome;
 use hubuum_storage_core::StorageUpstreamRenewal;
-use hubuum_storage_core::StorageUpstreamRevocation;
-use hubuum_storage_core::StorageUpstreamSession;
 use hubuum_storage_core::{
     CredentialActivityPolicy, ObservedSource, StorageActivityQuery, StorageCredentialActivity,
     StorageCredentialCreation,
@@ -21,6 +19,9 @@ use hubuum_storage_core::{
     StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
     StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionOutcome,
     StorageInteractionView,
+};
+use hubuum_storage_core::{
+    StorageUpstreamFailure, StorageUpstreamRevocation, StorageUpstreamSession,
 };
 
 #[async_trait]
@@ -94,7 +95,7 @@ impl AuthenticationStorage for StorageHandle {
         &self,
         access: StorageInteractionAccess,
         context: EventContext,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<Option<StorageUpstreamSession>>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Authentication,
@@ -703,7 +704,7 @@ impl ExternalIdentityStorage for StorageHandle {
     async fn fail_upstream_renewal(
         &self,
         claim: StorageUpstreamClaim,
-        failure: StorageExternalSyncFailure,
+        failure: StorageUpstreamFailure,
     ) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),

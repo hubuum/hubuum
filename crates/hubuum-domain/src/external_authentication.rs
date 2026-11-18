@@ -30,6 +30,8 @@ pub enum ExternalAuthenticationError {
     InvalidProfile,
     #[error("required membership claim is absent")]
     MissingMemberships,
+    #[error("verified external identity failed membership validation")]
+    MembershipRejected(Box<VerifiedMembershipRejection>),
     #[error("membership claim must be a bounded array of unique valid group strings")]
     MalformedMemberships,
     #[error("provider membership result is incomplete")]
@@ -453,14 +455,48 @@ impl ExternalAuthenticationContext {
         verified_at: DateTime<Utc>,
     ) -> Result<VerifiedExternalAuthentication, ExternalAuthenticationError> {
         let identity = self.identity(profile.subject.clone())?;
+        let memberships = ExternalMemberships::validate(self.configuration.membership(), claims)
+            .map_err(|error| match error {
+                ExternalAuthenticationError::MissingMemberships
+                | ExternalAuthenticationError::MalformedMemberships
+                | ExternalAuthenticationError::IncompleteMemberships => {
+                    ExternalAuthenticationError::MembershipRejected(Box::new(
+                        VerifiedMembershipRejection {
+                            binding: self.binding.clone(),
+                            identity: identity.clone(),
+                            verified_at,
+                        },
+                    ))
+                }
+                other => other,
+            })?;
         Ok(VerifiedExternalAuthentication {
             binding: self.binding.clone(),
             identity,
             profile,
-            memberships: ExternalMemberships::validate(self.configuration.membership(), claims)?,
+            memberships,
             admission: self.configuration.admission().clone(),
             verified_at,
         })
+    }
+}
+
+/// An authenticated subject whose required membership observation failed validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedMembershipRejection {
+    binding: InteractionBinding,
+    identity: ExternalIdentity,
+    verified_at: DateTime<Utc>,
+}
+impl VerifiedMembershipRejection {
+    pub fn binding(&self) -> &InteractionBinding {
+        &self.binding
+    }
+    pub fn identity(&self) -> &ExternalIdentity {
+        &self.identity
+    }
+    pub fn verified_at(&self) -> DateTime<Utc> {
+        self.verified_at
     }
 }
 

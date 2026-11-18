@@ -201,3 +201,63 @@ async fn only_temporary_outages_allow_cached_authority(
     .await
     .unwrap();
 }
+
+#[actix_web::test]
+async fn local_logout_revokes_session_when_provider_authority_is_unavailable() {
+    use crate::tests::api_operations::post_request;
+    use actix_web::http::StatusCode;
+    let context = TestContext::new().await;
+    let app = app_context(&context.pool);
+    let scope = context.scoped_name("logout_offline");
+    let credential = StorageUser::from(
+        storage_handle(&context.pool)
+            .sync_external_user(
+                ResourceRevision::INITIAL,
+                StorageExternalUserSync::builder(&scope, "ldap", "subject", "alice").build(),
+            )
+            .await
+            .unwrap()
+            .into_value(),
+    );
+    let login = AuthenticatedLogin {
+        user: crate::services::identity::user_from_storage(credential.clone()),
+        credential,
+        identity_scope: scope.clone(),
+        provider_kind: "ldap".into(),
+        authentication_revision: Some(ResourceRevision::INITIAL),
+    };
+    let issued = issue_login_token(app.get_ref(), &login, &EventContext::system())
+        .await
+        .unwrap();
+    assert!(
+        refresh_principal_if_needed(&context.pool, login.user.id)
+            .await
+            .is_err()
+    );
+    let result = post_request(
+        &context.pool,
+        issued.token().as_str(),
+        "/api/v1/auth/logout",
+        &serde_json::json!({}),
+    )
+    .await;
+    let revoked =
+        crate::services::authentication::authenticate_bearer_token(&context.pool, issued.token())
+            .await
+            .is_err();
+    with_transaction(&context.pool, async |connection| {
+        diesel::sql_query("DELETE FROM principals WHERE id=$1")
+            .bind::<diesel::sql_types::Integer, _>(login.user.id)
+            .execute(connection)
+            .await?;
+        diesel::sql_query("DELETE FROM identity_scopes WHERE name=$1")
+            .bind::<diesel::sql_types::Text, _>(&scope)
+            .execute(connection)
+            .await?;
+        Ok::<_, diesel::result::Error>(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(result.status(), StatusCode::OK);
+    assert!(revoked);
+}

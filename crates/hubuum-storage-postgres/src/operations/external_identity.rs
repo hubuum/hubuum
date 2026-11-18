@@ -31,33 +31,43 @@ pub async fn find_external_identity(
     runtime: &PostgresRuntime,
     identity: hubuum_domain::ExternalIdentity,
 ) -> Result<Option<PrincipalId>, PostgresStorageError> {
-    let id = runtime
+    runtime
         .with_read_connection(async move |connection| {
-            principals::table
-                .inner_join(identity_scopes::table)
-                .inner_join(
-                    authentication_provider_bindings::table
-                        .on(authentication_provider_bindings::name.eq(identity_scopes::name)),
-                )
-                .filter(
-                    authentication_provider_bindings::provider_id.eq(identity
-                        .provider()
-                        .external_id()
-                        .expect("external identity provider")),
-                )
-                .filter(authentication_provider_bindings::kind.eq(identity.provider_kind()))
-                .filter(authentication_provider_bindings::namespace.eq(identity.namespace()))
-                .filter(identity_scopes::name.eq(identity.scope().as_str()))
-                .filter(identity_scopes::provider_kind.eq(identity.provider_kind()))
-                .filter(principals::kind.eq(HUMAN_PRINCIPAL_KIND))
-                .filter(principals::provider_managed.eq(true))
-                .filter(principals::external_subject.eq(identity.subject().as_str()))
-                .select(principals::id)
-                .first::<i32>(connection)
-                .await
-                .optional()
+            identity_principal(connection, &identity, false).await
         })
-        .await?;
+        .await
+}
+pub(super) async fn identity_principal(
+    connection: &mut PostgresConnection,
+    identity: &hubuum_domain::ExternalIdentity,
+    lock: bool,
+) -> Result<Option<PrincipalId>, PostgresStorageError> {
+    let query = principals::table
+        .inner_join(identity_scopes::table)
+        .inner_join(
+            authentication_provider_bindings::table
+                .on(authentication_provider_bindings::name.eq(identity_scopes::name)),
+        )
+        .filter(
+            authentication_provider_bindings::provider_id.eq(identity
+                .provider()
+                .external_id()
+                .expect("external identity provider")),
+        )
+        .filter(authentication_provider_bindings::kind.eq(identity.provider_kind()))
+        .filter(authentication_provider_bindings::namespace.eq(identity.namespace()))
+        .filter(identity_scopes::name.eq(identity.scope().as_str()))
+        .filter(identity_scopes::provider_kind.eq(identity.provider_kind()))
+        .filter(principals::kind.eq(HUMAN_PRINCIPAL_KIND))
+        .filter(principals::provider_managed.eq(true))
+        .filter(principals::external_subject.eq(identity.subject().as_str()))
+        .select(principals::id);
+    let id = if lock {
+        query.for_update().first::<i32>(connection).await
+    } else {
+        query.first::<i32>(connection).await
+    }
+    .optional()?;
     id.map(|id| PrincipalId::new(id).map_err(Into::into))
         .transpose()
 }
@@ -402,10 +412,9 @@ async fn sync_on_connection(
 
 pub(super) async fn lock_interaction_identity(
     connection: &mut PostgresConnection,
-    authentication: &StorageExternalInteractionAuthentication,
+    identity: &hubuum_domain::ExternalIdentity,
+    binding: &hubuum_domain::InteractionBinding,
 ) -> Result<(), PostgresStorageError> {
-    let fact = authentication.authentication();
-    let identity = fact.identity();
     // Serialize absent-row provisioning by immutable scope and subject across
     // replicas. Hash collisions only cause extra serialization, never linking.
     sql_query("SELECT pg_advisory_xact_lock(hashtextextended($1,576))")
@@ -426,7 +435,7 @@ pub(super) async fn lock_interaction_identity(
         .first::<i32>(connection)
         .await
         .optional()?;
-    if let Some(actor) = fact.binding().authority().actor() {
+    if let Some(actor) = binding.authority().actor() {
         let scope = scope.ok_or_else(|| {
             PostgresStorageError::authentication_required("External approval identity mismatch")
         })?;

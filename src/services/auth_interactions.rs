@@ -759,7 +759,7 @@ pub async fn revoke(
     access: StorageInteractionAccess,
     event_context: EventContext,
 ) -> Result<(), ApiError> {
-    storage_handle(context)
+    let credential = storage_handle(context)
         .revoke_auth_interaction_session(access, event_context)
         .await
         .map_err(|error| {
@@ -770,6 +770,9 @@ pub async fn revoke(
             }
         })?
         .into_value();
+    if let Some(record) = credential {
+        oidc::revoke_best_effort(vec![record], context.clone());
+    }
     Ok(())
 }
 fn storage_error(error: StorageError) -> ApiError {

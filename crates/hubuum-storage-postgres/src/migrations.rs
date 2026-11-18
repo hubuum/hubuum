@@ -21,6 +21,7 @@ const OFFLINE_MIGRATIONS: &[&str] = &[
     "20261112000001",
     "20261112000002",
     "20261113000001",
+    "20261118000001",
 ];
 
 /// Whether pending migrations permit the previous API to remain online.
@@ -127,7 +128,10 @@ pub fn run_embedded_migrations_as(
 /// isolated restore verification. The emptiness check and migrations share
 /// one connection so a caller cannot accidentally point this path at an
 /// already initialized Hubuum database.
-pub fn prepare_disposable_restore_database(connection_url: &str) -> Result<usize, StorageError> {
+pub fn prepare_disposable_restore_database(
+    connection_url: &str,
+    source: &hubuum_storage_core::StorageBackupReplay,
+) -> Result<usize, StorageError> {
     let mut connection = PgConnection::establish(connection_url).map_err(|error| {
         StorageError::from(PostgresStorageError::database(format!(
             "failed to connect to the disposable restore-test database: {error}"
@@ -183,14 +187,30 @@ pub fn prepare_disposable_restore_database(connection_url: &str) -> Result<usize
             state.user_object_count
         )));
     }
-    connection
+    let count = connection
         .run_pending_migrations(MIGRATIONS)
         .map_err(|error| {
             StorageError::from(PostgresStorageError::database(format!(
                 "failed to migrate the disposable restore-test database: {error}"
             )))
         })
-        .map(|migrations| migrations.len())
+        .map(|migrations| migrations.len())?;
+    let seeded = connection.transaction::<_, PostgresStorageError, _>(|connection| {
+        for row in source.state_rows(hubuum_storage_core::StorageBackupStateSection::IdentityScopes) {
+            let row = row.map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
+            if let Some(binding) = row.disposable_browser_binding().map_err(|error| PostgresStorageError::invalid_input(error.to_string()))? {
+                diesel::sql_query("INSERT INTO authentication_provider_bindings(name,provider_id,kind,namespace) VALUES ($1,$2,$3,$4)")
+                    .bind::<Text,_>(binding.name()).bind::<diesel::sql_types::Uuid,_>(binding.id())
+                    .bind::<Text,_>(binding.kind().as_str()).bind::<Text,_>(binding.namespace()).execute(connection)?;
+            }
+        }
+        Ok(())
+    });
+    if let Err(error) = seeded {
+        reset_disposable_restore_database(connection_url)?;
+        return Err(error.into());
+    }
+    Ok(count)
 }
 
 /// Remove the Hubuum schema created by [`prepare_disposable_restore_database`]
@@ -280,7 +300,8 @@ mod tests {
     #[case::before_security_candidates(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261110000001"], MigrationMode::Offline)]
     #[case::before_auth_interactions(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261110000001", "20261112000001"], MigrationMode::Offline)]
     #[case::before_oidc_credentials(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261110000001", "20261112000001", "20261112000002"], MigrationMode::Offline)]
-    #[case::current(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261110000001", "20261112000001", "20261112000002", "20261113000001"], MigrationMode::Rolling)]
+    #[case::before_credential_retention(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261110000001", "20261112000001", "20261112000002", "20261113000001"], MigrationMode::Offline)]
+    #[case::current(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261110000001", "20261112000001", "20261112000002", "20261113000001", "20261118000001"], MigrationMode::Rolling)]
     fn pending_offline_migrations_determine_mode(
         #[case] applied: Vec<&str>,
         #[case] expected: MigrationMode,
@@ -296,6 +317,7 @@ mod tests {
             "20261112000001",
             "20261112000002",
             "20261113000001",
+            "20261118000001",
         ]
         .map(str::to_owned);
         assert_eq!(

@@ -366,6 +366,7 @@ fn remote_error_outcome(error: &OutboundHttpError) -> &'static str {
         OutboundHttpError::DnsResolution { .. }
         | OutboundHttpError::EmptyDnsResolution { .. }
         | OutboundHttpError::ClientBuild
+        | OutboundHttpError::InvalidResponseBody { .. }
         | OutboundHttpError::ResponseRead
         | OutboundHttpError::Connect
         | OutboundHttpError::Request => "failure",
@@ -614,7 +615,9 @@ fn outbound_error_to_api_message(error: OutboundHttpError) -> String {
             format!("Remote target host '{host}' resolves to a disallowed address ({address})")
         }
         OutboundHttpError::ClientBuild => "HTTP client initialization failed".to_string(),
-        OutboundHttpError::ResponseRead => "Failed reading remote response".to_string(),
+        OutboundHttpError::InvalidResponseBody { .. } | OutboundHttpError::ResponseRead => {
+            "Failed reading remote response".to_string()
+        }
         OutboundHttpError::Timeout => "Remote call timed out".to_string(),
         OutboundHttpError::Connect => "Remote connection failed".to_string(),
         OutboundHttpError::Request => "Remote call failed".to_string(),

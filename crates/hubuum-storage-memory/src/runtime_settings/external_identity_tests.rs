@@ -741,7 +741,7 @@ async fn fresh_authentication_fences_old_memory_refresh(#[case] success: bool) {
             .await
     } else {
         f.backend
-            .fail_upstream_renewal(*old, StorageExternalSyncFailure::Rejected)
+            .fail_upstream_renewal(*old, hubuum_storage_core::StorageUpstreamFailure::Rejected)
             .await
     };
     assert!(stale.is_err());
@@ -836,11 +836,11 @@ async fn retained_renewal_updates_membership_and_rotates_atomically() {
 }
 
 #[rstest]
-#[case::temporary(StorageExternalSyncFailure::Unavailable, true)]
-#[case::rejected(StorageExternalSyncFailure::Rejected, false)]
+#[case::temporary(hubuum_storage_core::StorageUpstreamFailure::Unavailable, true)]
+#[case::rejected(hubuum_storage_core::StorageUpstreamFailure::Rejected, false)]
 #[tokio::test]
 async fn failed_memory_renewal_never_reuses_consumed_credentials(
-    #[case] failure: StorageExternalSyncFailure,
+    #[case] failure: hubuum_storage_core::StorageUpstreamFailure,
     #[case] preserves_snapshot: bool,
 ) {
     use hubuum_storage_core::StorageUpstreamClaimOutcome;

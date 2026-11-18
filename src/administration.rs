@@ -967,7 +967,12 @@ async fn verify_backup_restore(
     keep_restore_test_database: bool,
     capture_budget: StorageBackupBudget,
 ) -> Result<BackupVerificationReport, ApiError> {
-    let migrations_applied = prepare_disposable_restore_database(&target)?;
+    let (source, _, _) = crate::restores::replay::parse(
+        artifact.reader(),
+        artifact.summary().byte_size() as usize,
+        target.schema_limits(),
+    )?;
+    let migrations_applied = prepare_disposable_restore_database(&target, &source.snapshot)?;
     let verification = async {
         let storage = initialize_storage(&target)?;
         let started_at = std::time::Instant::now();
@@ -980,11 +985,6 @@ async fn verify_backup_restore(
                 "Restored disposable database did not pass storage readiness".to_string(),
             ));
         }
-        let (source, _, _) = crate::restores::replay::parse(
-            artifact.reader(),
-            artifact.summary().byte_size() as usize,
-            storage.schema_limits(),
-        )?;
         drop(artifact);
         let restored = crate::restores::replay::capture(
             &storage,

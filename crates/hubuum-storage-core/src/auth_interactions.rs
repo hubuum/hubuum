@@ -408,6 +408,7 @@ pub enum StorageInteractionAction {
         state: InteractionDigest,
     },
     Fail,
+    RejectMembership(Box<hubuum_domain::VerifiedMembershipRejection>),
     Authenticate {
         authentication: Box<StorageInteractionAuthentication>,
         approval: Option<InteractionBrowserBinding>,

@@ -8,8 +8,8 @@ use hubuum_auth_core::{
     ExternalAuthenticationContext, MembershipClaims, VerifiedExternalAuthentication,
 };
 use hubuum_domain::{
-    AuthenticationEndpoint, InteractionId, MembershipClaimSource, OAuthProfile,
-    OAuthProviderDefinition, ProviderClientAuthentication,
+    InteractionId, MembershipClaimSource, OAuthProfile, OAuthProviderDefinition,
+    ProviderClientAuthentication,
 };
 use hubuum_secrets::SecretValue;
 use oauth2::{
@@ -35,18 +35,16 @@ impl OAuthAdapter {
     pub fn new(
         definition: OAuthProviderDefinition,
         secret: SecretValue,
-        callback: &str,
+        callback: &hubuum_domain::BrowserCallbackUrl,
         allow_private_targets: bool,
     ) -> Result<Self, OAuthError> {
-        AuthenticationEndpoint::try_from(callback.to_owned())
-            .map_err(|_| OAuthError::Configuration)?;
         if secret.len() > 16 * 1024 || secret.expose_utf8().is_err() {
             return Err(OAuthError::Configuration);
         }
         Ok(Self {
             definition,
             secret,
-            callback: RedirectUrl::new(callback.to_owned())
+            callback: RedirectUrl::new(callback.as_str().to_owned())
                 .map_err(|_| OAuthError::Configuration)?,
             transport: Transport::new(allow_private_targets),
         })
@@ -329,7 +327,14 @@ impl OAuthAdapter {
                 },
                 Utc::now(),
             )
-            .map_err(|_| OAuthError::Denied)?;
+            .map_err(|error| match OAuthError::from(error) {
+                OAuthError::MembershipRejected(rejection)
+                    if rejection.identity().namespace() != self.definition.identity_namespace() =>
+                {
+                    OAuthError::Denied
+                }
+                error => error,
+            })?;
         if proof.identity().namespace() != self.definition.identity_namespace() {
             return Err(OAuthError::Denied);
         }

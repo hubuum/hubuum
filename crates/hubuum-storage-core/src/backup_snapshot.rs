@@ -122,6 +122,44 @@ backup_sections! {
 pub struct StorageBackupRow(Map<String, Value>);
 
 impl StorageBackupRow {
+    /// An empty restore-test database assigns fresh local IDs to the backed-up namespaces.
+    pub fn disposable_browser_binding(
+        &self,
+    ) -> Result<Option<crate::StorageProviderIdentityBinding>, StorageValidationError> {
+        let kind = match self.get("provider_kind").and_then(Value::as_str) {
+            Some("oidc") => crate::StorageAuthenticationProviderKind::Oidc,
+            Some("oauth") => crate::StorageAuthenticationProviderKind::Oauth,
+            _ => return Ok(None),
+        };
+        let field = |name| {
+            self.get(name)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    StorageValidationError::invalid(
+                        "Browser identity scope requires its name and source namespace",
+                    )
+                })
+        };
+        let namespace =
+            hubuum_domain::BrowserIdentityNamespace::try_from(field("identity_namespace")?)
+                .map_err(|error| StorageValidationError::invalid(error.to_string()))?;
+        if (kind == crate::StorageAuthenticationProviderKind::Oauth)
+            != namespace.as_str().starts_with('[')
+        {
+            return Err(StorageValidationError::invalid(
+                "Identity namespace does not match the browser provider kind",
+            ));
+        }
+        crate::StorageProviderIdentityBinding::try_new(
+            field("name")?,
+            uuid::Uuid::new_v4(),
+            kind,
+            namespace.as_str().to_owned(),
+        )
+        .map(Some)
+    }
+
     /// Browser subjects are scoped to the source issuer, including across installations.
     pub fn verify_identity_namespace(
         &self,

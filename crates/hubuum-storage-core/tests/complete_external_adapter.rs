@@ -308,7 +308,10 @@ impl AuthenticationStorage for CompleteExternalAdapter {
         &self,
         access: StorageInteractionAccess,
         context: EventContext,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<
+        StorageMutationOutcome<Option<hubuum_storage_core::StorageUpstreamSession>>,
+        StorageError,
+    > {
         fixture_result()
     }
     async fn purge_auth_interactions(&self, limit: usize) -> Result<usize, StorageError> {
@@ -575,7 +578,7 @@ impl ExternalIdentityStorage for CompleteExternalAdapter {
     async fn fail_upstream_renewal(
         &self,
         claim: StorageUpstreamClaim,
-        failure: StorageExternalSyncFailure,
+        failure: hubuum_storage_core::StorageUpstreamFailure,
     ) -> Result<(), StorageError> {
         fixture_result()
     }

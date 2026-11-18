@@ -907,6 +907,12 @@ pub(crate) async fn activate(
         if let Some(providers) = previous.authentication() {
             for provider in providers.providers().iter().filter(|provider| {
                 provider.enabled()
+                    && !candidate.retains_authenticated_provider(
+                        previous
+                            .record(StorageRuntimeSettingsGroup::Authentication)
+                            .assignment(),
+                        provider.name(),
+                    )
                     && matches!(
                         provider.kind(),
                         StorageAuthenticationProviderKind::Oidc

@@ -5,7 +5,7 @@ use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::events::{EventContext, RequestProvenance};
 use crate::extractors::AccessEventContext;
-use crate::extractors::{AdminAccess, Authenticated, ManagementAccess};
+use crate::extractors::{AdminAccess, Authenticated, LogoutCredential, ManagementAccess};
 use crate::middlewares::rate_limit::{
     LoginAttemptOutcome, begin_login_attempt, client_ip_for_request, finish_login_attempt,
 };
@@ -172,15 +172,12 @@ pub async fn login(
 #[post("/logout")]
 pub async fn logout(
     context: AppContext,
-    requestor: Authenticated,
+    requestor: LogoutCredential,
 ) -> Result<impl Responder, ApiError> {
     debug!(message = "token logout requested");
 
-    let upstream = oidc::session_revocations(
-        &context,
-        SessionRevocation::Current(requestor.token_meta.id()),
-    )
-    .await;
+    let upstream =
+        oidc::session_revocations(&context, SessionRevocation::Current(requestor.token_id)).await;
 
     let result = requestor.token.delete(&context).await;
 

@@ -155,7 +155,8 @@ assurance from unspecified `acr` or `amr` values.
 ## Upgrade and recovery
 
 This increment is an offline upgrade. Stop all API and worker replicas, back up
-the database, apply migration `2026-11-13-000001_oidc_credentials` and role grants,
+the database, apply migrations through
+`2026-11-18-000001_retain_unchanged_credentials` and role grants,
 then start matching binaries everywhere and begin new interactions. Upgrade
 external storage adapters and all ten SDK dependencies to `0.11.0`. Regenerate
 OpenAPI clients for the new browser routes and OIDC option. Older binaries and

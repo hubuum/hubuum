@@ -22,8 +22,10 @@ def run_tests(command, admin, database_url):
     host = f"[{source.hostname}]" if ":" in source.hostname else source.hostname
     authority = host + (f":{source.port}" if source.port else "")
 
-    def url(role):
-        return urlunsplit((source.scheme, f"{role}:{password}@{authority}", f"/{database}", source.query, ""))
+    drill = f"{database}_drill"
+
+    def url(role, target=database):
+        return urlunsplit((source.scheme, f"{role}:{password}@{authority}", f"/{target}", source.query, ""))
 
     psql = str(Path(os.environ["PG_BIN"]) / "psql.exe") if os.name == "nt" else "psql"
 
@@ -38,7 +40,8 @@ def run_tests(command, admin, database_url):
             f"CREATE ROLE {migrator} LOGIN PASSWORD '{password}';\n"
             f"CREATE ROLE {runtime} LOGIN PASSWORD '{password}';\n"
             f"GRANT {owner} TO {migrator};\n"
-            f"CREATE DATABASE {database} OWNER {owner};\n")
+            f"CREATE DATABASE {database} OWNER {owner};\n"
+            f"CREATE DATABASE {drill} OWNER {migrator};\n")
         migration_env = {**os.environ,
                          "HUBUUM_DATABASE_URL": url(runtime),
                          "HUBUUM_MIGRATION_DATABASE_URL": url(migrator),
@@ -48,11 +51,13 @@ def run_tests(command, admin, database_url):
                          "HUBUUM_DATABASE_RUNTIME_ROLE": runtime}
         subprocess.run([str(admin), "--migrate"], env=migration_env, cwd=ROOT, check=True)
         test_env = {**os.environ,
+                    "HUBUUM_RESTORE_DRILL_DATABASE_URL": url(migrator, drill),
                     "HUBUUM_RESTORE_TEST_DATABASE_URL": url(runtime),
                     "HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL": url(migrator)}
         return subprocess.run(command, env=test_env, cwd=ROOT, check=False).returncode
     finally:
-        sql(f"DROP DATABASE IF EXISTS {database} WITH (FORCE);\n"
+        sql(f"DROP DATABASE IF EXISTS {drill} WITH (FORCE);\n"
+            f"DROP DATABASE IF EXISTS {database} WITH (FORCE);\n"
             f"DROP ROLE IF EXISTS {runtime};\n"
             f"DROP ROLE IF EXISTS {migrator};\n"
             f"DROP ROLE IF EXISTS {owner};\n")
