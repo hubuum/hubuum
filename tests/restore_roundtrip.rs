@@ -121,6 +121,7 @@ async fn disposable_restore_verifies_browser_identity_namespaces() {
     );
     let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(report["result"], "passed");
+    assert_eq!(report["mode"], "isolated_restore");
 }
 
 #[tokio::test]

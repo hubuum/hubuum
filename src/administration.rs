@@ -327,7 +327,10 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let database_url_override = CommandLineDatabaseUrl::from_matches(&matches, "database_url");
     let migration_url_override =
         CommandLineDatabaseUrl::from_matches(&matches, "migration_database_url");
-    init_logging(&admin_cli.log_level, admin_cli.reconcile_query_usage);
+    init_logging(
+        &admin_cli.log_level,
+        admin_cli.reconcile_query_usage || admin_cli.json,
+    );
 
     if let Some(path) = admin_cli.verify_backup.as_deref() {
         verify_backup_file(BackupVerificationOptions {
