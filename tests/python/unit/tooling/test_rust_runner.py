@@ -40,9 +40,10 @@ with open(os.environ["RUNNER_CALLS"], "a") as output:
     output.write(json.dumps(call) + "\\n")
 if name == "cargo":
     if "--message-format=json" in args:
-        print(json.dumps({"reason": "compiler-artifact",
-                          "target": {"name": "hubuum-template-worker"},
-                          "executable": "/fixture/custom target/hubuum-template-worker"}))
+        print(json.dumps({"reason": "compiler-artifact", "target": {"name": "dependency"}}))
+        if os.environ["RUNNER_FAILURE"] != "worker_artifact":
+            print(json.dumps({"reason": "compiler-artifact", "target": {"name": "hubuum-template-worker"},
+                              "executable": "/separate build directory/template worker"}))
     restore_migration = "--migrate" in args and (call["HUBUUM_DATABASE_URL"] or "").endswith("_restore")
     application_tests = args == ["test", "--features", "integration-test-support,embedded-migrations"]
     if (os.environ["RUNNER_FAILURE"] == "migration" and restore_migration
@@ -51,7 +52,7 @@ if name == "cargo":
 if name == "diesel" and os.environ["RUNNER_FAILURE"] == "diesel":
     sys.exit(17)
 if name == "python3" and args[:1] == ["-c"]:
-    exec(args[1])
+    os.execv(sys.executable, [sys.executable, *args])
 ''')
             stub.chmod(0o755)
             for name in ("cargo", "diesel", "psql", "python3"):
@@ -93,15 +94,6 @@ if name == "python3" and args[:1] == ["-c"]:
                     for call in calls
                 ))
 
-    def test_every_suite_receives_cargos_reported_worker_path(self):
-        result, calls = self.run_fixture()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        tests = [call for call in calls if call["tool"] == "cargo" and call["args"][0] == "test"]
-        self.assertEqual(len(tests), 4)
-        for call in tests:
-            self.assertEqual(call["CARGO_BIN_EXE_hubuum-template-worker"],
-                             "/fixture/custom target/hubuum-template-worker")
-
     def test_invalid_role_test_setting_fails_before_building_or_provisioning(self):
         for role_tests in ("", "TRUE", "0", "yes", "false "):
             with self.subTest(role_tests=role_tests):
@@ -109,6 +101,21 @@ if name == "python3" and args[:1] == ["-c"]:
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("HUBUUM_DATABASE_ROLE_TESTS", result.stdout + result.stderr)
                 self.assertFalse(any(call["tool"] in {"cargo", "diesel", "psql"} for call in calls))
+
+    def test_all_rust_suites_receive_cargo_reported_worker_path(self):
+        result, calls = self.run_fixture()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        tests = [call for call in calls if call["tool"] == "cargo" and call["args"][0] == "test"]
+        self.assertEqual(len(tests), 4)
+        for call in tests:
+            self.assertEqual(call["CARGO_BIN_EXE_hubuum-template-worker"],
+                             "/separate build directory/template worker")
+
+    def test_missing_worker_artifact_fails_before_database_provisioning(self):
+        result, calls = self.run_fixture("worker_artifact")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one template worker", result.stderr)
+        self.assertFalse(any(call["tool"] in {"diesel", "psql"} for call in calls))
 
     def test_single_login_runs_general_suites_with_separate_migrated_restore_database(self):
         result, calls = self.run_fixture(role_tests="false")

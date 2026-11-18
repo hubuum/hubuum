@@ -2,6 +2,7 @@
 
 from unittest.mock import Mock, patch
 import io
+import json
 import subprocess
 import sys
 import traceback
@@ -37,23 +38,36 @@ class FixtureFailureTests(unittest.TestCase):
                 runner.wait_until_ready(probe, "fixture")
 
     def test_cleanup_attempts_every_resource_after_a_timeout(self):
-        def fixtures(_root, containers, _servers, networks):
+        def fixtures(_root, containers, _servers, networks, _worker_path):
             containers.extend(["first", "second"])
             networks.append("network")
             return 0
 
         success = subprocess.CompletedProcess([], 0)
+        worker = subprocess.CompletedProcess([], 0, stdout=json.dumps({
+            "reason": "compiler-artifact", "target": {"name": "hubuum-template-worker"},
+            "executable": "/relocated/hubuum-template-worker",
+        }))
         expired = subprocess.TimeoutExpired(["docker", "fixture-secret"], 30)
         errors = io.StringIO()
         with patch.object(runner.sys, "platform", "linux"), \
                 patch.object(runner, "run", side_effect=fixtures), \
                 patch.object(runner.subprocess, "run",
-                             side_effect=[success, success, expired, success, success]) as run, \
+                             side_effect=[success, worker, expired, success, success]) as run, \
                 patch.object(sys, "stderr", errors):
             self.assertEqual(runner.main(), 1)
         self.assertEqual([call.args[0][-1] for call in run.call_args_list[2:]],
                          ["second", "first", "network"])
         self.assertNotIn("fixture-secret", errors.getvalue())
+
+    def test_missing_worker_artifact_fails_before_starting_fixtures(self):
+        success = subprocess.CompletedProcess([], 0, stdout="")
+        with patch.object(runner.sys, "platform", "linux"), \
+                patch.object(runner.subprocess, "run", return_value=success), \
+                patch.object(runner, "run") as fixtures:
+            with self.assertRaisesRegex(RuntimeError, "exactly one template worker"):
+                runner.main()
+            fixtures.assert_not_called()
 
     def test_unsupported_platform_fails_before_building_or_provisioning(self):
         for platform in ("darwin", "win32"):

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 CARGO_DENY_VERSION="$(
   python3 "$repo_root/scripts/check-supply-chain-policy.py" \
     --tool-value CARGO_DENY_VERSION
@@ -35,16 +35,20 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   } >> "$GITHUB_STEP_SUMMARY"
 fi
 
-policy_args=(check)
-if [[ "$manifest_path" == "fuzz/Cargo.toml" || "$manifest_path" == "$repo_root/fuzz/Cargo.toml" ]]; then
-  # The standalone fuzz graph omits application dependencies. The root audit
-  # remains authoritative for unused exceptions; retain a notice here.
-  policy_args+=(--warn advisory-not-detected)
-fi
+# Root-only exceptions need not match the separate fuzz workspace. The root
+# audit still rejects unused exceptions; matching advisory errors stay fatal.
+unused_exception_lint="$(
+  python3 - "$manifest_path" "$repo_root/fuzz/Cargo.toml" <<'PY'
+from pathlib import Path
+import sys
+
+print("--warn" if Path(sys.argv[1]).resolve() == Path(sys.argv[2]).resolve() else "--deny")
+PY
+)"
 
 set +e
 cargo deny --manifest-path "$manifest_path" --config "$repo_root/deny.toml" \
-  --all-features --locked "${policy_args[@]}" 2>&1 | tee "$report_path"
+  --all-features --locked check "$unused_exception_lint" advisory-not-detected 2>&1 | tee "$report_path"
 status="${PIPESTATUS[0]}"
 set -e
 exit "$status"

@@ -62,7 +62,7 @@ actix-web = { version = "4", default-features = false, features = [
     "compat",
     "ws",
 ] }
-actix-http = { version = "3", default-features = false }
+actix-http = { version = "3.21.3", default-features = false }
 argon2 = "0.6.0"
 async-trait = "0.1"
 bytes = "1"

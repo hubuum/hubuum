@@ -7,6 +7,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Security
+
+- Require Actix HTTP 3.21.3 or later to fix malformed chunked request framing
+  and request-header timeout bypass on persistent HTTP/1 connections
+  (RUSTSEC-2026-0552, RUSTSEC-2026-0553 and RUSTSEC-2026-0554).
+
+- Require `lettre` 0.11.24 or later for the email event sink to fix SMTP reply
+  handling, message and address encoding, and unbounded response buffering
+  (RUSTSEC-2026-0560 through RUSTSEC-2026-0565).
+
 ### Added
 
 - Server-owned OAuth authorization-code login with S256 PKCE, a pinned GitHub.com
@@ -193,6 +203,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Security activation and offline recovery acquire settings before principal locks,
   avoiding a deadlock with concurrent authentication completion.
+
+- Rendering tests use Cargo's reported template-worker path, supporting the
+  relocated test executables introduced by Cargo 1.100.
+
 - Shared login reservations retain their original expiry when runtime rate-limit
   windows change, so in-flight failures still count toward the captured policy.
 - Shared login lockouts keep their expiry when overlapping requests finish under

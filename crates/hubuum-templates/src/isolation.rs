@@ -272,10 +272,10 @@ pub(crate) async fn validate_syntax(
 }
 
 fn worker_executable() -> Result<PathBuf, TemplateError> {
-    // Cargo test executables can live outside the final artifact directory.
-    // Use Cargo's executable metadata instead of depending on its build layout.
-    if let Some(executable) = std::env::var_os("CARGO_BIN_EXE_hubuum-template-worker") {
-        return Ok(executable.into());
+    // Cargo's test executables can live outside the final binary directory.
+    // Test runners supply this for unit tests across workspace packages too.
+    if let Some(worker) = std::env::var_os("CARGO_BIN_EXE_hubuum-template-worker") {
+        return Ok(PathBuf::from(worker));
     }
     let executable = std::env::current_exe()
         .map_err(|_| TemplateError::boundary("cannot locate template worker"))?;
