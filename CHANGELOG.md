@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Security
+
+- Require Actix HTTP 3.21.3 or later to fix malformed chunked request framing
+  and request-header timeout bypass on persistent HTTP/1 connections
+  (RUSTSEC-2026-0552, RUSTSEC-2026-0553 and RUSTSEC-2026-0554).
+
 ### Added
 
 - Administrators can change `pagination.max_page_limit` together with
@@ -325,6 +331,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `2026-11-11-000001_archive_runtime_compatibility`; it qualifies the known Legacy
   registry layout without enabling online expiry or replacing an installed
   versioned history protocol. Unknown future checkpoints still fail closed.
+
+- Rendering tests use Cargo's reported template-worker path, supporting the
+  relocated test executables introduced by Cargo 1.100.
 
 - Shared login reservations retain their original expiry when runtime rate-limit
   windows change, so in-flight failures still count toward the captured policy.

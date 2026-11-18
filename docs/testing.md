@@ -45,6 +45,12 @@ runs. This positive-integer setting changes the functional tests' polling budget
 production deadlines and the tests' result, authorization and cancellation
 assertions stay unchanged.
 
+The runner obtains the template worker executable from Cargo's JSON artifact
+report and passes `CARGO_BIN_EXE_hubuum-template-worker` to every Rust suite.
+CI supplies the matching final release binary path, including the Windows target
+directory. This keeps renderer tests independent of Cargo's internal test-binary
+layout; installed applications continue to find the worker beside their binary.
+
 The runner includes PostgreSQL adapter tests and a resource-limited JSON Schema
 probe. Python applies the probe's process limits; its assertions remain in Rust.
 Destructive restore contracts use a second runner-owned database with the same
