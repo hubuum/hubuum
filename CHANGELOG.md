@@ -13,6 +13,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   and request-header timeout bypass on persistent HTTP/1 connections
   (RUSTSEC-2026-0552, RUSTSEC-2026-0553 and RUSTSEC-2026-0554).
 
+- Require `lettre` 0.11.24 or later for the email event sink to fix SMTP reply
+  handling, message and address encoding, and unbounded response buffering
+  (RUSTSEC-2026-0560 through RUSTSEC-2026-0565).
+
 ### Added
 
 - Administrators can change `pagination.max_page_limit` together with
