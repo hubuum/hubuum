@@ -122,6 +122,27 @@ backup_sections! {
 pub struct StorageBackupRow(Map<String, Value>);
 
 impl StorageBackupRow {
+    /// Browser subjects are scoped to the source issuer, including across installations.
+    pub fn verify_identity_namespace(
+        &self,
+        destination: Option<&crate::StorageProviderIdentityBinding>,
+    ) -> Result<(), crate::StorageValidationError> {
+        let kind = self.get("provider_kind").and_then(Value::as_str);
+        if matches!(kind, Some("oidc" | "oauth"))
+            && !destination.is_some_and(|binding| {
+                Some(binding.name()) == self.get("name").and_then(Value::as_str)
+                    && Some(binding.kind().as_str()) == kind
+                    && Some(binding.namespace())
+                        == self.get("identity_namespace").and_then(Value::as_str)
+            })
+        {
+            return Err(crate::StorageValidationError::invalid(
+                "Restored browser identity scope requires a matching source and destination namespace",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn try_from_value(value: Value) -> Result<Self, StorageValidationError> {
         match value {
             Value::Object(fields) => Ok(Self(fields)),

@@ -95,6 +95,14 @@ async fn providers(
             });
         }
     }
+    if providers
+        .iter()
+        .filter(|provider| provider.id.external_id().is_some())
+        .count()
+        > hubuum_storage_core::StorageAuthenticationProviders::MAX_PROVIDERS
+    {
+        return Err(InteractionError::ProviderUnavailable.into());
+    }
     Ok((revision, providers))
 }
 
@@ -140,9 +148,6 @@ async fn resolve_password_providers(
             kind,
             binding,
         });
-    }
-    if providers.len() > 64 {
-        return Err(InteractionError::ProviderUnavailable.into());
     }
     Ok(providers)
 }
@@ -671,7 +676,10 @@ pub async fn complete(
                         verification,
                         candidate: crate::models::security_candidate::SecurityCandidateReport::new(
                             &candidate,
-                            Some(receipt),
+                            candidate
+                                .verification_receipt()
+                                .filter(|stored| **stored == receipt.digest())
+                                .map(|_| receipt),
                         ),
                     },
                 ))

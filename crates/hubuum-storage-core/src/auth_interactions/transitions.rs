@@ -158,7 +158,11 @@ impl StorageInteractionRecord {
                                 StorageProviderIdentityBinding::from_provider(provider).ok()
                             });
                         if selected.as_ref() != self.provider.as_ref()
-                            || candidate.state(now) != StorageSecurityCandidateState::Verified
+                            || !matches!(
+                                candidate.state(now),
+                                StorageSecurityCandidateState::Verified
+                                    | StorageSecurityCandidateState::Unverified
+                            )
                         {
                             return Err(InteractionTransitionError::Invalid);
                         }

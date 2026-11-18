@@ -26,6 +26,18 @@ impl MemoryRuntimeSettings {
             .revision()
     }
 
+    pub(super) fn fence_authentication_revision(
+        &self,
+        revision: ResourceRevision,
+    ) -> Result<(), StorageError> {
+        if self.authentication_revision() != revision {
+            return Err(StorageError::authentication_required(
+                "Authentication configuration changed; sign in again",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn provider_binding(&self, name: &str) -> Option<&StorageProviderIdentityBinding> {
         self.bindings.get(name)
     }

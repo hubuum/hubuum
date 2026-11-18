@@ -1789,6 +1789,7 @@ pub trait ExternalIdentityStorage: Send + Sync {
     /// Atomically remove the recoverable token and lease its single renewal attempt.
     async fn claim_upstream_credential(
         &self,
+        revision: ResourceRevision,
         principal: PrincipalId,
     ) -> Result<crate::StorageUpstreamClaimOutcome, StorageError>;
     /// Reconcile current identity/memberships and replace the rotated encrypted token atomically.
@@ -1826,6 +1827,7 @@ pub trait ExternalIdentityStorage: Send + Sync {
     /// pending login evidence, and active tokens; an outage preserves the last success.
     async fn record_external_sync_failure(
         &self,
+        revision: ResourceRevision,
         principal_id: PrincipalId,
         failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError>;
@@ -1834,6 +1836,7 @@ pub trait ExternalIdentityStorage: Send + Sync {
     /// group memberships, synchronization timestamps, and lifecycle events.
     async fn sync_external_user(
         &self,
+        revision: ResourceRevision,
         request: StorageExternalUserSync,
     ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError>;
 }

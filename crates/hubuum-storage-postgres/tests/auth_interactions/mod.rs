@@ -497,8 +497,13 @@ async fn revoking_the_initiating_credential_invalidates_a_ready_approval() {
     f.cleanup().await;
 }
 
+#[rstest::rstest]
+#[case::last_check(false)]
+#[case::another_provider_pending(true)]
 #[tokio::test]
-async fn provider_verification_consumes_only_the_exact_candidate_without_issuing_or_provisioning() {
+async fn provider_verification_consumes_only_the_exact_candidate_without_issuing_or_provisioning(
+    #[case] another_pending: bool,
+) {
     use hubuum_domain::InteractionActor;
     let f = Fixture::new().await;
     let backend = f.replica();
@@ -511,9 +516,23 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
     .with_id(Uuid::new_v4())
     .unwrap();
     let provider_binding = StorageProviderIdentityBinding::from_provider(&provider).unwrap();
+    let second_id = Uuid::new_v4();
+    let mut proposed = vec![provider];
+    if another_pending {
+        proposed.push(
+            StorageAuthenticationProvider::deployment(
+                "second-directory",
+                StorageAuthenticationProviderKind::Ldap,
+                true,
+            )
+            .unwrap()
+            .with_id(second_id)
+            .unwrap(),
+        );
+    }
     let update = StorageRuntimeSettingsUpdate::new(
         StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authentication(
-            StorageAuthenticationProviders::try_new(vec![provider]).unwrap(),
+            StorageAuthenticationProviders::try_new(proposed).unwrap(),
         )),
         ResourceRevision::INITIAL,
         context(),
@@ -569,7 +588,7 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
     else {
         panic!("claim rejected")
     };
-    let checks = [
+    let mut checks: Vec<_> = [
         StorageSecurityCheckKind::Configuration,
         StorageSecurityCheckKind::RecoveryAdministrator,
         StorageSecurityCheckKind::Identity,
@@ -589,12 +608,22 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
         .unwrap()
     })
     .collect();
-    let verified = candidate
-        .clone()
-        .with_checks(checks)
-        .unwrap()
-        .verify(digest('d'))
-        .unwrap();
+    if another_pending {
+        checks.push(
+            StorageSecurityCheck::try_new(
+                StorageSecurityCheckKind::Identity,
+                StorageSecurityCheckStatus::NotRun,
+                Some(second_id),
+                "test_sign_in_required",
+            )
+            .unwrap(),
+        );
+    }
+    let mut verified = candidate.clone().with_checks(checks).unwrap();
+    if !another_pending {
+        verified = verified.verify(digest('d')).unwrap();
+    }
+    let expected_state = verified.state(Utc::now());
     let proof =
         VerifiedInteractionSubject::new(interaction.binding.clone(), "external-subject").unwrap();
     let authentication = StorageInteractionAuthentication::verification(proof, verified).unwrap();
@@ -631,7 +660,7 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
             .await
             .unwrap()
             .state(Utc::now()),
-        StorageSecurityCandidateState::Verified
+        expected_state
     );
     assert_eq!(
         backend

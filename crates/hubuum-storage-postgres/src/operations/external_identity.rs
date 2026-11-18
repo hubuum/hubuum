@@ -1,5 +1,6 @@
 //! PostgreSQL implementation of external-identity synchronization contracts.
 
+use hubuum_domain::ResourceRevision;
 use hubuum_storage_core::StorageExternalSyncFailure;
 use std::collections::{HashMap, HashSet};
 
@@ -212,12 +213,14 @@ pub async fn get_external_principal_state(
 
 pub async fn record_external_sync_failure(
     runtime: &PostgresRuntime,
+    revision: ResourceRevision,
     principal_id: i32,
     failure: StorageExternalSyncFailure,
 ) -> Result<(), PostgresStorageError> {
     validate_positive_id(principal_id, "principal id")?;
     runtime
         .with_transaction(async move |connection| {
+            super::security_candidates::fence_authentication_revision(connection, revision).await?;
             failure_on_connection(connection, principal_id, failure).await
         })
         .await
@@ -287,10 +290,12 @@ pub(super) async fn failure_on_connection(
 
 pub async fn sync_external_user(
     runtime: &PostgresRuntime,
+    revision: ResourceRevision,
     request: StorageExternalUserSync,
 ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, PostgresStorageError> {
     runtime
         .with_transaction(async move |connection| {
+            super::security_candidates::fence_authentication_revision(connection, revision).await?;
             sync_on_connection(connection, request, false, None).await
         })
         .await

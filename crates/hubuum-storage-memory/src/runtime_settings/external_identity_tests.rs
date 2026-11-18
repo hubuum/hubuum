@@ -429,7 +429,11 @@ async fn rejection_fences_a_previously_verified_callback() {
     let attempt = f.start().await;
     let stale = f.command(&attempt, "subject", "alice", json!(["/team"]));
     f.backend
-        .record_external_sync_failure(f.id("subject").await, StorageExternalSyncFailure::Rejected)
+        .record_external_sync_failure(
+            ResourceRevision::INITIAL,
+            f.id("subject").await,
+            StorageExternalSyncFailure::Rejected,
+        )
         .await
         .unwrap();
     assert!(f.backend.advance_auth_interaction(stale).await.is_err());
@@ -711,7 +715,7 @@ async fn fresh_authentication_fences_old_memory_refresh(#[case] success: bool) {
     let (attempt, principal) = f.retained_session().await;
     let StorageUpstreamClaimOutcome::Claim(old) = f
         .backend
-        .claim_upstream_credential(principal)
+        .claim_upstream_credential(ResourceRevision::INITIAL, principal)
         .await
         .unwrap()
     else {
@@ -743,7 +747,7 @@ async fn fresh_authentication_fences_old_memory_refresh(#[case] success: bool) {
     assert!(stale.is_err());
     let StorageUpstreamClaimOutcome::Claim(new) = f
         .backend
-        .claim_upstream_credential(principal)
+        .claim_upstream_credential(ResourceRevision::INITIAL, principal)
         .await
         .unwrap()
     else {
@@ -759,8 +763,9 @@ async fn retained_token_is_consumed_once_across_memory_handles() {
     let (_, principal) = f.retained_session().await;
     let other = f.backend.clone();
     let (a, b) = tokio::join!(
-        f.backend.claim_upstream_credential(principal),
-        other.claim_upstream_credential(principal)
+        f.backend
+            .claim_upstream_credential(ResourceRevision::INITIAL, principal),
+        other.claim_upstream_credential(ResourceRevision::INITIAL, principal)
     );
     let outcomes = [a.unwrap(), b.unwrap()];
     assert_eq!(
@@ -788,7 +793,7 @@ async fn retained_renewal_updates_membership_and_rotates_atomically() {
     let (attempt, principal) = f.retained_session().await;
     let StorageUpstreamClaimOutcome::Claim(claim) = f
         .backend
-        .claim_upstream_credential(principal)
+        .claim_upstream_credential(ResourceRevision::INITIAL, principal)
         .await
         .unwrap()
     else {
@@ -812,7 +817,7 @@ async fn retained_renewal_updates_membership_and_rotates_atomically() {
         .unwrap();
     let StorageUpstreamClaimOutcome::Claim(claim) = f
         .backend
-        .claim_upstream_credential(principal)
+        .claim_upstream_credential(ResourceRevision::INITIAL, principal)
         .await
         .unwrap()
     else {
@@ -843,7 +848,7 @@ async fn failed_memory_renewal_never_reuses_consumed_credentials(
     let (_, principal) = f.retained_session().await;
     let StorageUpstreamClaimOutcome::Claim(claim) = f
         .backend
-        .claim_upstream_credential(principal)
+        .claim_upstream_credential(ResourceRevision::INITIAL, principal)
         .await
         .unwrap()
     else {
@@ -865,7 +870,7 @@ async fn failed_memory_renewal_never_reuses_consumed_credentials(
     );
     assert!(matches!(
         f.backend
-            .claim_upstream_credential(principal)
+            .claim_upstream_credential(ResourceRevision::INITIAL, principal)
             .await
             .unwrap(),
         StorageUpstreamClaimOutcome::Unavailable
@@ -904,4 +909,65 @@ async fn identity_lookup_preserves_provider_instance(#[case] other: bool, #[case
         f.backend.find_external_identity(identity).await.unwrap(),
         found.then_some(principal)
     );
+}
+
+#[rstest]
+#[case::same_namespace(Some("https://id.example/realm"), true)]
+#[case::other_issuer(Some("https://other.example/realm"), false)]
+#[case::unbound_destination(None, false)]
+#[tokio::test]
+async fn backup_requires_matching_browser_namespace(
+    #[case] issuer: Option<&str>,
+    #[case] accepted: bool,
+) {
+    use hubuum_storage_core::{BackupSnapshotStorage, StorageBackupBudget};
+    let fixture = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
+    fixture.retained_session().await;
+    let snapshot = fixture
+        .backend
+        .capture_backup_replay(
+            true,
+            StorageBackupBudget::new(16 * 1024 * 1024, 10000).unwrap(),
+        )
+        .await
+        .unwrap()
+        .materialize()
+        .unwrap();
+    let mut destination = MemoryRuntimeSettings::new();
+    if let Some(issuer) = issuer {
+        let provider = StorageProviderIdentityBinding::try_new(
+            "company".into(),
+            Uuid::new_v4(),
+            StorageAuthenticationProviderKind::Oidc,
+            issuer.into(),
+        )
+        .unwrap();
+        destination.bindings.insert("company".into(), provider);
+    }
+    assert_eq!(
+        crate::backup::restore(destination, snapshot).is_ok(),
+        accepted
+    );
+}
+
+#[tokio::test]
+async fn stale_policy_cannot_consume_current_session_credential() {
+    let fixture = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
+    let (_, principal) = fixture.retained_session().await;
+    let other = ResourceRevision::INITIAL.checked_advance().unwrap();
+    assert!(
+        fixture
+            .backend
+            .claim_upstream_credential(other, principal)
+            .await
+            .is_err()
+    );
+    assert!(matches!(
+        fixture
+            .backend
+            .claim_upstream_credential(ResourceRevision::INITIAL, principal)
+            .await
+            .unwrap(),
+        hubuum_storage_core::StorageUpstreamClaimOutcome::Claim(_)
+    ));
 }

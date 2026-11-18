@@ -319,3 +319,35 @@ async fn initial_login_requires_nonce() {
             .is_err()
     );
 }
+
+#[rstest]
+#[case::rotated(Some("replacement"), "replacement")]
+#[case::non_rotating(None, "original")]
+#[tokio::test]
+async fn verified_refresh_retains_usable_token(
+    #[case] replacement: Option<&str>,
+    #[case] expected: &str,
+) {
+    let (adapter, discovered, context) = fixture();
+    let claims = claims();
+    let original = RetainedCredentials {
+        refresh: "original".into(),
+        nonce: "nonce".into(),
+        subject: "stable-subject".into(),
+        issuer: adapter.definition.issuer().as_str().into(),
+        client_id: adapter.definition.client_id().into(),
+        auth_time: DateTime::from_timestamp(claims["auth_time"].as_i64().unwrap(), 0),
+    };
+    let mut response = response(
+        claims,
+        "current",
+        CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
+        false,
+    );
+    response.set_refresh_token(replacement.map(|token| RefreshToken::new(token.into())));
+    let verified = adapter
+        .verify_refresh(&discovered, response, original, &context)
+        .await
+        .unwrap();
+    assert_eq!(verified.credentials.unwrap().refresh, expected);
+}

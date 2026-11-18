@@ -117,10 +117,14 @@ pub(super) fn capture(
         .map_err(invalid_contract_value)
 }
 
-pub(super) fn restore(snapshot: StorageBackupSnapshot) -> Result<MemoryState, StorageError> {
+pub(super) fn restore(
+    runtime_settings: crate::runtime_settings::MemoryRuntimeSettings,
+    snapshot: StorageBackupSnapshot,
+) -> Result<MemoryState, StorageError> {
     let schema_limits = snapshot.schema_limits();
     let (sections, history) = snapshot.into_parts();
     let mut state = MemoryState::new();
+    state.runtime_settings = runtime_settings;
     resources::restore(&sections, &mut state)?;
     schemas::restore(&sections, &mut state, schema_limits)?;
     identity::restore(&sections, &mut state)?;

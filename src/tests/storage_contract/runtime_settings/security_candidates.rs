@@ -377,3 +377,23 @@ async fn invalid_browser_fields_fail_at_the_request_boundary(
     .await;
     assert_eq!(response.status(), http::StatusCode::BAD_REQUEST);
 }
+
+#[actix_web::test]
+async fn invalid_ldap_refresh_window_rejects_candidate_before_connection() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let (status, body) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post().uri(CANDIDATES).set_json(json!({
+            "group": "authentication", "expected_revision": 1,
+            "providers": [{"name": "directory", "kind": "ldap", "source": "runtime", "enabled": true,
+                "configuration": {"scope": "directory", "url": "ldaps://directory.example",
+                    "user_base_dn": "ou=people,dc=example", "user_filter": "(uid={username})",
+                    "subject_attribute": "entryUUID", "group_attributes": [], "group_rules": [],
+                    "refresh_ttl_seconds": 600, "max_stale_seconds": 60}}]
+        })),
+    ).await;
+    assert_eq!(status, http::StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.to_string().contains("max_stale_seconds"), "{body}");
+}

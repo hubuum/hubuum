@@ -120,7 +120,13 @@ impl OidcAdapter {
                     false,
                 )
                 .await
-                .map_err(|_| OidcError::Configuration)?;
+                .map_err(|error| {
+                    if error.is_dns_failure() {
+                        OidcError::Unavailable
+                    } else {
+                        OidcError::Configuration
+                    }
+                })?;
             }
         }
         let metadata: CoreProviderMetadata =
@@ -263,19 +269,33 @@ impl OidcAdapter {
         let discovered = self.discover().await?;
         let response = discovered
             .client
-            .exchange_refresh_token(&RefreshToken::new(retained.refresh))
+            .exchange_refresh_token(&RefreshToken::new(retained.refresh.clone()))
             .map_err(|_| OidcError::Configuration)?
             .request_async(&|request| self.transport.send(request))
             .await
             .map_err(token_error)?;
-        self.verify(
-            &discovered,
-            response,
-            &retained.nonce,
-            context,
-            Some((&retained.subject, retained.auth_time)),
-        )
-        .await
+        self.verify_refresh(&discovered, response, retained, context)
+            .await
+    }
+
+    async fn verify_refresh(
+        &self,
+        discovered: &Discovered,
+        response: CoreTokenResponse,
+        retained: RetainedCredentials,
+        context: &ExternalAuthenticationContext,
+    ) -> Result<Authentication, OidcError> {
+        let mut authentication = self
+            .verify(
+                discovered,
+                response,
+                &retained.nonce,
+                context,
+                Some((&retained.subject, retained.auth_time)),
+            )
+            .await?;
+        authentication.credentials.get_or_insert(retained);
+        Ok(authentication)
     }
 
     async fn verify(

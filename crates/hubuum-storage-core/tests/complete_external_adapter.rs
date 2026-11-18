@@ -581,6 +581,7 @@ impl ExternalIdentityStorage for CompleteExternalAdapter {
     }
     async fn claim_upstream_credential(
         &self,
+        revision: ResourceRevision,
         principal: PrincipalId,
     ) -> Result<StorageUpstreamClaimOutcome, StorageError> {
         fixture_result()
@@ -613,6 +614,7 @@ impl ExternalIdentityStorage for CompleteExternalAdapter {
 
     async fn record_external_sync_failure(
         &self,
+        revision: ResourceRevision,
         principal_id: PrincipalId,
         failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError> {
@@ -621,6 +623,7 @@ impl ExternalIdentityStorage for CompleteExternalAdapter {
 
     async fn sync_external_user(
         &self,
+        revision: ResourceRevision,
         request: StorageExternalUserSync,
     ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError> {
         fixture_result()

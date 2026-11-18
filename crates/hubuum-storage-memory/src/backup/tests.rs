@@ -10,7 +10,13 @@ pub(super) fn run(future: impl Future<Output = ()>) {
 fn restored(snapshot: StorageBackupSnapshot) -> MemoryStorage {
     MemoryStorage {
         schema_limits: snapshot.schema_limits(),
-        state: Arc::new(MemoryStateLock::new(restore(snapshot).unwrap())),
+        state: Arc::new(MemoryStateLock::new(
+            restore(
+                crate::runtime_settings::MemoryRuntimeSettings::new(),
+                snapshot,
+            )
+            .unwrap(),
+        )),
     }
 }
 
@@ -241,6 +247,7 @@ fn external_memberships_use_directory_revocation_provenance() {
         let key = "cn=operators,ou=groups,dc=example,dc=com";
         let _ = storage
             .sync_external_user(
+                ResourceRevision::INITIAL,
                 StorageExternalUserSync::builder("directory", LDAP_PROVIDER_KIND, "alice", "alice")
                     .groups(vec![StorageExternalGroup::new(key, "operators", None)])
                     .build(),
@@ -612,9 +619,10 @@ fn snapshot_with_correlation(correlation: Value) -> StorageBackupSnapshot {
 
 #[test]
 fn restore_normalizes_supported_legacy_correlation_strings() {
-    let state = restore(snapshot_with_correlation(json!(
-        "legacy invalid correlation"
-    )))
+    let state = restore(
+        crate::runtime_settings::MemoryRuntimeSettings::new(),
+        snapshot_with_correlation(json!("legacy invalid correlation")),
+    )
     .unwrap();
     assert!(
         state.events[0]
@@ -629,7 +637,11 @@ fn restore_normalizes_supported_legacy_correlation_strings() {
 #[test]
 fn restore_preserves_valid_correlation_ids() {
     let correlation = "backup-restore-123";
-    let state = restore(snapshot_with_correlation(json!(correlation))).unwrap();
+    let state = restore(
+        crate::runtime_settings::MemoryRuntimeSettings::new(),
+        snapshot_with_correlation(json!(correlation)),
+    )
+    .unwrap();
     assert_eq!(
         state.events[0].clone().into_parts().0.correlation_id(),
         Some(&CorrelationId::new(correlation).unwrap())
@@ -638,7 +650,13 @@ fn restore_preserves_valid_correlation_ids() {
 
 #[test]
 fn restore_rejects_malformed_correlation_field_types() {
-    assert!(restore(snapshot_with_correlation(json!(123))).is_err());
+    assert!(
+        restore(
+            crate::runtime_settings::MemoryRuntimeSettings::new(),
+            snapshot_with_correlation(json!(123))
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -740,6 +758,7 @@ fn backup_retains_both_manual_and_provider_membership_sources() {
         let storage = MemoryStorage::new();
         let id = storage
             .sync_external_user(
+                ResourceRevision::INITIAL,
                 StorageExternalUserSync::builder(
                     "directory",
                     LDAP_PROVIDER_KIND,

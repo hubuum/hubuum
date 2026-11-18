@@ -1027,8 +1027,9 @@ impl ExternalIdentityStorage for MemoryStorage {
             .upstream_sessions
             .get(&original.session().value())
             .ok_or_else(|| StorageError::authentication_required("Upstream session changed"))?;
-        if !state.upstream_eligible(record, Utc::now())
-            || !record.accepts(&claim, Utc::now())
+        let now = Utc::now();
+        if !state.upstream_eligible(record, now)
+            || !record.accepts(&claim, now)
             || state
                 .users
                 .get(&original.principal().id())
@@ -1041,22 +1042,38 @@ impl ExternalIdentityStorage for MemoryStorage {
                 "Upstream session changed",
             ));
         }
-        state.upstream_sessions.remove(&original.session().value());
+        let provider = state
+            .runtime_settings
+            .provider_binding(original.scope())
+            .ok_or_else(|| StorageError::authentication_required("Upstream provider changed"))?;
+        let record = state
+            .upstream_sessions
+            .get_mut(&original.session().value())
+            .expect("checked session");
+        if !record.defer_profile_retry(&claim, provider, failure, now) {
+            state.upstream_sessions.remove(&original.session().value());
+        }
         state.external_sync_failure(original.principal(), failure)?;
         *live = state;
         Ok(())
     }
     async fn claim_upstream_credential(
         &self,
+        revision: ResourceRevision,
         principal: PrincipalId,
     ) -> Result<StorageUpstreamClaimOutcome, StorageError> {
         let mut state = self.state.write().await;
+        state
+            .runtime_settings
+            .fence_authentication_revision(revision)?;
         let now = Utc::now();
         let selected = state
             .upstream_sessions
             .iter()
             .filter(|(_, record)| {
-                record.principal() == principal && state.upstream_eligible(record, now)
+                record.principal() == principal
+                    && record.has_credential_or_live_lease(now)
+                    && state.upstream_eligible(record, now)
             })
             .max_by_key(|(id, _)| (state.sessions.get(id).map(|session| session.absolute), **id))
             .map(|(id, _)| *id);
@@ -1233,10 +1250,13 @@ impl ExternalIdentityStorage for MemoryStorage {
 
     async fn record_external_sync_failure(
         &self,
+        revision: ResourceRevision,
         principal_id: PrincipalId,
         failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError> {
         let mut live = self.state.write().await;
+        live.runtime_settings
+            .fence_authentication_revision(revision)?;
         let mut state = live.clone();
         state.external_sync_failure(principal_id, failure)?;
         *live = state;
@@ -1245,9 +1265,12 @@ impl ExternalIdentityStorage for MemoryStorage {
 
     async fn sync_external_user(
         &self,
+        revision: ResourceRevision,
         request: StorageExternalUserSync,
     ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError> {
         let mut live = self.state.write().await;
+        live.runtime_settings
+            .fence_authentication_revision(revision)?;
         let mut staged = live.clone();
         let result = staged.sync_external_user(request, false, None)?;
         *live = staged;

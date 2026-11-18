@@ -115,7 +115,9 @@ does not extend upstream identity evidence.
 
 GitHub primary and secondary rate limits are temporary failures, including HTTP
 403 responses identified by rate-limit metadata or the secondary-limit error
-message. They do not immediately revoke existing Hubuum sessions.
+message. After a temporary profile-read failure, Hubuum retains the encrypted
+access token and waits 30 seconds before retrying that session. The failed read
+does not extend the cached membership lifetime.
 
 This profile does **not** perform refresh-token grants. GitHub OAuth Apps may
 issue expiring tokens and refresh tokens; the adapter honors access-token expiry

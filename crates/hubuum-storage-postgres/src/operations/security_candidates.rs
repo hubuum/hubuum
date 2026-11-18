@@ -183,14 +183,23 @@ pub async fn provider_binding(
     runtime: &PostgresRuntime,
     name: IdentityScopeName,
 ) -> Result<Option<StorageProviderIdentityBinding>, PostgresStorageError> {
-    runtime.with_connection(async |connection| -> Result<_, PostgresStorageError> {
-        sql_query("SELECT name,provider_id,kind,namespace FROM authentication_provider_bindings WHERE name=$1")
-            .bind::<Text,_>(name.as_str()).get_result::<ProviderBindingRow>(connection).await.optional()?
-            .map(|row| {
-                let kind = StorageAuthenticationProviderKind::parse(&row.kind).map_err(|error| PostgresStorageError::database(error.to_string()))?;
-                StorageProviderIdentityBinding::try_new(row.name, row.provider_id, kind, row.namespace).map_err(|error| PostgresStorageError::database(error.to_string()))
-            }).transpose()
-    }).await
+    runtime
+        .with_connection(async |connection| binding_on_connection(connection, name.as_str()).await)
+        .await
+}
+
+pub(super) async fn binding_on_connection(
+    connection: &mut PostgresConnection,
+    name: &str,
+) -> Result<Option<StorageProviderIdentityBinding>, PostgresStorageError> {
+    let row = sql_query("SELECT name,provider_id,kind,namespace FROM authentication_provider_bindings WHERE name=$1")
+        .bind::<Text,_>(name).get_result::<ProviderBindingRow>(connection).await.optional()?;
+    row.map(|row| {
+        let kind = StorageAuthenticationProviderKind::parse(&row.kind)?;
+        StorageProviderIdentityBinding::try_new(row.name, row.provider_id, kind, row.namespace)
+    })
+    .transpose()
+    .map_err(|error| PostgresStorageError::database(error.to_string()))
 }
 
 pub async fn purge(runtime: &PostgresRuntime) -> Result<usize, PostgresStorageError> {
@@ -255,16 +264,23 @@ pub(super) async fn fence_login(
     login: &hubuum_storage_core::StorageLogin,
 ) -> Result<(), PostgresStorageError> {
     if let Some(expected) = login.authentication_revision() {
-        let actual = sql_query(
-            "SELECT revision FROM runtime_settings WHERE setting_group='authentication' FOR SHARE",
-        )
-        .get_result::<SettingsRevision>(connection)
-        .await?;
-        if actual.revision != expected.get() {
-            return Err(PostgresStorageError::authentication_required(
-                "Authentication configuration changed; sign in again",
-            ));
-        }
+        fence_authentication_revision(connection, expected).await?;
+    }
+    Ok(())
+}
+pub(super) async fn fence_authentication_revision(
+    connection: &mut PostgresConnection,
+    expected: hubuum_domain::ResourceRevision,
+) -> Result<(), PostgresStorageError> {
+    let actual = sql_query(
+        "SELECT revision FROM runtime_settings WHERE setting_group='authentication' FOR SHARE",
+    )
+    .get_result::<SettingsRevision>(connection)
+    .await?;
+    if actual.revision != expected.get() {
+        return Err(PostgresStorageError::authentication_required(
+            "Authentication configuration changed; sign in again",
+        ));
     }
     Ok(())
 }

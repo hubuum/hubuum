@@ -123,6 +123,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Authentication changes now fence in-flight LDAP updates and browser renewals.
+  Browser identity restores require matching source and destination namespaces.
+  Before restoring, configure the destination with the same issuer or OAuth
+  namespace. Older backups containing browser scopes need a new backup that
+  records their namespaces.
+- Provider verification checks deployment selections, LDAP refresh settings
+  and required browser credentials. Candidates can verify multiple browser
+  providers individually. Temporary DNS and OAuth profile outages respect the
+  configured stale window, and OIDC renewal supports non-rotating tokens.
+  **Breaking for storage adapter authors:** pass the selected authentication
+  revision to external user synchronization, failure recording, and upstream
+  credential claims. Check it in the transaction before changing state.
 - OIDC fresh credential approval now keeps the newly verified encrypted refresh
   credential on an existing eligible session. Keycloak reauthentication no
   longer causes the next due eligibility check to reject the older grant's

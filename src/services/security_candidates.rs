@@ -63,15 +63,28 @@ fn check(
 
 async fn ldap_configuration(
     provider: &StorageAuthenticationProvider,
+    deployment: Option<&crate::auth::AuthProvidersConfig>,
 ) -> Result<crate::auth::ConfiguredLdapScope, ApiError> {
-    if provider.configuration().is_some() {
-        return crate::auth::runtime_provider_configuration(provider).await;
-    }
-    crate::auth::load_auth_config()?
-        .ldap
-        .into_iter()
-        .find(|config| config.ldap.scope == provider.name())
-        .ok_or_else(|| ApiError::BadRequest("Deployment provider unavailable".into()))
+    let configured = if provider.configuration().is_some() {
+        crate::auth::runtime_provider_configuration(provider).await?
+    } else {
+        let loaded;
+        let deployment = match deployment {
+            Some(deployment) => deployment,
+            None => {
+                loaded = crate::auth::load_auth_config()?;
+                &loaded
+            }
+        };
+        deployment
+            .ldap
+            .iter()
+            .find(|config| config.ldap.scope == provider.name())
+            .cloned()
+            .ok_or_else(|| ApiError::BadRequest("Deployment provider unavailable".into()))?
+    };
+    configured.refresh_policy()?;
+    Ok(configured)
 }
 
 async fn binding(
@@ -83,6 +96,24 @@ async fn binding(
         .map_err(|_| ApiError::ServiceUnavailable("Security secret sources unavailable".into()))?;
     let mut secret_versions = Vec::new();
     if let Some(StorageRuntimeSettingsValue::Authentication(providers)) = assignment.value() {
+        let release_config = release_ownership
+            .then(crate::auth::load_auth_config)
+            .transpose()?;
+        if let Some(deployment) = &release_config {
+            let mut active: Vec<_> = deployment
+                .ldap
+                .iter()
+                .map(|scope| scope.ldap.scope.as_str())
+                .collect();
+            let mut verified: Vec<_> = providers.providers().iter().map(|p| p.name()).collect();
+            active.sort_unstable();
+            verified.sort_unstable();
+            if active != verified {
+                return Err(ApiError::Conflict(
+                    "Deployment authentication selection changed".into(),
+                ));
+            }
+        }
         for provider in providers
             .providers()
             .iter()
@@ -93,7 +124,7 @@ async fn binding(
                 secret_versions.push(fingerprint(b"browser-secret", &json!({"id": provider.id(), "secret": secret.as_ref().map(|value| value.expose())}))?.as_str().to_owned());
                 continue;
             }
-            let configuration = ldap_configuration(provider).await?;
+            let configuration = ldap_configuration(provider, release_config.as_ref()).await?;
             // Provider-local version labels are not stable across replicas. A keyed
             // fingerprint covers the effective value as well as its source alias.
             let secret = if let Some(alias) = &configuration.ldap.bind_password_ref {
@@ -151,6 +182,7 @@ async fn binding(
         fingerprint(
             b"deployment",
             &json!({
+                "permission_backend": config.permission_backend,
                 "admin_group": config.admin_groupname,
                 "admin_identity_scope": config.admin_identity_scope,
                 "allow_private_targets": config.auth_runtime_allow_private_targets,
@@ -208,7 +240,11 @@ pub(crate) async fn create(
                     "Releasing ownership forbids provider overrides".into(),
                 ));
             }
-            let deployment = crate::auth::runtime_deployment_config();
+            let deployment = if current.authentication().is_none() || release_ownership {
+                crate::auth::load_auth_config()?
+            } else {
+                crate::auth::runtime_deployment_config()
+            };
             let mut ldap = Vec::new();
             let mut protected = Vec::new();
             for provider in providers {
@@ -232,7 +268,7 @@ pub(crate) async fn create(
                 .cloned(),
             );
             if release_ownership {
-                protected = crate::auth::load_auth_config()?
+                protected = deployment
                     .ldap
                     .iter()
                     .map(|provider| {
@@ -319,7 +355,7 @@ pub(crate) async fn create(
                         identified.push(provider);
                         continue;
                     }
-                    let configured = ldap_configuration(&provider).await?;
+                    let configured = ldap_configuration(&provider, Some(&deployment)).await?;
                     if configured.ldap.connect_timeout_seconds > 30
                         || configured.ldap.operation_timeout_seconds > 30
                     {
@@ -598,7 +634,7 @@ pub(crate) async fn authenticate_ldap_candidate(
     if provider.kind() != StorageAuthenticationProviderKind::Ldap {
         return Err(ApiError::BadRequest("LDAP provider required".into()));
     }
-    let configured = ldap_configuration(provider).await?;
+    let configured = ldap_configuration(provider, None).await?;
     let adapter = LdapIdentityProvider::with_secret_source(
         configured.ldap,
         std::sync::Arc::new(CandidateLdapSecrets),
@@ -744,11 +780,14 @@ pub(crate) async fn verify_browser_interaction(
             .to_owned(),
     )
     .map_err(invalid)?;
-    let candidate = candidate
-        .with_checks(checks)
-        .map_err(invalid)?
-        .verify(receipt)
-        .map_err(invalid)?;
+    let mut candidate = candidate.with_checks(checks).map_err(invalid)?;
+    if candidate
+        .checks()
+        .iter()
+        .all(|check| check.status() == CheckStatus::Passed)
+    {
+        candidate = candidate.verify(receipt).map_err(invalid)?;
+    }
     // No identity synchronization, membership writes or session issuance occurs.
     StorageInteractionAuthentication::verification(proof, candidate).map_err(invalid)
 }
@@ -782,15 +821,16 @@ pub(crate) async fn interaction_candidate(
         .iter()
         .find(|provider| provider.id() == Some(provider_id) && provider.enabled())
         .ok_or(crate::errors::InteractionError::Unsupported)?;
-    if !matches!(
-        provider.kind(),
-        StorageAuthenticationProviderKind::Ldap
-            | StorageAuthenticationProviderKind::Oidc
-            | StorageAuthenticationProviderKind::Oauth
-    ) || candidate.checks().iter().any(|check| {
-        check.status() != CheckStatus::Passed
-            && !(check.kind() == CheckKind::Identity && check.provider_id() == Some(provider_id))
-    }) {
+    let pending = candidate.checks().iter().any(|check| {
+        check.kind() == CheckKind::Identity
+            && check.provider_id() == Some(provider_id)
+            && check.status() == CheckStatus::NotRun
+    });
+    if !pending
+        || candidate.checks().iter().any(|check| {
+            check.status() != CheckStatus::Passed && check.kind() != CheckKind::Identity
+        })
+    {
         return Err(crate::errors::InteractionError::Unsupported.into());
     }
     let binding = hubuum_storage_core::StorageProviderIdentityBinding::from_provider(provider)

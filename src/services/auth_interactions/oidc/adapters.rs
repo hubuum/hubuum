@@ -163,12 +163,6 @@ pub(super) enum Authentication {
     OAuth(hubuum_auth_oauth::Authentication),
 }
 impl Authentication {
-    pub(super) fn proof(&self) -> &VerifiedExternalAuthentication {
-        match self {
-            Self::Oidc(value) => value.proof(),
-            Self::OAuth(value) => value.proof(),
-        }
-    }
     pub(super) fn into_parts(
         self,
     ) -> (VerifiedExternalAuthentication, Option<RetainedCredentials>) {

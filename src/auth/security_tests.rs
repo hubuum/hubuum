@@ -96,6 +96,7 @@ impl AuthProviderBackend for FailingDirectory {
     fn authenticate<'a>(
         &'a self,
         _storage: &'a crate::storage::StorageHandle,
+        _revision: ResourceRevision,
         _login: ValidatedLogin,
     ) -> AuthProviderFuture<'a, StorageUser> {
         Box::pin(async { Err(auth_failure()) })
@@ -104,6 +105,7 @@ impl AuthProviderBackend for FailingDirectory {
     fn refresh<'a>(
         &'a self,
         _storage: &'a crate::storage::StorageHandle,
+        _revision: ResourceRevision,
         _state: &'a ExternalUserState,
     ) -> AuthProviderRefreshFuture<'a> {
         Box::pin(async move {
@@ -137,6 +139,7 @@ async fn only_temporary_outages_allow_cached_authority(
     let scope = context.scoped_name("refresh_denial");
     let user = storage
         .sync_external_user(
+            ResourceRevision::INITIAL,
             StorageExternalUserSync::builder(&scope, "ldap", "subject", "alice").build(),
         )
         .await
@@ -145,6 +148,7 @@ async fn only_temporary_outages_allow_cached_authority(
     let calls = Arc::new(AtomicUsize::new(0));
     let mut registry =
         AuthProviderRegistry::from_config(AuthProvidersConfig { ldap: vec![] }).unwrap();
+    registry.revision = Some(ResourceRevision::INITIAL);
     registry
         .register(RegisteredAuthProvider {
             name: scope.clone(),

@@ -5,7 +5,18 @@ pub(super) fn capture(
     sections: &mut StorageBackupStateSections,
     progress: &mut StorageBackupCaptureProgress,
 ) -> Result<(), StorageError> {
-    sections.insert(StorageBackupStateSection::IdentityScopes, state.identity_scopes.values().map(|v| row(json!({"id": v.id().id(), "name": v.name(), "provider_kind": v.provider_kind(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
+    let scopes = state.identity_scopes.values().map(|scope| {
+        let mut document = json!({
+            "id": scope.id().id(), "name": scope.name(), "provider_kind": scope.provider_kind(),
+            "created_at": scope.created_at(), "updated_at": scope.updated_at(), "revision": scope.revision().get()
+        });
+        if matches!(scope.provider_kind(), "oidc" | "oauth") && let Some(binding) = state.runtime_settings.provider_binding(scope.name())
+            && binding.kind().as_str() == scope.provider_kind() {
+            document["identity_namespace"] = json!(binding.namespace());
+        }
+        capture_row(progress, row(document))
+    }).collect::<Result<_, _>>()?;
+    sections.insert(StorageBackupStateSection::IdentityScopes, scopes);
     sections.insert(StorageBackupStateSection::Groups, state.groups.values().map(|v| row(json!({"id": v.id().id(), "name": v.name(), "description": v.description(), "identity_scope_id": v.identity_scope_id().id(), "managed_by": v.managed_by(), "external_key": v.external_key(), "last_sync_attempted_at": v.last_sync_attempted_at(), "last_sync_success_at": v.last_sync_success_at(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
     sections.insert(StorageBackupStateSection::Principals, state.principals.values().map(|v| row(json!({"id": v.id().id(), "kind": v.kind().as_str(), "name": v.name(), "identity_scope_id": v.identity_scope_id().id(), "provider_managed": v.provider_managed(), "settings": v.settings(), "external_subject": v.external_subject(), "last_sync_attempted_at": v.last_sync_attempted_at(), "last_sync_success_at": v.last_sync_success_at(), "created_at": v.created_at(), "updated_at": v.updated_at(), "revision": v.revision().get()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
     sections.insert(StorageBackupStateSection::ServiceAccounts, state.service_accounts.values().map(|v| row(json!({"id": v.id().id(), "kind": "service_account", "description": v.description(), "owner_group_id": v.owner_group_id().id(), "created_by": v.created_by().map(PrincipalId::id), "disabled_at": v.disabled_at(), "created_at": v.created_at(), "updated_at": v.updated_at()}))).map(|row| capture_row(progress, row)).collect::<Result<_, _>>()?);
@@ -132,6 +143,8 @@ pub(super) fn restore(
             r.revision()?,
         )
         .map_err(invalid_contract_value)?;
+        row.verify_identity_namespace(state.runtime_settings.provider_binding(value.name()))
+            .map_err(invalid_contract_value)?;
         state.identity_scopes.insert(value.id().id(), value);
     }
     for row in &sections[&StorageBackupStateSection::Groups] {

@@ -1,12 +1,13 @@
 //! Lock order: authentication revision, identity (renewal), principal, session,
 //! encrypted credential. No database transaction remains open during OIDC I/O.
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
-use chrono::Utc;
-use diesel::sql_types::{BigInt, Integer, Jsonb, Nullable, Text, Uuid as SqlUuid};
+use chrono::{DateTime, Utc};
+use diesel::sql_types::{BigInt, Integer, Jsonb, Nullable, Text, Timestamptz, Uuid as SqlUuid};
 use diesel::{OptionalExtension, QueryableByName, sql_query};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::FreshExternalAuthentication;
 use hubuum_domain::PrincipalId;
+use hubuum_domain::ResourceRevision;
 use hubuum_storage_core::{
     SessionRevocation, StorageExternalInteractionAuthentication, StorageUpstreamApproval,
     StorageUpstreamClaimOutcome, StorageUpstreamRenewal, StorageUpstreamSession,
@@ -72,29 +73,73 @@ async fn save(
         .await?;
     Ok(())
 }
+enum SessionSelection {
+    ClaimAt(DateTime<Utc>),
+    Approval,
+    Session(Uuid),
+}
+
 async fn eligible(
     connection: &mut PostgresConnection,
     principal: PrincipalId,
     revision: i64,
-    session: Option<Uuid>,
+    selection: SessionSelection,
 ) -> Result<Option<StorageUpstreamSession>, PostgresStorageError> {
-    let row = sql_query("SELECT c.document FROM auth_upstream_credentials c JOIN auth_sessions s ON s.id=c.session_id AND s.principal_id=c.principal_id JOIN principals p ON p.id=c.principal_id JOIN users u ON u.id=p.id JOIN identity_scopes i ON i.id=p.identity_scope_id JOIN authentication_provider_bindings b ON b.provider_id=c.provider_id WHERE b.name=i.name AND b.kind=i.provider_kind AND b.kind IN ('oidc','oauth') AND b.namespace=c.document->>'namespace' AND i.name=c.document->>'scope' AND p.external_subject=c.document->>'subject' AND c.principal_id=$1 AND c.revision=$2 AND ($3 IS NULL OR c.session_id=$3) AND s.revoked_at IS NULL AND s.absolute_expires_at > clock_timestamp() AT TIME ZONE 'UTC' AND s.idle_expires_at > clock_timestamp() AT TIME ZONE 'UTC' AND u.anonymized_at IS NULL AND p.provider_managed AND p.last_sync_success_at IS NOT NULL ORDER BY s.absolute_expires_at DESC,c.session_id LIMIT 1 FOR UPDATE OF s,c")
-        .bind::<Integer,_>(principal.id()).bind::<BigInt,_>(revision).bind::<Nullable<SqlUuid>,_>(session)
-        .get_result::<Row>(connection).await.optional()?;
+    let (session, claim_at) = match selection {
+        SessionSelection::ClaimAt(now) => (None, Some(now)),
+        SessionSelection::Approval => (None, None),
+        SessionSelection::Session(id) => (Some(id), None),
+    };
+    let row = sql_query(
+        "SELECT c.document FROM auth_upstream_credentials c
+         JOIN auth_sessions s ON s.id=c.session_id AND s.principal_id=c.principal_id
+         JOIN principals p ON p.id=c.principal_id JOIN users u ON u.id=p.id
+         JOIN identity_scopes i ON i.id=p.identity_scope_id
+         JOIN authentication_provider_bindings b ON b.provider_id=c.provider_id
+         WHERE b.name=i.name AND b.kind=i.provider_kind AND b.kind IN ('oidc','oauth')
+           AND b.namespace=c.document->>'namespace' AND i.name=c.document->>'scope'
+           AND p.external_subject=c.document->>'subject' AND c.principal_id=$1 AND c.revision=$2
+           AND ($3 IS NULL OR c.session_id=$3)
+           AND ($4 IS NULL OR c.document->>'credential' IS NOT NULL
+                OR (c.document->'lease'->>1)::timestamptz > $4)
+           AND s.revoked_at IS NULL AND s.absolute_expires_at > clock_timestamp() AT TIME ZONE 'UTC'
+           AND s.idle_expires_at > clock_timestamp() AT TIME ZONE 'UTC' AND u.anonymized_at IS NULL
+           AND p.provider_managed AND p.last_sync_success_at IS NOT NULL
+         ORDER BY s.absolute_expires_at DESC,c.session_id LIMIT 1 FOR UPDATE OF s,c",
+    )
+    .bind::<Integer, _>(principal.id())
+    .bind::<BigInt, _>(revision)
+    .bind::<Nullable<SqlUuid>, _>(session)
+    .bind::<Nullable<Timestamptz>, _>(claim_at)
+    .get_result::<Row>(connection)
+    .await
+    .optional()?;
     row.map(decode).transpose()
 }
 pub async fn claim(
     runtime: &PostgresRuntime,
+    expected: ResourceRevision,
     principal: PrincipalId,
 ) -> Result<StorageUpstreamClaimOutcome, PostgresStorageError> {
     runtime
         .with_transaction(async move |connection| -> Result<_, PostgresStorageError> {
             let revision = revision(connection).await?;
+            if revision != expected.get() {
+                return Err(invalid());
+            }
             lock_principal(connection, principal).await?;
-            let Some(mut record) = eligible(connection, principal, revision, None).await? else {
+            let now = Utc::now();
+            let Some(mut record) = eligible(
+                connection,
+                principal,
+                revision,
+                SessionSelection::ClaimAt(now),
+            )
+            .await?
+            else {
                 return Ok(StorageUpstreamClaimOutcome::Unavailable);
             };
-            let outcome = record.claim(Utc::now());
+            let outcome = record.claim(now);
             save(connection, &record).await?;
             Ok(outcome)
         })
@@ -115,7 +160,7 @@ pub async fn approval_session(
                 .ok_or_else(invalid)?
                 .principal_id();
             lock_principal(connection, principal).await?;
-            eligible(connection, principal, revision, None)
+            eligible(connection, principal, revision, SessionSelection::Approval)
                 .await?
                 .map(|record| StorageUpstreamApproval::new(&record, proof).map_err(|_| invalid()))
                 .transpose()
@@ -147,7 +192,7 @@ pub(super) async fn retain_approval(
         connection,
         principal,
         revision,
-        Some(approval.session().value()),
+        SessionSelection::Session(approval.session().value()),
     )
     .await?
     .ok_or_else(invalid)?;
@@ -173,7 +218,7 @@ pub async fn finish(
                 connection,
                 original.principal(),
                 revision,
-                Some(original.session().value()),
+                SessionSelection::Session(original.session().value()),
             )
             .await?
             else {
@@ -234,17 +279,18 @@ pub async fn fail(
             let revision = revision(connection).await?;
             let original = claim.session();
             lock_principal(connection, original.principal()).await?;
-            let Some(record) = eligible(
+            let Some(mut record) = eligible(
                 connection,
                 original.principal(),
                 revision,
-                Some(original.session().value()),
+                SessionSelection::Session(original.session().value()),
             )
             .await?
             else {
                 return Err(invalid());
             };
-            if !record.accepts(&claim, Utc::now()) {
+            let now = Utc::now();
+            if !record.accepts(&claim, now) {
                 return Err(invalid());
             }
             let latest = super::external_identity::sync_success_on_connection(
@@ -255,10 +301,18 @@ pub async fn fail(
             if latest.is_some_and(|at| at > claim.started_at()) {
                 return Err(invalid());
             }
-            sql_query("DELETE FROM auth_upstream_credentials WHERE session_id=$1")
-                .bind::<SqlUuid, _>(original.session().value())
-                .execute(connection)
-                .await?;
+            let provider =
+                super::security_candidates::binding_on_connection(connection, original.scope())
+                    .await?
+                    .ok_or_else(invalid)?;
+            if record.defer_profile_retry(&claim, &provider, failure, now) {
+                save(connection, &record).await?;
+            } else {
+                sql_query("DELETE FROM auth_upstream_credentials WHERE session_id=$1")
+                    .bind::<SqlUuid, _>(original.session().value())
+                    .execute(connection)
+                    .await?;
+            }
             super::external_identity::failure_on_connection(
                 connection,
                 original.principal().id(),

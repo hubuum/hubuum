@@ -685,6 +685,21 @@ async fn replace_backend_replay(
     connection: &mut PostgresConnection,
     snapshot: StorageBackupReplay,
 ) -> Result<(), PostgresStorageError> {
+    for row in snapshot.state_rows(StorageBackupStateSection::IdentityScopes) {
+        let row = row?;
+        if matches!(
+            row.get("provider_kind").and_then(Value::as_str),
+            Some("oidc" | "oauth")
+        ) {
+            let name = row.get("name").and_then(Value::as_str).ok_or_else(|| {
+                PostgresStorageError::invalid_input("Invalid identity scope name")
+            })?;
+            let destination =
+                super::security_candidates::binding_on_connection(connection, name).await?;
+            row.verify_identity_namespace(destination.as_ref())
+                .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
+        }
+    }
     for table in TRUNCATE_TABLES {
         validate_restore_identifier(table, None)?;
     }

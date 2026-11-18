@@ -1,5 +1,6 @@
 use super::*;
 use hubuum_domain::ExternalIdentity;
+use hubuum_domain::ResourceRevision;
 use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
 use hubuum_storage_core::StorageExternalSyncFailure;
 use hubuum_storage_core::StorageUpstreamClaim;
@@ -718,6 +719,7 @@ impl ExternalIdentityStorage for StorageHandle {
     }
     async fn claim_upstream_credential(
         &self,
+        revision: ResourceRevision,
         principal: PrincipalId,
     ) -> Result<StorageUpstreamClaimOutcome, StorageError> {
         self.observe_storage_call(
@@ -726,7 +728,7 @@ impl ExternalIdentityStorage for StorageHandle {
             "claim_upstream_credential",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.claim_upstream_credential(principal).await
+                    backend.claim_upstream_credential(revision, principal).await
                 })
             },
         )
@@ -800,6 +802,7 @@ impl ExternalIdentityStorage for StorageHandle {
 
     async fn record_external_sync_failure(
         &self,
+        revision: ResourceRevision,
         principal_id: PrincipalId,
         failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError> {
@@ -811,7 +814,7 @@ impl ExternalIdentityStorage for StorageHandle {
             async {
                 dispatch_backend!(self, |backend| {
                     backend
-                        .record_external_sync_failure(principal_id, failure)
+                        .record_external_sync_failure(revision, principal_id, failure)
                         .await
                 })
             },
@@ -821,6 +824,7 @@ impl ExternalIdentityStorage for StorageHandle {
 
     async fn sync_external_user(
         &self,
+        revision: ResourceRevision,
         request: StorageExternalUserSync,
     ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError> {
         self.observe_storage_call(
@@ -829,7 +833,7 @@ impl ExternalIdentityStorage for StorageHandle {
             "sync_external_user",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.sync_external_user(request).await
+                    backend.sync_external_user(revision, request).await
                 })
             },
         )

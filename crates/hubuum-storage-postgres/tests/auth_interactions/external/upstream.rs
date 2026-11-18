@@ -157,7 +157,7 @@ impl ExternalFixture {
     async fn upstream_claim(&self, principal: PrincipalId) -> StorageUpstreamClaim {
         let StorageUpstreamClaimOutcome::Claim(claim) = self
             .backend
-            .claim_upstream_credential(principal)
+            .claim_upstream_credential(ResourceRevision::INITIAL, principal)
             .await
             .unwrap()
         else {
@@ -279,8 +279,9 @@ async fn concurrent_replicas_claim_one_refresh_token() {
     let principal = f.retained_login().await;
     let other = f.database.replica();
     let (a, b) = tokio::join!(
-        f.backend.claim_upstream_credential(principal),
-        other.claim_upstream_credential(principal)
+        f.backend
+            .claim_upstream_credential(ResourceRevision::INITIAL, principal),
+        other.claim_upstream_credential(ResourceRevision::INITIAL, principal)
     );
     let outcomes = [a.unwrap(), b.unwrap()];
     assert_eq!(
@@ -370,7 +371,7 @@ async fn rejected_refresh_invalidates_external_authority() {
     );
     assert!(matches!(
         f.backend
-            .claim_upstream_credential(principal)
+            .claim_upstream_credential(ResourceRevision::INITIAL, principal)
             .await
             .unwrap(),
         StorageUpstreamClaimOutcome::Unavailable
@@ -407,7 +408,7 @@ async fn uncertain_refresh_destroys_token_but_preserves_bounded_snapshot() {
     );
     assert!(matches!(
         f.backend
-            .claim_upstream_credential(principal)
+            .claim_upstream_credential(ResourceRevision::INITIAL, principal)
             .await
             .unwrap(),
         StorageUpstreamClaimOutcome::Unavailable
@@ -541,6 +542,29 @@ async fn logout_snapshot_is_scoped_to_the_requested_provider(
         } else {
             vec![principal]
         }
+    );
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
+async fn expired_lease_does_not_hide_another_sessions_credential() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let principal = f.retained_login().await;
+    f.retained_login().await;
+    let spent = f
+        .upstream_claim(principal)
+        .await
+        .session()
+        .session()
+        .value();
+    f.database.owner(&format!("UPDATE auth_upstream_credentials SET document=jsonb_set(document, '{{lease,1}}', to_jsonb(now() - interval '1 minute')) WHERE session_id='{spent}'")).await.unwrap();
+    assert_ne!(
+        f.upstream_claim(principal)
+            .await
+            .session()
+            .session()
+            .value(),
+        spent
     );
     f.database.cleanup().await;
 }

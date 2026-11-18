@@ -42,6 +42,22 @@ pub(super) async fn provider_configuration(
     {
         return Err(InteractionError::ConfigurationChanged.into());
     }
+    if current.authentication().is_none() {
+        let configured = crate::auth::interaction_password_providers(binding.revision())?;
+        let providers = super::resolve_password_providers(&storage, configured).await?;
+        let deployed = providers
+            .iter()
+            .filter_map(|provider| provider.binding.as_ref())
+            .find(|provider| Some(provider.id()) == binding.provider().external_id())
+            .ok_or(InteractionError::ProviderUnavailable)?;
+        return StorageAuthenticationProvider::deployment(
+            deployed.name().to_owned(),
+            deployed.kind(),
+            true,
+        )
+        .and_then(|provider| provider.with_id(deployed.id()))
+        .map_err(|_| InteractionError::Invalid.into());
+    }
     let provider = current
         .authentication()
         .and_then(|providers| {
@@ -204,7 +220,15 @@ pub(crate) async fn check_existing_authority(
         != hubuum_auth_core::ExternalFreshness::Current
     {
         if let Some(provider) = provider
-            && super::oidc::renew(storage, principal, provider).await?
+            && super::oidc::renew(
+                storage,
+                principal,
+                current
+                    .record(StorageRuntimeSettingsGroup::Authentication)
+                    .revision(),
+                provider,
+            )
+            .await?
         {
             return Ok(true);
         }

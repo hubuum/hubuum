@@ -316,11 +316,13 @@ pub async fn callback(
             .await
             .map_err(error)?;
         if view.binding().authority().purpose() == InteractionPurpose::ProviderVerification {
-            let verified = crate::services::security_candidates::verify_browser_interaction(
-                context,
-                authentication.proof(),
-            )
-            .await?;
+            let (proof, credentials) = authentication.into_parts();
+            if retain_credentials(&selected) && credentials.is_none() {
+                return Err(InteractionError::Unsupported.into());
+            }
+            let verified =
+                crate::services::security_candidates::verify_browser_interaction(context, &proof)
+                    .await?;
             super::advance(
                 context,
                 StorageInteractionAuthorization::Claim(claim.claim().clone()),
@@ -410,6 +412,7 @@ use hubuum_storage_core::StorageInteractionAuthentication;
 pub(crate) async fn renew(
     storage: &crate::storage::StorageHandle,
     principal: PrincipalId,
+    revision: hubuum_domain::ResourceRevision,
     provider: &StorageAuthenticationProvider,
 ) -> Result<bool, ApiError> {
     use hubuum_storage_core::{
@@ -419,7 +422,10 @@ pub(crate) async fn renew(
     if !retain_credentials(provider) {
         return Ok(false);
     }
-    let claim = match storage.claim_upstream_credential(principal).await? {
+    let claim = match storage
+        .claim_upstream_credential(revision, principal)
+        .await?
+    {
         StorageUpstreamClaimOutcome::Unavailable => return Ok(false),
         StorageUpstreamClaimOutcome::Busy => {
             return Err(ApiError::ServiceUnavailable(
@@ -428,8 +434,7 @@ pub(crate) async fn renew(
         }
         StorageUpstreamClaimOutcome::Claim(claim) => *claim,
     };
-    // Bound the complete attempt, including secret resolution. Once claimed,
-    // no failure may leave a reusable upstream token behind.
+    // Bound the complete attempt, including secret resolution, to the claim lease.
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(25), async {
         let original = claim.session();
         let purpose = format!("upstream:{}", original.subject());

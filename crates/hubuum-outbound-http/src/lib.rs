@@ -73,6 +73,15 @@ pub enum OutboundHttpError {
     InvalidHeaderValue { name: String },
 }
 
+impl OutboundHttpError {
+    pub fn is_dns_failure(&self) -> bool {
+        matches!(
+            self,
+            Self::DnsResolution { .. } | Self::EmptyDnsResolution { .. }
+        )
+    }
+}
+
 impl fmt::Display for OutboundHttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
