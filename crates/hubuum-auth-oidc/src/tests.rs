@@ -31,7 +31,7 @@ fn fixture() -> (OidcAdapter, Discovered, ExternalAuthenticationContext) {
     let adapter = OidcAdapter::new(
         definition.clone(),
         SecretValue::new(b"secret".to_vec()).unwrap(),
-        "https://hubuum.example/callback",
+        &hubuum_domain::BrowserCallbackUrl::new("https://hubuum.example/callback", false).unwrap(),
         false,
     )
     .unwrap();
@@ -317,5 +317,73 @@ async fn initial_login_requires_nonce() {
             )
             .await
             .is_err()
+    );
+}
+
+#[rstest]
+#[case::rotated(Some("replacement"), "replacement")]
+#[case::non_rotating(None, "original")]
+#[tokio::test]
+async fn verified_refresh_retains_usable_token(
+    #[case] replacement: Option<&str>,
+    #[case] expected: &str,
+) {
+    let (adapter, discovered, context) = fixture();
+    let mut claims = claims();
+    let original = RetainedCredentials {
+        refresh: "original".into(),
+        nonce: "nonce".into(),
+        subject: "stable-subject".into(),
+        issuer: adapter.definition.issuer().as_str().into(),
+        client_id: adapter.definition.client_id().into(),
+        auth_time: DateTime::from_timestamp(claims["auth_time"].as_i64().unwrap(), 0),
+    };
+    let original_time = original.auth_time;
+    claims.as_object_mut().unwrap().remove("auth_time");
+    let mut response = response(
+        claims,
+        "current",
+        CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
+        false,
+    );
+    response.set_refresh_token(replacement.map(|token| RefreshToken::new(token.into())));
+    let verified = adapter
+        .verify_refresh(&discovered, response, original, &context)
+        .await
+        .unwrap();
+    let credential = verified.credentials.unwrap();
+    assert_eq!(credential.refresh, expected);
+    assert_eq!(credential.auth_time, original_time);
+}
+
+#[rstest]
+#[case::verified(false, true)]
+#[case::bad_signature(true, false)]
+#[tokio::test]
+async fn only_signed_identity_can_reject_memberships(
+    #[case] corrupt: bool,
+    #[case] rejected: bool,
+) {
+    let (adapter, discovered, context) = fixture();
+    let mut claims = claims();
+    claims.as_object_mut().unwrap().remove("groups");
+    let result = adapter
+        .verify(
+            &discovered,
+            response(
+                claims,
+                "current",
+                CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
+                corrupt,
+            ),
+            "nonce",
+            &context,
+            None,
+        )
+        .await;
+    assert!(result.is_err());
+    assert_eq!(
+        matches!(result, Err(OidcError::MembershipRejected(proof)) if proof.identity().subject().as_str() == "stable-subject"),
+        rejected
     );
 }

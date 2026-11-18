@@ -29,6 +29,21 @@ impl StorageInteractionRecord {
                             | StorageInteractionAction::Inspect
                     )
             }
+            (
+                StorageInteractionAuthorization::Claim(claim),
+                StorageInteractionAction::RejectMembership(rejection),
+            ) => {
+                self.lifecycle.authentication_claim() == Some(claim)
+                    && claim.binding() == rejection.binding()
+                    && claim.binding().authority().purpose()
+                        != InteractionPurpose::ProviderVerification
+                    && self.provider().is_some_and(|provider| {
+                        provider.name() == rejection.identity().scope().as_str()
+                            && provider.namespace() == rejection.identity().namespace()
+                            && provider.kind().as_str() == rejection.identity().provider_kind()
+                            && Some(provider.id()) == rejection.identity().provider().external_id()
+                    })
+            }
             (StorageInteractionAuthorization::Claim(claim), action) => {
                 self.lifecycle.authentication_claim() == Some(claim)
                     && matches!(
@@ -158,7 +173,11 @@ impl StorageInteractionRecord {
                                 StorageProviderIdentityBinding::from_provider(provider).ok()
                             });
                         if selected.as_ref() != self.provider.as_ref()
-                            || candidate.state(now) != StorageSecurityCandidateState::Verified
+                            || !matches!(
+                                candidate.state(now),
+                                StorageSecurityCandidateState::Verified
+                                    | StorageSecurityCandidateState::Unverified
+                            )
                         {
                             return Err(InteractionTransitionError::Invalid);
                         }
@@ -172,7 +191,10 @@ impl StorageInteractionRecord {
                 )?;
                 self.authenticated = Some(authentication.evidence);
             }
-            (StorageInteractionAuthorization::Claim(claim), StorageInteractionAction::Reject) => {
+            (
+                StorageInteractionAuthorization::Claim(claim),
+                StorageInteractionAction::Reject | StorageInteractionAction::RejectMembership(_),
+            ) => {
                 self.lifecycle.reject_authentication(&claim, now)?;
             }
             (

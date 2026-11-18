@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 mod browser;
 pub use browser::{
-    InteractionBrowserPrompt, InteractionReturnTarget, InteractionSealedOperation,
-    InteractionVerificationDetails,
+    BrowserCallbackUrl, InteractionBrowserPrompt, InteractionReturnTarget,
+    InteractionSealedOperation, InteractionVerificationDetails,
 };
 
 mod lifecycle;

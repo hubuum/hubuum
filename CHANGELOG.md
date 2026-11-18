@@ -133,6 +133,34 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Live browser sign-in invalidates cached authority when a verified subject fails
+  required membership checks. Local logout and orphan-session cleanup revoke the
+  presented session even during an upstream outage.
+- Changing another provider preserves retained OIDC and OAuth credentials.
+  Discovery and transport outages respect the stale window, and OIDC renewal
+  accepts an omitted authentication time. Disposable restore drills can replay
+  browser identity namespaces into an empty PostgreSQL database.
+- Browser callbacks honor the loopback HTTP development setting. Password
+  discovery excludes unavailable browser providers, and candidate creation
+  rejects oversized or duplicate selections before contacting providers.
+- **Breaking for storage adapter authors.** Implement verified membership
+  rejection, submission-aware renewal failures and atomic return of the issued
+  family's retained grant on orphan cleanup. Stop API and worker replicas,
+  back up the database, apply migration
+  `2026-11-18-000001_retain_unchanged_credentials` and restart matching binaries.
+
+- Authentication changes now fence in-flight LDAP updates and browser renewals.
+  Browser identity restores require matching source and destination namespaces.
+  Before restoring, configure the destination with the same issuer or OAuth
+  namespace. Older backups containing browser scopes need a new backup that
+  records their namespaces.
+- Provider verification checks deployment selections, LDAP refresh settings
+  and required browser credentials. Candidates can verify multiple browser
+  providers individually. Temporary DNS and OAuth profile outages respect the
+  configured stale window, and OIDC renewal supports non-rotating tokens.
+  **Breaking for storage adapter authors:** pass the selected authentication
+  revision to external user synchronization, failure recording, and upstream
+  credential claims. Check it in the transaction before changing state.
 - OIDC fresh credential approval now keeps the newly verified encrypted refresh
   credential on an existing eligible session. Keycloak reauthentication no
   longer causes the next due eligibility check to reject the older grant's

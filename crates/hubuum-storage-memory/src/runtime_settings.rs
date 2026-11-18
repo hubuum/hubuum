@@ -26,6 +26,18 @@ impl MemoryRuntimeSettings {
             .revision()
     }
 
+    pub(super) fn fence_authentication_revision(
+        &self,
+        revision: ResourceRevision,
+    ) -> Result<(), StorageError> {
+        if self.authentication_revision() != revision {
+            return Err(StorageError::authentication_required(
+                "Authentication configuration changed; sign in again",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn provider_binding(&self, name: &str) -> Option<&StorageProviderIdentityBinding> {
         self.bindings.get(name)
     }
@@ -330,12 +342,27 @@ impl RuntimeSettingsStorage for MemoryStorage {
             } else {
                 Vec::new()
             };
+        if request.update().group() == StorageRuntimeSettingsGroup::Authentication
+            && request.update().assignment() != &previous
+        {
+            let next = request
+                .update()
+                .expected_revision()
+                .checked_advance()
+                .map_err(|error| StorageError::internal(error.to_string()))?;
+            staged.upstream_sessions.retain(|_, record| {
+                if record.current_revision() == request.update().expected_revision()
+                    && candidate.retains_authenticated_provider(&previous, record.scope())
+                {
+                    record.retain_at_revision(next);
+                    true
+                } else {
+                    false
+                }
+            });
+        }
         let result = staged.runtime_settings.update(request.update())?;
         staged.invalidate_provider_credentials(&revoked_scopes);
-        let revision = staged.runtime_settings.authentication_revision();
-        staged
-            .upstream_sessions
-            .retain(|_, record| record.binding().revision() == revision);
         *live = staged;
         Ok(result)
     }

@@ -88,7 +88,7 @@ pub struct ConfiguredLdapScope {
 }
 
 impl ConfiguredLdapScope {
-    fn refresh_policy(&self) -> Result<RefreshPolicy, ApiError> {
+    pub(crate) fn refresh_policy(&self) -> Result<RefreshPolicy, ApiError> {
         RefreshPolicy::new(
             self.refresh_ttl_seconds
                 .unwrap_or(DEFAULT_REFRESH_TTL_SECONDS),
@@ -423,12 +423,14 @@ trait AuthProviderBackend: Send + Sync {
     fn authenticate<'a>(
         &'a self,
         storage: &'a crate::storage::StorageHandle,
+        revision: ResourceRevision,
         login: ValidatedLogin,
     ) -> AuthProviderFuture<'a, StorageUser>;
 
     fn refresh<'a>(
         &'a self,
         storage: &'a crate::storage::StorageHandle,
+        revision: ResourceRevision,
         state: &'a ExternalUserState,
     ) -> AuthProviderRefreshFuture<'a>;
 }
@@ -442,7 +444,7 @@ struct RegisteredAuthProvider {
 }
 
 #[derive(Clone, Copy)]
-struct RefreshPolicy {
+pub(crate) struct RefreshPolicy {
     refresh_ttl: RefreshTtl,
     max_stale: MaxStale,
 }
@@ -597,7 +599,14 @@ impl AuthProviderRegistry {
                     definition.configuration().is_some_and(|configuration| {
                         configuration.get("protected_credential").is_some()
                     });
-                status.available = status.credential_configured;
+                status.available = matches!(
+                    crate::services::security_candidates::providers::browser_secret(definition)
+                        .await,
+                    Ok(Some(_))
+                );
+                if !status.available {
+                    registry.unavailable.insert(definition.name().into(), true);
+                }
                 registry
                     .statuses
                     .insert(definition.name().to_owned(), status);
@@ -686,7 +695,16 @@ impl AuthProviderRegistry {
             .into_iter()
             .map(|provider| provider.name.clone())
             .collect::<Vec<_>>();
-        let mut unavailable = self.unavailable.keys().cloned().collect::<Vec<_>>();
+        let mut unavailable = self
+            .unavailable
+            .keys()
+            .filter(|name| {
+                self.statuses
+                    .get(*name)
+                    .is_some_and(|status| status.kind == LDAP_PROVIDER_KIND)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         unavailable.sort_unstable();
         names.extend(unavailable);
         names
@@ -756,6 +774,7 @@ impl AuthProviderBackend for LocalAuthProvider {
     fn authenticate<'a>(
         &'a self,
         storage: &'a crate::storage::StorageHandle,
+        _revision: ResourceRevision,
         login: ValidatedLogin,
     ) -> AuthProviderFuture<'a, StorageUser> {
         Box::pin(async move {
@@ -766,6 +785,7 @@ impl AuthProviderBackend for LocalAuthProvider {
     fn refresh<'a>(
         &'a self,
         _storage: &'a crate::storage::StorageHandle,
+        _revision: ResourceRevision,
         _state: &'a ExternalUserState,
     ) -> AuthProviderRefreshFuture<'a> {
         Box::pin(async {
@@ -805,6 +825,7 @@ impl AuthProviderBackend for LdapAuthProvider {
     fn authenticate<'a>(
         &'a self,
         storage: &'a crate::storage::StorageHandle,
+        revision: ResourceRevision,
         login: ValidatedLogin,
     ) -> AuthProviderFuture<'a, StorageUser> {
         Box::pin(async move {
@@ -813,14 +834,21 @@ impl AuthProviderBackend for LdapAuthProvider {
                 .authenticate(login.name(), login.password().as_str())
                 .await
                 .map_err(login_provider_error)?;
-            sync_external_user_from_backend(storage, &self.scope, LDAP_PROVIDER_KIND, authenticated)
-                .await
+            sync_external_user_from_backend(
+                storage,
+                revision,
+                &self.scope,
+                LDAP_PROVIDER_KIND,
+                authenticated,
+            )
+            .await
         })
     }
 
     fn refresh<'a>(
         &'a self,
         storage: &'a crate::storage::StorageHandle,
+        revision: ResourceRevision,
         state: &'a ExternalUserState,
     ) -> AuthProviderRefreshFuture<'a> {
         Box::pin(async move {
@@ -829,10 +857,16 @@ impl AuthProviderBackend for LdapAuthProvider {
                 .refresh_user(&state.refresh_request)
                 .await
                 .map_err(AuthProviderRefreshError::Provider)?;
-            sync_external_user_from_backend(storage, &self.scope, LDAP_PROVIDER_KIND, refreshed)
-                .await
-                .map(|_| ())
-                .map_err(AuthProviderRefreshError::Internal)
+            sync_external_user_from_backend(
+                storage,
+                revision,
+                &self.scope,
+                LDAP_PROVIDER_KIND,
+                refreshed,
+            )
+            .await
+            .map(|_| ())
+            .map_err(AuthProviderRefreshError::Internal)
         })
     }
 }
@@ -915,7 +949,11 @@ async fn login_with_registry(
     );
     let result = provider
         .backend
-        .authenticate(&storage, login)
+        .authenticate(
+            &storage,
+            authentication_revision.unwrap_or(ResourceRevision::INITIAL),
+            login,
+        )
         .instrument(span.clone())
         .await;
     span.record(
@@ -1009,9 +1047,14 @@ async fn refresh_principal_with_registry(
                             auth.operation = "identity_refresh",
                             auth.result = field::Empty,
                         );
+                        let revision = registry.revision.ok_or_else(|| {
+                            ApiError::ServiceUnavailable(
+                                "Authentication configuration is not reconciled".into(),
+                            )
+                        })?;
                         let refresh_result = configured
                             .backend
-                            .refresh(storage, &state)
+                            .refresh(storage, revision, &state)
                             .instrument(span.clone())
                             .await;
                         span.record(
@@ -1032,6 +1075,7 @@ async fn refresh_principal_with_registry(
                             )) => {
                                 record_external_sync_failure(
                                     storage,
+                                    revision,
                                     principal_id,
                                     StorageExternalSyncFailure::Rejected,
                                 )
@@ -1043,6 +1087,7 @@ async fn refresh_principal_with_registry(
                             )) => {
                                 match record_external_sync_failure(
                                     storage,
+                                    revision,
                                     principal_id,
                                     StorageExternalSyncFailure::Unavailable,
                                 )
@@ -1406,8 +1451,14 @@ pub(crate) async fn sync_external_user(
     configured: &ConfiguredLdapScope,
     authenticated: AuthenticatedExternalUser,
 ) -> Result<User, ApiError> {
+    use hubuum_storage_core::RuntimeSettingsStorage;
     sync_external_user_from_backend(
         pool,
+        crate::storage::storage_handle(pool)
+            .load_runtime_settings()
+            .await?
+            .record(hubuum_storage_core::StorageRuntimeSettingsGroup::Authentication)
+            .revision(),
         &configured.ldap.scope,
         LDAP_PROVIDER_KIND,
         authenticated,
@@ -1442,8 +1493,12 @@ impl hubuum_auth_ldap::LdapTransport for ApplicationLdapTransport {
                 false,
             )
             .await
-            .map_err(|_| {
-                AuthProviderError::Config("LDAP destination is prohibited or unavailable".into())
+            .map_err(|error| {
+                if error.is_dns_failure() {
+                    AuthProviderError::Unavailable("LDAP DNS resolution failed".into())
+                } else {
+                    AuthProviderError::Config("LDAP destination is prohibited".into())
+                }
             })?;
             let stream = tokio::net::TcpStream::connect(addresses.as_slice())
                 .await
@@ -1966,7 +2021,7 @@ mod tests {
     #[case::oidc(true)]
     #[case::oauth(false)]
     #[tokio::test]
-    async fn enabled_browser_provider_is_not_a_password_provider(#[case] oidc: bool) {
+    async fn unresolved_browser_secret_marks_enabled_provider_unavailable(#[case] oidc: bool) {
         let mut configuration = if oidc {
             serde_json::json!({"issuer":"https://identity.example/realm", "client_id":"hubuum", "client_authentication":"client_secret_basic", "scopes":["openid"], "signing_algorithms":["RS256"]})
         } else {
@@ -1993,12 +2048,17 @@ mod tests {
         )
         .await
         .unwrap();
+        assert!(registry.unavailable.contains_key("company"));
+        assert_eq!(registry.provider_names(), vec![LOCAL_IDENTITY_SCOPE]);
         assert!(registry.provider("company").is_err());
         assert!(
             registry
                 .provider_statuses()
                 .iter()
-                .any(|status| status.name == "company" && status.enabled && status.available)
+                .any(|status| status.name == "company"
+                    && status.enabled
+                    && status.credential_configured
+                    && !status.available)
         );
     }
 

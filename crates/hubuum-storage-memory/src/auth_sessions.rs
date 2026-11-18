@@ -31,7 +31,7 @@ impl MemoryState {
         record: &StorageUpstreamSession,
         now: DateTime<Utc>,
     ) -> bool {
-        record.binding().revision() == self.runtime_settings.authentication_revision()
+        record.current_revision() == self.runtime_settings.authentication_revision()
             && self
                 .sessions
                 .get(&record.session().value())

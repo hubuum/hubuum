@@ -3333,6 +3333,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         let external_name = prefix("identity_contract_external");
         let external = backend
             .sync_external_user(
+                ResourceRevision::INITIAL,
                 crate::storage::StorageExternalUserSync::builder(
                     &external_scope,
                     "compatibility_provider",
@@ -3358,6 +3359,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
         assert_eq!(external_state.identity_scope(), external_scope);
         backend
             .record_external_sync_failure(
+                ResourceRevision::INITIAL,
                 principal_id(external_id.id()),
                 StorageExternalSyncFailure::Unavailable,
             )
@@ -3415,12 +3417,15 @@ async fn postgres_external_sync_preserves_identity_and_reconciles_membership_sou
     };
 
     let first_id = backend
-        .sync_external_user(request(
-            &initial_subject,
-            &initial_name,
-            &first_group_key,
-            &first_group_name,
-        ))
+        .sync_external_user(
+            ResourceRevision::INITIAL,
+            request(
+                &initial_subject,
+                &initial_name,
+                &first_group_key,
+                &first_group_name,
+            ),
+        )
         .await
         .expect("initial external identity sync should succeed")
         .into_value()
@@ -3448,23 +3453,29 @@ async fn postgres_external_sync_preserves_identity_and_reconciles_membership_sou
         .into_value();
 
     let renamed_id = backend
-        .sync_external_user(request(
-            &initial_subject,
-            &renamed,
-            &second_group_key,
-            &second_group_name,
-        ))
+        .sync_external_user(
+            ResourceRevision::INITIAL,
+            request(
+                &initial_subject,
+                &renamed,
+                &second_group_key,
+                &second_group_name,
+            ),
+        )
         .await
         .expect("renamed external identity sync should succeed")
         .into_value()
         .id();
     let replacement_error = backend
-        .sync_external_user(request(
-            &replacement_subject,
-            &renamed,
-            &second_group_key,
-            &second_group_name,
-        ))
+        .sync_external_user(
+            ResourceRevision::INITIAL,
+            request(
+                &replacement_subject,
+                &renamed,
+                &second_group_key,
+                &second_group_name,
+            ),
+        )
         .await
         .err()
         .expect("a different external subject must not reuse the existing account");

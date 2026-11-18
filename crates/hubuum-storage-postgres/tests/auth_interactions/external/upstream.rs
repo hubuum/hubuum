@@ -1,4 +1,5 @@
 use super::*;
+use crate::{approval, candidate_for, context, digest};
 use hubuum_domain::VerifiedExternalAuthentication;
 use hubuum_domain::{FreshExternalAuthenticationRequest, InteractionActor};
 
@@ -112,6 +113,9 @@ impl ExternalFixture {
         )
     }
     async fn retained_login(&self) -> PrincipalId {
+        self.retained_interaction().await.0
+    }
+    async fn retained_interaction(&self) -> (PrincipalId, StorageInteractionAccess) {
         let (interaction, claim) = self.start(&self.backend).await;
         let command = self.command(&claim, "alice", "alice", json!(["/team"]));
         let StorageInteractionAction::AuthenticateExternal { authentication, .. } =
@@ -151,13 +155,13 @@ impl ExternalFixture {
         else {
             panic!("session")
         };
-        issued.into_value().principal_id()
+        (issued.into_value().principal_id(), interaction.access)
     }
 
     async fn upstream_claim(&self, principal: PrincipalId) -> StorageUpstreamClaim {
         let StorageUpstreamClaimOutcome::Claim(claim) = self
             .backend
-            .claim_upstream_credential(principal)
+            .claim_upstream_credential(ResourceRevision::INITIAL, principal)
             .await
             .unwrap()
         else {
@@ -243,7 +247,7 @@ async fn fresh_authentication_fences_old_refresh_completion(#[case] success: boo
             .await
     } else {
         f.backend
-            .fail_upstream_renewal(old, StorageExternalSyncFailure::Rejected)
+            .fail_upstream_renewal(old, StorageUpstreamFailure::Rejected)
             .await
     };
     assert!(stale.is_err());
@@ -279,8 +283,9 @@ async fn concurrent_replicas_claim_one_refresh_token() {
     let principal = f.retained_login().await;
     let other = f.database.replica();
     let (a, b) = tokio::join!(
-        f.backend.claim_upstream_credential(principal),
-        other.claim_upstream_credential(principal)
+        f.backend
+            .claim_upstream_credential(ResourceRevision::INITIAL, principal),
+        other.claim_upstream_credential(ResourceRevision::INITIAL, principal)
     );
     let outcomes = [a.unwrap(), b.unwrap()];
     assert_eq!(
@@ -355,7 +360,7 @@ async fn rejected_refresh_invalidates_external_authority() {
     f.backend
         .fail_upstream_renewal(
             f.upstream_claim(principal).await,
-            StorageExternalSyncFailure::Rejected,
+            StorageUpstreamFailure::Rejected,
         )
         .await
         .unwrap();
@@ -370,7 +375,7 @@ async fn rejected_refresh_invalidates_external_authority() {
     );
     assert!(matches!(
         f.backend
-            .claim_upstream_credential(principal)
+            .claim_upstream_credential(ResourceRevision::INITIAL, principal)
             .await
             .unwrap(),
         StorageUpstreamClaimOutcome::Unavailable
@@ -392,7 +397,7 @@ async fn uncertain_refresh_destroys_token_but_preserves_bounded_snapshot() {
     f.backend
         .fail_upstream_renewal(
             f.upstream_claim(principal).await,
-            StorageExternalSyncFailure::Unavailable,
+            StorageUpstreamFailure::Unavailable,
         )
         .await
         .unwrap();
@@ -407,7 +412,7 @@ async fn uncertain_refresh_destroys_token_but_preserves_bounded_snapshot() {
     );
     assert!(matches!(
         f.backend
-            .claim_upstream_credential(principal)
+            .claim_upstream_credential(ResourceRevision::INITIAL, principal)
             .await
             .unwrap(),
         StorageUpstreamClaimOutcome::Unavailable
@@ -442,7 +447,7 @@ async fn newer_login_fences_old_refresh_rejection() {
     f.login("alice", json!([])).await;
     assert!(
         f.backend
-            .fail_upstream_renewal(claim, StorageExternalSyncFailure::Rejected)
+            .fail_upstream_renewal(claim, StorageUpstreamFailure::Rejected)
             .await
             .is_err()
     );
@@ -541,6 +546,214 @@ async fn logout_snapshot_is_scoped_to_the_requested_provider(
         } else {
             vec![principal]
         }
+    );
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
+async fn expired_lease_does_not_hide_another_sessions_credential() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let principal = f.retained_login().await;
+    f.retained_login().await;
+    let spent = f
+        .upstream_claim(principal)
+        .await
+        .session()
+        .session()
+        .value();
+    f.database.owner(&format!("UPDATE auth_upstream_credentials SET document=jsonb_set(document, '{{lease,1}}', to_jsonb(now() - interval '1 minute')) WHERE session_id='{spent}'")).await.unwrap();
+    assert_ne!(
+        f.upstream_claim(principal)
+            .await
+            .session()
+            .session()
+            .value(),
+        spent
+    );
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
+async fn orphan_cleanup_returns_only_the_issued_grant_once() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let (principal, access) = f.retained_interaction().await;
+    f.retained_login().await;
+    let credential = f
+        .backend
+        .revoke_auth_interaction_session(access.clone(), EventContext::system())
+        .await
+        .unwrap()
+        .into_value()
+        .unwrap();
+    assert_ne!(
+        credential.session(),
+        f.upstream_claim(principal).await.session().session()
+    );
+    assert!(
+        f.backend
+            .revoke_auth_interaction_session(access, EventContext::system())
+            .await
+            .unwrap()
+            .into_value()
+            .is_none()
+    );
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
+async fn signed_membership_rejection_invalidates_only_the_observed_subject() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let alice = f.login("alice", json!(["/team"])).await;
+    let bob = f.login("bob", json!([])).await;
+    let (_, claim) = f.start(&f.backend).await;
+    let context = ExternalAuthenticationContext::oidc(
+        claim.binding().clone(),
+        IdentityScopeName::new(f.provider.name()).unwrap(),
+        &f.definition,
+    )
+    .unwrap();
+    let Err(hubuum_domain::ExternalAuthenticationError::MembershipRejected(rejection)) = context
+        .verified_oidc(
+            f.definition.issuer().as_str(),
+            ExternalIdentityProfile::new(ExternalSubject::new("alice").unwrap(), None, None)
+                .unwrap(),
+            MembershipClaims::Absent,
+            Utc::now(),
+        )
+    else {
+        panic!("expected verified membership rejection")
+    };
+    f.backend
+        .advance_auth_interaction(StorageInteractionCommand::new(
+            StorageInteractionAuthorization::Claim(claim),
+            StorageInteractionAction::RejectMembership(rejection),
+        ))
+        .await
+        .unwrap();
+    for (principal, valid) in [(alice, false), (bob, true)] {
+        assert_eq!(
+            f.backend
+                .get_external_principal_state(principal)
+                .await
+                .unwrap()
+                .unwrap()
+                .last_sync_success_at()
+                .is_some(),
+            valid
+        );
+    }
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
+async fn activating_an_unrelated_provider_retains_the_grant_and_fences_old_claims() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let browser = StorageAuthenticationProvider::try_new(
+        "company",
+        StorageAuthenticationProviderKind::Oidc,
+        serde_json::to_value(&f.definition).unwrap(),
+    )
+    .unwrap()
+    .with_id(f.provider.id())
+    .unwrap();
+    let assignment = |providers| {
+        StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authentication(
+            StorageAuthenticationProviders::try_new(providers).unwrap(),
+        ))
+    };
+    let previous = assignment(vec![browser.clone()]);
+    f.database
+        .owner(&format!(
+            "UPDATE runtime_settings SET value='{}'::jsonb WHERE setting_group='authentication'",
+            previous.to_document().unwrap()
+        ))
+        .await
+        .unwrap();
+    let principal = f.retained_login().await;
+    let old = f.upstream_claim(principal).await;
+    f.retained_login().await;
+    let ldap = StorageAuthenticationProvider::deployment(
+        "directory",
+        StorageAuthenticationProviderKind::Ldap,
+        true,
+    )
+    .unwrap()
+    .with_id(Uuid::new_v4())
+    .unwrap();
+    let update = StorageRuntimeSettingsUpdate::new(
+        assignment(vec![browser, ldap]),
+        ResourceRevision::INITIAL,
+        context(),
+    );
+    let candidate = candidate_for(&update);
+    f.backend
+        .create_security_candidate(candidate.clone())
+        .await
+        .unwrap();
+    let (claim, _) = approval(&f.backend, candidate.id()).await;
+    let activation = StorageSecurityCandidateActivation::try_new(
+        &candidate,
+        digest('d'),
+        update,
+        claim,
+        "admin".into(),
+    )
+    .unwrap();
+    let current = f
+        .backend
+        .activate_security_candidate(activation)
+        .await
+        .unwrap()
+        .record()
+        .revision();
+    let proof = f.renewal_proof(&old, "alice");
+    assert!(
+        f.backend
+            .finish_upstream_renewal(StorageUpstreamRenewal::new(old, proof, None).unwrap())
+            .await
+            .is_err()
+    );
+    let StorageUpstreamClaimOutcome::Claim(retained) = f
+        .backend
+        .claim_upstream_credential(current, principal)
+        .await
+        .unwrap()
+    else {
+        panic!("unspent session grant")
+    };
+    let proof = f.renewal_proof(&retained, "alice");
+    f.backend
+        .finish_upstream_renewal(
+            StorageUpstreamRenewal::new(*retained, proof, Some(encrypted("new-token"))).unwrap(),
+        )
+        .await
+        .unwrap();
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
+async fn outage_before_token_submission_retries_the_original_grant_after_backoff() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let principal = f.retained_login().await;
+    let claim = f.upstream_claim(principal).await;
+    f.backend
+        .fail_upstream_renewal(claim, StorageUpstreamFailure::UnavailableBeforeSubmission)
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.backend
+            .claim_upstream_credential(ResourceRevision::INITIAL, principal)
+            .await
+            .unwrap(),
+        StorageUpstreamClaimOutcome::Unavailable
+    ));
+    f.database
+        .owner("UPDATE auth_upstream_credentials SET document = document - 'retry_after'")
+        .await
+        .unwrap();
+    assert_eq!(
+        f.upstream_claim(principal).await.credential().ciphertext(),
+        "first-encrypted-token"
     );
     f.database.cleanup().await;
 }

@@ -19,7 +19,10 @@ use crate::models::runtime_settings::{
 pub enum SecurityCandidateRequest {
     Authentication {
         expected_revision: ResourceRevision,
-        #[serde(default)]
+        #[serde(
+            default,
+            deserialize_with = "SecurityCandidateProviderRequest::deserialize_selection"
+        )]
         providers: Vec<SecurityCandidateProviderRequest>,
         #[serde(default)]
         release_ownership: bool,
@@ -199,6 +202,33 @@ pub struct SecurityCandidateActivated {
 pub enum SecurityCandidateProviderRequest {
     Ldap(RuntimeAuthenticationProviderRequest),
     Browser(Box<BrowserProviderRequest>),
+}
+
+impl SecurityCandidateProviderRequest {
+    fn deserialize_selection<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<Self>, D::Error> {
+        let providers = Vec::<Self>::deserialize(deserializer)?;
+        hubuum_storage_core::StorageAuthenticationProviders::validate_selection(
+            providers.iter().map(Self::identity),
+        )
+        .map_err(serde::de::Error::custom)?;
+        Ok(providers)
+    }
+
+    fn identity(&self) -> (&str, Option<Uuid>) {
+        match self {
+            Self::Ldap(
+                RuntimeAuthenticationProviderRequest::Deployment {
+                    name, provider_id, ..
+                }
+                | RuntimeAuthenticationProviderRequest::Runtime {
+                    name, provider_id, ..
+                },
+            ) => (name, *provider_id),
+            Self::Browser(provider) => (&provider.name, provider.provider_id),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, ToSchema)]
@@ -381,4 +411,37 @@ impl SecurityCandidateVerificationPreview {
 pub struct SecurityCandidateLdapVerificationResponse {
     pub candidate: SecurityCandidateReport,
     pub verification: SecurityCandidateVerificationPreview,
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use rstest::rstest;
+    use serde_json::json;
+
+    #[rstest]
+    #[case::duplicate_name("directory", None, 2)]
+    #[case::duplicate_id("browser", Some(Uuid::from_u128(1)), 2)]
+    #[case::too_many("browser", None, 65)]
+    fn invalid_combined_selection_is_rejected_by_request_decoder(
+        #[case] name: &str,
+        #[case] browser_id: Option<Uuid>,
+        #[case] count: usize,
+    ) {
+        let mut providers = vec![
+            json!({"source":"deployment","kind":"ldap","name":"directory","provider_id":Uuid::from_u128(1),"enabled":true}),
+            json!({"source":"runtime","kind":"oidc","name":name,"provider_id":browser_id,"enabled":true}),
+        ];
+        providers.extend((2..count).map(|n| json!({"source":"deployment","kind":"ldap","name":format!("ldap{n}"),"enabled":true})));
+        let request = |providers| json!({"group":"authentication","expected_revision":1,"providers":providers});
+        for provider in &providers {
+            assert!(
+                serde_json::from_value::<SecurityCandidateRequest>(request(vec![provider])).is_ok()
+            );
+        }
+        assert!(
+            serde_json::from_value::<SecurityCandidateRequest>(request(providers.iter().collect()))
+                .is_err()
+        );
+    }
 }

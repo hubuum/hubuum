@@ -486,6 +486,41 @@ fn self_target_id(path: &actix_web::dev::Path<actix_web::dev::Url>) -> Result<i3
         .map_err(|_| ApiError::InternalServerError("Failed to parse principal id".into()))
 }
 
+/// A valid local bearer credential authorizes revocation of its own family.
+pub struct LogoutCredential {
+    pub token: Token,
+    pub token_id: hubuum_domain::TokenId,
+}
+
+impl FromRequest for LogoutCredential {
+    type Error = ApiError;
+    type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
+        let backend = backend_from_req(req);
+        let token = extract_token(req);
+        let cached = token
+            .as_ref()
+            .ok()
+            .and_then(|token| resolved_auth(req, token));
+        async move {
+            let token = token?;
+            let token_meta = match cached.transpose()? {
+                Some(meta) => meta,
+                None => {
+                    crate::services::authentication::authenticate_bearer_token(&backend?, &token)
+                        .await?
+                }
+            };
+            Ok(Self {
+                token,
+                token_id: token_meta.id(),
+            })
+        }
+        .boxed_local()
+    }
+}
+
 impl FromRequest for Authenticated {
     type Error = ApiError;
     type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;

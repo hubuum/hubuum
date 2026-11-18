@@ -34,7 +34,11 @@ fn fixture(github: bool) -> (OAuthAdapter, ExternalAuthenticationContext) {
         OAuthAdapter::new(
             definition,
             SecretValue::new(b"secret".to_vec()).unwrap(),
-            "https://hubuum.example/callback/provider",
+            &hubuum_domain::BrowserCallbackUrl::new(
+                "https://hubuum.example/callback/provider",
+                false,
+            )
+            .unwrap(),
             false,
         )
         .unwrap(),
@@ -230,11 +234,15 @@ fn callback_must_match_the_configured_adapter(#[case] same_profile: bool) {
     let receiver = OAuthAdapter::new(
         definition(same_profile),
         SecretValue::new(b"secret".to_vec()).unwrap(),
-        if same_profile {
-            "https://hubuum.example/callback/another-provider"
-        } else {
-            "https://hubuum.example/callback/provider"
-        },
+        &hubuum_domain::BrowserCallbackUrl::new(
+            if same_profile {
+                "https://hubuum.example/callback/another-provider"
+            } else {
+                "https://hubuum.example/callback/provider"
+            },
+            false,
+        )
+        .unwrap(),
         false,
     )
     .unwrap();

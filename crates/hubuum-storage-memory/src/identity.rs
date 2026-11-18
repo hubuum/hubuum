@@ -5,13 +5,14 @@ use hubuum_storage_core::StorageExternalSyncFailure;
 use hubuum_storage_core::StorageUpstreamClaim;
 use hubuum_storage_core::StorageUpstreamClaimOutcome;
 use hubuum_storage_core::StorageUpstreamRenewal;
-use hubuum_storage_core::StorageUpstreamRevocation;
-use hubuum_storage_core::StorageUpstreamSession;
 use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
 use hubuum_storage_core::{
     StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
     StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionOutcome,
     StorageInteractionView,
+};
+use hubuum_storage_core::{
+    StorageUpstreamFailure, StorageUpstreamRevocation, StorageUpstreamSession,
 };
 use serde_json::{Value, json};
 
@@ -62,7 +63,7 @@ impl AuthenticationStorage for MemoryStorage {
         &self,
         access: StorageInteractionAccess,
         context: EventContext,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<Option<StorageUpstreamSession>>, StorageError> {
         let mut live = self.state.write().await;
         let mut staged = live.clone();
         let result = staged.revoke_interaction(access, context)?;
@@ -1018,7 +1019,7 @@ impl ExternalIdentityStorage for MemoryStorage {
     async fn fail_upstream_renewal(
         &self,
         claim: StorageUpstreamClaim,
-        failure: StorageExternalSyncFailure,
+        failure: StorageUpstreamFailure,
     ) -> Result<(), StorageError> {
         let mut live = self.state.write().await;
         let mut state = live.clone();
@@ -1027,8 +1028,9 @@ impl ExternalIdentityStorage for MemoryStorage {
             .upstream_sessions
             .get(&original.session().value())
             .ok_or_else(|| StorageError::authentication_required("Upstream session changed"))?;
-        if !state.upstream_eligible(record, Utc::now())
-            || !record.accepts(&claim, Utc::now())
+        let now = Utc::now();
+        if !state.upstream_eligible(record, now)
+            || !record.accepts(&claim, now)
             || state
                 .users
                 .get(&original.principal().id())
@@ -1041,22 +1043,38 @@ impl ExternalIdentityStorage for MemoryStorage {
                 "Upstream session changed",
             ));
         }
-        state.upstream_sessions.remove(&original.session().value());
-        state.external_sync_failure(original.principal(), failure)?;
+        let provider = state
+            .runtime_settings
+            .provider_binding(original.scope())
+            .ok_or_else(|| StorageError::authentication_required("Upstream provider changed"))?;
+        let record = state
+            .upstream_sessions
+            .get_mut(&original.session().value())
+            .expect("checked session");
+        if !record.defer_credential_retry(&claim, provider, failure, now) {
+            state.upstream_sessions.remove(&original.session().value());
+        }
+        state.external_sync_failure(original.principal(), failure.sync_failure())?;
         *live = state;
         Ok(())
     }
     async fn claim_upstream_credential(
         &self,
+        revision: ResourceRevision,
         principal: PrincipalId,
     ) -> Result<StorageUpstreamClaimOutcome, StorageError> {
         let mut state = self.state.write().await;
+        state
+            .runtime_settings
+            .fence_authentication_revision(revision)?;
         let now = Utc::now();
         let selected = state
             .upstream_sessions
             .iter()
             .filter(|(_, record)| {
-                record.principal() == principal && state.upstream_eligible(record, now)
+                record.principal() == principal
+                    && record.has_credential_or_live_lease(now)
+                    && state.upstream_eligible(record, now)
             })
             .max_by_key(|(id, _)| (state.sessions.get(id).map(|session| session.absolute), **id))
             .map(|(id, _)| *id);
@@ -1169,37 +1187,7 @@ impl ExternalIdentityStorage for MemoryStorage {
         &self,
         identity: ExternalIdentity,
     ) -> Result<Option<PrincipalId>, StorageError> {
-        let state = self.state.read().await;
-        if !state
-            .runtime_settings
-            .provider_binding(identity.scope().as_str())
-            .is_some_and(|provider| {
-                Some(provider.id()) == identity.provider().external_id()
-                    && provider.kind().as_str() == identity.provider_kind()
-                    && provider.namespace() == identity.namespace()
-            })
-        {
-            return Ok(None);
-        }
-        let scope = state.identity_scopes.values().find(|scope| {
-            scope.name() == identity.scope().as_str()
-                && scope.provider_kind() == identity.provider_kind()
-        });
-        let Some(scope) = scope else {
-            return Ok(None);
-        };
-        state
-            .users
-            .iter()
-            .find(|(_, record)| {
-                record.identity_scope_id == scope.id()
-                    && record.provider_managed
-                    && record.external_subject.as_deref() == Some(identity.subject().as_str())
-            })
-            .map(|(id, _)| {
-                PrincipalId::new(*id).map_err(|error| StorageError::internal(error.to_string()))
-            })
-            .transpose()
+        self.state.read().await.identity_principal(&identity)
     }
 
     async fn get_external_principal_state(
@@ -1233,10 +1221,13 @@ impl ExternalIdentityStorage for MemoryStorage {
 
     async fn record_external_sync_failure(
         &self,
+        revision: ResourceRevision,
         principal_id: PrincipalId,
         failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError> {
         let mut live = self.state.write().await;
+        live.runtime_settings
+            .fence_authentication_revision(revision)?;
         let mut state = live.clone();
         state.external_sync_failure(principal_id, failure)?;
         *live = state;
@@ -1245,9 +1236,12 @@ impl ExternalIdentityStorage for MemoryStorage {
 
     async fn sync_external_user(
         &self,
+        revision: ResourceRevision,
         request: StorageExternalUserSync,
     ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError> {
         let mut live = self.state.write().await;
+        live.runtime_settings
+            .fence_authentication_revision(revision)?;
         let mut staged = live.clone();
         let result = staged.sync_external_user(request, false, None)?;
         *live = staged;
@@ -1261,6 +1255,41 @@ fn source_has_membership(source: &StorageBackupRow, key: (i32, i32)) -> bool {
 }
 
 impl MemoryState {
+    pub(super) fn identity_principal(
+        &self,
+        identity: &ExternalIdentity,
+    ) -> Result<Option<PrincipalId>, StorageError> {
+        if !self
+            .runtime_settings
+            .provider_binding(identity.scope().as_str())
+            .is_some_and(|provider| {
+                Some(provider.id()) == identity.provider().external_id()
+                    && provider.kind().as_str() == identity.provider_kind()
+                    && provider.namespace() == identity.namespace()
+            })
+        {
+            return Ok(None);
+        }
+        let scope = self.identity_scopes.values().find(|scope| {
+            scope.name() == identity.scope().as_str()
+                && scope.provider_kind() == identity.provider_kind()
+        });
+        let Some(scope) = scope else {
+            return Ok(None);
+        };
+        self.users
+            .iter()
+            .find(|(_, record)| {
+                record.identity_scope_id == scope.id()
+                    && record.provider_managed
+                    && record.external_subject.as_deref() == Some(identity.subject().as_str())
+            })
+            .map(|(id, _)| {
+                PrincipalId::new(*id).map_err(|error| StorageError::internal(error.to_string()))
+            })
+            .transpose()
+    }
+
     fn owns_external_membership(&self, key: (i32, i32), scope: IdentityScopeId) -> bool {
         let sources = self.membership_sources.iter().filter(|source| {
             source_has_membership(source, key)

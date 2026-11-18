@@ -1,6 +1,6 @@
 //! Ephemeral verification and atomic activation over the shared settings authority.
 use chrono::Utc;
-use diesel::sql_types::{BigInt, Integer, Jsonb, Text, Timestamptz, Uuid as SqlUuid};
+use diesel::sql_types::{Array, BigInt, Integer, Jsonb, Text, Timestamptz, Uuid as SqlUuid};
 use diesel::{OptionalExtension, QueryableByName, sql_query};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::IdentityScopeName;
@@ -143,6 +143,22 @@ pub async fn activate(
             .bind::<Text,_>(request.update().group().as_str()).get_result::<SettingsDocument>(connection).await?;
         let previous = hubuum_storage_core::StorageRuntimeSettingsAssignment::from_document(request.update().group(), previous.document.as_ref())
             .map_err(|error| PostgresStorageError::database(error.to_string()))?;
+        if request.update().assignment() != &previous
+            && let Some(StorageRuntimeSettingsValue::Authentication(providers)) = previous.value() {
+            let retained: Vec<_> = providers.providers().iter()
+                .filter(|provider| candidate.retains_authenticated_provider(&previous, provider.name()))
+                .filter_map(|provider| provider.id())
+                .collect();
+            let revision = request.update().expected_revision();
+            let next = revision.checked_advance().map_err(|error| PostgresStorageError::internal(error.to_string()))?;
+            sql_query("UPDATE auth_upstream_credentials
+                SET document=jsonb_set(document,'{current_revision}',to_jsonb($1::bigint))
+                WHERE provider_id=ANY($2) AND COALESCE((document->>'current_revision')::bigint,revision)=$3")
+                .bind::<BigInt,_>(next.get())
+                .bind::<Array<SqlUuid>,_>(retained)
+                .bind::<BigInt,_>(revision.get())
+                .execute(connection).await?;
+        }
         let outcome = super::runtime_settings::update_on_connection(connection, request.update()).await?;
         if request.update().group() == hubuum_storage_core::StorageRuntimeSettingsGroup::Authentication {
             let scopes = sql_query("SELECT name FROM identity_scopes WHERE name <> 'local'").load::<ScopeName>(connection).await?;
@@ -183,14 +199,23 @@ pub async fn provider_binding(
     runtime: &PostgresRuntime,
     name: IdentityScopeName,
 ) -> Result<Option<StorageProviderIdentityBinding>, PostgresStorageError> {
-    runtime.with_connection(async |connection| -> Result<_, PostgresStorageError> {
-        sql_query("SELECT name,provider_id,kind,namespace FROM authentication_provider_bindings WHERE name=$1")
-            .bind::<Text,_>(name.as_str()).get_result::<ProviderBindingRow>(connection).await.optional()?
-            .map(|row| {
-                let kind = StorageAuthenticationProviderKind::parse(&row.kind).map_err(|error| PostgresStorageError::database(error.to_string()))?;
-                StorageProviderIdentityBinding::try_new(row.name, row.provider_id, kind, row.namespace).map_err(|error| PostgresStorageError::database(error.to_string()))
-            }).transpose()
-    }).await
+    runtime
+        .with_connection(async |connection| binding_on_connection(connection, name.as_str()).await)
+        .await
+}
+
+pub(super) async fn binding_on_connection(
+    connection: &mut PostgresConnection,
+    name: &str,
+) -> Result<Option<StorageProviderIdentityBinding>, PostgresStorageError> {
+    let row = sql_query("SELECT name,provider_id,kind,namespace FROM authentication_provider_bindings WHERE name=$1")
+        .bind::<Text,_>(name).get_result::<ProviderBindingRow>(connection).await.optional()?;
+    row.map(|row| {
+        let kind = StorageAuthenticationProviderKind::parse(&row.kind)?;
+        StorageProviderIdentityBinding::try_new(row.name, row.provider_id, kind, row.namespace)
+    })
+    .transpose()
+    .map_err(|error| PostgresStorageError::database(error.to_string()))
 }
 
 pub async fn purge(runtime: &PostgresRuntime) -> Result<usize, PostgresStorageError> {
@@ -255,16 +280,23 @@ pub(super) async fn fence_login(
     login: &hubuum_storage_core::StorageLogin,
 ) -> Result<(), PostgresStorageError> {
     if let Some(expected) = login.authentication_revision() {
-        let actual = sql_query(
-            "SELECT revision FROM runtime_settings WHERE setting_group='authentication' FOR SHARE",
-        )
-        .get_result::<SettingsRevision>(connection)
-        .await?;
-        if actual.revision != expected.get() {
-            return Err(PostgresStorageError::authentication_required(
-                "Authentication configuration changed; sign in again",
-            ));
-        }
+        fence_authentication_revision(connection, expected).await?;
+    }
+    Ok(())
+}
+pub(super) async fn fence_authentication_revision(
+    connection: &mut PostgresConnection,
+    expected: hubuum_domain::ResourceRevision,
+) -> Result<(), PostgresStorageError> {
+    let actual = sql_query(
+        "SELECT revision FROM runtime_settings WHERE setting_group='authentication' FOR SHARE",
+    )
+    .get_result::<SettingsRevision>(connection)
+    .await?;
+    if actual.revision != expected.get() {
+        return Err(PostgresStorageError::authentication_required(
+            "Authentication configuration changed; sign in again",
+        ));
     }
     Ok(())
 }

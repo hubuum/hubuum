@@ -51,12 +51,11 @@ async fn configured_adapter(
     let secret = crate::services::security_candidates::providers::browser_secret(provider)
         .await?
         .ok_or(InteractionError::ProviderUnavailable)?;
-    let callback = format!(
-        "{}/api/v1/auth/callbacks/{}",
-        crate::config::get_config()?.auth_browser.origin()?,
-        provider.id().ok_or(InteractionError::Invalid)?
-    );
-    let private = crate::config::get_config()?.auth_runtime_allow_private_targets;
+    let config = crate::config::get_config()?;
+    let callback = config
+        .auth_browser
+        .callback(provider.id().ok_or(InteractionError::Invalid)?)?;
+    let private = config.auth_runtime_allow_private_targets;
     match provider.browser_definition() {
         Some(StorageBrowserProviderDefinition::Oidc(definition)) => {
             OidcAdapter::new(definition.clone(), secret, &callback, private)
@@ -277,6 +276,7 @@ pub async fn callback(
         return Err(InteractionError::Invalid.into());
     };
     let rotated = session.rotate();
+    let mut failure_action = StorageInteractionAction::Fail;
     let result = async {
         let pending = PendingLogin::restore(
             &unprotect(
@@ -311,16 +311,24 @@ pub async fn callback(
             None => return Err(InteractionError::Unsupported.into()),
         }
         .map_err(|_| InteractionError::Invalid)?;
-        let authentication = adapter
-            .exchange(accepted, &provider_context)
-            .await
-            .map_err(error)?;
+        let authentication = match adapter.exchange(accepted, &provider_context).await {
+            Err(OidcError::MembershipRejected(rejection))
+                if view.binding().authority().purpose()
+                    != InteractionPurpose::ProviderVerification =>
+            {
+                failure_action = StorageInteractionAction::RejectMembership(rejection);
+                return Err(InteractionError::Invalid.into());
+            }
+            outcome => outcome.map_err(error)?,
+        };
         if view.binding().authority().purpose() == InteractionPurpose::ProviderVerification {
-            let verified = crate::services::security_candidates::verify_browser_interaction(
-                context,
-                authentication.proof(),
-            )
-            .await?;
+            let (proof, credentials) = authentication.into_parts();
+            if retain_credentials(&selected) && credentials.is_none() {
+                return Err(InteractionError::Unsupported.into());
+            }
+            let verified =
+                crate::services::security_candidates::verify_browser_interaction(context, &proof)
+                    .await?;
             super::advance(
                 context,
                 StorageInteractionAuthorization::Claim(claim.claim().clone()),
@@ -394,12 +402,12 @@ pub async fn callback(
     }
     .await;
     if let Err(error) = result {
-        let _ = super::advance(
+        super::advance(
             context,
             StorageInteractionAuthorization::Claim(claim.claim().clone()),
-            StorageInteractionAction::Fail,
+            failure_action,
         )
-        .await;
+        .await?;
         return Err(error);
     }
     Ok((id, rotated))
@@ -410,16 +418,20 @@ use hubuum_storage_core::StorageInteractionAuthentication;
 pub(crate) async fn renew(
     storage: &crate::storage::StorageHandle,
     principal: PrincipalId,
+    revision: hubuum_domain::ResourceRevision,
     provider: &StorageAuthenticationProvider,
 ) -> Result<bool, ApiError> {
     use hubuum_storage_core::{
-        ExternalIdentityStorage, StorageEncryptedUpstreamCredential, StorageExternalSyncFailure,
-        StorageUpstreamClaimOutcome, StorageUpstreamRenewal,
+        ExternalIdentityStorage, StorageEncryptedUpstreamCredential, StorageUpstreamClaimOutcome,
+        StorageUpstreamFailure, StorageUpstreamRenewal,
     };
     if !retain_credentials(provider) {
         return Ok(false);
     }
-    let claim = match storage.claim_upstream_credential(principal).await? {
+    let claim = match storage
+        .claim_upstream_credential(revision, principal)
+        .await?
+    {
         StorageUpstreamClaimOutcome::Unavailable => return Ok(false),
         StorageUpstreamClaimOutcome::Busy => {
             return Err(ApiError::ServiceUnavailable(
@@ -428,8 +440,8 @@ pub(crate) async fn renew(
         }
         StorageUpstreamClaimOutcome::Claim(claim) => *claim,
     };
-    // Bound the complete attempt, including secret resolution. Once claimed,
-    // no failure may leave a reusable upstream token behind.
+    // Bound the complete attempt, including secret resolution, to the claim lease.
+    let submitted = std::sync::atomic::AtomicBool::new(false);
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(25), async {
         let original = claim.session();
         let purpose = format!("upstream:{}", original.subject());
@@ -456,7 +468,9 @@ pub(crate) async fn renew(
         .map_err(error)?;
         let authentication = configured_adapter(provider)
             .await?
-            .refresh(credentials, &provider_context)
+            .refresh(credentials, &provider_context, || {
+                submitted.store(true, std::sync::atomic::Ordering::Relaxed)
+            })
             .await
             .map_err(error)?;
         let (proof, credentials) = authentication.into_parts();
@@ -493,10 +507,12 @@ pub(crate) async fn renew(
             storage
                 .fail_upstream_renewal(
                     claim,
-                    if temporary {
-                        StorageExternalSyncFailure::Unavailable
+                    if temporary && !submitted.load(std::sync::atomic::Ordering::Relaxed) {
+                        StorageUpstreamFailure::UnavailableBeforeSubmission
+                    } else if temporary {
+                        StorageUpstreamFailure::Unavailable
                     } else {
-                        StorageExternalSyncFailure::Rejected
+                        StorageUpstreamFailure::Rejected
                     },
                 )
                 .await?;
@@ -579,7 +595,12 @@ fn queue_revocations(records: Vec<StorageUpstreamSession>, selection: Revocation
                 };
                 let selected = match selection {
                     RevocationProvider::Live(context) => {
-                        provider(&context, record.binding()).await?
+                        super::external::provider_at_revision(
+                            &context,
+                            record.binding().provider(),
+                            record.current_revision(),
+                        )
+                        .await?
                     }
                     RevocationProvider::Previous(provider) => provider,
                 };

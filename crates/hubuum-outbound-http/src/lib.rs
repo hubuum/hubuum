@@ -65,12 +65,22 @@ pub enum OutboundHttpError {
     DisallowedAddress { host: String, address: IpAddr },
     ClientBuild,
     ResponseRead,
+    InvalidResponseBody { status: u16 },
     Timeout,
     Connect,
     Request,
     InvalidHeaderName { name: String },
     TransportControlledHeader { name: String },
     InvalidHeaderValue { name: String },
+}
+
+impl OutboundHttpError {
+    pub fn is_dns_failure(&self) -> bool {
+        matches!(
+            self,
+            Self::DnsResolution { .. } | Self::EmptyDnsResolution { .. }
+        )
+    }
 }
 
 impl fmt::Display for OutboundHttpError {
@@ -92,6 +102,7 @@ impl fmt::Display for OutboundHttpError {
                 "outbound host '{host}' resolves to a disallowed address ({address})"
             ),
             Self::ClientBuild => write!(f, "HTTP client initialization failed"),
+            Self::InvalidResponseBody { .. } => write!(f, "invalid outbound response body"),
             Self::ResponseRead => write!(f, "failed reading outbound response"),
             Self::Timeout => write!(f, "outbound call timed out"),
             Self::Connect => write!(f, "outbound connection failed"),
@@ -445,6 +456,14 @@ impl OutboundRequest {
     }
 
     pub async fn send(self) -> Result<OutboundResponse, OutboundHttpError> {
+        self.send_with_dispatch(|| {}).await
+    }
+
+    /// Called after destination screening, immediately before handing the request to the client.
+    pub async fn send_with_dispatch(
+        self,
+        dispatch: impl FnOnce(),
+    ) -> Result<OutboundResponse, OutboundHttpError> {
         let span = info_span!(
             "http.client.request",
             otel.kind = "client",
@@ -454,7 +473,7 @@ impl OutboundRequest {
             server.address.category = "screened",
             error.type = tracing::field::Empty,
         );
-        let result = execute(self).instrument(span.clone()).await;
+        let result = execute(self, dispatch).instrument(span.clone()).await;
         if let Err(error) = &result {
             span.record("error.type", outbound_error_category(error));
         }
@@ -517,15 +536,23 @@ impl OutboundResponse {
     }
 }
 
-async fn execute(request: OutboundRequest) -> Result<OutboundResponse, OutboundHttpError> {
-    execute_with_screen(request, |host, port, private, localhost| async move {
-        screen_host(&host, port, private, localhost).await
-    })
+async fn execute(
+    request: OutboundRequest,
+    dispatch: impl FnOnce(),
+) -> Result<OutboundResponse, OutboundHttpError> {
+    execute_with_screen(
+        request,
+        dispatch,
+        |host, port, private, localhost| async move {
+            screen_host(&host, port, private, localhost).await
+        },
+    )
     .await
 }
 
 async fn execute_with_screen<Screen, Screening>(
     request: OutboundRequest,
+    dispatch: impl FnOnce(),
     screen: Screen,
 ) -> Result<OutboundResponse, OutboundHttpError>
 where
@@ -564,6 +591,7 @@ where
             request_builder = request_builder.body(body);
         }
 
+        dispatch();
         let response = request_builder.send().await.map_err(map_reqwest_error)?;
         let status = response.status();
         Span::current().record("http.response.status_code", status.as_u16());
@@ -606,6 +634,7 @@ fn outbound_error_category(error: &OutboundHttpError) -> &'static str {
         }
         OutboundHttpError::DisallowedAddress { .. } => "address_policy",
         OutboundHttpError::ClientBuild => "client",
+        OutboundHttpError::InvalidResponseBody { .. } => "invalid_response_body",
         OutboundHttpError::ResponseRead => "response_read",
         OutboundHttpError::Timeout => "timeout",
         OutboundHttpError::Connect => "connect",
@@ -719,6 +748,7 @@ async fn read_capped_body(
     limit: usize,
     require_complete: bool,
 ) -> Result<String, OutboundHttpError> {
+    let status = response.status().as_u16();
     let mut buffer: Vec<u8> = Vec::new();
     while require_complete || buffer.len() < limit {
         match response.chunk().await.map_err(|error| {
@@ -731,7 +761,7 @@ async fn read_capped_body(
             Some(chunk) => {
                 let remaining = limit - buffer.len();
                 if require_complete && chunk.len() > remaining {
-                    return Err(OutboundHttpError::ResponseRead);
+                    return Err(OutboundHttpError::InvalidResponseBody { status });
                 }
                 let take = remaining.min(chunk.len());
                 buffer.extend_from_slice(&chunk[..take]);
@@ -740,7 +770,7 @@ async fn read_capped_body(
         }
     }
     if require_complete {
-        String::from_utf8(buffer).map_err(|_| OutboundHttpError::ResponseRead)
+        String::from_utf8(buffer).map_err(|_| OutboundHttpError::InvalidResponseBody { status })
     } else {
         Ok(String::from_utf8_lossy(&buffer).replace('\0', "\u{FFFD}"))
     }
@@ -810,16 +840,16 @@ mod tests {
     static CLIENT_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[rstest::rstest]
-    #[case::exact_limit(b"{}", 2, 2, true)]
-    #[case::over_limit(b"{} ", 3, 2, false)]
-    #[case::truncated(b"{}", 3, 3, false)]
-    #[case::invalid_utf8(b"\xff", 1, 2, false)]
+    #[case::exact_limit(b"{}", 2, 2, None)]
+    #[case::over_limit(b"{} ", 3, 2, Some("invalid_response_body"))]
+    #[case::truncated(b"{}", 3, 3, Some("response_read"))]
+    #[case::invalid_utf8(b"\xff", 1, 2, Some("invalid_response_body"))]
     #[tokio::test]
     async fn complete_body_rejects_lossy_protocol_responses(
         #[case] body: &'static [u8],
         #[case] content_length: usize,
         #[case] limit: usize,
-        #[case] accepted: bool,
+        #[case] error: Option<&str>,
     ) {
         use std::io::{Read, Write};
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -848,8 +878,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            read_capped_body(response, limit, true).await.is_ok(),
-            accepted
+            read_capped_body(response, limit, true)
+                .await
+                .err()
+                .as_ref()
+                .map(outbound_error_category),
+            error
         );
         server.join().unwrap();
     }
@@ -872,6 +906,7 @@ mod tests {
                     ),
                     Duration::from_secs(2),
                 ),
+                || {},
                 |_, _, _, _| async move { Ok(vec![address]) },
             ));
             // Neither listener completes TLS; the deadline ends the request.
@@ -936,6 +971,7 @@ mod tests {
         let started = tokio::time::Instant::now();
         let result = execute_with_screen(
             OutboundRequest::new(OutboundMethod::Get, "https://example.com/", timeout),
+            || panic!("request dispatched before screening finished"),
             |_, _, _, _| std::future::pending(),
         )
         .await;

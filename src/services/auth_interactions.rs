@@ -95,6 +95,14 @@ async fn providers(
             });
         }
     }
+    if providers
+        .iter()
+        .filter(|provider| provider.id.external_id().is_some())
+        .count()
+        > hubuum_storage_core::StorageAuthenticationProviders::MAX_PROVIDERS
+    {
+        return Err(InteractionError::ProviderUnavailable.into());
+    }
     Ok((revision, providers))
 }
 
@@ -140,9 +148,6 @@ async fn resolve_password_providers(
             kind,
             binding,
         });
-    }
-    if providers.len() > 64 {
-        return Err(InteractionError::ProviderUnavailable.into());
     }
     Ok(providers)
 }
@@ -671,7 +676,10 @@ pub async fn complete(
                         verification,
                         candidate: crate::models::security_candidate::SecurityCandidateReport::new(
                             &candidate,
-                            Some(receipt),
+                            candidate
+                                .verification_receipt()
+                                .filter(|stored| **stored == receipt.digest())
+                                .map(|_| receipt),
                         ),
                     },
                 ))
@@ -751,7 +759,7 @@ pub async fn revoke(
     access: StorageInteractionAccess,
     event_context: EventContext,
 ) -> Result<(), ApiError> {
-    storage_handle(context)
+    let credential = storage_handle(context)
         .revoke_auth_interaction_session(access, event_context)
         .await
         .map_err(|error| {
@@ -762,6 +770,9 @@ pub async fn revoke(
             }
         })?
         .into_value();
+    if let Some(record) = credential {
+        oidc::revoke_best_effort(vec![record], context.clone());
+    }
     Ok(())
 }
 fn storage_error(error: StorageError) -> ApiError {

@@ -50,6 +50,7 @@ impl AuthProviderBackend for DirectoryProvider {
     fn authenticate<'a>(
         &'a self,
         storage: &'a crate::storage::StorageHandle,
+        revision: ResourceRevision,
         login: ValidatedLogin,
     ) -> AuthProviderFuture<'a, StorageUser> {
         Box::pin(async move {
@@ -58,6 +59,7 @@ impl AuthProviderBackend for DirectoryProvider {
             }
             sync_external_user_from_backend(
                 storage,
+                revision,
                 &self.scope,
                 LDAP_PROVIDER_KIND,
                 self.identity(login.name(), true),
@@ -69,11 +71,13 @@ impl AuthProviderBackend for DirectoryProvider {
     fn refresh<'a>(
         &'a self,
         storage: &'a crate::storage::StorageHandle,
+        revision: ResourceRevision,
         state: &'a ExternalUserState,
     ) -> AuthProviderRefreshFuture<'a> {
         Box::pin(async move {
             sync_external_user_from_backend(
                 storage,
+                revision,
                 &self.scope,
                 LDAP_PROVIDER_KIND,
                 self.identity(state.refresh_request.username(), false),
@@ -232,7 +236,7 @@ async fn configured_external_login_snapshots_synced_identity_and_policy(#[case] 
             .provider(&scope)
             .unwrap()
             .backend
-            .refresh(&storage, &state)
+            .refresh(&storage, authentication_revision, &state)
             .await
             .is_ok()
     );

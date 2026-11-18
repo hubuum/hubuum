@@ -26,6 +26,14 @@ pub(super) async fn provider_configuration(
     context: &AppContext,
     binding: &InteractionBinding,
 ) -> Result<StorageAuthenticationProvider, ApiError> {
+    provider_at_revision(context, binding.provider(), binding.revision()).await
+}
+
+pub(super) async fn provider_at_revision(
+    context: &AppContext,
+    provider_id: hubuum_domain::InteractionProviderId,
+    revision: hubuum_domain::ResourceRevision,
+) -> Result<StorageAuthenticationProvider, ApiError> {
     let storage = storage_handle(context);
     storage
         .applied_runtime_settings()
@@ -38,16 +46,33 @@ pub(super) async fn provider_configuration(
     if current
         .record(StorageRuntimeSettingsGroup::Authentication)
         .revision()
-        != binding.revision()
+        != revision
     {
         return Err(InteractionError::ConfigurationChanged.into());
+    }
+    if current.authentication().is_none() {
+        let configured = crate::auth::interaction_password_providers(revision)?;
+        let providers = super::resolve_password_providers(&storage, configured).await?;
+        let deployed = providers
+            .iter()
+            .filter_map(|provider| provider.binding.as_ref())
+            .find(|provider| Some(provider.id()) == provider_id.external_id())
+            .ok_or(InteractionError::ProviderUnavailable)?;
+        return StorageAuthenticationProvider::deployment(
+            deployed.name().to_owned(),
+            deployed.kind(),
+            true,
+        )
+        .and_then(|provider| provider.with_id(deployed.id()))
+        .map_err(|_| InteractionError::Invalid.into());
     }
     let provider = current
         .authentication()
         .and_then(|providers| {
-            providers.providers().iter().find(|provider| {
-                provider.enabled() && provider.id() == binding.provider().external_id()
-            })
+            providers
+                .providers()
+                .iter()
+                .find(|provider| provider.enabled() && provider.id() == provider_id.external_id())
         })
         .ok_or(InteractionError::ProviderUnavailable)?;
     let scope = IdentityScopeName::new(provider.name()).map_err(|_| InteractionError::Invalid)?;
@@ -204,7 +229,15 @@ pub(crate) async fn check_existing_authority(
         != hubuum_auth_core::ExternalFreshness::Current
     {
         if let Some(provider) = provider
-            && super::oidc::renew(storage, principal, provider).await?
+            && super::oidc::renew(
+                storage,
+                principal,
+                current
+                    .record(StorageRuntimeSettingsGroup::Authentication)
+                    .revision(),
+                provider,
+            )
+            .await?
         {
             return Ok(true);
         }

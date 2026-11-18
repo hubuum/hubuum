@@ -5,6 +5,37 @@ use url::Url;
 
 use super::InteractionValidationError;
 
+/// A browser navigation target with an explicitly controlled loopback HTTP exception.
+pub struct BrowserCallbackUrl(String);
+impl BrowserCallbackUrl {
+    pub fn new(uri: &str, allow_loopback_http: bool) -> Result<Self, InteractionValidationError> {
+        let url = Url::parse(uri).map_err(|_| InteractionValidationError::InvalidReturnTarget)?;
+        let loopback = url.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .trim_matches(['[', ']'])
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        });
+        if url.as_str().len() > 2048
+            || url.host_str().is_none()
+            || !(url.scheme() == "https"
+                || url.scheme() == "http" && allow_loopback_http && loopback)
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(InteractionValidationError::InvalidReturnTarget);
+        }
+        Ok(Self(url.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// A bounded, immutable handoff selected from deployment-owned registrations.
 /// It carries no credential; the receiving BFF must match the nonce to its session.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,26 +52,12 @@ impl InteractionReturnTarget {
         uri: String,
         nonce: String,
     ) -> Result<Self, InteractionValidationError> {
-        let url = Url::parse(&uri).map_err(|_| InteractionValidationError::InvalidReturnTarget)?;
-        let loopback = url.host_str().is_some_and(|host| {
-            host == "localhost"
-                || host
-                    .trim_matches(['[', ']'])
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|ip| ip.is_loopback())
-        });
+        let url = BrowserCallbackUrl::new(&uri, true)?;
         if id.is_empty()
             || id.len() > 64
             || !id
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-            || url.as_str().len() > 2048
-            || url.host_str().is_none()
-            || !(url.scheme() == "https" || url.scheme() == "http" && loopback)
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.query().is_some()
-            || url.fragment().is_some()
             || !(32..=128).contains(&nonce.len())
             || !nonce
                 .bytes()
@@ -50,7 +67,7 @@ impl InteractionReturnTarget {
         }
         Ok(Self {
             id,
-            uri: url.to_string(),
+            uri: url.0,
             nonce,
         })
     }

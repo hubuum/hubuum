@@ -294,17 +294,25 @@ pub async fn advance(
                 return Err(invalid());
             }
             let at = Utc::now();
-            let external = matches!(command.action(), StorageInteractionAction::AuthenticateExternal { .. });
+            let external = matches!(command.action(), StorageInteractionAction::AuthenticateExternal { .. } | StorageInteractionAction::RejectMembership(_));
             if let StorageInteractionAction::AuthenticateExternal { authentication, approval } = command.action() {
                 let StorageInteractionAuthorization::Claim(claim) = command.authorization() else { return Err(invalid()); };
                 authentication.prepare(&record, claim, approval.clone(), at).map_err(|_| invalid())?;
                 // Identity serialization precedes the actor/principal fence on
                 // both login and approval paths, avoiding inverse lock order.
-                super::external_identity::lock_interaction_identity(connection, authentication).await?;
+                let fact = authentication.authentication();
+                super::external_identity::lock_interaction_identity(connection, fact.identity(), fact.binding()).await?;
+            } else if let StorageInteractionAction::RejectMembership(rejection) = command.action() {
+                super::external_identity::lock_interaction_identity(connection, rejection.identity(), rejection.binding()).await?;
             }
             let outcome = if let Some(error) = fence(connection, &mut record, revision, at).await? {
                 StorageInteractionOutcome::Rejected(error)
             } else {
+                if let StorageInteractionAction::RejectMembership(rejection) = command.action()
+                    && let Some(principal) = super::external_identity::identity_principal(connection, rejection.identity(), true).await?
+                    && !super::external_identity::sync_success_on_connection(connection, principal).await?.is_some_and(|success| success > rejection.verified_at()) {
+                    super::external_identity::failure_on_connection(connection, principal.id(), hubuum_storage_core::StorageExternalSyncFailure::Rejected).await?;
+                }
                 let command = if let StorageInteractionAction::AuthenticateExternal { authentication, approval } = command.action() {
                     let StorageInteractionAuthorization::Claim(claim) = command.authorization() else { return Err(invalid()); };
                     let provider = record.provider().ok_or_else(invalid)?;
@@ -486,7 +494,10 @@ pub async fn revoke(
     runtime: &PostgresRuntime,
     access: StorageInteractionAccess,
     context: EventContext,
-) -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
+) -> Result<
+    StorageMutationOutcome<Option<hubuum_storage_core::StorageUpstreamSession>>,
+    PostgresStorageError,
+> {
     runtime
         .with_transaction(async move |connection| -> Result<_, PostgresStorageError> {
             // No revision/actor rejection: cleanup remains available after a
@@ -502,12 +513,15 @@ pub async fn revoke(
                     "Interaction has not issued a session",
                 ));
             };
-            auth_sessions::revoke_on_connection(
+            let credential =
+                super::upstream_authentication::issued_session_credential(connection, id).await?;
+            Ok(auth_sessions::revoke_on_connection(
                 connection,
                 SessionRevocation::Session(AuthSessionId::new(id)),
                 context,
             )
-            .await
+            .await?
+            .map(|count| credential.filter(|_| count > 0)))
         })
         .await
 }

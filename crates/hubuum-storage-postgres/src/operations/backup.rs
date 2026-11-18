@@ -425,6 +425,9 @@ pub(crate) fn state_row_to_postgres(
     let object = row.as_object_mut().ok_or_else(|| {
         PostgresStorageError::invalid_input("Logical backup state row is not a JSON object")
     })?;
+    if section == StorageBackupStateSection::IdentityScopes {
+        object.remove("identity_namespace");
+    }
     reject_physical_fields(object, state_field_mappings(section))?;
     if section == StorageBackupStateSection::Users && object.contains_key("password") {
         return Err(PostgresStorageError::invalid_input(
@@ -621,6 +624,11 @@ async fn stream_capture_rows(
 ) -> Result<(), PostgresStorageError> {
     let key = snapshot_key(table)?;
     let predicate = filter.sql(table)?.unwrap_or("TRUE");
+    let projection = if table == "identity_scopes" {
+        "to_jsonb(snapshot_row) || COALESCE((SELECT jsonb_build_object('identity_namespace', b.namespace) FROM authentication_provider_bindings b WHERE b.name=snapshot_row.name AND b.kind=snapshot_row.provider_kind AND b.kind IN ('oidc','oauth')), '{}'::jsonb)"
+    } else {
+        "to_jsonb(snapshot_row)"
+    };
     // Evaluate eligibility per source row so excluded rows also consume work.
     // A NO SCROLL, WITHOUT HOLD cursor cannot materialize a held snapshot.
     let max_chars = progress
@@ -629,7 +637,7 @@ async fn stream_capture_rows(
         .min(i32::MAX as usize);
     diesel::sql_query(format!(
         "DECLARE hubuum_backup_rows NO SCROLL CURSOR WITHOUT HOLD FOR \
-         SELECT CASE WHEN {predicate} THEN left(to_jsonb(snapshot_row)::text, {max_chars}) \
+         SELECT CASE WHEN {predicate} THEN left(({projection})::text, {max_chars}) \
          ELSE NULL END AS row FROM {table} snapshot_row ORDER BY {key}"
     ))
     .execute(conn)

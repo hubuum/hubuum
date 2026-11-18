@@ -357,9 +357,9 @@ impl StorageInteractionAuthentication {
             || actor.principal_id() != candidate.owner().actor_id()
             || actor.token_id() != candidate.owner().token_id()
             || binding.revision() != candidate.base_revision()
-            || binding.verification_receipt().is_some_and(|receipt| {
-                !candidate.verification_receipt().is_some_and(|value| {
-                    bool::from(value.as_str().as_bytes().ct_eq(receipt.as_str().as_bytes()))
+            || candidate.verification_receipt().is_some_and(|value| {
+                binding.verification_receipt().is_some_and(|receipt| {
+                    !bool::from(value.as_str().as_bytes().ct_eq(receipt.as_str().as_bytes()))
                 })
             })
         {
@@ -408,6 +408,7 @@ pub enum StorageInteractionAction {
         state: InteractionDigest,
     },
     Fail,
+    RejectMembership(Box<hubuum_domain::VerifiedMembershipRejection>),
     Authenticate {
         authentication: Box<StorageInteractionAuthentication>,
         approval: Option<InteractionBrowserBinding>,

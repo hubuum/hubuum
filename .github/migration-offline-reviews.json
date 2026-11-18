@@ -61,6 +61,13 @@
       "reason": "Older replicas cannot deserialize retained OIDC interaction state or enforce encrypted upstream credential invalidation during restore and recovery.",
       "upgrade_action": "Stop all API and worker replicas, back up the database, apply migrations and role grants, then start matching binaries. Upgrade external adapters to SDK 0.11 and begin fresh interactions. Restore the pre-upgrade snapshot before downgrading. See docs/authentication/keycloak.md#upgrade-and-recovery.",
       "drop_constraints": {}
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-18-000001_retain_unchanged_credentials/up.sql",
+      "sha256": "d4599cbdc992e46888dae77ba7aa8fd54fa1ea6d5b872cbad38812668cd25cd4",
+      "reason": "Older replicas cannot read the current policy revision on a retained browser credential or fence renewal across a provider settings activation.",
+      "upgrade_action": "Stop API and worker replicas, back up the database, apply the migration, and restart with matching binaries. Restore the pre-upgrade backup for a downgrade.",
+      "drop_constraints": {}
     }
   ]
 }

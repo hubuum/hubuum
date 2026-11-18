@@ -1,4 +1,5 @@
 use hubuum_domain::PlaintextPassword;
+use hubuum_domain::ResourceRevision;
 use hubuum_domain::{GroupId, PrincipalId};
 use hubuum_storage_core::StorageExternalSyncFailure;
 use std::collections::HashMap;
@@ -858,11 +859,12 @@ pub async fn get_external_principal_state(
 
 pub async fn record_external_sync_failure(
     context: &impl StorageContext,
+    revision: ResourceRevision,
     principal_id: i32,
     failure: StorageExternalSyncFailure,
 ) -> Result<(), ApiError> {
     Ok(storage_handle(context)
-        .record_external_sync_failure(PrincipalId::new(principal_id)?, failure)
+        .record_external_sync_failure(revision, PrincipalId::new(principal_id)?, failure)
         .await?)
 }
 
@@ -887,17 +889,20 @@ fn external_sync_request(
 
 pub async fn sync_external_user(
     context: &impl StorageContext,
+    revision: ResourceRevision,
     scope_name: &str,
     provider_kind: &str,
     authenticated: AuthenticatedExternalUser,
 ) -> Result<crate::models::User, ApiError> {
     Ok(user_from_storage(
-        sync_external_credential(context, scope_name, provider_kind, authenticated).await?,
+        sync_external_credential(context, revision, scope_name, provider_kind, authenticated)
+            .await?,
     ))
 }
 
 pub(crate) async fn sync_external_credential(
     context: &impl StorageContext,
+    revision: ResourceRevision,
     scope_name: &str,
     provider_kind: &str,
     authenticated: AuthenticatedExternalUser,
@@ -905,7 +910,7 @@ pub(crate) async fn sync_external_credential(
     let request = external_sync_request(scope_name, provider_kind, authenticated);
     Ok(StorageUser::from(
         storage_handle(context)
-            .sync_external_user(request)
+            .sync_external_user(revision, request)
             .await?
             .into_value(),
     ))

@@ -26,6 +26,9 @@ const INTERACTIONS: &str = include_str!("../migrations/2026-11-12-000002_auth_in
 const CANDIDATES: &str = include_str!("../migrations/2026-11-12-000001_security_candidates/up.sql");
 const UPSTREAM: &str = include_str!("../migrations/2026-11-13-000001_oidc_credentials/up.sql");
 
+const RETENTION: &str =
+    include_str!("../migrations/2026-11-18-000001_retain_unchanged_credentials/up.sql");
+
 /// Independent security authority per test, using current production table shapes
 /// and the actual settings/candidate migrations. Connections use the runtime role.
 struct Fixture {
@@ -57,7 +60,7 @@ impl Fixture {
         ]
         .map(|table| format!("CREATE TABLE {table} (LIKE public.{table} INCLUDING ALL);"))
         .join("\n");
-        f.owner(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {tables} {APPROVALS} {LEGACY} {SETTINGS} {POLICIES} {CANDIDATES} {INTERACTIONS} {UPSTREAM}
+        f.owner(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {tables} {APPROVALS} {LEGACY} {SETTINGS} {POLICIES} {CANDIDATES} {INTERACTIONS} {UPSTREAM} {RETENTION}
             -- LIKE INCLUDING ALL does not copy triggers. Reuse the production
             -- revision guard so credential revocation cannot bypass its contract.
             CREATE TRIGGER tokens_revision BEFORE INSERT OR UPDATE ON tokens
@@ -153,6 +156,9 @@ fn update() -> StorageRuntimeSettingsUpdate {
     )
 }
 fn candidate() -> StorageSecurityCandidate {
+    candidate_for(&update())
+}
+fn candidate_for(update: &StorageRuntimeSettingsUpdate) -> StorageSecurityCandidate {
     let checks = [
         StorageSecurityCheckKind::Configuration,
         StorageSecurityCheckKind::RecoveryAdministrator,
@@ -166,7 +172,7 @@ fn candidate() -> StorageSecurityCandidate {
     StorageSecurityCandidate::try_new(
         Uuid::new_v4(),
         owner(),
-        &update(),
+        update,
         StorageSecurityCandidateBinding::new(digest('a'), digest('b'), digest('c')),
     )
     .unwrap()

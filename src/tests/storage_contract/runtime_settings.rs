@@ -283,6 +283,7 @@ async fn external_administrators_cannot_change_security_settings(
     let backend = StorageHandle::memory();
     let user = backend
         .sync_external_user(
+            ResourceRevision::INITIAL,
             hubuum_storage_core::StorageExternalUserSync::builder(
                 "corporate",
                 "ldap",

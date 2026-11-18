@@ -62,11 +62,14 @@ UNIQUE_SUFFIX="$(date +%s)_$$_${RANDOM}${RANDOM}"
 TEST_DB_NAME="${TEST_DB_PREFIX}${UNIQUE_SUFFIX}"
 SINGLE_TEST_DB_NAME="${TEST_DB_NAME}_single"
 RESTORE_TEST_DB_NAME="${TEST_DB_NAME}_restore"
+DRILL_TEST_DB_NAME="${TEST_DB_NAME}_drill"
 OWNER_ROLE="hubuum_test_owner_${UNIQUE_SUFFIX}"
 MIGRATOR_ROLE="hubuum_test_migrator_${UNIQUE_SUFFIX}"
 RUNTIME_ROLE="hubuum_test_runtime_${UNIQUE_SUFFIX}"
 
 cleanup() {
+    PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+        -c "DROP DATABASE IF EXISTS $DRILL_TEST_DB_NAME;" > /dev/null 2>&1 || true
     if [ -n "${RESTORE_TEST_DB_NAME:-}" ]; then
         PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" \
             -v ON_ERROR_STOP=1 \
@@ -175,6 +178,11 @@ PGOPTIONS="$MIGRATION_PGOPTIONS" diesel migration run \
 # Diesel above still verifies the committed schema under --locked-schema.
 cargo run --quiet --features embedded-migrations --bin hubuum-admin -- \
     --migrate > /dev/null
+
+# The CLI restore drill itself verifies emptiness and applies migrations.
+PGPASSWORD=$DB_PASSWORD psql "$ROOT_URL" -v ON_ERROR_STOP=1 \
+    -c "CREATE DATABASE $DRILL_TEST_DB_NAME;" > /dev/null
+export HUBUUM_RESTORE_DRILL_DATABASE_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DRILL_TEST_DB_NAME$SSL_MODE"
 
 # Destructive recovery contracts own a separate database. Their backup size and
 # execution time must not depend on retained history from unrelated test suites.

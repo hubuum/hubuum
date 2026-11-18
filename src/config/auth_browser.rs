@@ -103,6 +103,16 @@ impl BrowserSettings {
             .as_deref()
             .ok_or_else(|| InteractionError::Unsupported.into())
     }
+    pub fn callback(
+        &self,
+        provider: uuid::Uuid,
+    ) -> Result<hubuum_domain::BrowserCallbackUrl, ApiError> {
+        hubuum_domain::BrowserCallbackUrl::new(
+            &format!("{}/api/v1/auth/callbacks/{provider}", self.origin()?),
+            self.allow_loopback_http,
+        )
+        .map_err(|_| InteractionError::Invalid.into())
+    }
     pub fn secure(&self) -> bool {
         !self
             .origin
@@ -187,6 +197,11 @@ mod tests {
                 .parse()
                 .unwrap();
         assert!(!enabled.secure());
+        let id = uuid::Uuid::new_v4();
+        assert_eq!(
+            enabled.callback(id).unwrap().as_str(),
+            format!("http://127.0.0.1:8080/api/v1/auth/callbacks/{id}")
+        );
     }
 
     #[test]

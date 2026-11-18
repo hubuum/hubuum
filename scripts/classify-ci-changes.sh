@@ -156,6 +156,7 @@ for path in "$@"; do
       operational_contract=true
       ;;
     docs/openapi.json)
+      code=true
       openapi=true
       ;;
     docs/authentication/openapi.proposed.json | docs/authentication/fixtures.json | \

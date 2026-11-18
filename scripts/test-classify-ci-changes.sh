@@ -328,7 +328,7 @@ assert_flag "$rust_api_policy_output" benchmarks false
 openapi_output="$(bash "$classifier" docs/openapi.json)"
 assert_flag "$openapi_output" openapi true
 assert_flag "$openapi_output" operational_contract false
-assert_flag "$openapi_output" code false
+assert_flag "$openapi_output" code true
 
 openapi_policy_output="$(bash "$classifier" \
   .github/openapi-breaking-exceptions.json \

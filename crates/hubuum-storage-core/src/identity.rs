@@ -709,7 +709,7 @@ pub trait AuthenticationStorage: Send + Sync {
         &self,
         access: crate::StorageInteractionAccess,
         context: hubuum_events_core::EventContext,
-    ) -> Result<crate::StorageMutationOutcome<usize>, StorageError>;
+    ) -> Result<crate::StorageMutationOutcome<Option<crate::StorageUpstreamSession>>, StorageError>;
     async fn purge_auth_interactions(&self, limit: usize) -> Result<usize, StorageError>;
 
     async fn record_credential_creation(

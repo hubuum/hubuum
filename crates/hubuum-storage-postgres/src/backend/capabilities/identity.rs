@@ -1,7 +1,7 @@
 use super::super::*;
+use hubuum_domain::ResourceRevision;
 use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
 use hubuum_storage_core::StorageExternalSyncFailure;
-use hubuum_storage_core::StorageUpstreamRevocation;
 use hubuum_storage_core::{
     CredentialActivityPolicy, ObservedSource, StorageActivityQuery, StorageCredentialActivity,
     StorageCredentialCreation,
@@ -15,6 +15,9 @@ use hubuum_storage_core::{
     StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
     StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionOutcome,
     StorageInteractionView,
+};
+use hubuum_storage_core::{
+    StorageUpstreamFailure, StorageUpstreamRevocation, StorageUpstreamSession,
 };
 
 #[async_trait]
@@ -56,7 +59,7 @@ impl AuthenticationStorage for PostgresStorage {
         &self,
         access: StorageInteractionAccess,
         context: EventContext,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<Option<StorageUpstreamSession>>, StorageError> {
         crate::operations::auth_interactions::revoke(self.runtime(), access, context)
             .await
             .map_err(StorageError::from)
@@ -438,7 +441,7 @@ impl ExternalIdentityStorage for PostgresStorage {
     async fn fail_upstream_renewal(
         &self,
         claim: hubuum_storage_core::StorageUpstreamClaim,
-        failure: StorageExternalSyncFailure,
+        failure: StorageUpstreamFailure,
     ) -> Result<(), StorageError> {
         crate::operations::upstream_authentication::fail(self.runtime(), claim, failure)
             .await
@@ -446,9 +449,10 @@ impl ExternalIdentityStorage for PostgresStorage {
     }
     async fn claim_upstream_credential(
         &self,
+        revision: ResourceRevision,
         principal: PrincipalId,
     ) -> Result<hubuum_storage_core::StorageUpstreamClaimOutcome, StorageError> {
-        crate::operations::upstream_authentication::claim(self.runtime(), principal)
+        crate::operations::upstream_authentication::claim(self.runtime(), revision, principal)
             .await
             .map_err(StorageError::from)
     }
@@ -463,7 +467,7 @@ impl ExternalIdentityStorage for PostgresStorage {
     async fn upstream_logout_credentials(
         &self,
         target: StorageUpstreamRevocation,
-    ) -> Result<Vec<hubuum_storage_core::StorageUpstreamSession>, StorageError> {
+    ) -> Result<Vec<StorageUpstreamSession>, StorageError> {
         crate::operations::upstream_authentication::logout_credentials(self.runtime(), target)
             .await
             .map_err(StorageError::from)
@@ -491,11 +495,13 @@ impl ExternalIdentityStorage for PostgresStorage {
 
     async fn record_external_sync_failure(
         &self,
+        revision: ResourceRevision,
         principal_id: PrincipalId,
         failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError> {
         crate::operations::external_identity::record_external_sync_failure(
             self.runtime(),
+            revision,
             principal_id.id(),
             failure,
         )
@@ -505,9 +511,10 @@ impl ExternalIdentityStorage for PostgresStorage {
 
     async fn sync_external_user(
         &self,
+        revision: ResourceRevision,
         request: StorageExternalUserSync,
     ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError> {
-        crate::operations::external_identity::sync_external_user(self.runtime(), request)
+        crate::operations::external_identity::sync_external_user(self.runtime(), revision, request)
             .await
             .map_err(StorageError::from)
     }

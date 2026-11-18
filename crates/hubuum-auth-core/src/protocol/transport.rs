@@ -27,6 +27,14 @@ impl Transport {
     }
 
     pub async fn send(self, request: HttpRequest) -> Result<HttpResponse, ProtocolError> {
+        self.send_with_dispatch(request, || {}).await
+    }
+
+    pub async fn send_with_dispatch(
+        self,
+        request: HttpRequest,
+        dispatch: impl FnOnce(),
+    ) -> Result<HttpResponse, ProtocolError> {
         let _permit = REQUESTS
             .try_acquire()
             .map_err(|_| ProtocolError::Unavailable)?;
@@ -53,7 +61,7 @@ impl Transport {
         let url = request.uri().to_string();
         let body =
             String::from_utf8(request.into_body()).map_err(|_| ProtocolError::Configuration)?;
-        self.send_to(method, headers, body, url).await
+        self.send_to(method, headers, body, url, dispatch).await
     }
 
     async fn send_to(
@@ -62,6 +70,7 @@ impl Transport {
         headers: OutboundHeaders,
         body: String,
         url: String,
+        dispatch: impl FnOnce(),
     ) -> Result<HttpResponse, ProtocolError> {
         let response = OutboundRequest::new(method, url, Duration::from_secs(5))
             .headers(headers)
@@ -69,10 +78,14 @@ impl Transport {
             .max_response_bytes(RESPONSE_LIMIT)
             .require_complete_body()
             .allow_private_targets(self.allow_private_targets)
-            .send()
+            .send_with_dispatch(dispatch)
             .await
             .map_err(|error| match error {
-                OutboundHttpError::ResponseRead => ProtocolError::InvalidResponse,
+                OutboundHttpError::InvalidResponseBody { status }
+                    if status < 500 && status != 429 =>
+                {
+                    ProtocolError::InvalidResponse
+                }
                 _ => ProtocolError::Unavailable,
             })?;
         Self::response(

@@ -221,6 +221,7 @@ mod tests {
         let scope = context.scoped_name("unconfigured_execution_provider");
         let principal = storage
             .sync_external_user(
+                hubuum_domain::ResourceRevision::INITIAL,
                 StorageExternalUserSync::builder(
                     &scope,
                     "ldap",

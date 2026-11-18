@@ -3,12 +3,28 @@
 use chrono::{DateTime, Duration, Utc};
 use hubuum_domain::{
     BrowserIdentityNamespace, FreshExternalAuthentication, InteractionBinding, InteractionPurpose,
-    PrincipalId, VerifiedExternalAuthentication,
+    PrincipalId, ResourceRevision, VerifiedExternalAuthentication,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{AuthSessionId, StorageValidationError};
+
+/// Whether a failed attempt could have spent its rotating refresh token.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageUpstreamFailure {
+    UnavailableBeforeSubmission,
+    Unavailable,
+    Rejected,
+}
+impl StorageUpstreamFailure {
+    pub fn sync_failure(self) -> crate::StorageExternalSyncFailure {
+        match self {
+            Self::Rejected => crate::StorageExternalSyncFailure::Rejected,
+            _ => crate::StorageExternalSyncFailure::Unavailable,
+        }
+    }
+}
 
 /// Select encrypted credentials before an authorized local revocation commits.
 #[derive(Clone, Debug)]
@@ -126,6 +142,10 @@ pub struct StorageUpstreamSession {
     subject: String,
     credential: Option<StorageEncryptedUpstreamCredential>,
     lease: Option<(Uuid, DateTime<Utc>)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_after: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_revision: Option<ResourceRevision>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -138,13 +158,19 @@ struct SessionInput {
     subject: String,
     credential: Option<StorageEncryptedUpstreamCredential>,
     lease: Option<(Uuid, DateTime<Utc>)>,
+    retry_after: Option<DateTime<Utc>>,
+    current_revision: Option<ResourceRevision>,
 }
 impl TryFrom<SessionInput> for StorageUpstreamSession {
     type Error = StorageValidationError;
     fn try_from(value: SessionInput) -> Result<Self, Self::Error> {
         validate_identity(&value.binding, &value.scope, &value.subject)?;
-        if value.session.is_nil()
+        if value
+            .current_revision
+            .is_some_and(|revision| revision < value.binding.revision())
+            || value.session.is_nil()
             || value.credential.is_some() && value.lease.is_some()
+            || value.retry_after.is_some() && value.credential.is_none()
             || value.lease.is_some_and(|(id, _)| id.is_nil())
         {
             return Err(invalid());
@@ -158,6 +184,8 @@ impl TryFrom<SessionInput> for StorageUpstreamSession {
             subject: value.subject,
             credential: value.credential,
             lease: value.lease,
+            retry_after: value.retry_after,
+            current_revision: value.current_revision,
         })
     }
 }
@@ -200,6 +228,8 @@ impl StorageUpstreamSession {
             subject: retained.subject,
             credential: Some(retained.credential),
             lease: None,
+            retry_after: None,
+            current_revision: None,
         })
     }
     pub fn session(&self) -> AuthSessionId {
@@ -223,7 +253,22 @@ impl StorageUpstreamSession {
     pub fn credential(&self) -> Option<&StorageEncryptedUpstreamCredential> {
         self.credential.as_ref()
     }
+    /// The original binding remains the authenticated data for the ciphertext.
+    pub fn current_revision(&self) -> ResourceRevision {
+        self.current_revision.unwrap_or(self.binding.revision())
+    }
+    pub fn retain_at_revision(&mut self, revision: ResourceRevision) {
+        self.current_revision = Some(revision);
+    }
+    pub fn has_credential_or_live_lease(&self, now: DateTime<Utc>) -> bool {
+        self.credential.is_some() || self.lease.is_some_and(|(_, deadline)| now < deadline)
+    }
+
     pub fn claim(&mut self, now: DateTime<Utc>) -> StorageUpstreamClaimOutcome {
+        if self.retry_after.is_some_and(|after| now < after) {
+            return StorageUpstreamClaimOutcome::Unavailable;
+        }
+        self.retry_after = None;
         if self.lease.is_some_and(|(_, deadline)| now < deadline) {
             return StorageUpstreamClaimOutcome::Busy;
         }
@@ -241,7 +286,8 @@ impl StorageUpstreamSession {
         }))
     }
     pub fn accepts(&self, claim: &StorageUpstreamClaim, now: DateTime<Utc>) -> bool {
-        self.session == claim.session.session
+        self.current_revision() == claim.session.current_revision()
+            && self.session == claim.session.session
             && self.principal == claim.session.principal
             && self.binding == claim.session.binding
             && self.subject == claim.session.subject
@@ -249,6 +295,29 @@ impl StorageUpstreamSession {
             && self.namespace == claim.session.namespace
             && self.lease == Some((claim.attempt, claim.deadline))
             && now < claim.deadline
+    }
+    /// An OAuth read or pre-submission OIDC failure leaves the grant usable. Retry after
+    /// a bounded delay, without advancing the last successful verification.
+    pub fn defer_credential_retry(
+        &mut self,
+        claim: &StorageUpstreamClaim,
+        provider: &crate::StorageProviderIdentityBinding,
+        failure: StorageUpstreamFailure,
+        now: DateTime<Utc>,
+    ) -> bool {
+        if !(failure == StorageUpstreamFailure::UnavailableBeforeSubmission
+            || failure == StorageUpstreamFailure::Unavailable
+                && provider.kind() == crate::StorageAuthenticationProviderKind::Oauth)
+            || Some(provider.id()) != self.binding.provider().external_id()
+            || provider.namespace() != self.namespace()
+            || !self.accepts(claim, now)
+        {
+            return false;
+        }
+        self.credential = Some(claim.credential.clone());
+        self.lease = None;
+        self.retry_after = Some(now + Duration::seconds(30));
+        true
     }
     pub fn renewed(
         &mut self,
@@ -289,6 +358,7 @@ impl StorageUpstreamSession {
             return Err(invalid());
         }
         self.credential = Some(credential);
+        self.retry_after = None;
         self.lease = None;
         Ok(())
     }
@@ -318,7 +388,7 @@ impl StorageUpstreamApproval {
                 .map(|actor| actor.principal_id())
                 != Some(session.principal)
             || binding.provider() != session.binding.provider()
-            || binding.revision() != session.binding.revision()
+            || binding.revision() != session.current_revision()
             || identity.scope().as_str() != session.scope
             || identity.namespace() != session.namespace.as_str()
             || identity.subject().as_str() != session.subject
@@ -395,5 +465,80 @@ impl StorageUpstreamRenewal {
     }
     pub fn credential(&self) -> Option<&StorageEncryptedUpstreamCredential> {
         self.credential.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{StorageAuthenticationProviderKind, StorageProviderIdentityBinding};
+    use hubuum_domain::{
+        ExternalAuthenticationContext, IdentityScopeName, InteractionAuthority,
+        InteractionClientId, InteractionId, InteractionProviderId, MembershipClaims,
+        OAuthProviderDefinition, ResourceRevision,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn profile_outage_retries_same_access_token_after_backoff() {
+        let definition: OAuthProviderDefinition = serde_json::from_value(json!({
+            "profile":"json_user", "authorization_endpoint":"https://id.example/auth", "token_endpoint":"https://id.example/token",
+            "profile_endpoint":"https://id.example/user", "client_id":"client", "client_authentication":"client_secret_post", "scopes":[],
+            "subject_pointer":"/id", "subject_type":"string", "name_pointer":"/name", "admission":{"mode":"existing_only"},
+            "membership":{"mode":"local_only","refresh_interval_seconds":300,"max_stale_seconds":900}
+        })).unwrap();
+        let now = Utc::now();
+        let provider = StorageProviderIdentityBinding::try_new(
+            "company".into(),
+            Uuid::new_v4(),
+            StorageAuthenticationProviderKind::Oauth,
+            definition.identity_namespace(),
+        )
+        .unwrap();
+        let binding = InteractionBinding::try_new(
+            InteractionId::new(Uuid::new_v4()).unwrap(),
+            InteractionProviderId::external(provider.id()).unwrap(),
+            InteractionClientId::new("test").unwrap(),
+            ResourceRevision::INITIAL,
+            InteractionAuthority::login(),
+        )
+        .unwrap();
+        let proof = ExternalAuthenticationContext::oauth(
+            binding,
+            IdentityScopeName::new("company").unwrap(),
+            &definition,
+        )
+        .unwrap()
+        .verified_oauth(&json!({"id":"alice"}), MembershipClaims::Absent, now)
+        .unwrap();
+        let retained = StorageRetainedAuthentication::new(
+            &proof,
+            StorageEncryptedUpstreamCredential::new("encrypted-access-token".into()).unwrap(),
+        )
+        .unwrap();
+        let mut record = StorageUpstreamSession::try_new(
+            AuthSessionId::new(Uuid::new_v4()),
+            PrincipalId::new(1).unwrap(),
+            retained,
+        )
+        .unwrap();
+        let StorageUpstreamClaimOutcome::Claim(claim) = record.claim(now) else {
+            panic!("initial claim")
+        };
+        assert!(record.defer_credential_retry(
+            &claim,
+            &provider,
+            StorageUpstreamFailure::Unavailable,
+            now
+        ));
+        assert!(matches!(
+            record.claim(now),
+            StorageUpstreamClaimOutcome::Unavailable
+        ));
+        let StorageUpstreamClaimOutcome::Claim(retry) = record.claim(now + Duration::seconds(30))
+        else {
+            panic!("retry")
+        };
+        assert_eq!(retry.credential().ciphertext(), "encrypted-access-token");
     }
 }

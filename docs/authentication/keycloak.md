@@ -125,7 +125,9 @@ and immutable subject. Each authenticated interaction issues at most one
 session, and the retained record is attached atomically to that principal and
 session. Concurrent callers claim one token; the old encrypted credential is
 removed before exchange and a validated replacement commits with membership
-updates. Ambiguous failures never retry the old token. Temporary failures may
+updates. If the verified refresh response omits a replacement, Hubuum retains
+the original refresh token for the next renewal. Ambiguous failures never retry
+the old token. Temporary failures may
 use the last successful snapshot only within its configured maximum-stale
 bound. Invalid grants, subject changes and definitive rejection invalidate
 provider-derived authority. Disabled providers and changed configuration fence
@@ -153,7 +155,8 @@ assurance from unspecified `acr` or `amr` values.
 ## Upgrade and recovery
 
 This increment is an offline upgrade. Stop all API and worker replicas, back up
-the database, apply migration `2026-11-13-000001_oidc_credentials` and role grants,
+the database, apply migrations through
+`2026-11-18-000001_retain_unchanged_credentials` and role grants,
 then start matching binaries everywhere and begin new interactions. Upgrade
 external storage adapters and all ten SDK dependencies to `0.11.0`. Regenerate
 OpenAPI clients for the new browser routes and OIDC option. Older binaries and

@@ -354,7 +354,11 @@ async fn rejection_fences_a_previously_verified_callback(#[case] timezone: &str)
     let rejection = f.database.replica_with_timezone(timezone);
     let before = Utc::now();
     rejection
-        .record_external_sync_failure(id, StorageExternalSyncFailure::Rejected)
+        .record_external_sync_failure(
+            ResourceRevision::INITIAL,
+            id,
+            StorageExternalSyncFailure::Rejected,
+        )
         .await
         .unwrap();
     let after = Utc::now();
@@ -520,4 +524,40 @@ async fn fresh_approval_and_login_use_consistent_lock_order(#[case] login_subjec
         StorageInteractionCompletion::Rejected(InteractionTransitionError::Consumed)
     ));
     f.database.cleanup().await;
+}
+
+#[rstest::rstest]
+#[case::synchronization(false)]
+#[case::rejection(true)]
+#[tokio::test]
+async fn ldap_state_mutations_require_current_revision(#[case] rejection: bool) {
+    let f = Fixture::new().await;
+    let backend = f.replica();
+    let request =
+        || StorageExternalUserSync::builder("directory", "ldap", "subject", "alice").build();
+    let principal = backend
+        .sync_external_user(ResourceRevision::INITIAL, request())
+        .await
+        .unwrap()
+        .into_value()
+        .id();
+    f.owner("UPDATE runtime_settings SET revision=revision+1 WHERE setting_group='authentication'")
+        .await
+        .unwrap();
+    let result = if rejection {
+        backend
+            .record_external_sync_failure(
+                ResourceRevision::INITIAL,
+                PrincipalId::new(principal.id()).unwrap(),
+                StorageExternalSyncFailure::Rejected,
+            )
+            .await
+    } else {
+        backend
+            .sync_external_user(ResourceRevision::INITIAL, request())
+            .await
+            .map(|_| ())
+    };
+    assert!(result.is_err());
+    f.cleanup().await;
 }

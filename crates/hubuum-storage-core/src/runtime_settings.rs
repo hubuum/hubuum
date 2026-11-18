@@ -475,6 +475,17 @@ impl StorageAuthenticationProviders {
     pub fn try_new(
         providers: Vec<StorageAuthenticationProvider>,
     ) -> Result<Self, StorageValidationError> {
+        Self::validate_selection(
+            providers
+                .iter()
+                .map(|provider| (provider.name(), provider.id())),
+        )?;
+        Ok(Self(providers))
+    }
+
+    pub fn validate_selection<'a>(
+        providers: impl ExactSizeIterator<Item = (&'a str, Option<Uuid>)>,
+    ) -> Result<(), StorageValidationError> {
         if providers.len() > Self::MAX_PROVIDERS {
             return Err(StorageValidationError::invalid(format!(
                 "Authentication providers must not exceed {} entries",
@@ -482,25 +493,20 @@ impl StorageAuthenticationProviders {
             )));
         }
         let mut names = std::collections::HashSet::with_capacity(providers.len());
-        if providers
-            .iter()
-            .any(|provider| !names.insert(&provider.name))
-        {
-            return Err(StorageValidationError::invalid(
-                "Authentication provider names must be unique",
-            ));
-        }
         let mut ids = std::collections::HashSet::new();
-        if providers
-            .iter()
-            .filter_map(StorageAuthenticationProvider::id)
-            .any(|id| !ids.insert(id))
-        {
-            return Err(StorageValidationError::invalid(
-                "Authentication provider IDs must be unique",
-            ));
+        for (name, id) in providers {
+            if !names.insert(name) {
+                return Err(StorageValidationError::invalid(
+                    "Authentication provider names must be unique",
+                ));
+            }
+            if id.is_some_and(|id| !ids.insert(id)) {
+                return Err(StorageValidationError::invalid(
+                    "Authentication provider IDs must be unique",
+                ));
+            }
         }
-        Ok(Self(providers))
+        Ok(())
     }
 
     pub fn providers(&self) -> &[StorageAuthenticationProvider] {

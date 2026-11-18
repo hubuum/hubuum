@@ -79,10 +79,11 @@ impl BrowserAdapter {
         &self,
         credentials: RetainedCredentials,
         context: &ExternalAuthenticationContext,
+        submitting: impl Fn() + Sync,
     ) -> Result<Authentication, ProtocolError> {
         match (self, credentials) {
             (Self::Oidc(adapter), RetainedCredentials::Oidc(credentials)) => adapter
-                .refresh(credentials, context)
+                .refresh(credentials, context, submitting)
                 .await
                 .map(Authentication::Oidc),
             (Self::OAuth(adapter), RetainedCredentials::OAuth(credentials)) => adapter
@@ -163,12 +164,6 @@ pub(super) enum Authentication {
     OAuth(hubuum_auth_oauth::Authentication),
 }
 impl Authentication {
-    pub(super) fn proof(&self) -> &VerifiedExternalAuthentication {
-        match self {
-            Self::Oidc(value) => value.proof(),
-            Self::OAuth(value) => value.proof(),
-        }
-    }
     pub(super) fn into_parts(
         self,
     ) -> (VerifiedExternalAuthentication, Option<RetainedCredentials>) {
