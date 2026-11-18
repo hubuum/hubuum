@@ -7,6 +7,13 @@
       "reason": "openidconnect 4.1 requires rsa 0.9. Hubuum's OIDC adapter only verifies provider signatures with public keys; it does not decrypt or sign with RSA private keys. Private signing exists only under cfg(test) using a committed disposable fixture. Upgrade when openidconnect supports rsa >=0.10 and remove this exception; any production RSA private-key use invalidates it. See docs/supply-chain-security.md and issue #577.",
       "owner": "@terjekv",
       "expires": "2027-02-12"
+    },
+    {
+      "kind": "advisory",
+      "id": "RUSTSEC-2026-0543",
+      "reason": "Temporarily retain Chrono for the existing PostgreSQL, timestamp serialization and public SDK contracts while evaluating a maintained replacement. This advisory reports unmaintained status, has no patched version and does not identify a specific vulnerability. Review replacement compatibility and remove or explicitly reassess this exception before expiry; other Chrono advisories remain blocking.",
+      "owner": "@terjekv",
+      "expires": "2026-12-17"
     }
   ]
 }
