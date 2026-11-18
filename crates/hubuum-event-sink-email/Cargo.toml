@@ -14,7 +14,7 @@ rust-api = "workspace-internal"
 hubuum-event-sinks-common = { path = "../hubuum-event-sinks-common" }
 hubuum-events-core = { path = "../hubuum-events-core" }
 hubuum-event-rendering = { path = "../hubuum-event-rendering" }
-lettre = { version = "0.11.23", default-features = false, features = [
+lettre = { version = "0.11.24", default-features = false, features = [
     "builder",
     "hostname",
     "pool",

@@ -21,6 +21,9 @@ POLICY = load_script(SCRIPT.name)
 SEMVER_CHECKS_VERSION = POLICY.parse_tool_manifest(
     SCRIPT.parent.parent / ".github" / "supply-chain-tools.env"
 )["CARGO_SEMVER_CHECKS_VERSION"]
+CARGO_DENY_VERSION = POLICY.parse_tool_manifest(
+    SCRIPT.parent.parent / ".github" / "supply-chain-tools.env"
+)["CARGO_DENY_VERSION"]
 
 DIGEST = "a" * 64
 VALID_VALUES = {
@@ -72,6 +75,62 @@ class ToolManifestTests(unittest.TestCase):
             with self.subTest(key=key, value=value):
                 values = VALID_VALUES | {key: value}
                 self.assert_policy_error(lambda: POLICY.validate_tool_values(values))
+
+
+class CargoDenyWorkspaceTests(unittest.TestCase):
+    def run_manifest(self, manifest, status=0):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "bin"
+            binary.mkdir()
+            cargo = binary / "cargo"
+            cargo.write_text(
+                "#!/bin/sh\n"
+                'if [ "$1" = deny ] && [ "$2" = --version ]; then\n'
+                f"  echo 'cargo-deny {CARGO_DENY_VERSION}'\n"
+                "else\n"
+                '  printf "%s\\0" "$@" > "$CARGO_DENY_TEST_ARGUMENTS"\n'
+                '  exit "${CARGO_DENY_TEST_STATUS:-0}"\n'
+                "fi\n",
+                encoding="utf-8",
+            )
+            cargo.chmod(0o755)
+            deny = binary / "cargo-deny"
+            deny.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            deny.chmod(0o755)
+            arguments = root / "arguments"
+            environment = os.environ.copy()
+            environment["PATH"] = str(binary) + os.pathsep + environment["PATH"]
+            environment["CARGO_DENY_TEST_ARGUMENTS"] = str(arguments)
+            environment["CARGO_DENY_TEST_STATUS"] = str(status)
+            command = ["bash", str(SCRIPTS / "run-cargo-deny.sh"), str(root / "report")]
+            if manifest is not None:
+                command.append(str(manifest))
+            result = subprocess.run(
+                command, cwd=SCRIPTS.parent, env=environment,
+                text=True, capture_output=True, check=False,
+            )
+            return result, arguments.read_bytes().decode().rstrip("\0").split("\0")
+
+    def test_only_the_standalone_fuzz_audit_permits_root_only_exceptions(self):
+        for manifest, standalone in (
+            (None, False),
+            ("Cargo.toml", False),
+            (SCRIPTS.parent / "Cargo.toml", False),
+            ("fuzz/Cargo.toml", True),
+            (SCRIPTS.parent / "fuzz" / "Cargo.toml", True),
+            ("crates/hubuum-budget/Cargo.toml", False),
+        ):
+            with self.subTest(manifest=manifest):
+                result, arguments = self.run_manifest(manifest)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual("--warn" in arguments, standalone)
+                if standalone:
+                    self.assertEqual(arguments[-2:], ["--warn", "advisory-not-detected"])
+
+    def test_fuzz_audit_preserves_scanner_failure_status(self):
+        result, _ = self.run_manifest("fuzz/Cargo.toml", status=23)
+        self.assertEqual(result.returncode, 23)
 
 
 class DieselVersionTests(unittest.TestCase):
