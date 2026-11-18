@@ -7,6 +7,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Security
+
+- Require Actix HTTP 3.21.3 or later to fix malformed chunked request framing
+  and request-header timeout bypass on persistent HTTP/1 connections
+  (RUSTSEC-2026-0552, RUSTSEC-2026-0553 and RUSTSEC-2026-0554).
+
+- Require `lettre` 0.11.24 or later for the email event sink to fix SMTP reply
+  handling, message and address encoding, and unbounded response buffering
+  (RUSTSEC-2026-0560 through RUSTSEC-2026-0565).
+
+- Require Actix Web 4.18.2 or later and use the patched Actix HTTP dependency
+  to reject malformed chunked request trailers and bound compressed request-body
+  decoding, including large-window Brotli streams (RUSTSEC-2026-0446,
+  RUSTSEC-2026-0447, RUSTSEC-2026-0448 and RUSTSEC-2026-0455).
+
 ### Added
 
 - Gated logical-size expiry selects the oldest eligible original history clocks
@@ -595,6 +610,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   registry layout without enabling online expiry or replacing an installed
   versioned history protocol. Unknown future checkpoints still fail closed.
 
+- Rendering tests use Cargo's reported template-worker path, supporting the
+  relocated test executables introduced by Cargo 1.100.
+
 - Shared login reservations retain their original expiry when runtime rate-limit
   windows change, so in-flight failures still count toward the captured policy.
 - Shared login lockouts keep their expiry when overlapping requests finish under
@@ -647,13 +665,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Retained history and task-event actor names no longer attach to a different
   principal when a restore timeline reuses an integer ID. Historical relation
   endpoint hydration also requires the captured endpoint identity.
-
-### Security
-
-- Require `actix-http` 3.20.3 and `actix-web` 4.18.2 or newer to reject malformed
-  chunked request trailers and bound compressed request-body decoding, including
-  large-window Brotli streams. This addresses RUSTSEC-2026-0446, RUSTSEC-2026-0447,
-  RUSTSEC-2026-0448 and RUSTSEC-2026-0455 without advisory exceptions.
 
 ## [0.0.22] - 2026-11-09
 
