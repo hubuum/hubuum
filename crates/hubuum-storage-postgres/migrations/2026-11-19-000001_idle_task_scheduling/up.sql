@@ -50,9 +50,12 @@ BEGIN
         ON CONFLICT(worker_identity) DO UPDATE SET kinds=EXCLUDED.kinds,expires_at=EXCLUDED.expires_at,generation=EXCLUDED.generation,
             task_identity=NULL,lease_token=NULL,last_lock_wait_us=EXCLUDED.last_lock_wait_us;
     -- Register idle workers before returning so reserved capacity still reflects
-    -- the live worker population. An indexed queue probe avoids reading all
-    -- historical principal service groups on every empty poll.
-    IF NOT EXISTS (SELECT 1 FROM public.tasks WHERE status='queued' AND kind=ANY(supported)) THEN
+    -- the live worker population. Read one supported head in tasks_scheduler_queue
+    -- order. Unordered EXISTS can scan the heap past an arbitrarily long
+    -- prefix of terminal tasks or unsupported kinds.
+    IF (SELECT t.id FROM public.tasks t WHERE t.status='queued' AND t.kind=ANY(supported)
+        ORDER BY t.kind, coalesce((t.logical_identity #>> '{references,/submitted_by,reference,identity}')::UUID,
+            '00000000-0000-0000-0000-000000000000'::UUID), t.created_at, t.id LIMIT 1) IS NULL THEN
         RETURN NULL;
     END IF;
     snapshot := public.hubuum_task_scheduling_snapshot();
