@@ -332,7 +332,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Runtime export and backup limits must fit the configured artifact worker
   reservation. Ordinary object-name lookups avoid history and audit admission
   limits. Artifact cleanup continues after a zero-block state transition, and
-  idle worker polls avoid scanning historical principals.
+  idle worker polls avoid scanning historical principals. The scheduler migration
+  also qualifies the Legacy archive registry at its new schema checkpoint.
 
 - The runtime permission proxy preserves external task-read, bulk-read and
   cancellation decisions instead of substituting default owner/admin behavior.

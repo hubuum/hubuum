@@ -1,3 +1,6 @@
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
+
 CREATE OR REPLACE FUNCTION hubuum_schedule_task(worker UUID, supported TEXT[], lease_ms BIGINT) RETURNS INTEGER
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $function$
 DECLARE started TIMESTAMPTZ := clock_timestamp(); lock_wait BIGINT; p hubuum_control.task_policy; s hubuum_control.task_scheduler;
@@ -116,3 +119,36 @@ BEGIN
     RETURN selected.id;
 END
 $function$;
+
+-- Qualify this scheduler-only schema change for the existing Legacy registry.
+-- Preserve any installed versioned protocol and its gate.
+DO $compatibility$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute
+        WHERE attrelid='hubuum_control.runtime_registrations'::regclass
+          AND attname='history_protocol' AND NOT attisdropped) THEN
+        EXECUTE $definition$
+CREATE OR REPLACE FUNCTION public.hubuum_archive_history_entry(registration uuid, ownership uuid, image uuid, revision bigint)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $entry$
+DECLARE legacy boolean;
+BEGIN
+    IF registration IS NULL OR ownership IS NULL OR NOT public.hubuum_archive_history_requires_legacy_runtime()
+        OR NOT public.hubuum_application_execution_allowed(registration,ownership,image,revision) THEN RETURN FALSE; END IF;
+    -- No absent-column/error catch: only the explicitly supported schema can
+    -- interpret an unversioned registration as Legacy.
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_attribute WHERE attrelid='hubuum_control.runtime_registrations'::regclass
+               AND attname='history_protocol' AND NOT attisdropped) THEN
+        EXECUTE 'SELECT history_protocol=0 FROM hubuum_control.runtime_registrations WHERE id=$1 AND ownership_token=$2 FOR SHARE'
+            INTO STRICT legacy USING registration,ownership;
+    ELSE
+        IF (SELECT max(version) FROM public.__diesel_schema_migrations) <> '20261119000001' THEN
+            RAISE EXCEPTION 'Unversioned archive runtime schema is not supported';
+        END IF;
+        SELECT TRUE INTO STRICT legacy FROM hubuum_control.runtime_registrations
+            WHERE id=registration AND ownership_token=ownership FOR SHARE;
+    END IF;
+    RETURN legacy IS TRUE;
+END $entry$;
+        $definition$;
+    END IF;
+END $compatibility$;
