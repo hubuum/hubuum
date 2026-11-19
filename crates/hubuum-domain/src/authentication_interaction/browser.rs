@@ -193,15 +193,23 @@ impl fmt::Debug for InteractionSealedOperation {
 #[serde(try_from = "VerificationDocument", into = "VerificationDocument")]
 pub struct InteractionVerificationDetails {
     admitted: bool,
-    groups: Vec<(String, String)>,
+    groups: Option<Vec<(String, String)>>,
 }
 impl InteractionVerificationDetails {
     pub fn new(
         admitted: bool,
         groups: Vec<(String, String)>,
     ) -> Result<Self, InteractionValidationError> {
-        if groups.len() > 1000
-            || groups.iter().any(|(key, name)| {
+        Self::from_provider_groups(admitted, Some(groups))
+    }
+
+    pub fn from_provider_groups(
+        admitted: bool,
+        groups: Option<Vec<(String, String)>>,
+    ) -> Result<Self, InteractionValidationError> {
+        let entries = groups.as_deref().unwrap_or_default();
+        if entries.len() > crate::ExternalMemberships::MAX_GROUPS
+            || entries.iter().any(|(key, name)| {
                 [key, name]
                     .iter()
                     .any(|v| v.is_empty() || v.len() > 255 || v.chars().any(char::is_control))
@@ -215,19 +223,23 @@ impl InteractionVerificationDetails {
         self.admitted
     }
     pub fn groups(&self) -> &[(String, String)] {
-        &self.groups
+        self.groups.as_deref().unwrap_or_default()
+    }
+
+    pub fn provider_groups(&self) -> Option<&[(String, String)]> {
+        self.groups.as_deref()
     }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct VerificationDocument {
     admitted: bool,
-    groups: Vec<(String, String)>,
+    groups: Option<Vec<(String, String)>>,
 }
 impl TryFrom<VerificationDocument> for InteractionVerificationDetails {
     type Error = InteractionValidationError;
     fn try_from(v: VerificationDocument) -> Result<Self, Self::Error> {
-        Self::new(v.admitted, v.groups)
+        Self::from_provider_groups(v.admitted, v.groups)
     }
 }
 impl From<InteractionVerificationDetails> for VerificationDocument {

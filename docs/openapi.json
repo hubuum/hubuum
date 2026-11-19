@@ -42397,7 +42397,11 @@
             "type": "boolean"
           },
           "membership": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "local_only",
+              "complete"
+            ]
           },
           "provider_id": {
             "type": "string",

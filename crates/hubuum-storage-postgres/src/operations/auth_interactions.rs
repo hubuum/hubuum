@@ -186,6 +186,8 @@ async fn fence(
     Ok(error)
 }
 
+const ADMISSION_COUNTS: &str = include_str!("auth_interactions/admission.sql");
+
 pub async fn create(
     runtime: &PostgresRuntime,
     request: StorageInteractionCreate,
@@ -203,7 +205,7 @@ pub async fn create(
             if !compatible.valid { return Err(invalid()); }
         }
         let binding=record.lifecycle().binding();
-        let counts=sql_query("WITH interactions AS (SELECT *,created_at<=$3 AND expires_at>$3 AND (document#>>'{lifecycle,phase,state}' IN ('pending','ready','awaiting_approval') OR (document#>>'{lifecycle,phase,state}'='authenticating' AND (document#>>'{lifecycle,phase,deadline}')::timestamptz>$3)) AS active FROM auth_interactions) SELECT count(*) AS total,count(*) FILTER(WHERE active) AS active,count(*) FILTER(WHERE active AND client_id=$1) AS client,count(*) FILTER(WHERE active AND actor_id=$2) AS actor FROM interactions")
+        let counts=sql_query(ADMISSION_COUNTS)
             .bind::<Text,_>(binding.client().as_str()).bind::<Nullable<Integer>,_>(binding.authority().actor().map(|actor|actor.principal_id().id())).bind::<Timestamptz,_>(at).get_result::<Counts>(connection).await?;
         if counts.total>=MAX_AUTH_INTERACTIONS as i64 || counts.active>=MAX_ACTIVE_AUTH_INTERACTIONS as i64 || counts.client>=MAX_ACTIVE_AUTH_INTERACTIONS_PER_CLIENT as i64 || counts.actor>=MAX_ACTIVE_AUTH_INTERACTIONS_PER_ACTOR as i64 { return Err(PostgresStorageError::conflict("Too many authentication interactions")); }
         let written=sql_query("INSERT INTO auth_interactions(id,client_id,actor_id,user_code_digest,created_at,expires_at,retain_until,document) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING")

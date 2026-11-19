@@ -42,6 +42,10 @@ impl StorageProviderIdentityBinding {
         Self::try_new(provider.name().to_owned(), id, provider.kind(), namespace)
     }
 
+    pub fn matches_provider(&self, provider: &StorageAuthenticationProvider) -> bool {
+        Self::from_provider(provider).is_ok_and(|expected| &expected == self)
+    }
+
     pub fn try_new(
         name: String,
         id: Uuid,
@@ -50,7 +54,7 @@ impl StorageProviderIdentityBinding {
     ) -> Result<Self, StorageValidationError> {
         let name = IdentityScopeName::new(name)
             .map_err(|error| StorageValidationError::invalid(error.to_string()))?;
-        if name.as_str() == "local" || id.is_nil() || namespace.is_empty() || namespace.len() > 4096
+        if name.as_str() == "local" || id.is_nil() || namespace.is_empty() || namespace.len() > 8192
         {
             return Err(StorageValidationError::invalid(
                 "Invalid provider identity binding",

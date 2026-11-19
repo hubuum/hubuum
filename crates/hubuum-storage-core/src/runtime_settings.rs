@@ -880,6 +880,24 @@ impl StorageRuntimeSettingsAssignment {
         }
     }
 
+    pub fn local_only_provider_names(&self) -> impl Iterator<Item = &str> {
+        let providers = match self.value() {
+            Some(StorageRuntimeSettingsValue::Authentication(selection)) => selection.providers(),
+            _ => &[],
+        };
+        providers.iter().filter_map(|provider| {
+            let membership = match provider.browser_definition()? {
+                StorageBrowserProviderDefinition::Oidc(definition) => definition.membership(),
+                StorageBrowserProviderDefinition::Oauth(definition) => definition.membership(),
+            };
+            matches!(
+                membership,
+                hubuum_domain::ProviderMembership::LocalOnly { .. }
+            )
+            .then(|| provider.name())
+        })
+    }
+
     /// Persistence document; `None` records deployment ownership.
     #[must_use]
     pub fn to_document(&self) -> Option<Value> {

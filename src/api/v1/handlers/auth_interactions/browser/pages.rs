@@ -135,6 +135,22 @@ mod tests {
     use super::*;
 
     #[actix_web::test]
+    async fn callback_recovery_link_suppresses_the_referrer() {
+        let page = response(
+            StatusCode::BAD_REQUEST,
+            BrowserPage::Error {
+                message: "Unable to continue",
+            },
+        );
+        let body = actix_web::body::to_bytes(page.into_body()).await.unwrap();
+        assert!(
+            std::str::from_utf8(&body)
+                .unwrap()
+                .contains(r#"href="/api/v1/auth/interactions/browser" rel="noreferrer""#)
+        );
+    }
+
+    #[actix_web::test]
     async fn approval_details_are_html_escaped() {
         let response = response(
             StatusCode::OK,

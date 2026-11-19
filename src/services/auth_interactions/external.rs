@@ -13,7 +13,7 @@ use hubuum_storage_core::{
     ExternalIdentityStorage, RuntimeSettingsStorage, StorageAuthenticationProvider,
     StorageBrowserProviderDefinition, StorageExternalInteractionAuthentication,
     StorageExternalPrincipalState, StorageInteractionAction, StorageInteractionAuthorization,
-    StorageInteractionView, StorageProviderIdentityBinding, StorageRuntimeSettingsGroup,
+    StorageInteractionView, StorageRuntimeSettingsGroup,
 };
 
 use crate::errors::{ApiError, InteractionError};
@@ -76,14 +76,11 @@ pub(super) async fn provider_at_revision(
         })
         .ok_or(InteractionError::ProviderUnavailable)?;
     let scope = IdentityScopeName::new(provider.name()).map_err(|_| InteractionError::Invalid)?;
-    let expected = StorageProviderIdentityBinding::from_provider(provider)
-        .map_err(|_| InteractionError::Invalid)?;
-    if storage
-        .authentication_provider_binding(scope.clone())
+    if !storage
+        .authentication_provider_binding(scope)
         .await
         .map_err(super::storage_error)?
-        .as_ref()
-        != Some(&expected)
+        .is_some_and(|binding| binding.matches_provider(provider))
     {
         return Err(InteractionError::ConfigurationChanged.into());
     }
@@ -196,26 +193,25 @@ pub(crate) async fn check_existing_authority(
         return Ok(false);
     }
     let current = storage.load_runtime_settings().await?;
-    let provider = current.authentication().and_then(|providers| {
-        providers.providers().iter().find(|provider| {
-            provider.enabled()
-                && provider.id() == Some(binding.id())
-                && provider.name() == binding.name()
+    let unavailable =
+        || ApiError::Unauthorized("External authentication provider is unavailable".into());
+    let provider = current
+        .authentication()
+        .and_then(|providers| {
+            providers
+                .providers()
+                .iter()
+                .find(|provider| provider.name() == binding.name())
         })
-    });
-    let policy = provider.and_then(|provider| match provider.browser_definition() {
-        Some(StorageBrowserProviderDefinition::Oidc(definition)) => {
-            Some((definition.admission(), definition.membership()))
+        .filter(|provider| provider.enabled() && binding.matches_provider(provider))
+        .ok_or_else(unavailable)?;
+    let (admission, membership) = match provider.browser_definition().ok_or_else(unavailable)? {
+        StorageBrowserProviderDefinition::Oidc(definition) => {
+            (definition.admission(), definition.membership())
         }
-        Some(StorageBrowserProviderDefinition::Oauth(definition)) => {
-            Some((definition.admission(), definition.membership()))
+        StorageBrowserProviderDefinition::Oauth(definition) => {
+            (definition.admission(), definition.membership())
         }
-        None => None,
-    });
-    let Some((admission, membership)) = policy else {
-        return Err(ApiError::Unauthorized(
-            "External authentication provider is unavailable".into(),
-        ));
     };
     if matches!(admission,ProviderAdmission::SubjectAllowlist { subjects } if !subjects.iter().any(|subject|subject==state.external_subject()))
     {
@@ -228,16 +224,15 @@ pub(crate) async fn check_existing_authority(
     if policy.evaluate(state.last_sync_success_at(), Utc::now())
         != hubuum_auth_core::ExternalFreshness::Current
     {
-        if let Some(provider) = provider
-            && super::oidc::renew(
-                storage,
-                principal,
-                current
-                    .record(StorageRuntimeSettingsGroup::Authentication)
-                    .revision(),
-                provider,
-            )
-            .await?
+        if super::oidc::renew(
+            storage,
+            principal,
+            current
+                .record(StorageRuntimeSettingsGroup::Authentication)
+                .revision(),
+            provider,
+        )
+        .await?
         {
             return Ok(true);
         }

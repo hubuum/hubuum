@@ -3,7 +3,7 @@ use actix_web::{
     HttpRequest, HttpResponse, Responder, ResponseError,
     cookie::{Cookie, SameSite, time::Duration},
     get,
-    http::{StatusCode, header},
+    http::{Method, StatusCode, header},
     post, web,
 };
 use hubuum_domain::InteractionId;
@@ -80,10 +80,11 @@ fn failure(error: ApiError) -> HttpResponse {
 fn check_request(
     req: &HttpRequest,
     settings: &BrowserSettings,
-    mutation: bool,
+    creation: bool,
 ) -> Result<(), ApiError> {
     check_host(req, settings)?;
     let origin = settings.origin()?;
+    let mutation = req.method() == Method::POST;
     if !req.query_string().is_empty()
         || mutation
             && (req.headers().get_all(header::ORIGIN).count() != 1
@@ -103,20 +104,37 @@ fn check_request(
     {
         return Err(InteractionError::Invalid.into());
     }
-    super::admission::admit(client_ip_for_request(req), false)
+    super::admission::admit(client_ip_for_request(req), creation)
 }
 fn check_host(req: &HttpRequest, settings: &BrowserSettings) -> Result<(), ApiError> {
-    let authority = settings
-        .origin()?
-        .split_once("://")
-        .ok_or(InteractionError::Invalid)?
-        .1;
-    if req.headers().get_all(header::HOST).count() != 1
-        || req
-            .headers()
-            .get(header::HOST)
-            .and_then(|value| value.to_str().ok())
-            != Some(authority)
+    let origin = reqwest::Url::parse(settings.origin()?).map_err(|_| InteractionError::Invalid)?;
+    let mut hosts = req.headers().get_all(header::HOST);
+    let raw = hosts
+        .next()
+        .and_then(|value| value.to_str().ok())
+        .ok_or(InteractionError::Invalid)?;
+    let authority: actix_http::uri::Authority =
+        raw.parse().map_err(|_| InteractionError::Invalid)?;
+    // Authority accepts userinfo and can report an invalid explicit port as
+    // absent. Host permits only a hostname and an optional numeric port.
+    let host = authority.host();
+    let suffix = raw.strip_prefix(host).ok_or(InteractionError::Invalid)?;
+    let port = if suffix.is_empty() {
+        if settings.secure() { 443 } else { 80 }
+    } else {
+        let digits = suffix.strip_prefix(':').ok_or(InteractionError::Invalid)?;
+        if !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(InteractionError::Invalid.into());
+        }
+        digits
+            .parse::<u16>()
+            .map_err(|_| InteractionError::Invalid)?
+    };
+    if hosts.next().is_some()
+        || !origin
+            .host_str()
+            .is_some_and(|expected| host.eq_ignore_ascii_case(expected))
+        || Some(port) != origin.port_or_known_default()
     {
         return Err(InteractionError::Invalid.into());
     }
@@ -219,7 +237,6 @@ pub async fn attach(
     Ok(async {
         let settings = service::settings(&context)?;
         check_request(&req, &settings, true)?;
-        super::admission::admit(client_ip_for_request(&req), true)?;
         let session = session(&req, &settings, None)?;
         session.validate_csrf(&form.csrf)?;
         let view =
@@ -280,7 +297,7 @@ pub async fn provider_start(
 ) -> Result<impl Responder, ApiError> {
     Ok(async {
         let settings = service::settings(&context)?;
-        check_request(&req, &settings, true)?;
+        check_request(&req, &settings, false)?;
         let id = InteractionId::new(*id).map_err(|_| InteractionError::Invalid)?;
         let session = session(&req, &settings, Some(id))?;
         session.validate_csrf(&form.csrf)?;
@@ -348,7 +365,7 @@ pub async fn credentials(
 ) -> Result<impl Responder, ApiError> {
     Ok(async {
         let settings = service::settings(&context)?;
-        check_request(&req, &settings, true)?;
+        check_request(&req, &settings, false)?;
         let id = InteractionId::new(*id).map_err(|_| InteractionError::Invalid)?;
         let session = session(&req, &settings, Some(id))?;
         let form = form.into_inner();
@@ -381,7 +398,7 @@ pub async fn decide(
 ) -> Result<impl Responder, ApiError> {
     Ok(async {
         let settings = service::settings(&context)?;
-        check_request(&req, &settings, true)?;
+        check_request(&req, &settings, false)?;
         let id = InteractionId::new(*id).map_err(|_| InteractionError::Invalid)?;
         let session = session(&req, &settings, Some(id))?;
         session.validate_csrf(&form.csrf)?;

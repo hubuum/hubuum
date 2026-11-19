@@ -109,7 +109,12 @@ impl Transport {
         let mut output = http::Response::builder().status(status);
         // Preserve only protocol metadata, including GitHub's 403 rate-limit
         // signals. Never propagate provider cookies.
-        for name in ["content-type", "retry-after", "x-ratelimit-remaining"] {
+        for name in [
+            "content-type",
+            "retry-after",
+            "x-ratelimit-remaining",
+            "link",
+        ] {
             if let Some(value) = headers.get(name).and_then(serde_json::Value::as_str) {
                 output = output.header(name, value);
             }
@@ -145,13 +150,15 @@ mod tests {
                 "content-type": "application/json",
                 "retry-after": "60",
                 "x-ratelimit-remaining": "0",
+                "link": "</groups?page=2>; rel=next",
                 "set-cookie": "provider-session=secret"
             }),
             Vec::new(),
         )
         .unwrap();
         let headers = response.headers();
-        assert_eq!(headers.len(), 3);
+        assert_eq!(headers.len(), 4);
+        assert_eq!(headers["link"], "</groups?page=2>; rel=next");
         assert_eq!(headers["content-type"], "application/json");
         assert_eq!(headers["retry-after"], "60");
         assert_eq!(headers["x-ratelimit-remaining"], "0");

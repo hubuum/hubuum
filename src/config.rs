@@ -1104,7 +1104,7 @@ pub struct AppConfig {
     pub max_transitive_depth: i32,
 
     /// The name of the admin group
-    #[clap(long, env = "HUBUUM_ADMIN_GROUPNAME", default_value = "admin")]
+    #[clap(long, env = "HUBUUM_ADMIN_GROUPNAME", default_value = DEFAULT_ADMIN_GROUPNAME)]
     pub admin_groupname: String,
 
     /// Identity scope that contains the admin group.
@@ -2417,7 +2417,7 @@ fn get_config_from_env() -> Result<AppConfig, ApiError> {
         max_transitive_depth: env_or_default("HUBUUM_MAX_TRANSITIVE_DEPTH", "100")
             .parse()
             .unwrap_or(DEFAULT_MAX_TRANSITIVE_DEPTH),
-        admin_groupname: env_or_default("HUBUUM_ADMIN_GROUPNAME", "admin"),
+        admin_groupname: env_or_default("HUBUUM_ADMIN_GROUPNAME", DEFAULT_ADMIN_GROUPNAME),
         admin_identity_scope: Some(env_or_default("HUBUUM_ADMIN_IDENTITY_SCOPE", "local")),
         auth_config_path: env_or_default_opt("HUBUUM_AUTH_CONFIG_PATH", None),
         auth_browser: env_or_default("HUBUUM_AUTH_BROWSER", "{}")

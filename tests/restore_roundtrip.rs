@@ -32,6 +32,7 @@ use hubuum::tests::TestScope;
 use hubuum::traits::CanSave;
 use hubuum_storage_core::{RestoreStorage, StorageBackupBudget, StorageRestoreArtifact};
 use hubuum_storage_postgres::diesel_async_prelude::*;
+use hubuum_storage_postgres::test_support::integration_test_restore_migration_url as database_url;
 use hubuum_storage_postgres::{PostgresStorage, with_connection, with_transaction};
 use rstest::rstest;
 use tokio::sync::Mutex;
@@ -41,11 +42,6 @@ use uuid::Uuid;
 
 // These tests replace the whole runner-owned database, so they must not overlap.
 static RESTORE_TEST_LOCK: Mutex<()> = Mutex::const_new(());
-
-fn database_url() -> String {
-    std::env::var("HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL")
-        .expect("The test runner must provide isolated destructive restore authority")
-}
 
 fn runtime_database_url() -> String {
     std::env::var("HUBUUM_RESTORE_TEST_DATABASE_URL")

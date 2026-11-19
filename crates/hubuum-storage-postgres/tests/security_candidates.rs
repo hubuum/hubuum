@@ -29,6 +29,9 @@ const UPSTREAM: &str = include_str!("../migrations/2026-11-13-000001_oidc_creden
 const RETENTION: &str =
     include_str!("../migrations/2026-11-18-000001_retain_unchanged_credentials/up.sql");
 
+const ADMISSION: &str =
+    include_str!("../migrations/2026-11-19-000001_auth_interaction_admission/up.sql");
+
 /// Independent security authority per test, using current production table shapes
 /// and the actual settings/candidate migrations. Connections use the runtime role.
 struct Fixture {
@@ -60,7 +63,7 @@ impl Fixture {
         ]
         .map(|table| format!("CREATE TABLE {table} (LIKE public.{table} INCLUDING ALL);"))
         .join("\n");
-        f.owner(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {tables} {APPROVALS} {LEGACY} {SETTINGS} {POLICIES} {CANDIDATES} {INTERACTIONS} {UPSTREAM} {RETENTION}
+        f.owner(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {tables} {APPROVALS} {LEGACY} {SETTINGS} {POLICIES} {CANDIDATES} {INTERACTIONS} {UPSTREAM} {RETENTION} {ADMISSION}
             -- LIKE INCLUDING ALL does not copy triggers. Reuse the production
             -- revision guard so credential revocation cannot bypass its contract.
             CREATE TRIGGER tokens_revision BEFORE INSERT OR UPDATE ON tokens
@@ -159,6 +162,11 @@ fn candidate() -> StorageSecurityCandidate {
     candidate_for(&update())
 }
 fn candidate_for(update: &StorageRuntimeSettingsUpdate) -> StorageSecurityCandidate {
+    unverified_candidate_for(update)
+        .verify(digest('d'))
+        .unwrap()
+}
+fn unverified_candidate_for(update: &StorageRuntimeSettingsUpdate) -> StorageSecurityCandidate {
     let checks = [
         StorageSecurityCheckKind::Configuration,
         StorageSecurityCheckKind::RecoveryAdministrator,
@@ -177,8 +185,6 @@ fn candidate_for(update: &StorageRuntimeSettingsUpdate) -> StorageSecurityCandid
     )
     .unwrap()
     .with_checks(checks)
-    .unwrap()
-    .verify(digest('d'))
     .unwrap()
 }
 async fn approval(backend: &PostgresStorage, candidate_id: Uuid) -> (StorageCredentialClaim, i32) {
@@ -519,5 +525,88 @@ async fn provider_identity_bindings_survive_restart_and_reject_reassignment() {
             .unwrap(),
         Some(bound)
     );
+    f.cleanup().await;
+}
+
+#[tokio::test]
+async fn releasing_deployment_owned_authentication_preserves_ldap_credentials() {
+    let f = Fixture::new().await;
+    let backend = f.replica();
+    f.owner("INSERT INTO identity_scopes(id,name,provider_kind) VALUES(2,'directory','ldap');
+        INSERT INTO principals(id,kind,name,identity_scope_id) VALUES(2,'human','alice',2);
+        INSERT INTO tokens(id,token,principal_id,expires_at) VALUES(2,'directory-token',2,now()+interval '1 hour');").await.unwrap();
+    let candidate = unverified_candidate_for(&update())
+        .release_ownership()
+        .unwrap()
+        .verify(digest('d'))
+        .unwrap();
+    backend
+        .create_security_candidate(candidate.clone())
+        .await
+        .unwrap();
+    let (claim, _) = approval(&backend, candidate.id()).await;
+    let update = StorageRuntimeSettingsUpdate::new(
+        candidate.assignment().clone(),
+        ResourceRevision::INITIAL,
+        context(),
+    );
+    let activation = StorageSecurityCandidateActivation::try_new(
+        &candidate,
+        digest('d'),
+        update,
+        claim,
+        "admin".into(),
+    )
+    .unwrap();
+    assert!(
+        !backend
+            .activate_security_candidate(activation)
+            .await
+            .unwrap()
+            .is_committed()
+    );
+    f.owner("DO $$ BEGIN IF EXISTS (SELECT FROM tokens WHERE id=2 AND revoked_at IS NOT NULL) THEN RAISE EXCEPTION 'Unchanged activation revoked token'; END IF; END $$").await.unwrap();
+    f.cleanup().await;
+}
+
+#[tokio::test]
+async fn migration_binds_existing_oauth_headers_to_the_rust_namespace() {
+    const REVERT: &str =
+        include_str!("../migrations/2026-11-19-000001_auth_interaction_admission/down.sql");
+    let f = Fixture::new().await;
+    let definition = serde_json::json!({
+        "profile":"json_user", "authorization_endpoint":"https://identity.example/auth", "token_endpoint":"https://identity.example/token", "profile_endpoint":"https://identity.example/user",
+        "client_id":"app", "client_authentication":"client_secret_basic", "scopes":[], "subject_pointer":"/id", "subject_type":"integer", "name_pointer":"/name",
+        "profile_headers":{"user-agent":"Hubuum:client","x-tenant-id":"tenant A"},
+        "membership":{"mode":"local_only","refresh_interval_seconds":30,"max_stale_seconds":60}, "admission":{"mode":"existing_only"}});
+    let provider = StorageAuthenticationProvider::try_new(
+        "tenant",
+        StorageAuthenticationProviderKind::Oauth,
+        definition,
+    )
+    .unwrap()
+    .with_id(Uuid::new_v4())
+    .unwrap();
+    let binding = StorageProviderIdentityBinding::from_provider(&provider).unwrap();
+    let selection = StorageRuntimeSettingsValue::Authentication(
+        StorageAuthenticationProviders::try_new(vec![provider]).unwrap(),
+    )
+    .to_document();
+    let legacy = serde_json::json!(["https://identity.example/user", "/id", "integer"]);
+    f.owner(&format!(
+        "{REVERT}
+        INSERT INTO authentication_provider_bindings VALUES ('tenant','{}','oauth','{legacy}');
+        UPDATE runtime_settings SET value='{selection}' WHERE setting_group='authentication';
+        {ADMISSION}",
+        binding.id()
+    ))
+    .await
+    .unwrap();
+    let stored = f
+        .replica()
+        .authentication_provider_binding(hubuum_domain::IdentityScopeName::new("tenant").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(stored.as_ref(), Some(&binding));
     f.cleanup().await;
 }

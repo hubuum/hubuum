@@ -561,3 +561,69 @@ async fn ldap_state_mutations_require_current_revision(#[case] rejection: bool) 
     assert!(result.is_err());
     f.cleanup().await;
 }
+
+#[tokio::test]
+async fn activating_local_only_clears_only_the_owning_membership_sources() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let provider = |definition| {
+        StorageAuthenticationProvider::try_new(
+            "company",
+            StorageAuthenticationProviderKind::Oidc,
+            definition,
+        )
+        .unwrap()
+        .with_id(f.provider.id())
+        .unwrap()
+    };
+    let assignment = |definition| {
+        StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authentication(
+            StorageAuthenticationProviders::try_new(vec![provider(definition)]).unwrap(),
+        ))
+    };
+    let mut definition = serde_json::to_value(&f.definition).unwrap();
+    f.database
+        .owner(&format!(
+            "UPDATE runtime_settings SET value='{}'::jsonb WHERE setting_group='authentication'",
+            assignment(definition.clone()).to_document().unwrap()
+        ))
+        .await
+        .unwrap();
+    let id = f
+        .login("alice", json!(["/team", "/manual", "/shared"]))
+        .await
+        .id();
+    f.database.owner(&format!("INSERT INTO identity_scopes(name,provider_kind) VALUES('other','ldap');
+        INSERT INTO group_membership_sources(principal_id,group_id,source,source_scope_id,source_key)
+        SELECT {id},id,'manual',1,'' FROM groups WHERE external_key='/manual'
+        UNION ALL SELECT {id},id,'external',(SELECT id FROM identity_scopes WHERE name='other'),'shared' FROM groups WHERE external_key='/shared'")).await.unwrap();
+    definition["membership"] =
+        json!({"mode":"local_only","refresh_interval_seconds":300,"max_stale_seconds":900});
+    let update = StorageRuntimeSettingsUpdate::new(
+        assignment(definition),
+        ResourceRevision::INITIAL,
+        context(),
+    );
+    let candidate = candidate_for(&update);
+    f.backend
+        .create_security_candidate(candidate.clone())
+        .await
+        .unwrap();
+    let (claim, _) = approval(&f.backend, candidate.id()).await;
+    let activation = StorageSecurityCandidateActivation::try_new(
+        &candidate,
+        digest('d'),
+        update,
+        claim,
+        "admin".into(),
+    )
+    .unwrap();
+    f.backend
+        .activate_security_candidate(activation)
+        .await
+        .unwrap();
+    f.database.owner(&format!("DO $$ BEGIN
+        IF EXISTS (SELECT FROM group_membership_sources s JOIN identity_scopes i ON s.source_scope_id=i.id WHERE i.name='company' AND s.principal_id={id})
+            OR (SELECT array_agg(g.external_key ORDER BY g.external_key) FROM group_memberships m JOIN groups g ON g.id=m.group_id WHERE m.principal_id={id}) IS DISTINCT FROM ARRAY['/manual','/shared']::varchar[]
+        THEN RAISE EXCEPTION 'local-only membership cleanup failed'; END IF; END $$")).await.unwrap();
+    f.database.cleanup().await;
+}

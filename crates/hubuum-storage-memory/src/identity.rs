@@ -7,9 +7,9 @@ use hubuum_storage_core::StorageUpstreamClaimOutcome;
 use hubuum_storage_core::StorageUpstreamRenewal;
 use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
 use hubuum_storage_core::{
-    StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
-    StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionOutcome,
-    StorageInteractionView,
+    StorageInteractionAccess, StorageInteractionAction, StorageInteractionCommand,
+    StorageInteractionComplete, StorageInteractionCompletion, StorageInteractionCreate,
+    StorageInteractionOutcome, StorageInteractionView,
 };
 use hubuum_storage_core::{
     StorageUpstreamFailure, StorageUpstreamRevocation, StorageUpstreamSession,
@@ -22,28 +22,29 @@ impl AuthenticationStorage for MemoryStorage {
         &self,
         request: StorageInteractionCreate,
     ) -> Result<StorageInteractionView, StorageError> {
-        let mut live = self.state.write().await;
-        let mut staged = live.clone();
-        let result = staged.create_interaction(request)?;
-        *live = staged;
-        Ok(result)
+        self.state.write().await.create_interaction(request)
     }
     async fn bind_auth_interaction_browser(
         &self,
         code: InteractionDigest,
         browser: InteractionBrowserBinding,
     ) -> Result<StorageInteractionOutcome, StorageError> {
-        let mut live = self.state.write().await;
-        let mut staged = live.clone();
-        let result = staged.bind_interaction(code, browser)?;
-        *live = staged;
-        Ok(result)
+        self.state.write().await.bind_interaction(code, browser)
     }
     async fn advance_auth_interaction(
         &self,
         command: StorageInteractionCommand,
     ) -> Result<StorageInteractionOutcome, StorageError> {
         let mut live = self.state.write().await;
+        // Local transitions stage their record in advance_interaction. Only
+        // external observations can also mutate principals and credentials.
+        if !matches!(
+            command.action(),
+            StorageInteractionAction::AuthenticateExternal { .. }
+                | StorageInteractionAction::RejectMembership(_)
+        ) {
+            return live.advance_interaction(command);
+        }
         let mut staged = live.clone();
         let result = staged.advance_interaction(command)?;
         *live = staged;
@@ -71,11 +72,7 @@ impl AuthenticationStorage for MemoryStorage {
         Ok(result)
     }
     async fn purge_auth_interactions(&self, limit: usize) -> Result<usize, StorageError> {
-        let mut live = self.state.write().await;
-        let mut staged = live.clone();
-        let result = staged.purge_interactions(limit)?;
-        *live = staged;
-        Ok(result)
+        self.state.write().await.purge_interactions(limit)
     }
 
     async fn record_credential_creation(
@@ -1249,9 +1246,9 @@ impl ExternalIdentityStorage for MemoryStorage {
     }
 }
 
-fn source_has_membership(source: &StorageBackupRow, key: (i32, i32)) -> bool {
-    source.get("principal_id").and_then(Value::as_i64) == Some(i64::from(key.0))
-        && source.get("group_id").and_then(Value::as_i64) == Some(i64::from(key.1))
+fn source_membership(source: &StorageBackupRow) -> Option<(i32, i32)> {
+    let id = |field| i32::try_from(source.get(field)?.as_i64()?).ok();
+    Some((id("principal_id")?, id("group_id")?))
 }
 
 impl MemoryState {
@@ -1292,7 +1289,7 @@ impl MemoryState {
 
     fn owns_external_membership(&self, key: (i32, i32), scope: IdentityScopeId) -> bool {
         let sources = self.membership_sources.iter().filter(|source| {
-            source_has_membership(source, key)
+            source_membership(source) == Some(key)
                 && source.get("source").and_then(Value::as_str) == Some(EXTERNAL_MEMBERSHIP_SOURCE)
         });
         if sources.clone().count() == 0 {
@@ -1303,6 +1300,66 @@ impl MemoryState {
             sources.clone().any(|source| {
                 source.get("source_scope_id").and_then(Value::as_i64) == Some(i64::from(scope.id()))
             })
+        }
+    }
+    pub(super) fn clear_provider_memberships(&mut self, scope: IdentityScopeId) {
+        // Imported memberships may carry implicit provenance through the
+        // group's scope. Explicit surviving sources take precedence.
+        let mut affected: BTreeSet<_> = self
+            .external_memberships
+            .iter()
+            .copied()
+            .filter(|(_, group)| {
+                self.groups
+                    .get(group)
+                    .is_some_and(|g| g.identity_scope_id() == scope)
+            })
+            .collect();
+        self.membership_sources.retain(|row| {
+            let owned = row.get("source").and_then(Value::as_str)
+                == Some(EXTERNAL_MEMBERSHIP_SOURCE)
+                && row.get("source_scope_id").and_then(Value::as_i64)
+                    == Some(i64::from(scope.id()));
+            if owned && let Some(key) = source_membership(row) {
+                affected.insert(key);
+            }
+            !owned
+        });
+        let mut lost_effective = affected.clone();
+        for row in &self.membership_sources {
+            if let Some(key) = source_membership(row) {
+                lost_effective.remove(&key);
+                if row.get("source").and_then(Value::as_str) == Some(EXTERNAL_MEMBERSHIP_SOURCE) {
+                    affected.remove(&key);
+                }
+            }
+        }
+        for key in affected {
+            self.external_memberships.remove(&key);
+        }
+        for key in lost_effective {
+            self.memberships.remove(&key);
+        }
+    }
+
+    fn remove_provider_membership(&mut self, key: (i32, i32), scope: IdentityScopeId) {
+        self.membership_sources.retain(|source| {
+            !(source_membership(source) == Some(key)
+                && source.get("source").and_then(Value::as_str) == Some(EXTERNAL_MEMBERSHIP_SOURCE)
+                && source.get("source_scope_id").and_then(Value::as_i64)
+                    == Some(i64::from(scope.id())))
+        });
+        let retained = self
+            .membership_sources
+            .iter()
+            .filter(|source| source_membership(source) == Some(key));
+        if !retained.clone().any(|source| {
+            source.get("source").and_then(Value::as_str) == Some(EXTERNAL_MEMBERSHIP_SOURCE)
+        }) {
+            self.external_memberships.remove(&key);
+        }
+        if retained.count() == 0 {
+            self.memberships.remove(&key);
         }
     }
     pub(super) fn external_sync_failure(
@@ -1602,7 +1659,7 @@ impl MemoryState {
                 let key = (principal_id.id(), group.id().id());
                 current_external_groups.insert(key);
                 if !state.membership_sources.iter().any(|source| {
-                    source_has_membership(source, key)
+                    source_membership(source) == Some(key)
                         && source.get("source").and_then(Value::as_str)
                             == Some(EXTERNAL_MEMBERSHIP_SOURCE)
                         && source.get("source_scope_id").and_then(Value::as_i64)
@@ -1639,25 +1696,7 @@ impl MemoryState {
                 .copied()
                 .collect::<Vec<_>>();
             for key in stale_groups {
-                state.membership_sources.retain(|source| {
-                    !(source_has_membership(source, key)
-                        && source.get("source").and_then(Value::as_str)
-                            == Some(EXTERNAL_MEMBERSHIP_SOURCE)
-                        && source.get("source_scope_id").and_then(Value::as_i64)
-                            == Some(i64::from(scope.id().id())))
-                });
-                let retained = state
-                    .membership_sources
-                    .iter()
-                    .filter(|source| source_has_membership(source, key));
-                if !retained.clone().any(|source| {
-                    source.get("source").and_then(Value::as_str) == Some(EXTERNAL_MEMBERSHIP_SOURCE)
-                }) {
-                    state.external_memberships.remove(&key);
-                }
-                if retained.count() == 0 {
-                    state.memberships.remove(&key);
-                }
+                state.remove_provider_membership(key, scope.id());
             }
             state.external_memberships.extend(current_external_groups);
         }

@@ -273,6 +273,20 @@ impl StorageSecurityCandidate {
         }
     }
 
+    /// A local-only definition cannot vouch for any grants from its scope,
+    /// including grants left behind when a previous definition was removed.
+    pub fn newly_local_only_provider_names(
+        &self,
+        previous: &StorageRuntimeSettingsAssignment,
+    ) -> Vec<&str> {
+        let previous: std::collections::BTreeSet<_> =
+            previous.local_only_provider_names().collect();
+        self.assignment
+            .local_only_provider_names()
+            .filter(|name| !previous.contains(name))
+            .collect()
+    }
+
     pub const fn releases_ownership(&self) -> bool {
         self.verification_assignment.is_some()
     }

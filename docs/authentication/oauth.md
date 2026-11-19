@@ -97,7 +97,8 @@ or follow provider links, pagination, distributed claims or additional endpoints
 Providers requiring those features need a small explicit adapter.
 
 Optional `profile_headers` permits at most eight bounded lowercase `accept`,
-`user-agent` or `x-*` headers. Authentication, host, cookies, framing and
+`user-agent` or `x-*` headers. These headers select the identity namespace. Changing a
+header requires a new scope. Authentication, host, cookies, framing and
 `x-forwarded-*` headers are rejected. All endpoints require HTTPS without
 userinfo, query or fragments. Shared transport screens DNS on every request,
 pins resolved addresses, refuses redirects and proxies, validates certificates,

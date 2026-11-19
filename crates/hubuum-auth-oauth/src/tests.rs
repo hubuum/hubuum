@@ -161,7 +161,7 @@ fn github_rejects_invalid_subject(#[case] subject: Value) {
     let (adapter, context) = fixture(true);
     let mut document = user(true);
     document["id"] = subject;
-    assert!(adapter.verify_document(&document, &context).is_err());
+    assert!(adapter.verify_document(&document, &context, false).is_err());
 }
 
 #[rstest]
@@ -176,20 +176,22 @@ fn email_and_site_admin_do_not_affect_identity_or_grants(#[case] email: Option<V
     } else {
         document.as_object_mut().unwrap().remove("email");
     }
-    let proof = adapter.verify_document(&document, &context).unwrap();
+    let proof = adapter.verify_document(&document, &context, false).unwrap();
     assert!(proof.memberships().provider_groups().is_none());
 }
 
 #[test]
 fn username_changes_preserve_identity() {
     let (adapter, context) = fixture(true);
-    let first = adapter.verify_document(&user(true), &context).unwrap();
+    let first = adapter
+        .verify_document(&user(true), &context, false)
+        .unwrap();
     let mut renamed = user(true);
     renamed["login"] = json!("renamed");
     assert_eq!(
         first.identity(),
         adapter
-            .verify_document(&renamed, &context)
+            .verify_document(&renamed, &context, false)
             .unwrap()
             .identity()
     );
@@ -496,4 +498,63 @@ fn github_comma_scopes_and_normalized_user_scope_are_supported() {
     )
     .unwrap();
     assert!(adapter.credentials(response).is_ok());
+}
+
+#[rstest]
+#[case::subject(r#"{"account":{"key":"one","k\u0065y":"two"},"roles":[]}"#)]
+#[case::ancestor(r#"{"account":{"key":"one"},"account":{"key":"two"},"roles":[]}"#)]
+#[case::in_array(r#"{"account":{"key":"one"},"roles":[{"id":1,"id":2}]}"#)]
+fn profile_rejects_duplicate_members(#[case] body: &str) {
+    assert!(matches!(
+        profile::parse(body.as_bytes()),
+        Err(OAuthError::InvalidResponse)
+    ));
+}
+
+#[test]
+fn profile_keeps_arbitrary_precision_integer_subjects() {
+    let value = profile::parse(br#"{"id":987654321012345678909876543210}"#).unwrap();
+    assert_eq!(value["id"].to_string(), "987654321012345678909876543210");
+}
+
+#[rstest]
+#[case::next(r#"<https://other.example/groups?p=2>; rel="next""#, true)]
+#[case::relations(r#"</u>; rel=self, </v>; REL = "alternate Next""#, true)]
+#[case::self_only(r#"</u?q=a,b>; title="a; b"; rel=self"#, false)]
+#[tokio::test]
+async fn profile_links_preserve_membership_completeness(
+    #[case] link: &str,
+    #[case] incomplete: bool,
+) {
+    let (adapter, context) = fixture(false);
+    let credentials = adapter.credentials(token()).unwrap();
+    let client = |_: oauth2::HttpRequest| {
+        std::future::ready(Ok(http::Response::builder()
+            .status(200)
+            .header("content-type", "application/json")
+            .header("link", link)
+            .body(serde_json::to_vec(&user(false)).unwrap())
+            .unwrap()))
+    };
+    let result = adapter
+        .authenticate_using(credentials, &context, &client)
+        .await;
+    if incomplete {
+        assert!(
+            matches!(result, Err(OAuthError::MembershipRejected(proof)) if proof.identity().subject().as_str()=="Case:001")
+        );
+    } else {
+        assert!(result.is_ok());
+    }
+}
+
+#[test]
+fn tenant_header_is_bound_to_the_persisted_namespace() {
+    let mut definition = serde_json::to_value(definition(false)).unwrap();
+    let mut namespace_for = |tenant| {
+        definition["profile_headers"]["x-tenant-id"] = json!(tenant);
+        let provider: OAuthProviderDefinition = serde_json::from_value(definition.clone()).unwrap();
+        hubuum_domain::BrowserIdentityNamespace::try_from(provider.identity_namespace()).unwrap()
+    };
+    assert_ne!(namespace_for("one").as_str(), namespace_for("two").as_str());
 }

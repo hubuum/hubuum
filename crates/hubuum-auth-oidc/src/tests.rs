@@ -3,9 +3,7 @@ use hubuum_domain::{
     IdentityScopeName, InteractionAuthority, InteractionBinding, InteractionClientId,
     InteractionId, InteractionProviderId, ResourceRevision,
 };
-use openidconnect::{
-    IdTokenClaims, JsonWebKeyId, PrivateSigningKey, core::CoreRsaPrivateSigningKey,
-};
+use openidconnect::{JsonWebKeyId, PrivateSigningKey, core::CoreRsaPrivateSigningKey};
 use rstest::rstest;
 use serde_json::json;
 use uuid::Uuid;
@@ -82,11 +80,23 @@ fn response(
     algorithm: CoreJwsSigningAlgorithm,
     tamper: bool,
 ) -> CoreTokenResponse {
-    let claims: IdTokenClaims<Additional, CoreGenderClaim> =
-        serde_json::from_value(claims).unwrap();
-    let mut token = ClaimsToken::new(claims, &signing_key(key), algorithm, None, None)
-        .unwrap()
-        .to_string();
+    signed_response(&claims.to_string(), key, algorithm, tamper)
+}
+
+fn signed_response(
+    payload: &str,
+    key: &str,
+    algorithm: CoreJwsSigningAlgorithm,
+    tamper: bool,
+) -> CoreTokenResponse {
+    let header = json!({"alg": algorithm, "kid": key});
+    let input = format!(
+        "{}.{}",
+        URL_SAFE_NO_PAD.encode(header.to_string()),
+        URL_SAFE_NO_PAD.encode(payload)
+    );
+    let signature = signing_key(key).sign(&algorithm, input.as_bytes()).unwrap();
+    let mut token = format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature));
     if tamper {
         let start = token.rfind('.').unwrap() + 1;
         let replacement = if &token[start..start + 1] == "A" {
@@ -123,6 +133,40 @@ async fn signed_additional_claims_produce_complete_identity_proof() {
         proof.memberships().provider_groups().unwrap()[0].key(),
         "/engineering"
     );
+}
+
+#[rstest]
+#[case::groups("/groups", r#""groups":["/team"],"groups":[]"#)]
+#[case::nested("/account/groups", r#""account":{"groups":["/team"],"groups":[]}"#)]
+#[tokio::test]
+async fn signed_memberships_require_unique_claims(#[case] pointer: &str, #[case] members: &str) {
+    let (mut adapter, discovered, original_context) = fixture();
+    let mut config = serde_json::to_value(&adapter.definition).unwrap();
+    config["membership"]["claim_pointer"] = json!(pointer);
+    adapter.definition = serde_json::from_value(config).unwrap();
+    let context = ExternalAuthenticationContext::oidc(
+        original_context.binding().clone(),
+        IdentityScopeName::new("company").unwrap(),
+        &adapter.definition,
+    )
+    .unwrap();
+    let mut claims = claims();
+    claims.as_object_mut().unwrap().remove("groups");
+    let mut payload = claims.to_string();
+    payload.pop();
+    payload.push_str(&format!(",{members}}}"));
+    let tokens = signed_response(
+        &payload,
+        "current",
+        CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
+        false,
+    );
+    assert!(matches!(
+        adapter
+            .verify(&discovered, tokens, "nonce", &context, None)
+            .await,
+        Err(OidcError::InvalidResponse)
+    ));
 }
 
 #[rstest]
@@ -193,6 +237,9 @@ async fn rejects_untrusted_signature(
 #[case::fragment("jwks_uri", json!("https://id.example/certs#part"))]
 #[case::pkce_plain("code_challenge_methods_supported", json!(["plain"]))]
 #[case::implicit_only("response_types_supported", json!(["token"]))]
+#[case::null_modes("response_modes_supported", Value::Null)]
+#[case::malformed_modes("response_modes_supported", json!(["query",1]))]
+#[case::fragment_only("response_modes_supported", json!(["fragment"]))]
 #[case::secret_post_only("token_endpoint_auth_methods_supported", json!(["client_secret_post"]))]
 #[case::unaccepted_algorithm("id_token_signing_alg_values_supported", json!(["HS256"]))]
 fn rejects_unqualified_discovery(#[case] field: &str, #[case] value: Value) {
@@ -386,4 +433,134 @@ async fn only_signed_identity_can_reject_memberships(
         matches!(result, Err(OidcError::MembershipRejected(proof)) if proof.identity().subject().as_str() == "stable-subject"),
         rejected
     );
+}
+
+#[rstest]
+#[case::malformed_metadata_or_keys(OidcError::InvalidResponse, OidcError::Unavailable)]
+#[case::refused_discovery(OidcError::Denied, OidcError::Unavailable)]
+#[case::unsupported_configuration(OidcError::Configuration, OidcError::Configuration)]
+fn discovery_failures_are_provider_failures(
+    #[case] failure: OidcError,
+    #[case] expected: OidcError,
+) {
+    assert_eq!(discovery_error(failure), expected);
+}
+
+#[rstest]
+#[case("invalid_grant", OidcError::Denied)]
+#[case("invalid_client", OidcError::Configuration)]
+#[case("unauthorized_client", OidcError::Configuration)]
+#[case("temporarily_unavailable", OidcError::Unavailable)]
+#[case("server_error", OidcError::Unavailable)]
+#[case("provider_extension", OidcError::Unavailable)]
+fn token_endpoint_classifies_user_and_provider_failures(
+    #[case] code: &str,
+    #[case] expected: OidcError,
+) {
+    let response = serde_json::from_value(json!({ "error": code })).unwrap();
+    let error = token_error(openidconnect::RequestTokenError::ServerResponse(response));
+    assert_eq!(error, expected);
+}
+
+#[tokio::test]
+async fn distributed_group_claim_carries_signed_subject() {
+    let (adapter, discovered, context) = fixture();
+    let mut claims = claims();
+    claims.as_object_mut().unwrap().remove("groups");
+    claims["_claim_names"] = json!({"groups":"remote"});
+    let result = adapter
+        .verify(
+            &discovered,
+            response(
+                claims,
+                "current",
+                CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
+                false,
+            ),
+            "nonce",
+            &context,
+            None,
+        )
+        .await;
+    assert!(
+        matches!(result, Err(OidcError::MembershipRejected(rejection)) if rejection.identity().subject().as_str() == "stable-subject")
+    );
+}
+
+#[rstest]
+#[case::default_query("response_modes_supported", true)]
+#[case::default_client_secret_basic("token_endpoint_auth_methods_supported", true)]
+#[case::required_s256("code_challenge_methods_supported", false)]
+fn discovery_uses_defaults_only_for_optional_fields(#[case] field: &str, #[case] accepted: bool) {
+    let mut document = metadata();
+    document.as_object_mut().unwrap().remove(field);
+    assert_eq!(
+        validate_metadata(&document, &definition()).is_ok(),
+        accepted
+    );
+    if accepted {
+        serde_json::from_value::<CoreProviderMetadata>(document).unwrap();
+    }
+}
+
+#[rstest]
+#[case::duplicate_subject(br#"{"sub":"other","sub":"stable-subject","groups":[]}"#)]
+#[case::duplicate_groups(br#"{"sub":"stable-subject","groups":["/team"],"groups":[]}"#)]
+fn userinfo_rejects_duplicate_members(#[case] body: &[u8]) {
+    let reply = openidconnect::http::Response::new(body.to_vec());
+    assert_eq!(
+        userinfo_profile(&reply, "stable-subject"),
+        Err(OidcError::InvalidResponse)
+    );
+}
+
+#[test]
+fn paginated_userinfo_cannot_supply_complete_memberships() {
+    let reply = openidconnect::http::Response::builder()
+        .header("link", r#"</groups/2>; rel="next""#)
+        .body(br#"{"sub":"stable-subject","groups":["/team"]}"#.to_vec())
+        .unwrap();
+    let (document, paginated) = userinfo_profile(&reply, "stable-subject").unwrap();
+    let (adapter, _, _) = fixture();
+    assert!(matches!(
+        adapter.membership_claims(
+            &document,
+            MembershipClaimSource::Userinfo,
+            Utc::now(),
+            paginated
+        ),
+        Ok(MembershipClaims::Incomplete)
+    ));
+}
+
+#[rstest]
+#[case::mac("mac")]
+#[case::extension("DPoP")]
+#[tokio::test]
+async fn userinfo_rejects_unsupported_token_types_before_dispatch(#[case] token_type: &str) {
+    let (mut adapter, mut discovered, context) = fixture();
+    let mut definition = serde_json::to_value(&adapter.definition).unwrap();
+    definition["membership"]["claim_source"] = json!("userinfo");
+    adapter.definition = serde_json::from_value(definition).unwrap();
+    discovered.userinfo = Some("https://unused.invalid/userinfo".into());
+    let mut tokens = serde_json::to_value(response(
+        claims(),
+        "current",
+        CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
+        false,
+    ))
+    .unwrap();
+    tokens["token_type"] = json!(token_type);
+    assert!(matches!(
+        adapter
+            .verify(
+                &discovered,
+                serde_json::from_value(tokens).unwrap(),
+                "nonce",
+                &context,
+                None
+            )
+            .await,
+        Err(OidcError::Configuration)
+    ));
 }

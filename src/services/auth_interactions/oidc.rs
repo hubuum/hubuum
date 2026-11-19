@@ -501,8 +501,9 @@ pub(crate) async fn renew(
         Err(failure) => {
             let temporary = matches!(
                 failure,
-                ApiError::AuthenticationInteraction(InteractionError::ProviderUnavailable)
-                    | ApiError::ServiceUnavailable(_)
+                ApiError::AuthenticationInteraction(
+                    InteractionError::ProviderUnavailable | InteractionError::Unsupported
+                ) | ApiError::ServiceUnavailable(_)
             );
             storage
                 .fail_upstream_renewal(

@@ -201,6 +201,16 @@ class ProjectBranchTests(unittest.TestCase):
 
 
 class RestoreFixtureWorkflowTests(unittest.TestCase):
+    def test_postgres_adapter_contracts_receive_isolated_restore_authority(self):
+        step = job("feature-permutations").split("      - name: Test PostgreSQL adapter-native contracts\n", 1)[1]
+        step = step.split("      - name:", 1)[0]
+        command = shlex.split(step.split("        run: >-\n", 1)[1])
+        self.assertEqual(command[:command.index("hubuum-storage-postgres") + 1], [
+            "python3", "tests/python/run.py", "integration", "rust-tests",
+            "--admin-binary", "$RUNNER_TEMP/hubuum-admin-migrate", "--",
+            "cargo", "test", "-p", "hubuum-storage-postgres",
+        ])
+
     def test_windows_initial_backfill_uses_the_current_step_database(self):
         setup = job("test").split("      - name: Set up database (Windows)\n", 1)[1]
         setup = setup.split("      - name:", 1)[0]

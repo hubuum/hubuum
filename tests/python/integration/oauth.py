@@ -162,12 +162,22 @@ class Fixture(BaseFixture):
             print(f"Open {interaction['next']['verification_uri']} and enter {interaction['next']['user_code']}.", flush=True)
             print("Complete GitHub sign-in and explicitly approve the Hubuum request. The fixture waits up to 5 minutes.", flush=True)
             deadline = time.monotonic() + 300
-            while time.monotonic() < deadline:
-                status, _, raw = self.browser.request(self.origin + f"/api/v1/auth/interactions/{interaction['id']}/status", {"client_id": "oidc-qa"},
+            interval = interaction["interval_seconds"]
+            while time.monotonic() + interval < deadline:
+                time.sleep(interval)
+                status, headers, raw = self.browser.request(
+                    self.origin + f"/api/v1/auth/interactions/{interaction['id']}/status",
+                    {"client_id": "oidc-qa"},
                     headers={"Authorization": "Hubuum-Interaction " + interaction["redemption_secret"]})
-                if status == 200 and json.loads(raw).get("state") == "ready":
-                    return
-                time.sleep(5)
+                if status == 200:
+                    state = json.loads(raw)["state"]
+                    if state == "ready":
+                        return
+                    if state != "pending":
+                        raise AssertionError(f"GitHub interaction ended in state {state}")
+                elif status != 429:
+                    raise AssertionError(f"GitHub interaction status request failed (HTTP {status})")
+                interval = max(interval, int(headers.get("Retry-After", interval)))
             raise AssertionError("Authorized GitHub browser qualification did not finish")
         browser = Browser(self.root / "mount" / "ca.pem")
         url, status, page = browser.follow(interaction["next"]["verification_uri"])

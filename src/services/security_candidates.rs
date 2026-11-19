@@ -1,6 +1,8 @@
 //! Prepare and verify security settings without granting live authentication authority.
 pub(crate) mod providers;
 
+use std::borrow::Borrow;
+
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use hubuum_auth_core::ExternalIdentityProvider;
@@ -94,6 +96,8 @@ async fn binding(
     crate::secrets::refresh_security_candidate_secrets()
         .await
         .map_err(|_| ApiError::ServiceUnavailable("Security secret sources unavailable".into()))?;
+    let config = crate::config::get_config()?;
+    let mut browser_enabled = false;
     let mut secret_versions = Vec::new();
     if let Some(StorageRuntimeSettingsValue::Authentication(providers)) = assignment.value() {
         let release_config = release_ownership
@@ -120,6 +124,7 @@ async fn binding(
             .filter(|provider| provider.enabled())
         {
             if provider.kind() != StorageAuthenticationProviderKind::Ldap {
+                browser_enabled = true;
                 let secret = providers::browser_secret(provider).await?;
                 secret_versions.push(fingerprint(b"browser-secret", &json!({"id": provider.id(), "secret": secret.as_ref().map(|value| value.expose())}))?.as_str().to_owned());
                 continue;
@@ -151,7 +156,6 @@ async fn binding(
             );
         }
     }
-    let config = crate::config::get_config()?;
     let trust = config
         .treetop_ca_cert
         .as_ref()
@@ -179,24 +183,37 @@ async fn binding(
             &json!({"selection": assignment.to_document(), "release_ownership": release_ownership}),
         )?,
         fingerprint(b"secrets", &secret_versions)?,
-        fingerprint(
-            b"deployment",
-            &json!({
-                "permission_backend": config.permission_backend,
-                "admin_group": config.admin_groupname,
-                "admin_identity_scope": config.admin_identity_scope,
-                "allow_private_targets": config.auth_runtime_allow_private_targets,
-                "locked_providers": config.auth_runtime_locked_providers,
-                "encryption_key_ref": config.runtime_settings_encryption_key_ref,
-                "treetop_url": config.treetop_url,
-                "treetop_ca": config.treetop_ca_cert,
-                "treetop_trust": trust,
-                "treetop_connect_timeout_ms": config.treetop_connect_timeout_ms,
-                "treetop_request_timeout_ms": config.treetop_request_timeout_ms,
-                "treetop_accept_invalid_certs": config.treetop_accept_invalid_certs,
-            }),
-        )?,
+        deployment_fingerprint(config, browser_enabled, trust.as_deref())?,
     ))
+}
+
+fn deployment_fingerprint(
+    config: impl Borrow<crate::config::AppConfig>,
+    browser_enabled: bool,
+    trust: Option<&[u8]>,
+) -> Result<StorageCredentialFingerprint, ApiError> {
+    let config = config.borrow();
+    let callback_origin = browser_enabled
+        .then(|| config.auth_browser.origin())
+        .transpose()?;
+    fingerprint(
+        b"deployment",
+        &json!({
+            "permission_backend": config.permission_backend,
+            "admin_group": config.admin_groupname,
+            "callback_origin": callback_origin,
+            "admin_identity_scope": config.admin_identity_scope,
+            "allow_private_targets": config.auth_runtime_allow_private_targets,
+            "locked_providers": config.auth_runtime_locked_providers,
+            "encryption_key_ref": config.runtime_settings_encryption_key_ref,
+            "treetop_url": config.treetop_url,
+            "treetop_ca": config.treetop_ca_cert,
+            "treetop_trust": trust,
+            "treetop_connect_timeout_ms": config.treetop_connect_timeout_ms,
+            "treetop_request_timeout_ms": config.treetop_request_timeout_ms,
+            "treetop_accept_invalid_certs": config.treetop_accept_invalid_certs,
+        }),
+    )
 }
 
 pub(crate) async fn create(
@@ -738,15 +755,17 @@ pub(crate) async fn verify_browser_interaction(
     let admitted = authentication
         .preview_admission(existing.map(|_| authentication.identity()))
         .map_err(|_| InteractionError::Invalid)?;
-    let details = InteractionVerificationDetails::new(
+    let details = InteractionVerificationDetails::from_provider_groups(
         admitted,
         authentication
             .memberships()
             .provider_groups()
-            .unwrap_or_default()
-            .iter()
-            .map(|group| (group.key().to_owned(), group.key().to_owned()))
-            .collect(),
+            .map(|groups| {
+                groups
+                    .iter()
+                    .map(|group| (group.key().to_owned(), group.key().to_owned()))
+                    .collect()
+            }),
     )
     .map_err(|_| InteractionError::Invalid)?;
     let proof = VerifiedInteractionSubject::new(
@@ -952,4 +971,25 @@ pub(crate) async fn activate(
         revision: outcome.record().revision(),
         changed: outcome.is_committed(),
     })
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::enabled(true)]
+    #[case::disabled(false)]
+    fn only_enabled_browser_providers_bind_the_callback_origin(#[case] enabled: bool) {
+        let mut config = crate::config::get_config().unwrap();
+        let mut at = |url: &str| {
+            config.auth_browser = json!({"origin": url}).to_string().parse().unwrap();
+            deployment_fingerprint(&config, enabled, None).unwrap()
+        };
+        assert_eq!(
+            at("https://auth.example") != at("https://changed.example"),
+            enabled
+        );
+    }
 }

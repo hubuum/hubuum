@@ -5894,6 +5894,24 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL",
+      "owner": "restores",
+      "exposure": "secret",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "test"
+      ],
+      "appears_in_running_configuration": false,
+      "source": "process",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_RUNTIME_ROLE",
       "owner": "server",
       "exposure": "public",

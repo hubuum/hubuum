@@ -85,7 +85,7 @@ struct AdminCli {
     recovery_administrator_id: Option<i32>,
 
     /// Deployment-owned local administrator group
-    #[arg(long, env = "HUBUUM_ADMIN_GROUPNAME", default_value = "admin")]
+    #[arg(long, env = "HUBUUM_ADMIN_GROUPNAME", default_value = crate::config::DEFAULT_ADMIN_GROUPNAME)]
     recovery_admin_group: String,
 
     /// Confirm every replica's privileged writes have been stopped for offline recovery
@@ -316,6 +316,31 @@ enum DatabasePrivilegeRole {
     Runtime,
 }
 
+fn deployment_recovery_group(requested: &str) -> Result<String, ApiError> {
+    let setting = |name, default: &str| match std::env::var(name) {
+        Ok(value) => Ok(value),
+        Err(std::env::VarError::NotPresent) => Ok(default.to_owned()),
+        Err(_) => Err(ApiError::BadRequest(format!("{name} must be valid UTF-8"))),
+    };
+    let scope = setting(
+        "HUBUUM_ADMIN_IDENTITY_SCOPE",
+        hubuum_domain::LOCAL_IDENTITY_SCOPE,
+    )?;
+    let group = setting(
+        "HUBUUM_ADMIN_GROUPNAME",
+        crate::config::DEFAULT_ADMIN_GROUPNAME,
+    )?;
+    if scope != hubuum_domain::LOCAL_IDENTITY_SCOPE {
+        return Err(ApiError::BadRequest(
+            "Offline recovery requires HUBUUM_ADMIN_IDENTITY_SCOPE=local".into(),
+        ));
+    }
+    if requested != group {
+        return Err(ApiError::BadRequest("--recovery-admin-group must match the deployment administrator group (HUBUUM_ADMIN_GROUPNAME)".into()));
+    }
+    Ok(group)
+}
+
 /// Parse and execute one Hubuum administration command.
 ///
 /// This is the workspace-internal boundary used by `hubuum-admin`; callers
@@ -323,6 +348,10 @@ enum DatabasePrivilegeRole {
 pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let matches = AdminCli::command().get_matches();
     let admin_cli = AdminCli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    let recovery_group = admin_cli
+        .recover_security
+        .then(|| deployment_recovery_group(&admin_cli.recovery_admin_group))
+        .transpose()?;
     let schema_limits = admin_cli.schema_validation.validate()?;
     let database_url_override = CommandLineDatabaseUrl::from_matches(&matches, "database_url");
     let migration_url_override =
@@ -516,7 +545,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let storage = initialize_storage(&storage_settings)?;
     ensure_storage_schema_ready(&storage).await?;
 
-    if admin_cli.recover_security {
+    if let Some(group) = recovery_group {
         use hubuum_storage_core::{RuntimeSettingsStorage, StorageSecurityRecovery};
         if !admin_cli.writes_quiesced {
             return Err(ApiError::BadRequest(
@@ -529,12 +558,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
                 || ApiError::BadRequest("--recovery-administrator-id is required".into()),
             )?)?;
         let snapshot = storage.load_runtime_settings().await?;
-        let request = StorageSecurityRecovery::try_new(
-            administrator,
-            admin_cli.recovery_admin_group,
-            &snapshot,
-        )
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        let request = StorageSecurityRecovery::try_new(administrator, group, &snapshot)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
         let outcomes = storage.recover_security_settings(request).await?;
         println!(
             "Security recovery committed: authentication revision {}, authorization revision {}. Reconcile every replica and verify local administrator login before resuming writes.",

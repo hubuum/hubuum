@@ -325,12 +325,20 @@ pub struct SecurityCandidateGroupPreview {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityCandidateMembershipPreview {
+    LocalOnly,
+    Complete,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SecurityCandidateVerificationPreview {
     pub candidate_id: Uuid,
     pub provider_id: Uuid,
     pub subject: String,
     pub admitted: bool,
-    pub membership: String,
+    #[schema(inline)]
+    pub membership: SecurityCandidateMembershipPreview,
     pub groups: Vec<SecurityCandidateGroupPreview>,
     pub issued_session: bool,
     pub provisioned: bool,
@@ -355,7 +363,11 @@ impl SecurityCandidateVerificationPreview {
                 .ok_or_else(invalid)?,
             subject: proof.subject().to_owned(),
             admitted: details.admitted(),
-            membership: "complete".into(),
+            membership: if details.provider_groups().is_some() {
+                SecurityCandidateMembershipPreview::Complete
+            } else {
+                SecurityCandidateMembershipPreview::LocalOnly
+            },
             groups: details
                 .groups()
                 .iter()
@@ -392,7 +404,7 @@ impl SecurityCandidateVerificationPreview {
             provider_id,
             subject: identity.profile.subject,
             admitted: true,
-            membership: "complete".into(),
+            membership: SecurityCandidateMembershipPreview::Complete,
             groups: identity
                 .groups
                 .into_iter()

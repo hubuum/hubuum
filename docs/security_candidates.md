@@ -193,7 +193,9 @@ hubuum-admin --recover-security --recovery-administrator-id 1 \
 ```
 
 The ID must identify an existing password-capable local administrator with local
-grants. The command commits local authorization and local-only authentication
+grants. Supply the server deployment’s administrator settings on the recovery host.
+The effective scope must be `local`, and `--recovery-admin-group` must match
+`HUBUUM_ADMIN_GROUPNAME` (default `admin`). The command commits local authorization and local-only authentication
 atomically, records explicit recovery audit evidence, discards candidates and
 unconsumed approvals, and revokes external credentials. It never calls the remote
 policy backend. Restart/reconcile every replica and verify local administrator

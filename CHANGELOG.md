@@ -9,6 +9,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Bind OAuth subjects to the configured profile headers, clear obsolete provider
+  grants on local-only activation, and reject incomplete membership observations.
+  OIDC client and provider failures preserve the last successful verification.
+  Browser verification receipts now bind the callback origin. Logical restore
+  reapplies the destination’s local-only membership policy. Offline recovery
+  requires the deployment’s effective administrator group to be local.
+- **Upgrade** — Stop API and worker replicas, take a backup, apply migration
+  `2026-11-19-000001_auth_interaction_admission`, and restart matching binaries.
+  The migration upgrades OAuth scopes with one recorded header configuration.
+  Create a new scope for bindings with missing or conflicting header history.
+  Affected providers refuse cached credentials and are omitted from login methods.
+  Other configured methods remain available.
+  Older OAuth backups carry no header identity and require a matching legacy
+  binding to restore. Restore the pre-upgrade snapshot to downgrade.
+
 - Require Actix HTTP 3.21.3 or later to fix malformed chunked request framing
   and request-header timeout bypass on persistent HTTP/1 connections
   (RUSTSEC-2026-0552, RUSTSEC-2026-0553 and RUSTSEC-2026-0554).

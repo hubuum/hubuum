@@ -9,6 +9,7 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
+base64 = "0.22"
 chrono = "0.4"
 hubuum-auth-core = { path = "../hubuum-auth-core" }
 hubuum-domain = { version = "=0.11.0", path = "../hubuum-domain" }

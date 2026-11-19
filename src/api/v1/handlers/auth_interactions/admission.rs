@@ -103,6 +103,20 @@ pub(super) fn admit(ip: Option<IpAddr>, creation: bool) -> Result<(), ApiError> 
 }
 
 #[cfg(test)]
+pub(super) fn allow_one_request_from(ip: std::net::Ipv4Addr) {
+    let limiter =
+        || RateLimiter::direct_with_clock(Quota::per_hour(NonZeroU32::MIN), MonotonicClock);
+    BUDGETS.lock().unwrap().entries.insert(
+        Some(ip.into()),
+        Budget {
+            requests: limiter(),
+            begins: limiter(),
+            last_seen: MonotonicClock.now(),
+        },
+    );
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use governor::clock::FakeRelativeClock;

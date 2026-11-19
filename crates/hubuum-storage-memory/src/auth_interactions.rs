@@ -85,7 +85,6 @@ impl MemoryState {
         &mut self,
         request: StorageInteractionCreate,
     ) -> Result<StorageInteractionView, StorageError> {
-        self.purge_interactions(128)?;
         let now = Utc::now();
         let mut record = request.into_record();
         if record.lifecycle().created_at() > now
@@ -113,7 +112,8 @@ impl MemoryState {
             })
             .collect();
         let binding = record.lifecycle().binding();
-        if self.auth_interactions.len() >= MAX_AUTH_INTERACTIONS
+        let expired = self.expired_interactions(now, 128);
+        if self.auth_interactions.len() - expired.len() >= MAX_AUTH_INTERACTIONS
             || active.len() >= MAX_ACTIVE_AUTH_INTERACTIONS
             || active
                 .iter()
@@ -139,11 +139,12 @@ impl MemoryState {
                 "Too many authentication interactions",
             ));
         }
-        if self.auth_interactions.contains_key(&binding.id().value())
+        if (self.auth_interactions.contains_key(&binding.id().value())
+            && !expired.contains(&binding.id().value()))
             || record.user_code().is_some_and(|code| {
                 self.auth_interactions
-                    .values()
-                    .any(|value| value.user_code() == Some(code))
+                    .iter()
+                    .any(|(id, value)| value.user_code() == Some(code) && !expired.contains(id))
             })
         {
             return Err(StorageError::conflict(
@@ -151,7 +152,11 @@ impl MemoryState {
             ));
         }
         let view = record.view(now);
-        self.store_interaction(record)?;
+        record.to_document().map_err(invalid_contract_value)?;
+        for id in expired {
+            self.auth_interactions.remove(&id);
+        }
+        self.auth_interactions.insert(binding.id().value(), record);
         Ok(view)
     }
 
@@ -509,17 +514,19 @@ impl MemoryState {
                 "Interaction cleanup limit must be at most 4096",
             ));
         }
-        let now = Utc::now();
-        let keys: Vec<_> = self
-            .auth_interactions
-            .iter()
-            .filter(|(_, record)| record.retain_until() <= now)
-            .map(|(id, _)| *id)
-            .take(limit)
-            .collect();
+        let keys = self.expired_interactions(Utc::now(), limit);
         for id in &keys {
             self.auth_interactions.remove(id);
         }
         Ok(keys.len())
+    }
+
+    fn expired_interactions(&self, now: DateTime<Utc>, limit: usize) -> BTreeSet<Uuid> {
+        self.auth_interactions
+            .iter()
+            .filter(|(_, record)| record.retain_until() <= now)
+            .map(|(id, _)| *id)
+            .take(limit)
+            .collect()
     }
 }

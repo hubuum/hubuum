@@ -226,6 +226,8 @@ pub struct ExternalMemberships {
 }
 
 impl ExternalMemberships {
+    pub(crate) const MAX_GROUPS: usize = 1024;
+
     fn validate(
         policy: &ProviderMembership,
         claims: MembershipClaims<'_>,
@@ -259,7 +261,7 @@ impl ExternalMemberships {
             .ok_or(ExternalAuthenticationError::MissingMemberships)?;
         let values = claim
             .as_array()
-            .filter(|values| values.len() <= 1024)
+            .filter(|values| values.len() <= Self::MAX_GROUPS)
             .ok_or(ExternalAuthenticationError::MalformedMemberships)?;
         let mut keys = BTreeSet::new();
         for value in values {
