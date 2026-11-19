@@ -124,7 +124,7 @@ impl TaskArtifactStore for StorageHandle {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Artifact,
-            "cleanup",
+            "cleanup_batch",
             async { dispatch_backend!(self, |backend| backend.cleanup_batch().await) },
         )
         .await
