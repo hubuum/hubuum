@@ -240,7 +240,7 @@ def remove_fixture(*arguments):
     return False
 
 
-def run(root, containers, servers, networks):
+def run(root, containers, servers, networks, worker_executable):
     tls = root / "tls"
     untrusted = root / "untrusted"
     certificates(tls)
@@ -322,6 +322,7 @@ def run(root, containers, servers, networks):
     valkey_port = mapped_port(valkey, 6379)
     env.update(extra)
     env.update({
+        "CARGO_BIN_EXE_hubuum-template-worker": worker_executable,
         "SSL_CERT_FILE": str(tls / "ca.pem"), "SSL_CERT_DIR": str(empty_roots),
         "HUBUUM_CONTRACT_PASSWORD": password,
         "HUBUUM_CONTRACT_AMQP_URI": f"amqps://contract:{{secret}}@127.0.0.1:{mapped_port(rabbit, 5671)}/%2f",
@@ -355,18 +356,25 @@ def main(argv=None):
     build = subprocess.run([*CARGO_TEST, "--no-run"], cwd=ROOT, timeout=1800, check=False)
     if build.returncode:
         return build.returncode
+    worker_name = "hubuum-template-worker"
     worker = subprocess.run(
-        ["cargo", "build", "--locked", "-p", "hubuum-templates", "--bin", "hubuum-template-worker"],
-        cwd=ROOT, timeout=1800, check=False,
+        ["cargo", "build", "--locked", "-p", "hubuum-templates", "--bin", worker_name,
+         "--message-format=json"],
+        cwd=ROOT, timeout=1800, check=False, text=True, stdout=subprocess.PIPE,
     )
     if worker.returncode:
         return worker.returncode
+    executables = [message["executable"] for line in worker.stdout.splitlines()
+                   if (message := json.loads(line)).get("reason") == "compiler-artifact"
+                   and message["target"]["name"] == worker_name and message.get("executable")]
+    if len(executables) != 1:
+        raise RuntimeError("Cargo did not report exactly one template worker executable")
     containers = []
     servers = []
     networks = []
     with tempfile.TemporaryDirectory(prefix="hubuum-transport-contract-") as temporary:
         try:
-            result = run(Path(temporary), containers, servers, networks)
+            result = run(Path(temporary), containers, servers, networks, executables[0])
         finally:
             for server in servers:
                 server.shutdown()

@@ -46,7 +46,8 @@ Build the worker, then run the template/schema harness:
 
 ```sh
 cargo build --locked --release -p hubuum-templates --bin hubuum-template-worker
-cargo bench --locked --features runtime-limit-bench --bench template_schema_concurrency
+env "CARGO_BIN_EXE_hubuum-template-worker=$PWD/target/release/hubuum-template-worker" \
+  cargo bench --locked --features runtime-limit-bench --bench template_schema_concurrency
 ```
 
 The benchmark workflow retains its JSON-lines output as the
