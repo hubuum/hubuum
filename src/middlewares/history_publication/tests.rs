@@ -423,8 +423,9 @@ trait ClientStream: AsyncRead + AsyncWrite + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Unpin> ClientStream for T {}
 
 #[derive(Clone, Copy)]
-enum NativeResponse {
+pub(crate) enum NativeResponse {
     Payload,
+    Pipelined,
     Head,
     Empty,
 }
@@ -439,8 +440,19 @@ async fn native_delivery_keeps_empty_headers() {
 }
 
 async fn native_delivery(tls: Option<crate::config::TlsBackend>, response: NativeResponse) {
-    crate::tls::install_default_crypto_provider().unwrap();
     let (storage, observations, principal, token) = fixture().await;
+    verify_native_delivery(storage, observations, principal, token, tls, response).await;
+}
+
+pub(crate) async fn verify_native_delivery(
+    storage: StorageHandle,
+    observations: Arc<Observations>,
+    principal: PrincipalId,
+    token: String,
+    tls: Option<crate::config::TlsBackend>,
+    response: NativeResponse,
+) {
+    crate::tls::install_default_crypto_provider().unwrap();
     let app_context = context(storage);
     let server = actix_web::HttpServer::new(move || {
         App::new()
@@ -517,25 +529,42 @@ async fn native_delivery(tls: Option<crate::config::TlsBackend>, response: Nativ
     } else {
         "GET"
     };
-    client.write_all(format!("{method} /api/v1/classes/42/history HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\n\r\n").as_bytes()).await.unwrap();
+    let request = format!(
+        "{method} /api/v1/classes/42/history HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\n\r\n"
+    );
+    let pipelined = matches!(response, NativeResponse::Pipelined);
+    let requests = if pipelined {
+        request.repeat(2)
+    } else {
+        request
+    };
+    client.write_all(requests.as_bytes()).await.unwrap();
     let qualified = !cfg!(windows);
-    let expected_body: &[u8] = if qualified && matches!(response, NativeResponse::Payload) {
+    let expected_body: &[u8] = if qualified
+        && matches!(
+            response,
+            NativeResponse::Payload | NativeResponse::Pipelined
+        ) {
         b"complete-native-publication"
     } else {
         b""
     };
     let mut received = Vec::new();
-    timeout(Duration::from_secs(5), async {
+    let first_response_end = timeout(Duration::from_secs(5), async {
         loop {
             assert!(client.read_buf(&mut received).await.unwrap() > 0);
             assert!(received.len() < 4096);
             if let Some(start) = received.windows(4).position(|bytes| bytes == b"\r\n\r\n")
                 && received.len() >= start + 4 + expected_body.len()
             {
+                let end = start + 4 + expected_body.len();
                 if qualified {
-                    assert_eq!(&received[start + 4..], expected_body);
+                    assert_eq!(&received[start + 4..end], expected_body);
+                    if !pipelined {
+                        assert_eq!(received.len(), end);
+                    }
                 }
-                break;
+                break end;
             }
         }
     })
@@ -550,7 +579,15 @@ async fn native_delivery(tls: Option<crate::config::TlsBackend>, response: Nativ
     };
     assert!(received.starts_with(format!("HTTP/1.1 {status}").as_bytes()));
     if qualified {
+        if pipelined {
+            timeout(Duration::from_secs(5), client.read_to_end(&mut received))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(received[first_response_end..].starts_with(b"HTTP/1.1 503"));
+        }
         observations.wait_for_settlements(1).await;
+        assert_eq!(observations.admitted.load(Ordering::SeqCst), 1);
         assert_eq!(
             observations.api_settled.load(Ordering::SeqCst),
             usize::from(!matches!(response, NativeResponse::Head))

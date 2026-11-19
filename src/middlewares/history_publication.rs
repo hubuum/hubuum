@@ -2,21 +2,23 @@
 //! API occupancy. An abandoned producer or lost driver witness stays charged.
 
 use std::any::Any;
+use std::cell::Cell;
 use std::future::Future;
 use std::io;
 use std::net::Shutdown;
 use std::pin::Pin;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
 
-use actix_web::Error;
 use actix_web::body::{BodySize, BoxBody, MessageBody};
 use actix_web::dev::{Extensions, ServiceRequest, ServiceResponse};
 use actix_web::http::{Method, StatusCode, Version, header};
 use actix_web::middleware::Next;
 use actix_web::web::Bytes;
+use actix_web::{Error, ResponseError};
 use hubuum_storage_core::{
     HistoryLifecycleStorage, HistoryPublicationKind, HistoryPublicationOwner,
 };
@@ -44,6 +46,7 @@ struct Connection {
     socket: Arc<std::net::TcpStream>,
     released: watch::Receiver<Option<ThreadId>>,
     worker: ThreadId,
+    publication_started: Rc<Cell<bool>>,
 }
 
 struct DriverWitness {
@@ -83,6 +86,7 @@ fn attach(socket: &TcpStream, extensions: &mut Extensions) -> io::Result<()> {
         socket: Arc::new(socket),
         released: receiver,
         worker,
+        publication_started: Rc::new(Cell::new(false)),
     });
     extensions.insert(DriverWitness { released, worker });
     Ok(())
@@ -125,11 +129,13 @@ impl Connection {
                 "Owned history publication requires non-upgraded HTTP/1".into(),
             ));
         }
-        req.request().conn_data::<Self>().cloned().ok_or_else(|| {
+        let connection = req.request().conn_data::<Self>().cloned().ok_or_else(|| {
             ApiError::ServiceUnavailable(
                 "HTTP publication requires a connection release witness".into(),
             )
-        })
+        })?;
+        connection.publication_started.set(true);
+        Ok(connection)
     }
 
     async fn driver_released(&mut self) -> Result<(), StorageError> {
@@ -332,6 +338,22 @@ pub(crate) async fn transmit(
     req: ServiceRequest,
     next: Next<impl MessageBody + 'static>,
 ) -> Result<ServiceResponse<BoxBody>, Error> {
+    // The dispatcher can already have queued requests when the first response
+    // sets Connection: close. The same worker sees the reservation before it
+    // dispatches those requests.
+    if req
+        .request()
+        .conn_data::<Connection>()
+        .is_some_and(|connection| connection.publication_started.get())
+    {
+        let mut response =
+            ApiError::ServiceUnavailable("HTTP publication requires a new connection".into())
+                .error_response();
+        response
+            .head_mut()
+            .set_connection_type(actix_http::ConnectionType::Close);
+        return Ok(req.into_response(response));
+    }
     let head_request = req.method() == Method::HEAD;
     let mut response = next.call(req).await?.map_into_boxed_body();
     let transmission = response

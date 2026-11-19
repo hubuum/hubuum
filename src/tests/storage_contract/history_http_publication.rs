@@ -7,11 +7,14 @@ use rstest::rstest;
 use std::panic::{AssertUnwindSafe, resume_unwind};
 
 use crate::middlewares::history_publication::tests::{
-    Observations, ResponseMode, verify_middleware,
+    NativeResponse, Observations, ResponseMode, verify_middleware, verify_native_delivery,
 };
 
+#[rstest]
+#[case::buffered(false)]
+#[case::pipelined(true)]
 #[actix_web::test]
-async fn buffered_http_keeps_its_postgres_publication_beyond_api_settlement() {
+async fn postgres_publication_retires_after_http_driver_release(#[case] pipelined: bool) {
     let observations = Arc::new(Observations::default());
     let adapter = AdapterPostgresStorage::new(
         pool().get_ref().clone(),
@@ -22,13 +25,28 @@ async fn buffered_http_keeps_its_postgres_publication_beyond_api_settlement() {
     let user = create_backend_user(&backend, &prefix("http_publication")).await;
     let registration = backend.register_history_runtime(None).await.unwrap();
     let storage = backend.clone().with_runtime_owner(registration.owner());
-    let checked = AssertUnwindSafe(verify_middleware(
-        storage,
-        observations,
-        user.principal_id,
-        user.raw_token.clone(),
-        ResponseMode::Buffered,
-    ))
+    let checked = AssertUnwindSafe(async {
+        if pipelined {
+            verify_native_delivery(
+                storage,
+                observations,
+                user.principal_id,
+                user.raw_token.clone(),
+                None,
+                NativeResponse::Pipelined,
+            )
+            .await;
+        } else {
+            verify_middleware(
+                storage,
+                observations,
+                user.principal_id,
+                user.raw_token.clone(),
+                ResponseMode::Buffered,
+            )
+            .await;
+        }
+    })
     .catch_unwind()
     .await;
     let cleanup = backend.unregister_runtime(registration).await;

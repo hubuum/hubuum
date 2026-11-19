@@ -475,6 +475,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- History-aware HTTP rejects queued follow-up requests on a connection that
+  already started an owned response. The first response can drain and retire
+  its publication without admitting another owner on the same connection.
 - Gated history recovery can verify larger current/open inventories in bounded
   metadata pages instead of rejecting the whole inventory after 1,000 rows or
   1 MiB. All pages share the original scan clock and authority locks; quarantine

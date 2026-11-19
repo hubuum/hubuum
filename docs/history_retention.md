@@ -266,9 +266,13 @@ and write buffers. Lost channels, deadlines and abort requests are not release
 proofs. Failed or interrupted supervision retains durable ownership and prevents
 clean runtime shutdown acknowledgement.
 
-Each owned response closes its HTTP/1 connection; keep-alive reuse needs a
-separate connection publication barrier. HTTP upgrades, CONNECT, HTTP/2 and
-missing transport witnesses are rejected before publication admission. Selected
+Each owned response closes its HTTP/1 connection. Requests already queued on
+that connection receive HTTP 503 before actor resolution and publication
+admission. On Unix, a native PostgreSQL test sends two HTTP/1.1 requests on one
+socket and checks that the first response is delivered, the second is rejected,
+and the first publication retires before runtime unregistration. The middleware
+rejects HTTP upgrades, CONNECT, HTTP/2 and requests missing a transport witness
+before publication admission. Selected
 API work keeps its original deadline. Ordinary owned HTTP work retains an
 inherited task deadline or receives a 60-second limit. A publication deadline
 requests socket shutdown, followed by at most 30 seconds each for driver and
@@ -514,14 +518,12 @@ publication settlement after API occupancy has already settled.
 Native socket probes cover plain HTTP/1, Rustls and OpenSSL body completion and
 backpressure on Unix. They retain a connection-data witness beyond body EOF and require
 a same-worker deferred dispatcher-release signal after requesting socket abort.
-These probes are development evidence for a transport mechanism, not production
-publication retirement: upgrade rejection, producer ownership, pipelining,
-cancellation/crash behavior and measured resource/liveness gates remain open.
+Broader cancellation, crash retirement and measured resource/liveness gates
+remain open.
 Controlled-I/O regressions also retain both pipelined response payloads in the
 actual dispatcher write buffer, with either both bodies at EOF or the second
 body still pending. Awaited dispatcher cancellation must positively release the
-body, I/O and deferred driver witness. This covers local dispatcher cancellation;
-production publication ownership and crash retirement remain unqualified.
+body, I/O and deferred driver witness. This covers local dispatcher cancellation.
 Windows backpressure did not confirm bounded retirement after socket shutdown.
 History-aware HTTP therefore installs no connection witness on Windows and
 rejects productive publication with HTTP 503 before admitting history ownership.
