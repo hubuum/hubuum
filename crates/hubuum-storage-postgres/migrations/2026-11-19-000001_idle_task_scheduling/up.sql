@@ -1,6 +1,29 @@
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
+-- The scheduler already holds a task row. Use its receipt fields directly
+-- while retaining the same detail visibility and durable-receipt checks.
+-- Only the owning functions can use this row-valued predicate.
+CREATE OR REPLACE FUNCTION hubuum_control.task_row_admission_allowed(candidate public.tasks) RETURNS BOOLEAN
+LANGUAGE sql STABLE SET search_path = pg_catalog AS $admission$
+    SELECT EXISTS (SELECT 1 FROM hubuum_control.application_control a
+        CROSS JOIN hubuum_control.task_retention_control c
+        WHERE a.id=1 AND c.id=1 AND public.hubuum_task_details_visible(candidate.id)
+        AND ((candidate.receipt_generation IS NULL AND (candidate.idempotency_key IS NULL OR c.activation->>'state'='disabled'))
+          OR (candidate.receipt_checkpoint IS NOT NULL AND c.activation->>'state'='protected'
+            AND candidate.receipt_incarnation=a.incarnation AND EXISTS (
+                SELECT 1 FROM hubuum_control.task_receipts r
+                WHERE r.task_identity=(candidate.logical_identity #>> '{subject,identity,identity}')::uuid
+                  AND r.generation=candidate.receipt_generation
+                  AND r.material #>> '{outcome,state}'='may_execute'))))
+$admission$;
+REVOKE ALL ON FUNCTION hubuum_control.task_row_admission_allowed(public.tasks) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.hubuum_task_admission_allowed(task INTEGER) RETURNS BOOLEAN
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $admission$
+    SELECT EXISTS (SELECT 1 FROM public.tasks t WHERE t.id=task AND hubuum_control.task_row_admission_allowed(t))
+$admission$;
+
 CREATE OR REPLACE FUNCTION hubuum_schedule_task(worker UUID, supported TEXT[], lease_ms BIGINT) RETURNS INTEGER
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $function$
 DECLARE started TIMESTAMPTZ := clock_timestamp(); lock_wait BIGINT; p hubuum_control.task_policy; s hubuum_control.task_scheduler;
@@ -88,7 +111,7 @@ BEGIN
     INTO selected FROM groups g CROSS JOIN LATERAL (
             SELECT t.id,t.created_at FROM public.tasks t
             WHERE t.status='queued' AND t.kind=g.kind
-                AND public.hubuum_task_admission_allowed(t.id)
+                AND hubuum_control.task_row_admission_allowed(t)
                 AND coalesce((t.logical_identity #>> '{references,/submitted_by,reference,identity}')::UUID,
                     '00000000-0000-0000-0000-000000000000'::UUID)=g.principal_identity
                 -- Keep eligibility as a per-row lookup so LIMIT can stop the

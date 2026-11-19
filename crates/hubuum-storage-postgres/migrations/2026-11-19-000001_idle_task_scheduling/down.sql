@@ -114,6 +114,21 @@ BEGIN
 END
 $function$;
 
+CREATE OR REPLACE FUNCTION public.hubuum_task_admission_allowed(task INTEGER) RETURNS BOOLEAN
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT EXISTS (SELECT 1 FROM public.tasks t CROSS JOIN hubuum_control.application_control a
+        CROSS JOIN hubuum_control.task_retention_control c
+        WHERE t.id=task AND a.id=1 AND c.id=1 AND public.hubuum_task_details_visible(t.id)
+        AND ((t.receipt_generation IS NULL AND (t.idempotency_key IS NULL OR c.activation->>'state'='disabled'))
+          OR (t.receipt_checkpoint IS NOT NULL AND c.activation->>'state'='protected'
+            AND t.receipt_incarnation=a.incarnation AND EXISTS (
+                SELECT 1 FROM hubuum_control.task_receipts r
+                WHERE r.task_identity=(t.logical_identity #>> '{subject,identity,identity}')::uuid
+                  AND r.generation=t.receipt_generation
+                  AND r.material #>> '{outcome,state}'='may_execute'))))
+$$;
+DROP FUNCTION IF EXISTS hubuum_control.task_row_admission_allowed(public.tasks);
+
 -- Restore the Legacy checkpoint accepted before the scheduler migration.
 -- Preserve any installed versioned protocol and its gate.
 DO $compatibility$
