@@ -4,12 +4,11 @@ use base64::Engine;
 use crate::api::locations as api_locations;
 use crate::api::openapi::ApiErrorResponse;
 use crate::api::response::ApiResponse;
-use crate::backups::{BackupSettings, authorize_backup_request};
+use crate::backups::BackupSettings;
 use crate::errors::ApiError;
-use crate::extractors::Authenticated;
+use crate::extractors::UnscopedRuntimeAdmin;
 use crate::models::{
-    BackupDocument, BackupOutputLookup, BackupRequest, PrincipalID, TaskID, TaskKind, TaskResponse,
-    TokenID,
+    BackupDocument, BackupOutputLookup, BackupRequest, TaskID, TaskKind, TaskResponse,
 };
 use crate::permissions::AppContext;
 use crate::services::tasks::{
@@ -67,25 +66,21 @@ fn invalid_stored_sha256() -> ApiError {
 pub async fn create_backup(
     context: AppContext,
     settings: web::Data<BackupSettings>,
-    requestor: Authenticated,
+    admin: UnscopedRuntimeAdmin,
     req: HttpRequest,
     request: web::Json<BackupRequest>,
 ) -> Result<impl Responder, ApiError> {
     let config = crate::config::runtime::current()?;
     let settings = settings.with_runtime(&config)?;
     let request = request.into_inner();
-    authorize_backup_request(&context, &requestor.principal, requestor.scopes()).await?;
     let payload = serde_json::to_value(&request)?;
     let hash = request_hash(&payload)?;
-    let scope_snapshot = task_scope_snapshot(
-        Some(TokenID::new(requestor.token_meta.id().id())?),
-        requestor.scopes(),
-    );
+    let scope_snapshot = task_scope_snapshot(Some(admin.token_id()), None);
     let task = submit_task(
         &context,
         TaskSubmission::new(
             TaskKind::Backup,
-            PrincipalID::new(requestor.principal.id().id())?,
+            admin.principal().id(),
             payload,
             1,
             settings.max_active_tasks_per_user(),
@@ -120,12 +115,11 @@ pub async fn create_backup(
 #[get("/{task_id}")]
 pub async fn get_backup(
     context: AppContext,
-    requestor: Authenticated,
+    admin: UnscopedRuntimeAdmin,
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
-    authorize_backup_request(&context, &requestor.principal, requestor.scopes()).await?;
     let task_id = task_id.into_inner();
-    let task = load_authorized_backup(&context, &requestor.principal, task_id).await?;
+    let task = load_authorized_backup(&context, admin.principal(), task_id).await?;
     let output = backup_output_summary(&context, task_id).await?;
     Ok(ApiResponse::new(
         task.to_response_with_backup_output(output.as_ref())?,
@@ -157,12 +151,11 @@ pub async fn get_backup(
 #[get("/{task_id}/output")]
 pub async fn get_backup_output(
     context: AppContext,
-    requestor: Authenticated,
+    admin: UnscopedRuntimeAdmin,
     task_id: web::Path<TaskID>,
 ) -> Result<HttpResponse, ApiError> {
     let task_id = task_id.into_inner();
-    authorize_backup_request(&context, &requestor.principal, requestor.scopes()).await?;
-    load_authorized_backup(&context, &requestor.principal, task_id).await?;
+    load_authorized_backup(&context, admin.principal(), task_id).await?;
     match backup_output(&context, task_id).await? {
         BackupOutputLookup::Available(output) => {
             let digest = digest_header_from_sha256(&output.sha256)?;

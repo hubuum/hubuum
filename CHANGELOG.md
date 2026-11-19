@@ -39,6 +39,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Backup, query-usage analysis, and administrative schema endpoints now return
+  HTTP 403 for scoped tokens and non-administrators before looking up the
+  requested resource. Unscoped administrator service accounts retain access.
+
 - **Breaking (REST clients with closed runtime-setting enums):** runtime-setting responses and discovery add operational policy groups and effect values.
   Regenerate administrator clients from the updated OpenAPI document or accept
   the new runtime-setting group and effect values before upgrading the server.

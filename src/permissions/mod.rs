@@ -43,7 +43,7 @@ use crate::config::{AppConfig, PermissionBackendKind};
 use crate::errors::ApiError;
 use crate::models::{Permissions, TokenScope};
 use crate::storage::StorageHandle;
-use crate::traits::{AuthzSubject, PrincipalIdAccessor, scope_allows, scope_allows_resources};
+use crate::traits::{PrincipalIdAccessor, scope_allows, scope_allows_resources};
 
 pub async fn authorize_resources<S>(
     backend: &dyn PermissionBackend,
@@ -83,41 +83,18 @@ where
     }
 }
 
-/// Require runtime-wide administrator authority for a queued full-system task.
-///
-/// Unlike [`crate::extractors::AdminAccess`], this accepts both human principals
-/// and service accounts. Tokens must still be unscoped because the operation
-/// cannot be represented by a collection permission subset.
-pub async fn require_unscoped_runtime_admin<C, S>(
-    context: &C,
-    subject: &S,
+/// Require an unscoped token and runtime administrator authority for a human or service account.
+pub async fn require_unscoped_runtime_admin(
+    context: &AppContext,
+    subject: &(impl PrincipalIdAccessor + ?Sized),
     token_scoped: bool,
-) -> Result<(), ApiError>
-where
-    C: AuthorizationContext,
-    S: AuthzSubject + ?Sized,
-{
-    if token_scoped {
+) -> Result<(), ApiError> {
+    if token_scoped || !context.is_admin(subject).await? {
         return Err(ApiError::Forbidden(
             "This operation requires an unscoped runtime administrator".to_string(),
         ));
     }
-    let pool = context;
-    let is_admin = match context.authorization_mode() {
-        AuthorizationMode::Delegated(backend) => {
-            let principal = PrincipalRef::load(pool, subject).await?;
-            backend.is_admin(&principal).await?
-        }
-        AuthorizationMode::LocalStorage => subject.is_admin(pool).await?,
-    };
-
-    if is_admin {
-        Ok(())
-    } else {
-        Err(ApiError::Forbidden(
-            "This operation requires an unscoped runtime administrator".to_string(),
-        ))
-    }
+    Ok(())
 }
 
 /// Construct the permission backend selected by the active config.
