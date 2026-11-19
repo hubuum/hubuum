@@ -18,17 +18,7 @@ esac
 python3 scripts/check-python-version.py
 
 # Rendering tests use the same isolated executable shipped in production.
-TEMPLATE_WORKER="$(cargo build --locked -p hubuum-templates --bin hubuum-template-worker \
-    --message-format=json | python3 -c '
-import json, sys
-workers = [entry["executable"] for line in sys.stdin
-           if (entry := json.loads(line)).get("reason") == "compiler-artifact"
-           and entry["target"]["name"] == "hubuum-template-worker"
-           and entry.get("executable")]
-if len(workers) != 1:
-    sys.exit("Cargo did not report exactly one template worker executable")
-print(workers[0])
-')"
+TEMPLATE_WORKER="$(scripts/build-template-worker.sh)"
 CARGO_TEST_ENV=(env "CARGO_BIN_EXE_hubuum-template-worker=$TEMPLATE_WORKER")
 
 # Fetching database details from environment variables with HUBUUM_TEST_ prefix

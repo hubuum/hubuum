@@ -166,6 +166,10 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ApiError> {
     config.token_issuance_policy()?;
     config.token_retention_settings()?;
     config.backup_budget()?;
+    config.artifacts.validate(
+        config.export_max_output_bytes,
+        config.backup_max_output_bytes,
+    )?;
     if config.event_retention_file_archive_enabled
         && config
             .event_retention_archive_path

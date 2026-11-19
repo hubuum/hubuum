@@ -1722,7 +1722,8 @@ mod tests {
         .await;
 
         let body = serde_json::json!({
-            "object_id": host.id
+            "object_id": host.id,
+            "query": "sort=depth"
         });
 
         let resp = post_request_with_headers(

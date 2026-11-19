@@ -18,6 +18,8 @@ class RustRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             shutil.copy(ROOT / "run_tests.sh", root / "run_tests.sh")
+            (root / "scripts").mkdir()
+            shutil.copy(ROOT / "scripts/build-template-worker.sh", root / "scripts")
             binaries = root / "bin"
             binaries.mkdir()
             stub = binaries / "stub"

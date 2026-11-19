@@ -119,6 +119,14 @@ pub struct ExportPhaseTimer {
 }
 
 impl ExportPhaseTimer {
+    pub fn pause(&mut self) {
+        self.timer.pause();
+    }
+
+    pub fn resume(&mut self) {
+        self.timer.resume();
+    }
+
     pub fn elapsed(&self) -> Duration {
         self.timer.elapsed()
     }

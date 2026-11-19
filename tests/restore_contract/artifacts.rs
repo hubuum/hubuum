@@ -2,6 +2,37 @@ use super::*;
 use hubuum_storage_core::artifacts::*;
 use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 
+#[tokio::test]
+async fn a_full_backup_omits_bytes_for_an_export_pending_detail_purge() {
+    super::task_capacity::with_fixture(StorageBackendKind::Postgres, async |fixture| {
+        let (id, _) = seed(fixture).await;
+        let pool =
+            postgres_test_pool_with_timeout(&database_url(), 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
+        with_connection(&pool, async |connection| {
+            diesel::update(tasks::table.find(id.id()))
+                .set(tasks::details_purge_pending.eq(true))
+                .execute(connection)
+                .await
+        })
+        .await
+        .unwrap();
+        let capture = fixture
+            .storage()
+            .capture_backup_replay(
+                true,
+                StorageBackupBudget::new(256 << 20, 1_000_000).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            !capture
+                .history_rows(StorageBackupHistorySection::ExportOutputs)
+                .any(|row| row.unwrap().get("task_id") == Some(&json!(id.id())))
+        );
+    })
+    .await;
+}
+
 #[rstest]
 #[tokio::test]
 async fn restored_copy_requires_space_in_addition_to_retained_obligations(

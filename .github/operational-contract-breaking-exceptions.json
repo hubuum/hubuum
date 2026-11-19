@@ -100,6 +100,17 @@
         "c1364737437b",
         "dec1c657f964"
       ]
+    },
+    {
+      "id": "v0.0.22-backup-format-12-reader-range",
+      "baseline": "v0.0.22",
+      "expires": "2027-01-31",
+      "reason": "The published backup compatibility description now includes formats 11 and 12, which the project branch already accepts.",
+      "migration": "Upgrade restore binaries before reading format 12 backups. Formats 6 through 11 remain readable.",
+      "changelog_entry": "**Breaking backup compatibility:** new backups use format 12, including portable",
+      "fingerprints": [
+        "ec7b19ce0749"
+      ]
     }
   ]
 }

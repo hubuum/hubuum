@@ -93,6 +93,10 @@ impl ArtifactStore for SlowDestination {
 }
 #[async_trait]
 impl TaskArtifactStore for SlowDestination {
+    async fn cleanup_batch(&self) -> ArtifactResult<ArtifactCleanupBatch> {
+        self.store.cleanup_batch().await
+    }
+
     async fn bind_task(
         &self,
         id: &ArtifactIdentity,
@@ -291,7 +295,7 @@ async fn full_pipeline_resource_probe() {
             .await
             .unwrap();
     }
-    while baseline.cleanup().await.unwrap() != 0 {}
+    while baseline.cleanup_batch().await.unwrap() != ArtifactCleanupBatch::Idle {}
     collection.cleanup().await.unwrap();
     assert!(
         resident <= 8 * 1024 * 1024 * 1024,

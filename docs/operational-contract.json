@@ -2079,6 +2079,7 @@
             "claim_event_retention_batch",
             "claim_next_task",
             "cleanup",
+            "cleanup_batch",
             "cleanup_hot_object_history",
             "commit_deletion_control",
             "commit_task_control",
@@ -2573,6 +2574,7 @@
             "claim_event_retention_batch",
             "claim_next_task",
             "cleanup",
+            "cleanup_batch",
             "cleanup_hot_object_history",
             "commit_deletion_control",
             "commit_task_control",
@@ -8460,7 +8462,7 @@
         "audit_events",
         "terminal_event_deliveries"
       ],
-      "rejection_policy": "accept backup versions 6 through 10; normalize legacy event defaults, missing query usage declarations and missing shared computed definition history; observe new definition history at the restore boundary"
+      "rejection_policy": "accept backup versions 6 through 12; normalize legacy event defaults, missing query usage declarations and missing shared computed definition history; observe new definition history at the restore boundary"
     },
     "import": {
       "version": 2,

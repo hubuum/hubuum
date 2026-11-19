@@ -455,8 +455,8 @@ records, and portable backups exclude them.
 
 `ArtifactStore::register_destination`, `ArtifactStore::stage`,
 `ArtifactStore::append`, `ArtifactStore::seal`, `ArtifactStore::publish`,
-`ArtifactStore::abort`, `ArtifactStore::cleanup`, and
-`TaskArtifactStore::bind_task` are context-free workflow operations. They change
+`ArtifactStore::abort`, `ArtifactStore::cleanup`, `TaskArtifactStore::bind_task`,
+and `TaskArtifactStore::cleanup_batch` are context-free workflow operations. They change
 physical storage state and durable ownership, not ordinary domain resources.
 Task completion owns the terminal task event and atomic output publication.
 Cleanup retains obligations and reservations until bounded physical deletion

@@ -276,11 +276,12 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
-      - name: Build the isolated renderer
-        run: cargo build --locked --release -p hubuum-templates --bin hubuum-template-worker
       - name: Measure concurrent templates and schema validation
         shell: bash
-        run: cargo bench --locked --features runtime-limit-bench --bench template_schema_concurrency | tee template-schema-evidence.jsonl
+        run: |
+          renderer="$(scripts/build-template-worker.sh --release)"
+          env "CARGO_BIN_EXE_hubuum-template-worker=$renderer" \
+            cargo bench --locked --features runtime-limit-bench --bench template_schema_concurrency | tee template-schema-evidence.jsonl
       - name: Verify schema budgets under process resource limits
         shell: bash
         run: python3 tests/python/run.py integration schema-budget --release | tee -a template-schema-evidence.jsonl

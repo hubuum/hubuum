@@ -137,12 +137,15 @@ activate the service alongside retained online expiry.
 ## Synchronizing runtime migrations
 
 Apply `2026-11-11-000001_archive_runtime_compatibility` after bringing the runtime
-settings migrations into the project branch. It updates the exact supported
-checkpoint for unversioned Legacy registrations; it preserves the fixed Legacy
-restriction, original owner/application checks, and refusal of unknown future
-checkpoints. Both upgrade and rollback leave an already installed versioned
+settings migrations into the project branch. The subsequent migration
+`2026-11-19-000001_idle_task_scheduling` qualifies its scheduler-only change
+and restores the prior checkpoint on rollback. Each migration updates the exact
+supported checkpoint for unversioned Legacy registrations. Both preserve the fixed
+Legacy restriction and original owner/application checks. Unknown future
+checkpoints still fail closed. Both upgrade and rollback leave an already installed versioned
 history protocol unchanged, so application order cannot replace its gate.
-Rollback on an unversioned registry restores the original archive checkpoint
-restriction; with newer runtime migrations still present, archive calls then
-refuse until the compatible migration is reapplied. Follow the runtime-policy
-offline upgrade and rollback procedure for the combined deployment.
+Rolling back the scheduler migration restores the November 11 checkpoint.
+Rolling back the November 11 compatibility migration while the newer runtime
+settings remain installed blocks archive calls until that compatibility
+migration is reapplied. Follow the runtime-policy offline upgrade and rollback
+procedure for the combined deployment.

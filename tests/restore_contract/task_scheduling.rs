@@ -540,7 +540,9 @@ async fn a_locked_oldest_task_does_not_block_the_next_candidate() {
 #[derive(QueryableByName)]
 struct TaskRowsVisited {
     #[diesel(sql_type = BigInt)]
-    value: i64,
+    heap_rows: i64,
+    #[diesel(sql_type = BigInt)]
+    candidate_entries: i64,
 }
 
 #[rstest]
@@ -568,6 +570,11 @@ async fn selecting_queue_heads_does_not_scan_the_complete_backlog(
                 SELECT id,row_number() OVER (ORDER BY id) AS ordinal FROM added")
                 .execute(connection).await?;
             diesel::sql_query("SET LOCAL hubuum.reconcile_task_capacity='on'").execute(connection).await?;
+            // An idle-queue probe must also skip an older heap prefix of unsupported work.
+            diesel::sql_query("INSERT INTO tasks(kind,status,submitted_by) \
+                SELECT 'backup','queued',p.id FROM generate_series(1,2048) \
+                CROSS JOIN scheduler_plan_principals p WHERE p.ordinal=1")
+                .execute(connection).await?;
             diesel::sql_query("INSERT INTO tasks(kind,status,submitted_by,created_at) \
                 SELECT CASE WHEN n%2=0 THEN 'import' ELSE 'export' END,'queued',p.id, \
                     (clock_timestamp() AT TIME ZONE 'UTC')-$1*interval '1 second' \
@@ -594,13 +601,18 @@ async fn selecting_queue_heads_does_not_scan_the_complete_backlog(
             // Exercise the parameter-independent plans used by warmed workers,
             // including a due promotion while no queued task is overdue.
             diesel::sql_query("SET LOCAL plan_cache_mode='force_generic_plan'").execute(connection).await?;
-            let counters = "SELECT seq_tup_read+idx_tup_fetch AS value FROM pg_stat_xact_user_tables \
-                WHERE schemaname='public' AND relname='tasks'";
-            let before = diesel::sql_query(counters).get_result::<TaskRowsVisited>(connection).await?.value;
+            let counters = "SELECT seq_tup_read+idx_tup_fetch AS heap_rows, \
+                seq_tup_read+(SELECT sum(pg_stat_get_xact_tuples_returned(indexrelid))::bigint \
+                    FROM pg_index WHERE indrelid='public.tasks'::regclass) AS candidate_entries \
+                FROM pg_stat_xact_user_tables WHERE schemaname='public' AND relname='tasks'";
+            let before = diesel::sql_query(counters).get_result::<TaskRowsVisited>(connection).await?;
             diesel::sql_query("SELECT public.hubuum_schedule_task($1::uuid,ARRAY['import','export'],60000)")
                 .bind::<Text,_>(TaskWorkerId::generate().as_string()).execute(connection).await?;
-            let after = diesel::sql_query(counters).get_result::<TaskRowsVisited>(connection).await?.value;
-            assert!((1..=maximum_rows).contains(&(after-before)), "queue-head selection visited {} task rows (maximum {maximum_rows})", after-before);
+            let after = diesel::sql_query(counters).get_result::<TaskRowsVisited>(connection).await?;
+            let heap_rows = after.heap_rows - before.heap_rows;
+            assert!((1..=maximum_rows).contains(&heap_rows), "queue-head selection visited {heap_rows} task rows (maximum {maximum_rows})");
+            let candidate_entries = after.candidate_entries - before.candidate_entries;
+            assert!((1..=1024).contains(&candidate_entries), "queue-head selection visited {candidate_entries} table and index entries (maximum 1024)");
             Ok::<_,hubuum_storage_postgres::PostgresStorageError>(())
         }).await.unwrap();
     }).await;

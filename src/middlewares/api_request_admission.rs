@@ -39,29 +39,38 @@ pub(crate) fn operation(method: &Method, path: &str) -> Option<ApiRequestClass> 
     if path == "/api/v1/events" {
         return Some(ApiRequestClass::Audit);
     }
-    let family = *parts.get(2)?;
-    if !matches!(
-        family,
-        "classes" | "collections" | "export-templates" | "remote-targets" | "iam"
-    ) {
-        return None;
-    }
-    let start = if family == "iam" || parts.get(3) == Some(&"by-name") {
-        5
-    } else {
-        4
+    let suffix = match &parts[2..] {
+        ["classes", "by-name", _, "object-aggregates"] => {
+            return Some(ApiRequestClass::Aggregate);
+        }
+        ["classes", "by-name", ..] => return None,
+        ["classes", _, "object-aggregates"] => return Some(ApiRequestClass::Aggregate),
+        ["classes", _, tail @ ..] => match tail {
+            ["history" | "events", ..] => tail,
+            [_, "relations", rest @ ..] | [_, rest @ ..] => rest,
+            [] => return None,
+        },
+        [
+            "collections" | "export-templates" | "remote-targets",
+            "by-name",
+            ..,
+        ] => return None,
+        [
+            "collections" | "export-templates" | "remote-targets",
+            _,
+            tail @ ..,
+        ]
+        | ["iam", "users" | "groups", _, tail @ ..] => tail,
+        _ => return None,
     };
-    let suffix = parts.get(start..)?;
-    if suffix == ["object-aggregates"] && family == "classes" {
-        return Some(ApiRequestClass::Aggregate);
+    match suffix {
+        ["events"] => Some(ApiRequestClass::Audit),
+        ["history"]
+        | ["history", "timeline" | "as-of"]
+        | ["history", "entries", _]
+        | ["history", "computed", "as-of"] => Some(ApiRequestClass::History),
+        _ => None,
     }
-    if suffix.contains(&"history") {
-        return Some(ApiRequestClass::History);
-    }
-    if suffix.last() == Some(&"events") {
-        return Some(ApiRequestClass::Audit);
-    }
-    None
 }
 
 struct DisconnectStop(TaskStopHandle);
@@ -294,6 +303,9 @@ mod tests {
     #[case("/api/v1/classes")]
     #[case("/api/v1/classes/42")]
     #[case("/api/v1/classes/by-name/history")]
+    #[case("/api/v1/classes/by-name/widgets/objects/by-name/history")]
+    #[case("/api/v1/classes/by-name/widgets/objects/by-name/events")]
+    #[case("/api/v1/classes/by-name/object-aggregates")]
     #[case("/api/v1/tasks")]
     #[case("/api/v1/tasks/42/events")]
     #[case("/api/v1/exports/42/output")]

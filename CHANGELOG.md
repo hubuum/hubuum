@@ -322,6 +322,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Full-history backups omit export bytes as soon as retention hides their output
+  and exclude audit events and deliveries for waiting tasks. Backup diagnostics
+  and the operational contract report the supported versions, 6 through 12.
+- Streamed export and backup downloads retain their original execution permit.
+  Related-object exports support graph sort fields across pages, share one
+  authorization candidate budget, and account for final template hydration in
+  both the stage timeout and the reported duration.
+- Runtime export and backup limits must fit the configured artifact worker
+  reservation. Ordinary object-name lookups avoid history and audit admission
+  limits. Artifact cleanup continues after a zero-block state transition, and
+  idle worker polls avoid scanning historical principals. The scheduler migration
+  also qualifies the Legacy archive registry at its new schema checkpoint.
+
 - The runtime permission proxy preserves external task-read, bulk-read and
   cancellation decisions instead of substituting default owner/admin behavior.
 

@@ -1,4 +1,5 @@
 use crate::models::task::task_kind_from_db;
+use hubuum_storage_core::artifacts::ArtifactCleanupBatch;
 use hubuum_storage_core::{
     StorageBackupBudget, StorageTaskClaimRequest, StorageTaskLeaseDuration, TaskExecutionStorage,
     TaskWorkerId,
@@ -769,7 +770,7 @@ async fn maybe_cleanup_expired_task_outputs(
     cleanup_artifacts_when_due(artifacts, cleanup_interval, async {
         storage_handle(backend)
             .artifact_store()
-            .cleanup()
+            .cleanup_batch()
             .await
             .map_err(crate::services::artifacts::error)
     })
@@ -842,14 +843,14 @@ async fn maybe_cleanup_expired_task_outputs(
 async fn cleanup_artifacts_when_due(
     state: &Mutex<CleanupSchedule>,
     interval: Duration,
-    cleanup: impl Future<Output = Result<u32, ApiError>>,
+    cleanup: impl Future<Output = Result<ArtifactCleanupBatch, ApiError>>,
 ) -> Result<(), ApiError> {
     let Some(reservation) = CleanupReservation::reserve(state, interval)? else {
         return Ok(());
     };
     // Drain one bounded batch per worker tick. Once empty, avoid a database
     // acquisition on every idle poll; failures remain eligible for retry.
-    if cleanup.await? == 0 {
+    if cleanup.await? == ArtifactCleanupBatch::Idle {
         reservation.commit(false)?;
     }
     Ok(())
@@ -1140,16 +1141,19 @@ mod cleanup_tests {
 
     use rstest::rstest;
 
-    use super::{CleanupReservation, CleanupSchedule, cleanup_artifacts_when_due};
+    use super::{
+        ArtifactCleanupBatch, CleanupReservation, CleanupSchedule, cleanup_artifacts_when_due,
+    };
     use crate::errors::ApiError;
 
     #[rstest]
-    #[case::drained(Some(0), 1)]
-    #[case::more_work(Some(16), 2)]
+    #[case::drained(Some(ArtifactCleanupBatch::Idle), 1)]
+    #[case::empty_attempt(Some(ArtifactCleanupBatch::Progress { removed_blocks: 0 }), 2)]
+    #[case::more_work(Some(ArtifactCleanupBatch::Progress { removed_blocks: 16 }), 2)]
     #[case::failure(None, 2)]
     #[actix_web::test]
     async fn artifact_cleanup_backs_off_only_after_an_empty_batch(
-        #[case] first_batch: Option<u32>,
+        #[case] first_batch: Option<ArtifactCleanupBatch>,
         #[case] expected_calls: u32,
     ) {
         let state = Mutex::new(CleanupSchedule::default());
@@ -1164,7 +1168,7 @@ mod cleanup_tests {
 
         cleanup_artifacts_when_due(&state, interval, async {
             calls.set(calls.get() + 1);
-            Ok(0)
+            Ok(ArtifactCleanupBatch::Idle)
         })
         .await
         .unwrap();

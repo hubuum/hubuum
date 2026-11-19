@@ -240,7 +240,7 @@ def remove_fixture(*arguments):
     return False
 
 
-def run(root, containers, servers, networks):
+def run(root, containers, servers, networks, template_worker):
     tls = root / "tls"
     untrusted = root / "untrusted"
     certificates(tls)
@@ -323,6 +323,7 @@ def run(root, containers, servers, networks):
     env.update(extra)
     env.update({
         "SSL_CERT_FILE": str(tls / "ca.pem"), "SSL_CERT_DIR": str(empty_roots),
+        "CARGO_BIN_EXE_hubuum-template-worker": template_worker,
         "HUBUUM_CONTRACT_PASSWORD": password,
         "HUBUUM_CONTRACT_AMQP_URI": f"amqps://contract:{{secret}}@127.0.0.1:{mapped_port(rabbit, 5671)}/%2f",
         "HUBUUM_CONTRACT_AMQP_MANAGEMENT": management,
@@ -356,8 +357,8 @@ def main(argv=None):
     if build.returncode:
         return build.returncode
     worker = subprocess.run(
-        ["cargo", "build", "--locked", "-p", "hubuum-templates", "--bin", "hubuum-template-worker"],
-        cwd=ROOT, timeout=1800, check=False,
+        [ROOT / "scripts" / "build-template-worker.sh"], cwd=ROOT, timeout=1800,
+        stdout=subprocess.PIPE, text=True, check=False,
     )
     if worker.returncode:
         return worker.returncode
@@ -366,7 +367,7 @@ def main(argv=None):
     networks = []
     with tempfile.TemporaryDirectory(prefix="hubuum-transport-contract-") as temporary:
         try:
-            result = run(Path(temporary), containers, servers, networks)
+            result = run(Path(temporary), containers, servers, networks, worker.stdout.strip())
         finally:
             for server in servers:
                 server.shutdown()
