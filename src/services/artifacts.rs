@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::errors::ApiError;
 use crate::services::tasks::ClaimedTask;
-use crate::storage::{StorageContext, storage_handle};
+use crate::storage::{ExecutionStorage, StorageContext, storage_handle};
 
 const _: () = assert!(
     hubuum_templates::MAX_WORKER_EXECUTION_TIME.as_secs()
@@ -112,23 +112,26 @@ pub(crate) fn download(
     context: &impl StorageContext,
     reference: ArtifactReference,
 ) -> impl Stream<Item = Result<Bytes, io::Error>> + 'static {
-    let store = storage_handle(context).artifact_store();
+    let storage = storage_handle(context);
+    let scope = storage.current_execution_scope();
+    let store = storage.artifact_store();
     // The generator owns the store. Opening and all block reads happen inside
     // the future, so the borrowed reader cannot outlive its storage handle.
     let (sender, receiver) = tokio::sync::mpsc::channel(1);
     let worker = actix_web::rt::spawn(async move {
-        let result = async {
-            let mut reader = ArtifactReader::open(store.as_ref(), &reference)
-                .await
-                .map_err(error)?;
-            while let Some(block) = reader.next_block().await.map_err(error)? {
-                if sender.send(Ok(Bytes::from(block))).await.is_err() {
-                    return Ok(());
+        let result = storage
+            .run_in_scope(scope, async {
+                let mut reader = ArtifactReader::open(store.as_ref(), &reference)
+                    .await
+                    .map_err(error)?;
+                while let Some(block) = reader.next_block().await.map_err(error)? {
+                    if sender.send(Ok(Bytes::from(block))).await.is_err() {
+                        return Ok(());
+                    }
                 }
-            }
-            Ok::<_, ApiError>(())
-        }
-        .await;
+                Ok::<_, ApiError>(())
+            })
+            .await;
         if let Err(error) = result {
             let _ = sender.send(Err(io::Error::other(error.to_string()))).await;
         }
@@ -145,4 +148,69 @@ pub(crate) fn download(
                 .map(|error| (Err(io::Error::other(error)), None))
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::{StorageHandle, StorageObservation, StorageObserver};
+    use futures_util::StreamExt;
+    use hubuum_artifacts::{ArtifactStore, ArtifactWriter};
+    use hubuum_storage_core::StorageExecutionPermit;
+    use hubuum_storage_memory::MemoryStorage;
+    use std::sync::Mutex;
+
+    struct DownloadObservations {
+        backend: MemoryStorage,
+        permits: Mutex<Vec<Option<StorageExecutionPermit>>>,
+    }
+    impl StorageObserver for DownloadObservations {
+        fn operation_finished(&self, call: &StorageObservation) {
+            if matches!(call.operation(), "published_manifest" | "block") {
+                self.permits.lock().unwrap().push(
+                    self.backend
+                        .current_execution_scope()
+                        .application_access_override()
+                        .cloned(),
+                );
+            }
+        }
+    }
+
+    #[actix_web::test]
+    async fn artifact_producer_inherits_the_download_scope_for_all_reads() {
+        let backend = MemoryStorage::new();
+        let destination = Destination::new(DestinationId::generate(), "download-scope").unwrap();
+        backend.register_destination(&destination).await.unwrap();
+        let limits = ArtifactLimits::builder()
+            .block_bytes(4)
+            .artifact_bytes(12)
+            .blocks(3)
+            .build()
+            .unwrap();
+        let mut writer =
+            ArtifactWriter::new(&backend, ArtifactIdentity::new(destination.id()), limits)
+                .await
+                .unwrap();
+        writer.write(b"three blocks").await.unwrap();
+        let reference = writer.finish().await.unwrap();
+        let observations = Arc::new(DownloadObservations {
+            backend: backend.clone(),
+            permits: Mutex::default(),
+        });
+        let storage =
+            StorageHandle::from_registered_backend_with_observer(backend, observations.clone());
+        let permit = storage.admit_application_work().await.unwrap();
+        let scope = storage
+            .current_execution_scope()
+            .with_application_access(permit.clone());
+        let mut stream =
+            Box::pin(storage.run_in_scope_sync(scope, || download(&storage, reference)));
+        while let Some(block) = stream.next().await {
+            block.unwrap();
+        }
+        let reads = observations.permits.lock().unwrap();
+        assert!(reads.len() >= 4);
+        assert!(reads.iter().all(|read| read.as_ref() == Some(&permit)));
+    }
 }

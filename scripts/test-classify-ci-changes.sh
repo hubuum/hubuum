@@ -785,19 +785,20 @@ if ((literal_include_count == 0)); then
   exit 1
 fi
 
-# The synchronized Legacy guard and its rollback/application-order regressions
-# require native adapter and production image validation.
-for archive_compatibility_path in \
+# Project storage migrations require native adapter and production image validation.
+for adapter_change_path in \
   crates/hubuum-storage-postgres/tests/archive_runtime_compatibility.rs \
   crates/hubuum-storage-postgres/migrations/2026-11-11-000001_archive_runtime_compatibility/up.sql \
-  crates/hubuum-storage-postgres/migrations/2026-11-11-000001_archive_runtime_compatibility/down.sql; do
-  archive_compatibility_output="$(bash "$classifier" "$archive_compatibility_path")"
-  assert_flag "$archive_compatibility_output" code true
-  assert_flag "$archive_compatibility_output" rust true
-  assert_flag "$archive_compatibility_output" container true
-  case "$archive_compatibility_path" in
-    */migrations/*) assert_flag "$archive_compatibility_output" operational_contract false ;;
-    *) assert_flag "$archive_compatibility_output" operational_contract true ;;
+  crates/hubuum-storage-postgres/migrations/2026-11-11-000001_archive_runtime_compatibility/down.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-19-000001_idle_task_scheduling/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-19-000001_idle_task_scheduling/down.sql; do
+  adapter_change_output="$(bash "$classifier" "$adapter_change_path")"
+  assert_flag "$adapter_change_output" code true
+  assert_flag "$adapter_change_output" rust true
+  assert_flag "$adapter_change_output" container true
+  case "$adapter_change_path" in
+    */migrations/*) assert_flag "$adapter_change_output" operational_contract false ;;
+    *) assert_flag "$adapter_change_output" operational_contract true ;;
   esac
 done
 

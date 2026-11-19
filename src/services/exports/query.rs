@@ -1,4 +1,7 @@
 use super::*;
+use crate::pagination::{CursorBoundary, CursorPaginated};
+use hubuum_query::{QueryContinuation, SortParam};
+use std::convert::identity;
 
 impl<'a, C, S> PermissionAwareExport<'a, C, S>
 where
@@ -111,6 +114,7 @@ where
     pub(super) async fn collections(
         &self,
         mut query: QueryOptions,
+        budget: &mut CandidateBudget,
     ) -> Result<Vec<Collection>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
             query.set_include_total(false);
@@ -127,6 +131,7 @@ where
         let permissions = query_permissions(&query, &[Permissions::ReadCollection])?;
         authorized_storage_page(
             &query,
+            budget,
             async |options| {
                 catalog_service::list_collections(
                     self.pool(),
@@ -150,6 +155,7 @@ where
     pub(super) async fn classes(
         &self,
         mut query: QueryOptions,
+        budget: &mut CandidateBudget,
     ) -> Result<Vec<HubuumClassExpanded>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
             query.set_include_total(false);
@@ -166,6 +172,7 @@ where
         let permissions = query_permissions(&query, &[Permissions::ReadClass])?;
         authorized_storage_page(
             &query,
+            budget,
             async |options| {
                 catalog_service::list_classes(
                     self.pool(),
@@ -194,6 +201,7 @@ where
     pub(super) async fn objects(
         &self,
         mut query: QueryOptions,
+        budget: &mut CandidateBudget,
     ) -> Result<Vec<HubuumObject>, ApiError> {
         let observed_query = query.clone();
         storage_handle(self.backend)
@@ -213,6 +221,7 @@ where
                 let permissions = query_permissions(&query, &[Permissions::ReadObject])?;
                 authorized_storage_page(
                     &query,
+                    budget,
                     async |options| {
                         catalog_service::list_objects(
                             self.pool(),
@@ -238,6 +247,7 @@ where
     pub(super) async fn class_relations(
         &self,
         query: QueryOptions,
+        budget: &mut CandidateBudget,
     ) -> Result<Vec<HubuumClassRelation>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
             return relation_queries::list_class_relations(
@@ -255,6 +265,7 @@ where
         let permissions = query_permissions(&query, &[Permissions::ReadClassRelation])?;
         authorized_storage_page(
             &query,
+            budget,
             async |options| {
                 relation_queries::list_class_relations(
                     self.pool(),
@@ -312,6 +323,7 @@ where
     pub(super) async fn object_relations(
         &self,
         query: QueryOptions,
+        budget: &mut CandidateBudget,
     ) -> Result<Vec<HubuumObjectRelation>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
             return relation_queries::list_object_relations(
@@ -329,6 +341,7 @@ where
         let permissions = query_permissions(&query, &[Permissions::ReadObjectRelation])?;
         authorized_storage_page(
             &query,
+            budget,
             async |options| {
                 relation_queries::list_object_relations(
                     self.pool(),
@@ -356,6 +369,7 @@ where
         &self,
         object: HubuumObjectID,
         query: QueryOptions,
+        budget: &mut CandidateBudget,
     ) -> Result<Vec<RelatedObjectGraphRow>, ApiError> {
         if let Some(is_admin) = self.authorization.local_is_admin() {
             return relation_queries::list_related_objects(
@@ -374,6 +388,7 @@ where
         let permissions = query_permissions(&query, &[Permissions::ReadObject])?;
         authorized_storage_page(
             &query,
+            budget,
             async |options| {
                 relation_queries::list_related_objects(
                     self.pool(),
@@ -543,7 +558,8 @@ pub(super) async fn execute_scope<C, S>(
     exporter: &PermissionAwareExport<'_, C, S>,
     scope: ValidatedExportScope,
     mut query_options: QueryOptions,
-) -> Result<(Vec<serde_json::Value>, Vec<ExportWarning>, bool), ApiError>
+    budget: &mut CandidateBudget,
+) -> Result<ExportPage, ApiError>
 where
     C: AuthorizationContext,
     S: crate::traits::Search + ?Sized,
@@ -551,21 +567,41 @@ where
     let pool = exporter.pool();
     let item_limit = query_options.limit().unwrap_or(1).saturating_sub(1).max(1);
 
-    let data = match scope {
-        ValidatedExportScope::Collections => {
-            to_json_items(exporter.collections(query_options).await?)?
-        }
-        ValidatedExportScope::Classes => to_json_items(exporter.classes(query_options).await?)?,
+    let sorts = query_options.sort().clone();
+    match scope {
+        ValidatedExportScope::Collections => ExportPage::from_rows(
+            exporter.collections(query_options, budget).await?,
+            item_limit,
+            &sorts,
+            identity,
+        ),
+        ValidatedExportScope::Classes => ExportPage::from_rows(
+            exporter.classes(query_options, budget).await?,
+            item_limit,
+            &sorts,
+            identity,
+        ),
         ValidatedExportScope::ObjectsInClass(class_id) => {
             push_exact_filter(&mut query_options, FilterField::ClassId, class_id.id())?;
-            to_json_items(exporter.objects(query_options).await?)?
+            ExportPage::from_rows(
+                exporter.objects(query_options, budget).await?,
+                item_limit,
+                &sorts,
+                identity,
+            )
         }
-        ValidatedExportScope::ClassRelations => {
-            to_json_items(exporter.class_relations(query_options).await?)?
-        }
-        ValidatedExportScope::ObjectRelations => {
-            to_json_items(exporter.object_relations(query_options).await?)?
-        }
+        ValidatedExportScope::ClassRelations => ExportPage::from_rows(
+            exporter.class_relations(query_options, budget).await?,
+            item_limit,
+            &sorts,
+            identity,
+        ),
+        ValidatedExportScope::ObjectRelations => ExportPage::from_rows(
+            exporter.object_relations(query_options, budget).await?,
+            item_limit,
+            &sorts,
+            identity,
+        ),
         ValidatedExportScope::RelatedObjects {
             class_id,
             object_id,
@@ -579,18 +615,44 @@ where
                 &object
             );
             check_if_object_in_class(pool, &class_id, &object_id).await?;
-            let related = exporter.related_objects(object_id, query_options).await?;
-            to_json_items(
-                related
-                    .into_iter()
-                    .map(|relation| relation.to_descendant_object_with_path())
-                    .collect::<Vec<_>>(),
-            )?
+            let related = exporter
+                .related_objects(object_id, query_options, budget)
+                .await?;
+            ExportPage::from_rows(related, item_limit, &sorts, |row| {
+                row.to_descendant_object_with_path()
+            })
         }
-    };
+    }
+}
 
-    let (items, truncated) = truncate_items(data, item_limit);
-    Ok((items, Vec::new(), truncated))
+pub(super) struct ExportPage {
+    pub items: Vec<serde_json::Value>,
+    pub continuation: Option<QueryContinuation>,
+}
+
+impl ExportPage {
+    fn from_rows<T: CursorPaginated, P: Serialize>(
+        mut rows: Vec<T>,
+        limit: usize,
+        sorts: &[SortParam],
+        project: impl Fn(T) -> P,
+    ) -> Result<Self, ApiError> {
+        let continuation = if rows.len() > limit {
+            rows.truncate(limit);
+            let last = rows.last().expect("export page size is positive");
+            Some(CursorBoundary::from_item(last, sorts)?.into_continuation()?)
+        } else {
+            None
+        };
+        let items = rows
+            .into_iter()
+            .map(|row| serde_json::to_value(project(row)))
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            items,
+            continuation,
+        })
+    }
 }
 
 pub(super) async fn apply_export_includes<C, S>(
@@ -751,25 +813,4 @@ pub(super) fn push_exact_filter(
         &value.to_string(),
     )?)?;
     Ok(())
-}
-
-pub(super) fn to_json_items<T: Serialize>(
-    items: Vec<T>,
-) -> Result<Vec<serde_json::Value>, ApiError> {
-    items
-        .into_iter()
-        .map(|item| serde_json::to_value(item).map_err(ApiError::from))
-        .collect()
-}
-
-pub(super) fn truncate_items(
-    mut items: Vec<serde_json::Value>,
-    limit: usize,
-) -> (Vec<serde_json::Value>, bool) {
-    if items.len() > limit {
-        items.truncate(limit);
-        (items, true)
-    } else {
-        (items, false)
-    }
 }

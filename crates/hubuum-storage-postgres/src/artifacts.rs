@@ -10,9 +10,9 @@ use diesel::{OptionalExtension, QueryableByName};
 use diesel_async::RunQueryDsl;
 use hubuum_storage_core::StorageErrorKind;
 use hubuum_storage_core::artifacts::{
-    ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReference,
-    ArtifactReservation, ArtifactResult, ArtifactStore, Destination, LOCAL_SPOOL_CLEANUP_GRACE,
-    TaskArtifactStore, VerifiedArtifact,
+    ArtifactCleanupBatch, ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest,
+    ArtifactReference, ArtifactReservation, ArtifactResult, ArtifactStore, Destination,
+    LOCAL_SPOOL_CLEANUP_GRACE, TaskArtifactStore, VerifiedArtifact,
 };
 use uuid::Uuid;
 
@@ -344,47 +344,9 @@ impl ArtifactStore for PostgresArtifactStore {
     }
 
     async fn cleanup(&self) -> ArtifactResult<u32> {
-        self.runtime.with_transaction(async |connection| {
-            // Pin holds and activation before artifact locks. The capability
-            // keeps published results behind protected purge while permitting
-            // lease-fenced abandoned staging to release retry capacity.
-            task_retention::lock_on(connection).await?;
-            #[derive(QueryableByName)]
-            struct Candidate {
-                #[diesel(sql_type = SqlUuid)] artifact_id: Uuid,
-                #[diesel(sql_type = Nullable<BigInt>)] spool_bytes: Option<i64>,
-                #[diesel(sql_type = Nullable<Timestamptz>)] cleanup_after: Option<DateTime<Utc>>,
-            }
-            let candidate = diesel::sql_query("SELECT a.artifact_id, o.spool_bytes, o.cleanup_after FROM artifact_attempts a LEFT JOIN artifact_task_owners o USING(artifact_id)
-                WHERE (o.artifact_id IS NULL OR public.hubuum_task_artifact_cleanup_allowed(a.artifact_id)) AND (o.cleanup_after IS NULL OR o.cleanup_after<=clock_timestamp()) AND a.state <> 'discarded' AND (a.state='deleting'
-                OR (a.state<>'published' AND a.expires_at<=clock_timestamp())
-                OR (o.artifact_id IS NOT NULL AND (o.output_expires_at<=clock_timestamp()
-                    OR NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id=o.task_id AND t.deleted_at IS NULL
-                        AND (t.logical_identity #>> '{subject,identity,identity}')::UUID=o.task_identity)
-                    OR (a.state='published' AND NOT EXISTS (SELECT 1 FROM export_task_outputs e WHERE (e.artifact_reference #>> '{identity,artifact}')::UUID=a.artifact_id) AND NOT EXISTS (SELECT 1 FROM backup_task_outputs b WHERE (b.artifact_reference #>> '{identity,artifact}')::UUID=a.artifact_id))
-                    OR (a.state<>'published' AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id=o.task_id
-                        AND t.lease_token=o.lease_token AND t.lease_expires_at>clock_timestamp()
-                        AND t.status IN ('running','validating'))))))
-                ORDER BY a.expires_at,a.artifact_id FOR UPDATE OF a SKIP LOCKED LIMIT 1")
-                .get_result::<Candidate>(connection).await.optional()?;
-            let Some(candidate) = candidate else { return Ok(0); };
-            diesel::sql_query("UPDATE artifact_attempts SET state='deleting' WHERE artifact_id=$1")
-                .bind::<SqlUuid, _>(candidate.artifact_id).execute(connection).await?;
-            if candidate.spool_bytes.is_some_and(|bytes| bytes > 0) && candidate.cleanup_after.is_none() {
-                diesel::sql_query("UPDATE artifact_task_owners SET cleanup_after=clock_timestamp()+$2*INTERVAL '1 millisecond' WHERE artifact_id=$1")
-                    .bind::<SqlUuid, _>(candidate.artifact_id)
-                    .bind::<BigInt, _>(LOCAL_SPOOL_CLEANUP_GRACE.as_millis() as i64)
-                    .execute(connection).await?;
-                return Ok(0);
-            }
-            let deleted = diesel::sql_query("DELETE FROM artifact_chunks WHERE artifact_id=$1 AND ordinal IN (SELECT ordinal FROM artifact_chunks WHERE artifact_id=$1 ORDER BY ordinal LIMIT 16)")
-                .bind::<SqlUuid, _>(candidate.artifact_id).execute(connection).await?;
-            diesel::sql_query("UPDATE artifact_attempts SET state='discarded', manifest=NULL WHERE artifact_id=$1 AND NOT EXISTS (SELECT 1 FROM artifact_chunks WHERE artifact_id=$1)")
-                .bind::<SqlUuid, _>(candidate.artifact_id).execute(connection).await?;
-            diesel::sql_query("DELETE FROM artifact_task_owners WHERE artifact_id=$1 AND EXISTS (SELECT 1 FROM artifact_attempts WHERE artifact_id=$1 AND state='discarded')")
-                .bind::<SqlUuid, _>(candidate.artifact_id).execute(connection).await?;
-            Ok::<_, PostgresStorageError>(deleted as u32)
-        }).await.map_err(boundary)
+        self.cleanup_batch()
+            .await
+            .map(ArtifactCleanupBatch::removed_blocks)
     }
 }
 
@@ -440,6 +402,50 @@ pub(crate) async fn publish_for_task(
 
 #[async_trait]
 impl TaskArtifactStore for PostgresArtifactStore {
+    async fn cleanup_batch(&self) -> ArtifactResult<ArtifactCleanupBatch> {
+        self.runtime.with_transaction(async |connection| {
+            // Pin holds and activation before artifact locks. The capability
+            // keeps published results behind protected purge while permitting
+            // lease-fenced abandoned staging to release retry capacity.
+            task_retention::lock_on(connection).await?;
+            #[derive(QueryableByName)]
+            struct Candidate {
+                #[diesel(sql_type = SqlUuid)] artifact_id: Uuid,
+                #[diesel(sql_type = Nullable<BigInt>)] spool_bytes: Option<i64>,
+                #[diesel(sql_type = Nullable<Timestamptz>)] cleanup_after: Option<DateTime<Utc>>,
+            }
+            let candidate = diesel::sql_query("SELECT a.artifact_id, o.spool_bytes, o.cleanup_after FROM artifact_attempts a LEFT JOIN artifact_task_owners o USING(artifact_id)
+                WHERE (o.artifact_id IS NULL OR public.hubuum_task_artifact_cleanup_allowed(a.artifact_id)) AND (o.cleanup_after IS NULL OR o.cleanup_after<=clock_timestamp()) AND a.state <> 'discarded' AND (a.state='deleting'
+                OR (a.state<>'published' AND a.expires_at<=clock_timestamp())
+                OR (o.artifact_id IS NOT NULL AND (o.output_expires_at<=clock_timestamp()
+                    OR NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id=o.task_id AND t.deleted_at IS NULL
+                        AND (t.logical_identity #>> '{subject,identity,identity}')::UUID=o.task_identity)
+                    OR (a.state='published' AND NOT EXISTS (SELECT 1 FROM export_task_outputs e WHERE (e.artifact_reference #>> '{identity,artifact}')::UUID=a.artifact_id) AND NOT EXISTS (SELECT 1 FROM backup_task_outputs b WHERE (b.artifact_reference #>> '{identity,artifact}')::UUID=a.artifact_id))
+                    OR (a.state<>'published' AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id=o.task_id
+                        AND t.lease_token=o.lease_token AND t.lease_expires_at>clock_timestamp()
+                        AND t.status IN ('running','validating'))))))
+                ORDER BY a.expires_at,a.artifact_id FOR UPDATE OF a SKIP LOCKED LIMIT 1")
+                .get_result::<Candidate>(connection).await.optional()?;
+            let Some(candidate) = candidate else { return Ok(ArtifactCleanupBatch::Idle); };
+            diesel::sql_query("UPDATE artifact_attempts SET state='deleting' WHERE artifact_id=$1")
+                .bind::<SqlUuid, _>(candidate.artifact_id).execute(connection).await?;
+            if candidate.spool_bytes.is_some_and(|bytes| bytes > 0) && candidate.cleanup_after.is_none() {
+                diesel::sql_query("UPDATE artifact_task_owners SET cleanup_after=clock_timestamp()+$2*INTERVAL '1 millisecond' WHERE artifact_id=$1")
+                    .bind::<SqlUuid, _>(candidate.artifact_id)
+                    .bind::<BigInt, _>(LOCAL_SPOOL_CLEANUP_GRACE.as_millis() as i64)
+                    .execute(connection).await?;
+                return Ok(ArtifactCleanupBatch::Progress { removed_blocks: 0 });
+            }
+            let deleted = diesel::sql_query("DELETE FROM artifact_chunks WHERE artifact_id=$1 AND ordinal IN (SELECT ordinal FROM artifact_chunks WHERE artifact_id=$1 ORDER BY ordinal LIMIT 16)")
+                .bind::<SqlUuid, _>(candidate.artifact_id).execute(connection).await?;
+            diesel::sql_query("UPDATE artifact_attempts SET state='discarded', manifest=NULL WHERE artifact_id=$1 AND NOT EXISTS (SELECT 1 FROM artifact_chunks WHERE artifact_id=$1)")
+                .bind::<SqlUuid, _>(candidate.artifact_id).execute(connection).await?;
+            diesel::sql_query("DELETE FROM artifact_task_owners WHERE artifact_id=$1 AND EXISTS (SELECT 1 FROM artifact_attempts WHERE artifact_id=$1 AND state='discarded')")
+                .bind::<SqlUuid, _>(candidate.artifact_id).execute(connection).await?;
+            Ok::<_, PostgresStorageError>(ArtifactCleanupBatch::Progress { removed_blocks: deleted as u32 })
+        }).await.map_err(boundary)
+    }
+
     async fn bind_task(
         &self,
         identity: &ArtifactIdentity,

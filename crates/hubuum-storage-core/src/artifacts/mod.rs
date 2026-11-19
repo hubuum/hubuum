@@ -176,10 +176,36 @@ impl ArtifactReservation {
     }
 }
 
+/// Result of one bounded task-artifact cleanup pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ArtifactCleanupBatch {
+    /// No eligible attempt was found.
+    Idle,
+    /// An attempt advanced, possibly without removing a physical block.
+    Progress { removed_blocks: u32 },
+}
+
+impl ArtifactCleanupBatch {
+    pub fn removed_blocks(self) -> u32 {
+        match self {
+            Self::Idle => 0,
+            Self::Progress { removed_blocks } => removed_blocks,
+        }
+    }
+}
+
 /// Task-owned artifact admission supplements the immutable byte-store protocol.
 /// Adapters bind to the exact durable task incarnation and fenced execution.
 #[async_trait]
 pub trait TaskArtifactStore: ArtifactStore {
+    /// Return Idle only when no eligible work remains. Legacy adapters cannot
+    /// prove that from a block count, so default to checking again next tick.
+    async fn cleanup_batch(&self) -> ArtifactResult<ArtifactCleanupBatch> {
+        self.cleanup()
+            .await
+            .map(|removed_blocks| ArtifactCleanupBatch::Progress { removed_blocks })
+    }
+
     async fn bind_task(
         &self,
         identity: &ArtifactIdentity,

@@ -61,7 +61,8 @@ async fn external_policy_export_crosses_bounded_pages_with_sparse_grants() {
         .unwrap();
     let query = parse_query_parameter(&format!("class_id={}&sort=id&limit=3", class.id)).unwrap();
     let started = std::time::Instant::now();
-    let (result, queries) = capture_queries(exporter.objects(query)).await;
+    let (result, queries) =
+        capture_queries(exporter.objects(query, &mut CandidateBudget::default())).await;
     let objects = result.unwrap();
     let elapsed = started.elapsed();
     assert_eq!(
