@@ -820,6 +820,10 @@ assert_flag "$inventory_output" code true
 worker_output="$(bash "$classifier" crates/hubuum-templates/src/bin/hubuum-template-worker.rs)"
 assert_flag "$worker_output" container true
 assert_flag "$worker_output" artifacts true
+renderer_build="$(bash "$classifier" scripts/build-template-worker.sh)"
+for flag in code rust benchmarks runtime_benchmark; do
+  assert_flag "$renderer_build" "$flag" true
+done
 performance_output="$(bash "$classifier" benches/template_schema_concurrency/main.rs)"
 assert_flag "$performance_output" code true
 assert_flag "$performance_output" benchmarks true
