@@ -2301,6 +2301,39 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#scope-aware-resource-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Scope-aware resource access
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runtime-administrator-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Runtime administrator access
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#humaniam-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Human/IAM access
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#login-validate-logout" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -5183,6 +5216,39 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#scope-aware-resource-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Scope-aware resource access
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runtime-administrator-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Runtime administrator access
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#humaniam-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Human/IAM access
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#login-validate-logout" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6066,8 +6132,8 @@ complete before and after snapshot in an <code>updated</code> audit event for th
 or service account. Unchanged mutations are no-ops and do not emit an event.</p>
 <hr />
 <h2 id="request-authority-extractors-and-gates">Request authority: extractors and gates<a class="headerlink" href="#request-authority-extractors-and-gates" title="Permanent link">&para;</a></h2>
-<p>Each handler declares the authority it requires. There are two families.</p>
-<p><strong>Scope-aware (the only family that accepts scoped tokens and service accounts):</strong></p>
+<p>Each handler declares the authority it requires through its extractor.</p>
+<h3 id="scope-aware-resource-access">Scope-aware resource access<a class="headerlink" href="#scope-aware-resource-access" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>Authenticated</code> — resolves the principal and, if the token is scoped, its scope
   set. Every downstream authority decision threads the scopes into the
@@ -6075,13 +6141,21 @@ or service account. Unchanged mutations are no-ops and do not emit an event.</p>
   extractor. Imports, exports, and remote-target invocation retain ordinary
   scope-aware authorization.</li>
 </ul>
-<p><strong>Human/IAM (privilege-separated):</strong></p>
+<h3 id="runtime-administrator-access">Runtime administrator access<a class="headerlink" href="#runtime-administrator-access" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>UnscopedRuntimeAdmin</code> accepts a human or service account with an unscoped
+  token when the configured permission backend grants administrator authority.
+  Backup, query-usage analysis, and administrative schema routes use this
+  extractor. Class, template, and task permissions still apply where required.</li>
+</ul>
+<h3 id="humaniam-access">Human/IAM access<a class="headerlink" href="#humaniam-access" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>UserAccess</code>, <code>AdminAccess</code>, <code>AdminOrSelfAccess</code>, <code>ManagementAccess</code> — used for
   human-only and credential/IAM operations (user CRUD, service-account CRUD,
   principal token management, admin/all-token logout, group-member mutation).</li>
 </ul>
-<p>The human/IAM extractors apply two gates, in order, <strong>before</strong> any admin/self check:</p>
+<p>Before checking admin or self access, the human/IAM extractors verify both the
+token scope and the principal kind.</p>
 <ol>
 <li><strong>Kind gate</strong> — the principal must be <code>kind = 'human'</code>. A service account is
    rejected with <code>403 Forbidden</code> (cleanly, never a <code>500</code>), even if it is in the

@@ -4875,7 +4875,8 @@ workload measurements alone cannot establish.</p>
 <h2 id="reproduction">Reproduction<a class="headerlink" href="#reproduction" title="Permanent link">&para;</a></h2>
 <p>Build the worker, then run the template/schema harness:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>cargo<span class="w"> </span>build<span class="w"> </span>--locked<span class="w"> </span>--release<span class="w"> </span>-p<span class="w"> </span>hubuum-templates<span class="w"> </span>--bin<span class="w"> </span>hubuum-template-worker
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>cargo<span class="w"> </span>bench<span class="w"> </span>--locked<span class="w"> </span>--features<span class="w"> </span>runtime-limit-bench<span class="w"> </span>--bench<span class="w"> </span>template_schema_concurrency
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>env<span class="w"> </span><span class="s2">"CARGO_BIN_EXE_hubuum-template-worker=</span><span class="nv">$PWD</span><span class="s2">/target/release/hubuum-template-worker"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>cargo<span class="w"> </span>bench<span class="w"> </span>--locked<span class="w"> </span>--features<span class="w"> </span>runtime-limit-bench<span class="w"> </span>--bench<span class="w"> </span>template_schema_concurrency
 </code></pre></div>
 <p>The benchmark workflow retains its JSON-lines output as the
 <code>template-schema-evidence</code> artifact. The conventional nested Cargo benchmark
