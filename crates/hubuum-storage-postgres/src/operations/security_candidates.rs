@@ -6,9 +6,9 @@ use diesel_async::RunQueryDsl;
 use hubuum_domain::IdentityScopeName;
 use hubuum_storage_core::{
     MAX_SECURITY_CANDIDATES, MAX_SECURITY_CANDIDATES_PER_ACTOR, StorageAuthenticationProviderKind,
-    StorageCredentialOperation, StorageProviderIdentityBinding,
-    StorageRuntimeSettingsUpdateOutcome, StorageRuntimeSettingsValue, StorageSecurityCandidate,
-    StorageSecurityCandidateActivation, StorageSecurityCandidateOwner,
+    StorageCredentialOperation, StorageProviderIdentityBinding, StorageRuntimeSettingsAssignment,
+    StorageRuntimeSettingsGroup, StorageRuntimeSettingsUpdateOutcome, StorageRuntimeSettingsValue,
+    StorageSecurityCandidate, StorageSecurityCandidateActivation, StorageSecurityCandidateOwner,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -139,10 +139,7 @@ pub async fn activate(
         require_local_recovery_administrator(connection, request.claim().actor_id().id(), request.recovery_group()).await?;
         let mut candidate = lock(connection, request.candidate_id()).await?;
         candidate.activate(&request, database_now(connection).await?).map_err(|error| PostgresStorageError::conflict(error.to_string()))?;
-        let previous = sql_query("SELECT value AS document FROM runtime_settings WHERE setting_group=$1 FOR UPDATE")
-            .bind::<Text,_>(request.update().group().as_str()).get_result::<SettingsDocument>(connection).await?;
-        let previous = hubuum_storage_core::StorageRuntimeSettingsAssignment::from_document(request.update().group(), previous.document.as_ref())
-            .map_err(|error| PostgresStorageError::database(error.to_string()))?;
+        let previous = locked_assignment(connection, request.update().group()).await?;
         if request.update().assignment() != &previous
             && let Some(StorageRuntimeSettingsValue::Authentication(providers)) = previous.value() {
             let retained: Vec<_> = providers.providers().iter()
@@ -160,10 +157,12 @@ pub async fn activate(
                 .execute(connection).await?;
         }
         let outcome = super::runtime_settings::update_on_connection(connection, request.update()).await?;
-        if request.update().group() == hubuum_storage_core::StorageRuntimeSettingsGroup::Authentication {
+        if outcome.is_committed() && request.update().group() == hubuum_storage_core::StorageRuntimeSettingsGroup::Authentication {
             let scopes = sql_query("SELECT name FROM identity_scopes WHERE name <> 'local'").load::<ScopeName>(connection).await?;
             let revoked: Vec<_> = scopes.into_iter().filter(|scope| !candidate.retains_authenticated_provider(&previous, &scope.name)).map(|scope| scope.name).collect();
             invalidate_provider_credentials(connection, &revoked).await?;
+            let local_only = candidate.newly_local_only_provider_names(&previous);
+            clear_provider_memberships(connection, &local_only).await?;
         }
         if let Some(StorageRuntimeSettingsValue::Authentication(providers)) = candidate.verification_assignment().value() {
             for provider in providers.providers() {
@@ -317,6 +316,33 @@ struct SettingsDocument {
 struct ScopeName {
     #[diesel(sql_type = Text)]
     name: String,
+}
+
+pub(super) async fn locked_assignment(
+    connection: &mut PostgresConnection,
+    group: StorageRuntimeSettingsGroup,
+) -> Result<StorageRuntimeSettingsAssignment, PostgresStorageError> {
+    let row = sql_query(
+        "SELECT value AS document FROM runtime_settings WHERE setting_group=$1 FOR UPDATE",
+    )
+    .bind::<Text, _>(group.as_str())
+    .get_result::<SettingsDocument>(connection)
+    .await?;
+    StorageRuntimeSettingsAssignment::from_document(group, row.document.as_ref())
+        .map_err(|error| PostgresStorageError::database(error.to_string()))
+}
+
+pub(super) async fn clear_provider_memberships(
+    connection: &mut PostgresConnection,
+    scopes: &[&str],
+) -> Result<(), PostgresStorageError> {
+    if !scopes.is_empty() {
+        sql_query("SELECT hubuum_clear_provider_memberships($1)")
+            .bind::<Array<Text>, _>(scopes)
+            .execute(connection)
+            .await?;
+    }
+    Ok(())
 }
 
 async fn invalidate_provider_credentials(

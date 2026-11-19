@@ -791,6 +791,20 @@ fn is_sensitive_response_header(name: &str) -> bool {
 fn headers_to_json(headers: &HeaderMap) -> serde_json::Value {
     let mut object = serde_json::Map::new();
     for (name, value) in headers {
+        if name == reqwest::header::LINK {
+            // Link is list-valued. A later header must not hide an earlier page.
+            object.entry(name.to_string()).or_insert_with(|| {
+                serde_json::Value::String(
+                    headers
+                        .get_all(name)
+                        .iter()
+                        .map(|v| v.to_str().unwrap_or("[invalid link]"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                )
+            });
+            continue;
+        }
         if is_sensitive_response_header(name.as_str()) {
             object.insert(
                 name.to_string(),
@@ -1042,6 +1056,17 @@ mod tests {
         assert!(!ip_blocked(
             "2606:4700:4700::1111".parse::<IpAddr>().unwrap()
         ));
+    }
+
+    #[test]
+    fn repeated_link_headers_preserve_all_relations() {
+        let mut headers = HeaderMap::new();
+        headers.append("link", HeaderValue::from_static("</second>; rel=next"));
+        headers.append("link", HeaderValue::from_static("</user>; rel=self"));
+        assert_eq!(
+            headers_to_json(&headers)["link"],
+            "</second>; rel=next, </user>; rel=self"
+        );
     }
 
     #[test]

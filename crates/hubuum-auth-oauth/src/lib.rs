@@ -21,6 +21,8 @@ use oauth2::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use hubuum_auth_core::protocol::profile;
+
 type Client = BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
 const GITHUB_ISSUER: &str = "https://github.com/login/oauth";
 
@@ -259,9 +261,9 @@ impl OAuthAdapter {
         {
             return Err(OAuthError::InvalidResponse);
         }
-        let document: Value =
-            serde_json::from_slice(response.body()).map_err(|_| OAuthError::InvalidResponse)?;
-        let proof = self.verify_document(&document, context)?;
+        let document = profile::parse(response.body())?;
+        let proof =
+            self.verify_document(&document, context, profile::paginated(response.headers())?)?;
         if credentials
             .subject
             .as_ref()
@@ -308,6 +310,7 @@ impl OAuthAdapter {
         &self,
         document: &Value,
         context: &ExternalAuthenticationContext,
+        paginated: bool,
     ) -> Result<VerifiedExternalAuthentication, OAuthError> {
         if *self.definition.profile() == OAuthProfile::Github
             && (document.get("type").and_then(Value::as_str) != Some("User")
@@ -321,9 +324,13 @@ impl OAuthAdapter {
         let proof = context
             .verified_oauth(
                 document,
-                MembershipClaims::Complete {
-                    source: MembershipClaimSource::Profile,
-                    document,
+                if paginated {
+                    MembershipClaims::Incomplete
+                } else {
+                    MembershipClaims::Complete {
+                        source: MembershipClaimSource::Profile,
+                        document,
+                    }
                 },
                 Utc::now(),
             )

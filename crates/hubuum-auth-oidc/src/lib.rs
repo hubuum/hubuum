@@ -1,5 +1,7 @@
 //! OIDC protocol adapter. Protocol types and upstream credentials stay private.
-use std::{collections::BTreeMap, fmt, time::Duration};
+use std::time::Duration;
+
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
 use chrono::{DateTime, Utc};
 use hubuum_auth_core::{
@@ -12,13 +14,12 @@ use hubuum_domain::{
 };
 use hubuum_secrets::SecretValue;
 use openidconnect::{
-    AccessTokenHash, AdditionalClaims, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
-    EndpointMaybeSet, EndpointNotSet, EndpointSet, IdToken, Nonce, NonceVerifier,
-    OAuth2TokenResponse, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope, TokenResponse,
+    AccessTokenHash, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet,
+    EndpointNotSet, EndpointSet, Nonce, NonceVerifier, OAuth2TokenResponse, PkceCodeVerifier,
+    RedirectUrl, RefreshToken, Scope, TokenResponse,
     core::{
-        CoreAuthenticationFlow, CoreClient, CoreGenderClaim, CoreJsonWebKeySet,
-        CoreJweContentEncryptionAlgorithm, CoreJwsSigningAlgorithm, CoreProviderMetadata,
-        CoreTokenResponse,
+        CoreAuthenticationFlow, CoreClient, CoreJsonWebKeySet, CoreJwsSigningAlgorithm,
+        CoreProviderMetadata, CoreTokenResponse,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -26,7 +27,7 @@ use serde_json::Value;
 use url::Url;
 
 pub use hubuum_auth_core::protocol::ProtocolError as OidcError;
-use hubuum_auth_core::protocol::{CodeState, Transport};
+use hubuum_auth_core::protocol::{CodeState, Transport, profile};
 
 type Client = CoreClient<
     EndpointSet,
@@ -36,22 +37,6 @@ type Client = CoreClient<
     EndpointMaybeSet,
     EndpointMaybeSet,
 >;
-type ClaimsToken = IdToken<
-    Additional,
-    CoreGenderClaim,
-    CoreJweContentEncryptionAlgorithm,
-    CoreJwsSigningAlgorithm,
->;
-
-#[derive(Clone, Serialize, Deserialize)]
-struct Additional(BTreeMap<String, Value>);
-impl AdditionalClaims for Additional {}
-impl fmt::Debug for Additional {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Additional(<redacted>)")
-    }
-}
-
 /// Selected by trusted server configuration, never from callback parameters.
 pub struct OidcAdapter {
     definition: OidcProviderDefinition,
@@ -90,6 +75,7 @@ impl OidcAdapter {
         tokio::time::timeout(Duration::from_secs(15), self.discover_inner())
             .await
             .map_err(|_| OidcError::Unavailable)?
+            .map_err(discovery_error)
     }
 
     async fn discover_inner(&self) -> Result<Discovered, OidcError> {
@@ -306,14 +292,7 @@ impl OidcAdapter {
         context: &ExternalAuthenticationContext,
         expected: Option<(&str, Option<DateTime<Utc>>)>,
     ) -> Result<Authentication, OidcError> {
-        // CoreTokenResponse preserves the original compact JWT. Reparse with
-        // bounded additional claims, then verify before accessing any claims.
-        let token: ClaimsToken = response
-            .id_token()
-            .ok_or(OidcError::InvalidResponse)?
-            .to_string()
-            .parse()
-            .map_err(|_| OidcError::InvalidResponse)?;
+        let token = response.id_token().ok_or(OidcError::InvalidResponse)?;
         let now = Utc::now();
         let verifier = discovered
             .client
@@ -374,8 +353,19 @@ impl OidcAdapter {
                 return Err(OidcError::InvalidResponse);
             }
         }
-        let id_document = serde_json::to_value(claims).map_err(|_| OidcError::InvalidResponse)?;
-        validate_claim_document(&id_document, now)?;
+        // CoreIdToken retains the original signing input. Decoding that payload
+        // preserves duplicate custom members until the strict JSON parser sees them.
+        let compact = token.to_string();
+        let payload = compact
+            .split('.')
+            .nth(1)
+            .ok_or(OidcError::InvalidResponse)?;
+        let bytes = URL_SAFE_NO_PAD
+            .decode(payload)
+            .map_err(|_| OidcError::InvalidResponse)?;
+        let id_document = profile::parse(&bytes)?;
+        let id_memberships =
+            self.membership_claims(&id_document, MembershipClaimSource::IdToken, now, false)?;
         // UserInfo is requested only when the configured membership source needs
         // it; its subject must match the signed ID token exactly.
         let userinfo = if matches!(
@@ -385,6 +375,13 @@ impl OidcAdapter {
                 ..
             }
         ) {
+            if !response
+                .token_type()
+                .as_ref()
+                .eq_ignore_ascii_case("bearer")
+            {
+                return Err(OidcError::Configuration);
+            }
             let endpoint = discovered
                 .userinfo
                 .as_ref()
@@ -399,16 +396,7 @@ impl OidcAdapter {
                 .body(Vec::new())
                 .map_err(|_| OidcError::InvalidResponse)?;
             let reply = self.transport.send(request).await?;
-            if reply.status() != openidconnect::http::StatusCode::OK {
-                return Err(OidcError::Denied);
-            }
-            let document: Value =
-                serde_json::from_slice(reply.body()).map_err(|_| OidcError::InvalidResponse)?;
-            validate_claim_document(&document, now)?;
-            if document.get("sub").and_then(Value::as_str) != Some(claims.subject().as_str()) {
-                return Err(OidcError::Denied);
-            }
-            Some(document)
+            Some(userinfo_profile(&reply, claims.subject().as_str())?)
         } else {
             None
         };
@@ -424,14 +412,10 @@ impl OidcAdapter {
         )
         .map_err(|_| OidcError::InvalidResponse)?;
         let memberships = match userinfo.as_ref() {
-            Some(document) => MembershipClaims::Complete {
-                source: MembershipClaimSource::Userinfo,
-                document,
-            },
-            None => MembershipClaims::Complete {
-                source: MembershipClaimSource::IdToken,
-                document: &id_document,
-            },
+            Some((document, paginated)) => {
+                self.membership_claims(document, MembershipClaimSource::Userinfo, now, *paginated)?
+            }
+            None => id_memberships,
         };
         let authentication = context
             .verified_oidc(self.definition.issuer().as_str(), profile, memberships, now)
@@ -449,6 +433,39 @@ impl OidcAdapter {
             auth_time: claims.auth_time(),
             credentials,
         })
+    }
+
+    fn membership_claims<'a>(
+        &self,
+        document: &'a Value,
+        source: MembershipClaimSource,
+        now: DateTime<Utc>,
+        paginated: bool,
+    ) -> Result<MembershipClaims<'a>, OidcError> {
+        if document
+            .get("nbf")
+            .is_some_and(|value| value.as_i64().is_none_or(|nbf| nbf > now.timestamp()))
+        {
+            return Err(OidcError::InvalidResponse);
+        }
+        if paginated {
+            return Ok(MembershipClaims::Incomplete);
+        }
+        if document.get("_claim_names").is_none() && document.get("_claim_sources").is_none() {
+            return Ok(MembershipClaims::Complete { source, document });
+        }
+        if let ProviderMembership::ProviderGroups {
+            claim_source,
+            claim_pointer,
+            ..
+        } = self.definition.membership()
+            && *claim_source == source
+            && let Some(root) = claim_pointer.split('/').nth(1)
+            && document.pointer(&format!("/_claim_names/{root}")).is_some()
+        {
+            return Ok(MembershipClaims::Incomplete);
+        }
+        Err(OidcError::InvalidResponse)
     }
 
     fn check_pending(&self, pending: &PendingLogin) -> Result<(), OidcError> {
@@ -615,6 +632,20 @@ fn endpoint(value: &str) -> Result<(), OidcError> {
     }
     Ok(())
 }
+fn userinfo_profile(
+    reply: &openidconnect::HttpResponse,
+    signed_subject: &str,
+) -> Result<(Value, bool), OidcError> {
+    if reply.status() != openidconnect::http::StatusCode::OK {
+        return Err(OidcError::Denied);
+    }
+    let document = profile::parse(reply.body())?;
+    if document.get("sub").and_then(Value::as_str) != Some(signed_subject) {
+        return Err(OidcError::Denied);
+    }
+    Ok((document, profile::paginated(reply.headers())?))
+}
+
 fn validate_metadata(value: &Value, definition: &OidcProviderDefinition) -> Result<(), OidcError> {
     if value.get("issuer").and_then(Value::as_str) != Some(definition.issuer().as_str()) {
         return Err(OidcError::InvalidResponse);
@@ -636,20 +667,25 @@ fn validate_metadata(value: &Value, definition: &OidcProviderDefinition) -> Resu
             endpoint(value.as_str().ok_or(OidcError::Configuration)?)?;
         }
     }
-    for (name, required) in [
-        ("code_challenge_methods_supported", "S256"),
-        ("response_types_supported", "code"),
-        ("response_modes_supported", "query"),
+    for (name, required, supported_by_default) in [
+        ("code_challenge_methods_supported", "S256", false),
+        ("response_types_supported", "code", false),
+        ("response_modes_supported", "query", true),
         (
             "token_endpoint_auth_methods_supported",
             "client_secret_basic",
+            true,
         ),
     ] {
-        if !value
-            .get(name)
-            .and_then(Value::as_array)
-            .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(required)))
-        {
+        let supported = match value.get(name) {
+            None => supported_by_default,
+            Some(Value::Array(items)) => {
+                items.iter().all(Value::is_string)
+                    && items.iter().any(|item| item.as_str() == Some(required))
+            }
+            _ => false,
+        };
+        if !supported {
             return Err(OidcError::Configuration);
         }
     }
@@ -668,24 +704,34 @@ fn validate_metadata(value: &Value, definition: &OidcProviderDefinition) -> Resu
     }
     Ok(())
 }
-fn validate_claim_document(value: &Value, now: DateTime<Utc>) -> Result<(), OidcError> {
-    if value.get("_claim_names").is_some()
-        || value.get("_claim_sources").is_some()
-        || value
-            .get("nbf")
-            .is_some_and(|value| value.as_i64().is_none_or(|nbf| nbf > now.timestamp()))
-    {
-        return Err(OidcError::InvalidResponse);
-    }
-    Ok(())
-}
-fn token_error<T: openidconnect::ErrorResponse>(
-    error: openidconnect::RequestTokenError<OidcError, T>,
-) -> OidcError {
+// Discovery and JWKS are provider-level requests. Neither submits a user grant.
+fn discovery_error(error: OidcError) -> OidcError {
     match error {
+        OidcError::Configuration => OidcError::Configuration,
+        _ => OidcError::Unavailable,
+    }
+}
+
+fn token_error(
+    error: openidconnect::RequestTokenError<
+        OidcError,
+        openidconnect::StandardErrorResponse<openidconnect::core::CoreErrorResponseType>,
+    >,
+) -> OidcError {
+    use openidconnect::core::CoreErrorResponseType::*;
+    match error {
+        openidconnect::RequestTokenError::Request(OidcError::InvalidResponse) => {
+            OidcError::Unavailable
+        }
         openidconnect::RequestTokenError::Request(error) => error,
-        openidconnect::RequestTokenError::ServerResponse(_) => OidcError::Denied,
-        _ => OidcError::InvalidResponse,
+        openidconnect::RequestTokenError::ServerResponse(response) => match response.error() {
+            InvalidGrant => OidcError::Denied,
+            InvalidClient | UnauthorizedClient | InvalidRequest | InvalidScope
+            | UnsupportedGrantType => OidcError::Configuration,
+            Extension(_) => OidcError::Unavailable,
+        },
+        // An empty or unparseable endpoint response contains no grant decision.
+        _ => OidcError::Unavailable,
     }
 }
 

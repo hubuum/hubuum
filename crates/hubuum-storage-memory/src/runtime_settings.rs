@@ -20,6 +20,12 @@ impl MemoryRuntimeSettings {
         }
     }
 
+    pub(super) fn authentication_assignment(&self) -> &StorageRuntimeSettingsAssignment {
+        self.snapshot
+            .record(StorageRuntimeSettingsGroup::Authentication)
+            .assignment()
+    }
+
     pub(super) fn authentication_revision(&self) -> ResourceRevision {
         self.snapshot
             .record(StorageRuntimeSettingsGroup::Authentication)
@@ -328,28 +334,26 @@ impl RuntimeSettingsStorage for MemoryStorage {
                     .insert(binding.name().to_owned(), binding);
             }
         }
-        let revoked_scopes: Vec<_> =
-            if request.update().group() == StorageRuntimeSettingsGroup::Authentication {
-                staged
-                    .identity_scopes
-                    .values()
-                    .filter(|scope| {
-                        scope.name() != "local"
-                            && !candidate.retains_authenticated_provider(&previous, scope.name())
-                    })
-                    .map(|scope| scope.id())
-                    .collect()
-            } else {
-                Vec::new()
-            };
-        if request.update().group() == StorageRuntimeSettingsGroup::Authentication
-            && request.update().assignment() != &previous
+        let result = staged.runtime_settings.update(request.update())?;
+        if result.is_committed()
+            && request.update().group() == StorageRuntimeSettingsGroup::Authentication
         {
-            let next = request
-                .update()
-                .expected_revision()
-                .checked_advance()
-                .map_err(|error| StorageError::internal(error.to_string()))?;
+            let candidate = &staged.runtime_settings.candidates[&request.candidate_id()];
+            let revoked_scopes: Vec<_> = staged
+                .identity_scopes
+                .values()
+                .filter(|scope| {
+                    scope.name() != "local"
+                        && !candidate.retains_authenticated_provider(&previous, scope.name())
+                })
+                .map(|scope| scope.id())
+                .collect();
+            let local_only: Vec<_> = candidate
+                .newly_local_only_provider_names(&previous)
+                .into_iter()
+                .filter_map(|name| staged.identity_scope_by_name(name).map(|scope| scope.id()))
+                .collect();
+            let next = result.record().revision();
             staged.upstream_sessions.retain(|_, record| {
                 if record.current_revision() == request.update().expected_revision()
                     && candidate.retains_authenticated_provider(&previous, record.scope())
@@ -360,9 +364,11 @@ impl RuntimeSettingsStorage for MemoryStorage {
                     false
                 }
             });
+            staged.invalidate_provider_credentials(&revoked_scopes);
+            for scope in local_only {
+                staged.clear_provider_memberships(scope);
+            }
         }
-        let result = staged.runtime_settings.update(request.update())?;
-        staged.invalidate_provider_credentials(&revoked_scopes);
         *live = staged;
         Ok(result)
     }

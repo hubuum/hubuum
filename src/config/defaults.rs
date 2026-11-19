@@ -1,3 +1,4 @@
+pub(crate) const DEFAULT_ADMIN_GROUPNAME: &str = "admin";
 pub const DEFAULT_PAGE_LIMIT: usize = 100;
 pub const MAX_PAGE_LIMIT: usize = 250;
 pub const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 5_000;

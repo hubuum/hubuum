@@ -48,7 +48,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:.9rem}dt{
 {% elif page.stage == "complete" %}
 <p>You can return to the application that started this request and close this page.</p>
 {% else %}
-<p>{{ page.message }}</p><p><a href="/api/v1/auth/interactions/browser">Enter a new code</a></p>
+<p>{{ page.message }}</p><p><a href="/api/v1/auth/interactions/browser" rel="noreferrer">Enter a new code</a></p>
 {% endif %}
 <footer>Authentication stays with this Hubuum server.</footer></main>
 </html>

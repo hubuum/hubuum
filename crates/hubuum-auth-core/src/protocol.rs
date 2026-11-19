@@ -3,6 +3,7 @@ use hubuum_domain::InteractionId;
 use oauth2::{CsrfToken, PkceCodeChallenge, PkceCodeVerifier};
 use serde::{Deserialize, Serialize};
 
+pub mod profile;
 mod transport;
 pub use transport::Transport;
 

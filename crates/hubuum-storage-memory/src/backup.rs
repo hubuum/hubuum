@@ -128,6 +128,15 @@ pub(super) fn restore(
     resources::restore(&sections, &mut state)?;
     schemas::restore(&sections, &mut state, schema_limits)?;
     identity::restore(&sections, &mut state)?;
+    let local_only: Vec<_> = state
+        .runtime_settings
+        .authentication_assignment()
+        .local_only_provider_names()
+        .filter_map(|name| state.identity_scope_by_name(name).map(|scope| scope.id()))
+        .collect();
+    for scope in local_only {
+        state.clear_provider_memberships(scope);
+    }
     workflows::restore(&sections, &mut state)?;
     workflows::restore_history(
         history.ok_or_else(|| invalid("prepared history"))?,

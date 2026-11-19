@@ -1,6 +1,13 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    auth_interaction_capacity (singleton) {
+        singleton -> Bool,
+        retained -> Int8,
+    }
+}
+
+diesel::table! {
     auth_interactions (id) {
         id -> Uuid,
         client_id -> Text,
@@ -10,6 +17,7 @@ diesel::table! {
         expires_at -> Timestamptz,
         retain_until -> Timestamptz,
         document -> Jsonb,
+        active_until -> Nullable<Timestamptz>,
     }
 }
 
@@ -1205,6 +1213,7 @@ diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    auth_interaction_capacity,
     auth_interactions,
     auth_sessions,
     auth_upstream_credentials,

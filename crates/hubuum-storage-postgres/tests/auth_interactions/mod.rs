@@ -761,3 +761,34 @@ async fn reciprocal_approval_completions_lock_principals_before_tokens() {
     }
     f.cleanup().await;
 }
+
+#[tokio::test]
+async fn admission_query_has_bounded_page_reads_with_retained_history() {
+    const COUNTS: &str = include_str!("../../src/operations/auth_interactions/admission.sql");
+    let f = Fixture::new().await;
+    let backend = f.replica();
+    Interaction::create(&backend, Duration::minutes(5)).await;
+    // Keep one real active interaction and populate the production table with
+    // terminal rows that are still inside the retention window.
+    f.owner(&format!("
+        INSERT INTO auth_interactions(id,client_id,created_at,expires_at,retain_until,document)
+        SELECT new.id, client_id, created_at, expires_at, retain_until,
+            jsonb_set(jsonb_set(document,'{{lifecycle,binding,id}}',to_jsonb(new.id::text)),
+                      '{{lifecycle,phase}}','{{\"state\":\"cancelled\"}}')
+        FROM auth_interactions CROSS JOIN (SELECT gen_random_uuid() AS id FROM generate_series(1,32000)) new;
+        ANALYZE auth_interactions;
+        PREPARE admission(text,int,timestamptz) AS {COUNTS};
+        DO $$ DECLARE plan jsonb; stats record; BEGIN
+            EXECUTE 'EXECUTE admission(''native-test'', NULL, now())' INTO stats;
+            IF stats.total <> 32001 OR stats.active <> 1 OR stats.client <> 1 OR stats.actor <> 0 THEN
+                RAISE EXCEPTION 'Incorrect admission counters: %', stats;
+            END IF;
+            EXECUTE 'EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) EXECUTE admission(''new-client'', NULL, now())' INTO plan;
+            IF (plan#>>'{{0,Plan,Shared Hit Blocks}}')::int + (plan#>>'{{0,Plan,Shared Read Blocks}}')::int > 20 THEN
+                RAISE EXCEPTION 'Admission exceeded the page-read budget: %', plan;
+            END IF;
+        END $$;
+        DEALLOCATE admission;"))
+        .await.unwrap();
+    f.cleanup().await;
+}

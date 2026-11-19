@@ -67,19 +67,16 @@ async fn providers(
                         | hubuum_storage_core::StorageAuthenticationProviderKind::Oauth
                 )
         }) {
-            let binding = StorageProviderIdentityBinding::from_provider(provider)
-                .map_err(|_| InteractionError::ProviderUnavailable)?;
             let scope = IdentityScopeName::new(provider.name())
                 .map_err(|_| InteractionError::ProviderUnavailable)?;
-            if storage
+            let Some(binding) = storage
                 .authentication_provider_binding(scope.clone())
                 .await
                 .map_err(storage_error)?
-                .as_ref()
-                != Some(&binding)
-            {
-                return Err(InteractionError::ProviderUnavailable.into());
-            }
+                .filter(|binding| binding.matches_provider(provider))
+            else {
+                continue;
+            };
             providers.push(PasswordProvider {
                 id: InteractionProviderId::external(binding.id())
                     .map_err(|_| InteractionError::ProviderUnavailable)?,

@@ -215,3 +215,28 @@ fn digest_equality_survives_persistence(#[case] value: String, #[case] matches: 
     let actual: InteractionDigest = serde_json::from_value(json!(value)).unwrap();
     assert_eq!(actual == digest('a'), matches);
 }
+
+#[rstest]
+#[case::local_only(None)]
+#[case::complete_empty(Some(vec![]))]
+fn persisted_verification_preserves_group_authority(#[case] groups: Option<Vec<(String, String)>>) {
+    let details =
+        InteractionVerificationDetails::from_provider_groups(true, groups.clone()).unwrap();
+    let restored: InteractionVerificationDetails =
+        serde_json::from_value(serde_json::to_value(details).unwrap()).unwrap();
+    assert_eq!(restored.provider_groups(), groups.as_deref());
+}
+
+#[rstest]
+#[case::above_one_thousand(1001, true)]
+#[case::maximum(1024, true)]
+#[case::too_many(1025, false)]
+fn verification_uses_the_live_membership_limit(#[case] count: usize, #[case] accepted: bool) {
+    let groups = (0..count)
+        .map(|i| (format!("/{i}"), format!("/{i}")))
+        .collect();
+    assert_eq!(
+        InteractionVerificationDetails::new(true, groups).is_ok(),
+        accepted
+    );
+}

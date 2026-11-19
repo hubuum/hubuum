@@ -391,17 +391,34 @@ impl OAuthProviderDefinition {
     pub fn identity_namespace(&self) -> String {
         // Encode component boundaries so delimiters in a URL path or JSON
         // Pointer cannot make distinct upstream identities share a binding.
+        use sha2::{Digest, Sha256};
+        use std::fmt::Write;
+        // Header names cannot contain ':' and values cannot contain newlines.
+        // BTreeMap order is stable and the binding never exposes header values.
+        let mut headers = Sha256::new();
+        for (name, value) in &self.profile_headers {
+            headers.update(name.as_bytes());
+            headers.update(b":");
+            headers.update(value.as_bytes());
+            headers.update(b"\n");
+        }
+        let mut digest = String::with_capacity(64);
+        for byte in headers.finalize() {
+            write!(digest, "{byte:02x}").expect("writing to a string");
+        }
         serde_json::to_string(&(
             self.profile_endpoint.as_str(),
             &self.subject_pointer,
             &self.subject_type,
+            digest,
         ))
         .expect("OAuth identity components are serializable")
     }
 }
 
 /// Persisted browser identity namespace, preserving either the exact OIDC
-/// issuer or the canonical OAuth endpoint/pointer/subject-type tuple.
+/// issuer or the canonical OAuth profile tuple. Legacy tuples can be read for
+/// restore, while newly issued identities always bind the profile headers.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct BrowserIdentityNamespace(String);
@@ -428,11 +445,22 @@ impl TryFrom<String> for BrowserIdentityNamespace {
         if AuthenticationEndpoint::try_from(value.clone()).is_ok() {
             return Ok(Self(value));
         }
-        let components: (AuthenticationEndpoint, String, OAuthSubjectType) =
-            serde_json::from_str(&value).map_err(|_| {
-                AuthenticationConfigurationError("Invalid browser identity namespace")
-            })?;
-        validate_pointer(&components.1)?;
+        #[derive(Serialize, Deserialize)]
+        #[serde(untagged)]
+        enum Components {
+            Headers(
+                AuthenticationEndpoint,
+                String,
+                OAuthSubjectType,
+                crate::InteractionDigest,
+            ),
+            Legacy(AuthenticationEndpoint, String, OAuthSubjectType),
+        }
+        let components: Components = serde_json::from_str(&value)
+            .map_err(|_| AuthenticationConfigurationError("Invalid browser identity namespace"))?;
+        let (Components::Headers(_, pointer, _, _) | Components::Legacy(_, pointer, _)) =
+            &components;
+        validate_pointer(pointer)?;
         if serde_json::to_string(&components).expect("namespace tuple is serializable") != value {
             return Err(AuthenticationConfigurationError(
                 "OAuth identity namespace must be canonical",

@@ -287,6 +287,11 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
 pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_MIGRATION_DATABASE_URL", Database, sensitive),
     option!("HUBUUM_DATABASE_ROLE_TESTS", Operations),
+    option!(
+        "HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL",
+        Restores,
+        sensitive
+    ),
     option!("HUBUUM_TOKEN_HASH_KEY", Authentication, sensitive),
     option!("HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID", Authentication),
     option!("HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS", Authentication),

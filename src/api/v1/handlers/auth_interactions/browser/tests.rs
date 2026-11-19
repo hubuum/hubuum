@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
 };
 
@@ -269,6 +269,26 @@ async fn stale_credentials_form_cannot_be_used_for_approval() {
     f.cleanup().await;
 }
 
+#[actix_web::test]
+async fn browser_attachment_consumes_one_request() {
+    let mut f = Fixture::new(false).await;
+    let (cookie, csrf) = f.entry().await;
+    let ip = Ipv4Addr::new(192, 0, 2, 184);
+    f.peer.set_ip(ip.into());
+    super::super::admission::allow_one_request_from(ip);
+    let request = Fixture::form(
+        ENTRY,
+        json!({"csrf":csrf,"user_code":f.begun["next"]["user_code"]}),
+        &cookie,
+    );
+    assert_eq!(f.call(request).await.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        f.call(test::TestRequest::get().uri(ENTRY)).await.status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    f.cleanup().await;
+}
+
 #[rstest]
 #[case::missing(None)]
 #[case::cross_origin(Some("https://attacker.example"))]
@@ -444,4 +464,31 @@ async fn changed_return_registration_prevents_browser_approval(#[case] removed: 
         StatusCode::CONFLICT
     );
     f.cleanup().await;
+}
+
+#[rstest]
+#[case("https://auth.example", &["AUTH.Example:443"], true)]
+#[case("https://auth.example:8443", &["auth.example"], false)]
+#[case("https://auth.example", &["auth.example:garbage"], false)]
+#[case("https://auth.example", &["user@auth.example:443"], false)]
+#[case("https://auth.example", &["auth.example","auth.example:443"], false)]
+#[case("http://[::1]", &["[::1]:80"], true)]
+#[actix_web::test]
+async fn host_uses_the_configured_scheme_and_effective_port(
+    #[case] origin: &str,
+    #[case] hosts: &[&str],
+    #[case] valid: bool,
+) {
+    let settings = json!({"origin":origin,"allow_loopback_http":true})
+        .to_string()
+        .parse()
+        .unwrap();
+    let mut request = test::TestRequest::get();
+    for &host in hosts {
+        request = request.append_header((header::HOST, host));
+    }
+    assert_eq!(
+        super::check_host(&request.to_http_request(), &settings).is_ok(),
+        valid
+    );
 }

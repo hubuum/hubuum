@@ -440,12 +440,15 @@ async fn rejection_fences_a_previously_verified_callback() {
 }
 
 #[rstest]
-#[case::manual("manual", "local")]
-#[case::other_provider("external", "another")]
+#[case::manual("manual", "local", false)]
+#[case::other_provider("external", "another", false)]
+#[case::local_only_manual("manual", "local", true)]
+#[case::local_only_other_provider("external", "another", true)]
 #[tokio::test]
 async fn independent_provenance_survives_provider_removal(
     #[case] source: &str,
     #[case] scope: &str,
+    #[case] local_only: bool,
 ) {
     let f = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
     f.sync("subject", "alice", json!(["/team"])).await.unwrap();
@@ -470,7 +473,16 @@ async fn independent_provenance_survives_provider_removal(
         state.membership_sources.push(StorageBackupRow::try_from_value(json!({"principal_id":id.id(),"group_id":group.id(),"source":source,"source_scope_id":source_scope.id(),"source_key":if source=="manual" {""} else {"independent"},"created_at":Utc::now(),"updated_at":Utc::now()})).unwrap());
         group
     };
-    f.sync("subject", "alice", json!([])).await.unwrap();
+    if local_only {
+        let mut state = f.backend.state.write().await;
+        let scope = state
+            .identity_scope_by_name(f.provider.name())
+            .unwrap()
+            .id();
+        state.clear_provider_memberships(scope);
+    } else {
+        f.sync("subject", "alice", json!([])).await.unwrap();
+    }
     assert!(
         f.backend
             .state
@@ -948,6 +960,82 @@ async fn backup_requires_matching_browser_namespace(
         crate::backup::restore(destination, snapshot).is_ok(),
         accepted
     );
+}
+
+#[tokio::test]
+async fn restore_discards_grants_from_a_now_local_only_provider() {
+    use hubuum_storage_core::{BackupSnapshotStorage, StorageBackupBudget};
+    let f = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
+    f.sync(
+        "subject",
+        "alice",
+        json!(["/removed", "/manual", "/shared"]),
+    )
+    .await
+    .unwrap();
+    let id = f.id("subject").await;
+    let other = f
+        .backend
+        .ensure_identity_scope(StorageIdentityScopeEnsure::new("another", "ldap"))
+        .await
+        .unwrap()
+        .id();
+    {
+        let mut state = f.backend.state.write().await;
+        for (key, source, scope, source_key) in [
+            ("/manual", "manual", 1, ""),
+            ("/shared", "external", other.id(), "team"),
+        ] {
+            let group = state
+                .groups
+                .values()
+                .find(|g| g.external_key() == Some(key))
+                .unwrap()
+                .id();
+            state.membership_sources.push(StorageBackupRow::try_from_value(json!({
+                "principal_id":id.id(),"group_id":group.id(),"source":source,"source_scope_id":scope,
+                "source_key":source_key,"created_at":Utc::now(),"updated_at":Utc::now()
+            })).unwrap());
+        }
+    }
+    let snapshot = f
+        .backend
+        .capture_backup_replay(
+            true,
+            StorageBackupBudget::new(16 * 1024 * 1024, 10000).unwrap(),
+        )
+        .await
+        .unwrap()
+        .materialize()
+        .unwrap();
+    let mut dest = f.backend.state.read().await.runtime_settings.clone();
+    let mut definition = serde_json::to_value(&f.definition).unwrap();
+    definition["membership"] =
+        json!({"mode":"local_only","refresh_interval_seconds":300,"max_stale_seconds":900});
+    let provider = StorageAuthenticationProvider::try_new(
+        "company",
+        StorageAuthenticationProviderKind::Oidc,
+        definition,
+    )
+    .unwrap()
+    .with_id(f.provider.id())
+    .unwrap();
+    dest.update(&StorageRuntimeSettingsUpdate::new(
+        StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authentication(
+            StorageAuthenticationProviders::try_new(vec![provider]).unwrap(),
+        )),
+        ResourceRevision::INITIAL,
+        EventContext::system(),
+    ))
+    .unwrap();
+    let restored = crate::backup::restore(dest, snapshot).unwrap();
+    let keys: BTreeSet<_> = restored
+        .memberships
+        .keys()
+        .filter(|(p, _)| *p == id.id())
+        .filter_map(|(_, g)| restored.groups.get(g)?.external_key())
+        .collect();
+    assert_eq!(keys, BTreeSet::from(["/manual", "/shared"]));
 }
 
 #[tokio::test]
