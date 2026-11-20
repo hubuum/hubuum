@@ -1,6 +1,6 @@
 [package]
 name = "hubuum"
-version = "0.0.22"
+version = "0.0.23"
 edition = "2024"
 description = "Flexible asset management REST service."
 license = "MIT"
@@ -50,7 +50,7 @@ members = [
 [dependencies]
 actix-rt = "2"
 actix-service = "2"
-actix-web = { version = "4", default-features = false, features = [
+actix-web = { version = "4.20", default-features = false, features = [
     "macros",
     "compress-brotli",
     "compress-gzip",

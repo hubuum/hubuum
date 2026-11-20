@@ -22,12 +22,12 @@ from support import ROOT
 
 
 RABBITMQ = (
-    "docker.io/library/rabbitmq:4.3.6-management@sha256:"
-    "a4bf913c794083231f24720d6d3180d6dfc74fa9d94a3bd5562b0e6c58d9ec9d"
+    "docker.io/library/rabbitmq:4.4.1-management@sha256:"
+    "61f90c401a5b5ed2486771973ea92ad66046471eacab9c9149f1a6e091c91677"
 )
 VALKEY = (
-    "docker.io/valkey/valkey:9.1.2-alpine@sha256:"
-    "48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11"
+    "docker.io/valkey/valkey:9.2.0-alpine@sha256:"
+    "c8e2d17498838af5d91e12eb7c11220b3434a7b7131a333e3af52ad5e0b80882"
 )
 CARGO_TEST = (
     "cargo", "test", "--locked", "--features", "production-all,integration-test-support",

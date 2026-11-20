@@ -822,7 +822,7 @@ jobs:
         feature: ${{ fromJSON(needs.changes.outputs.feature_matrix) }}
     services:
       postgres:
-        image: postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+        image: postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
         ports:
           - 5432:5432
         env:
@@ -885,7 +885,7 @@ jobs:
     runs-on: ubuntu-24.04
     services:
       valkey:
-        image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+        image: valkey/valkey:9.2.0-alpine@sha256:c8e2d17498838af5d91e12eb7c11220b3434a7b7131a333e3af52ad5e0b80882
         ports:
           - 6379:6379
         options: >-
@@ -947,7 +947,7 @@ jobs:
       CARGO_PROFILE_RELEASE_LTO: "off"
     services:
       postgres:
-        image: postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+        image: postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
         ports:
           - 5432:5432
         env:
@@ -1292,7 +1292,7 @@ jobs:
     runs-on: ubuntu-24.04
     services:
       postgres:
-        image: postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+        image: postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
         env:
           POSTGRES_DB: hubuum_container_test
           POSTGRES_PASSWORD: postgres
@@ -1359,7 +1359,7 @@ jobs:
             | grep --quiet -- "--restore-executor"
           docker run --rm --network host \
             --env PGPASSWORD=postgres \
-            postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722 psql \
+            postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a psql \
             --host 127.0.0.1 \
             --username postgres \
             --dbname postgres \
@@ -1371,7 +1371,7 @@ jobs:
             "$IMAGE" --migrate
           test "$(docker run --rm --network host \
             --env PGPASSWORD=postgres \
-            postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722 psql \
+            postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a psql \
             --host 127.0.0.1 \
             --username postgres \
             --dbname hubuum_container_single_test \
@@ -1382,14 +1382,14 @@ jobs:
             --database-role-setup-sql \
             | docker run --rm --interactive --network host \
                 --env PGPASSWORD=postgres \
-                postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722 psql \
+                postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a psql \
                 --host 127.0.0.1 \
                 --username postgres \
                 --dbname hubuum_container_test \
                 --set ON_ERROR_STOP=1
           docker run --rm --network host \
             --env PGPASSWORD=postgres \
-            postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722 psql \
+            postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a psql \
             --host 127.0.0.1 \
             --username postgres \
             --dbname hubuum_container_test \
@@ -1413,7 +1413,7 @@ jobs:
             "$IMAGE" --database-ready
           test "$(docker run --rm --network host \
             --env PGPASSWORD=postgres \
-            postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722 psql \
+            postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a psql \
             --host 127.0.0.1 \
             --username postgres \
             --dbname hubuum_container_test \

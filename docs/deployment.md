@@ -615,9 +615,9 @@ Common optional parameters:
 - `--frontend-tag`: frontend tag, overriding `--tag`.
 - `--backend-image`: full backend image reference, overriding tag options. Default: `ghcr.io/hubuum/hubuum-server:main`.
 - `--frontend-image`: full frontend image reference, overriding tag options. Default: `ghcr.io/hubuum/hubuum-frontend:main`.
-- `--postgres-image`: managed Postgres image. Default: `docker.io/library/postgres:18-alpine`.
-- `--valkey-image`: frontend session/cache Valkey image. Default: `docker.io/valkey/valkey:9-alpine`.
-- `--caddy-image`: reverse proxy image. Default: `docker.io/library/caddy:2-alpine`.
+- `--postgres-image`: managed PostgreSQL image. Fresh installations use digest-pinned PostgreSQL 18.7 on Alpine 3.24.
+- `--valkey-image`: frontend session/cache image. Fresh installations use digest-pinned Valkey 9.2.0 on Alpine.
+- `--caddy-image`: reverse proxy image. Fresh installations use digest-pinned Caddy 2.11.9 on Alpine. To apply this pin to an existing installation, pass `--caddy-image docker.io/library/caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0` to the installer.
 - `--network-subnet`: container bridge subnet and backend client allowlist. Default: `172.30.42.0/24`.
 - `--shared-host-routing`: required when `--web` and `--api` are the same in `all` mode. Accepted values: `bff`, `direct`, `prefixed`.
 - `--systemd`: install and enable a systemd service.
