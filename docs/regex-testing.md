@@ -98,7 +98,7 @@ fixture needs no application tables or migrations:
 docker run --rm --detach --name hubuum-regex-fuzz \
   --memory=1g --cpus=2 -p 127.0.0.1:55466:5432 \
   -e POSTGRES_DB=hubuum_regex_fuzz -e POSTGRES_PASSWORD=regex-fuzz \
-  postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+  postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
 # Wait until the fixture is ready before running the target.
 docker exec hubuum-regex-fuzz pg_isready -U postgres -d hubuum_regex_fuzz
 export HUBUUM_REGEX_FUZZ_DATABASE_URL=postgres://postgres:regex-fuzz@127.0.0.1:55466/hubuum_regex_fuzz

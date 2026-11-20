@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.0.23] - 2026-11-20
+
 ### Security
 
 - Require Actix HTTP 3.21.3 or later to fix malformed chunked request framing
@@ -39,6 +41,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- The server image uses Alpine 3.24.4 and the Rust 1.100 builder. The
+  single-host installer pins Caddy 2.11.9, PostgreSQL 18.7, Valkey 9.2.0,
+  Prometheus 3.16.0, and Grafana 13.3.1 by digest. Existing installations
+  can apply new pins with the corresponding image overrides.
+
 - Backup, query-usage analysis, and administrative schema endpoints now return
   HTTP 403 for scoped tokens and non-administrators before looking up the
   requested resource. Unscoped administrator service accounts retain access.
@@ -60,6 +67,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   deployment-only lifecycle settings and secrets remain outside runtime editing.
 
 ### Fixed
+
+- The single-host installer now saves explicit `--caddy-image`,
+  `--postgres-image`, and `--valkey-image` overrides when refreshing an
+  existing installation.
 
 - Rendering tests use Cargo's reported template-worker path, supporting the
   relocated test executables introduced by Cargo 1.100.
