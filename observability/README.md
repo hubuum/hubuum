@@ -70,8 +70,8 @@ They never fail over to one another as scrape targets.
 | `MONITORING_ENABLED` | `false` | Persisted opt-in; set by `--monitoring` |
 | `MONITORING_DEPLOYMENT` | API hostname | Stable identifier for one database |
 | `MONITORING_ASSETS_REF` | `auto` | Derive package from backend tag; `--monitoring-ref` overrides |
-| `PROMETHEUS_IMAGE` | Prometheus 3.13.1, digest-pinned | Override with `--prometheus-image` |
-| `GRAFANA_IMAGE` | Grafana 13.2.3, digest-pinned | Override with `--grafana-image` |
+| `PROMETHEUS_IMAGE` | Prometheus 3.16.0, digest-pinned | Override with `--prometheus-image` |
+| `GRAFANA_IMAGE` | Grafana 13.3.1, digest-pinned | Override with `--grafana-image` |
 | `PROMETHEUS_RETENTION_TIME` | `31d` | Allows a full 30-day SLO window once enough data is collected |
 | `PROMETHEUS_RETENTION_SIZE` | `5GB` | TSDB retention bound, not a filesystem quota; reserve WAL/head space |
 | `PROMETHEUS_MEMORY_LIMIT` | `512m` | Container limit; tune for cardinality and queries |
@@ -145,7 +145,7 @@ export GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 24)"
 export GRAFANA_SECRET_KEY="$(openssl rand -hex 32)"
 export PROMETHEUS_PASSWORD="$(openssl rand -hex 24)"
 export PROMETHEUS_PASSWORD_HASH="$(printf '%s\n' "$PROMETHEUS_PASSWORD" |
-  docker run --rm -i caddy:2-alpine caddy hash-password)"
+  docker run --rm -i caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0 caddy hash-password)"
 # These public configuration assets must be readable by the container users.
 chmod -R a+rX observability
 docker compose -f docker-compose.yml -f observability/compose.monitoring.yml \

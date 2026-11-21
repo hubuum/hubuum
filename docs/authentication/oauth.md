@@ -170,12 +170,10 @@ test. Delete the app and secret file after qualification. Do not add personal
 credentials to CI or commit them. Reports retain image/source identities and
 sanitized case results without tokens, callback URLs or user profile data.
 
-Synthetic success does not establish GitHub compatibility. Record the authorized
-real-login report and immutable source/image evidence in issue #581, with a link
-back to implementation issue #578, before claiming full compatibility. The
-maintainer transferred this live-provider gate to ecosystem qualification;
-GitHub fixture coverage is not a live qualification. Cross-repository acceptance
-and promotion to main remain separate.
+The 21 November 2026 qualification verified real GitHub.com sign-ins through the
+CLI and frontend. The CLI reused its saved session and the frontend retained its
+session after reload. The [qualification record](ecosystem_qualification.md)
+links the accepted artifacts, tested provider capabilities and promotion status.
 
 Protocol references: [GitHub OAuth authorization and PKCE](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps),
 [authenticated user](https://docs.github.com/en/rest/users/users#get-the-authenticated-user),

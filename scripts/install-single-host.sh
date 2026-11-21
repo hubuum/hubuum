@@ -21,9 +21,9 @@ FRONTEND_IMAGE="ghcr.io/hubuum/hubuum-frontend:main"
 IMAGE_TAG=""
 BACKEND_TAG=""
 FRONTEND_TAG=""
-POSTGRES_IMAGE="docker.io/library/postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
-VALKEY_IMAGE="docker.io/valkey/valkey:9-alpine"
-CADDY_IMAGE="docker.io/library/caddy:2-alpine"
+POSTGRES_IMAGE="docker.io/library/postgres:18.7-alpine3.24@sha256:ff64c9e3bdf8e2120107d3559de8db314e8305f7e38c5105903c6295876738ff"
+VALKEY_IMAGE="docker.io/valkey/valkey:9.2.0-alpine@sha256:c8e2d17498838af5d91e12eb7c11220b3434a7b7131a333e3af52ad5e0b80882"
+CADDY_IMAGE="docker.io/library/caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0"
 MONITORING_ENABLED="false"
 MONITORING_ASSETS_REF="auto"
 MONITORING_DEPLOYMENT=""
@@ -31,8 +31,8 @@ MONITORING_HOST=""
 GRAFANA_ADMIN_PASSWORD=""
 GRAFANA_SECRET_KEY=""
 PROMETHEUS_PASSWORD=""
-PROMETHEUS_IMAGE="docker.io/prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893"
-GRAFANA_IMAGE="docker.io/grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572"
+PROMETHEUS_IMAGE="docker.io/prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06"
+GRAFANA_IMAGE="docker.io/grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf"
 PROMETHEUS_RETENTION_TIME="31d"
 PROMETHEUS_RETENTION_SIZE="5GB"
 PROMETHEUS_MEMORY_LIMIT="512m"
@@ -95,9 +95,9 @@ Options:
                           Database roles: single or split. Default: single
   --auth-config PATH      Host auth-provider TOML file to mount read-only in the API container
   --engine ENGINE         Container engine: auto, docker, or podman. Default: auto
-  --postgres-image IMAGE  Postgres image. Default: PostgreSQL 18.6 on Alpine 3.24 (digest-pinned)
-  --valkey-image IMAGE    Valkey image. Default: docker.io/valkey/valkey:9-alpine
-  --caddy-image IMAGE     Caddy image. Default: docker.io/library/caddy:2-alpine
+  --postgres-image IMAGE  Postgres image. Default: PostgreSQL 18.7 on Alpine 3.24 (digest-pinned)
+  --valkey-image IMAGE    Valkey image. Default: Valkey 9.2.0 on Alpine (digest-pinned)
+  --caddy-image IMAGE     Caddy image. Default: Caddy 2.11.9 on Alpine (digest-pinned)
   --monitoring            Install Prometheus and Grafana under /prometheus/ and /grafana/
   --monitoring-ref REF    Operator-package Git ref (default: derive from backend image)
   --prometheus-image IMAGE
@@ -696,11 +696,12 @@ merge_missing_env_values() {
   local line
   local wrote_header="false"
 
-  # Honor explicit app-image choices while retaining operator-managed settings.
+  # Honor explicit image choices while retaining operator-managed settings.
   temporary="$(mktemp "${ENV_FILE}.XXXXXX")"
   while IFS= read -r line || [[ -n "$line" ]]; do
     key="${line%%=*}"
     if [[ "$key" == "BACKEND_IMAGE" || "$key" == "FRONTEND_IMAGE" ||
+      "$key" == "POSTGRES_IMAGE" || "$key" == "VALKEY_IMAGE" || "$key" == "CADDY_IMAGE" ||
       "$key" == "MONITORING_ENABLED" || "$key" == "MONITORING_ASSETS_REF" ||
       "$key" == "PROMETHEUS_IMAGE" || "$key" == "GRAFANA_IMAGE" ]] && arg_was_set "$key"; then
       line="${key}=${!key}"
