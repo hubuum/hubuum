@@ -9,7 +9,7 @@ use tokio::runtime::{Builder, Runtime};
 static NEXT_NAME_ID: AtomicU64 = AtomicU64::new(1);
 
 const POSTGRES_DATABASE: &str = "hubuum_bench";
-const POSTGRES_IMAGE: &str = "docker.io/library/postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873";
+const POSTGRES_IMAGE: &str = "docker.io/library/postgres:18.7-alpine3.24@sha256:ff64c9e3bdf8e2120107d3559de8db314e8305f7e38c5105903c6295876738ff";
 
 pub fn benchmark_pool(database_url: &str) -> PostgresPool {
     let settings = PostgresPoolSettings::builder(database_url)

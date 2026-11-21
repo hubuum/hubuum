@@ -27,13 +27,13 @@ CARGO_DENY_VERSION = POLICY.parse_tool_manifest(
 
 DIGEST = "a" * 64
 VALID_VALUES = {
-    "CARGO_DENY_VERSION": "0.20.2",
+    "CARGO_DENY_VERSION": "0.22.0",
     "CARGO_SEMVER_CHECKS_VERSION": "0.51.0",
     "DIESEL_CLI_VERSION": "2.3.14",
-    "POSTGRES_WINDOWS_VERSION": "18.6-3",
+    "POSTGRES_WINDOWS_VERSION": "18.7-2",
     "POSTGRES_WINDOWS_SHA256": DIGEST,
-    "SYFT_IMAGE": f"anchore/syft:v1.55.0@sha256:{DIGEST}",
-    "TRIVY_IMAGE": f"aquasec/trivy:0.76.1@sha256:{DIGEST}",
+    "SYFT_IMAGE": f"anchore/syft:v1.57.2@sha256:{DIGEST}",
+    "TRIVY_IMAGE": f"aquasec/trivy:0.76.2@sha256:{DIGEST}",
     "COSIGN_VERSION": "v3.1.4",
 }
 
@@ -68,7 +68,7 @@ class ToolManifestTests(unittest.TestCase):
         for key, value in (
             ("POSTGRES_WINDOWS_VERSION", "18"),
             ("POSTGRES_WINDOWS_VERSION", "18.6"),
-            ("POSTGRES_WINDOWS_VERSION", "18.6-3/../../other"),
+            ("POSTGRES_WINDOWS_VERSION", "18.7-2/../../other"),
             ("POSTGRES_WINDOWS_SHA256", "a" * 63),
             ("POSTGRES_WINDOWS_SHA256", "g" * 64),
         ):

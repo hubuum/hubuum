@@ -2,7 +2,7 @@ use crate::{
     api::{openapi::ApiErrorResponse, response::ApiResponse},
     can,
     errors::ApiError,
-    extractors::{AccessEventContext, Authenticated},
+    extractors::{AccessEventContext, Authenticated, UnscopedRuntimeAdmin},
     models::{Permissions, query_usage::*},
     permissions::AppContext,
     services::query_usage as service,
@@ -134,21 +134,16 @@ pub async fn delete_query_usage(
 #[post("/{class_id}/query-usage/analysis")]
 pub async fn analyze_query_usage(
     context: AppContext,
-    requestor: Authenticated,
+    admin: UnscopedRuntimeAdmin,
     path: web::Path<ClassId>,
     request: web::Json<QueryUsageAnalysisRequest>,
 ) -> Result<impl Responder, ApiError> {
-    if requestor.scopes().is_some() || !context.is_admin(&requestor.principal).await? {
-        return Err(ApiError::Forbidden(
-            "Query usage analysis requires unscoped administrator access".into(),
-        ));
-    }
     let class_id = path.into_inner();
     let class = class_id.instance(&context).await?;
     can!(
         &context,
-        &requestor.principal,
-        requestor.scopes(),
+        admin.principal(),
+        None,
         [Permissions::ReadClass],
         class
     );

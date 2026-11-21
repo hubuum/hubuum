@@ -5,7 +5,7 @@ use crate::{
     api::{openapi::ApiErrorResponse, response::ApiResponse},
     can,
     errors::ApiError,
-    extractors::{AccessEventContext, Authenticated},
+    extractors::{AccessEventContext, Authenticated, UnscopedRuntimeAdmin},
     models::{Permissions, schema_evolution::*},
     permissions::AppContext,
     traits::{SelfAccessors, UserPermissions},
@@ -18,19 +18,18 @@ use hubuum_storage_core::{
 
 async fn authorized_report_source(
     context: &AppContext,
-    requestor: &Authenticated,
+    admin: &UnscopedRuntimeAdmin,
     class_id: ClassId,
     task_id: TaskId,
 ) -> Result<(HubuumClass, StorageSchemaWork), ApiError> {
     let class = class_id.instance(context).await?;
     can!(
         context,
-        &requestor.principal,
-        requestor.scopes(),
+        admin.principal(),
+        None,
         [Permissions::ReadClass],
         class
     );
-    require_admin(context, requestor).await?;
     let work = storage_handle(context).get_schema_work(task_id).await?;
     if work.target().class_id() != class_id || work.kind() != StorageSchemaWorkKind::Impact {
         return Err(ApiError::NotFound(
@@ -56,19 +55,19 @@ fn repair_report_response(report: StorageSchemaRepairReport, download: bool) -> 
 #[post("/{class_id}/schema/tasks/{task_id}/report")]
 pub async fn generate_schema_repair_report(
     context: AppContext,
-    requestor: Authenticated,
+    admin: UnscopedRuntimeAdmin,
     path: web::Path<(ClassId, TaskId)>,
     request: web::Json<SchemaRepairReportRequest>,
 ) -> Result<impl Responder, ApiError> {
     let (class_id, task_id) = path.into_inner();
-    let (class, work) = authorized_report_source(&context, &requestor, class_id, task_id).await?;
+    let (class, work) = authorized_report_source(&context, &admin, class_id, task_id).await?;
     let request = request.into_inner();
     let layout = if let Some(id) = request.template_id {
         let template = id.instance(&context).await?;
         can!(
             &context,
-            &requestor.principal,
-            requestor.scopes(),
+            admin.principal(),
+            None,
             [Permissions::ReadTemplate],
             template
         );
@@ -76,8 +75,8 @@ pub async fn generate_schema_repair_report(
         for sibling in &siblings {
             can!(
                 &context,
-                &requestor.principal,
-                requestor.scopes(),
+                admin.principal(),
+                None,
                 [Permissions::ReadTemplate],
                 sibling
             );
@@ -101,12 +100,12 @@ pub async fn generate_schema_repair_report(
 #[get("/{class_id}/schema/tasks/{task_id}/report")]
 pub async fn get_schema_repair_report(
     context: AppContext,
-    requestor: Authenticated,
+    admin: UnscopedRuntimeAdmin,
     path: web::Path<(ClassId, TaskId)>,
     query: web::Query<SchemaRepairReportQuery>,
 ) -> Result<impl Responder, ApiError> {
     let (class_id, task_id) = path.into_inner();
-    let (_, work) = authorized_report_source(&context, &requestor, class_id, task_id).await?;
+    let (_, work) = authorized_report_source(&context, &admin, class_id, task_id).await?;
     let report = service::retained_repair_report(&context, work.target(), task_id).await?;
     Ok(repair_report_response(report, query.download))
 }
@@ -161,15 +160,6 @@ pub async fn list_object_compliance(
     Ok(ApiResponse::ok(SchemaCompliancePage { items, next_after }))
 }
 
-async fn require_admin(context: &AppContext, requestor: &Authenticated) -> Result<(), ApiError> {
-    if requestor.scopes().is_some() || !context.is_admin(&requestor.principal).await? {
-        return Err(ApiError::Forbidden(
-            "Detailed class compliance reports require administrator access".into(),
-        ));
-    }
-    Ok(())
-}
-
 #[utoipa::path(get,path="/api/v1/classes/{class_id}/schema/revisions",tag="schema evolution",security(("bearer_auth"=[])),params(("class_id"=ClassId,Path,description="Class ID"),("after"=Option<i64>,Query,description="Last schema revision; defaults to zero"),("limit"=Option<usize>,Query,description="1 to 100 revisions; defaults to 50")),responses((status=200,description="Bounded immutable schema revision list",body=Vec<SchemaRevisionResponse>),(status=400,description="Invalid schema, policy or bounded request",body=ApiErrorResponse),(status=403,description="Forbidden",body=ApiErrorResponse),(status=404,description="Class, revision or task not found",body=ApiErrorResponse),(status=409,description="Stale revision, incompatible activation or invalid lifecycle transition",body=ApiErrorResponse)))]
 #[get("/{class_id}/schema/revisions")]
 pub async fn list_schema_revisions(
@@ -196,19 +186,18 @@ pub async fn list_schema_revisions(
 #[get("/{class_id}/schema")]
 pub async fn get_schema_state(
     context: AppContext,
-    requestor: Authenticated,
+    admin: UnscopedRuntimeAdmin,
     path: web::Path<ClassId>,
 ) -> Result<impl Responder, ApiError> {
     let class_id = path.into_inner();
     let class = class_id.instance(&context).await?;
     can!(
         &context,
-        &requestor.principal,
-        requestor.scopes(),
+        admin.principal(),
+        None,
         [Permissions::ReadClass],
         class
     );
-    require_admin(&context, &requestor).await?;
     let result = service::class_state(&context, class_id).await?;
     Ok(ApiResponse::new(result, StatusCode::OK))
 }
@@ -311,7 +300,7 @@ pub async fn activate_schema_revision(
         class
     );
     if matches!(request.policy, SchemaActivationPolicy::AllowPending) {
-        require_admin(&context, &requestor).await?;
+        requestor.require_runtime_admin(&context).await?;
     }
     let result = service::activate(
         &context,
@@ -328,7 +317,7 @@ pub async fn activate_schema_revision(
 #[post("/{class_id}/schema/revisions/{revision}/impact")]
 pub async fn analyze_schema_impact(
     context: AppContext,
-    requestor: Authenticated,
+    admin: UnscopedRuntimeAdmin,
     path: web::Path<(ClassId, SchemaRevision)>,
     http_request: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -336,19 +325,18 @@ pub async fn analyze_schema_impact(
     let class = class_id.instance(&context).await?;
     can!(
         &context,
-        &requestor.principal,
-        requestor.scopes(),
+        admin.principal(),
+        None,
         [Permissions::UpdateClass],
         class
     );
 
-    require_admin(&context, &requestor).await?;
     let result = service::request_work(
         &context,
         CollectionId::new(class.collection_id)?,
         SchemaReference::new(class_id, revision),
         StorageSchemaWorkKind::Impact,
-        &requestor.event_context(&http_request),
+        &admin.event_context(&http_request),
     )
     .await?;
     Ok(ApiResponse::new(result, StatusCode::ACCEPTED))
@@ -358,7 +346,7 @@ pub async fn analyze_schema_impact(
 #[post("/{class_id}/schema/revisions/{revision}/revalidate")]
 pub async fn revalidate_schema(
     context: AppContext,
-    requestor: Authenticated,
+    admin: UnscopedRuntimeAdmin,
     path: web::Path<(ClassId, SchemaRevision)>,
     http_request: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -366,19 +354,18 @@ pub async fn revalidate_schema(
     let class = class_id.instance(&context).await?;
     can!(
         &context,
-        &requestor.principal,
-        requestor.scopes(),
+        admin.principal(),
+        None,
         [Permissions::UpdateClass],
         class
     );
 
-    require_admin(&context, &requestor).await?;
     let result = service::request_work(
         &context,
         CollectionId::new(class.collection_id)?,
         SchemaReference::new(class_id, revision),
         StorageSchemaWorkKind::Revalidation,
-        &requestor.event_context(&http_request),
+        &admin.event_context(&http_request),
     )
     .await?;
     Ok(ApiResponse::new(result, StatusCode::ACCEPTED))
@@ -388,19 +375,18 @@ pub async fn revalidate_schema(
 #[get("/{class_id}/schema/tasks/{task_id}")]
 pub async fn get_schema_work(
     context: AppContext,
-    requestor: Authenticated,
+    admin: UnscopedRuntimeAdmin,
     path: web::Path<(ClassId, TaskId)>,
 ) -> Result<impl Responder, ApiError> {
     let (class_id, task_id) = path.into_inner();
     let class = class_id.instance(&context).await?;
     can!(
         &context,
-        &requestor.principal,
-        requestor.scopes(),
+        admin.principal(),
+        None,
         [Permissions::ReadClass],
         class
     );
-    require_admin(&context, &requestor).await?;
     let result = service::get_work(&context, task_id).await?;
     if result.target.class_id() != class_id {
         return Err(ApiError::NotFound(
@@ -414,7 +400,7 @@ pub async fn get_schema_work(
 #[delete("/{class_id}/schema/tasks/{task_id}")]
 pub async fn cancel_schema_work(
     context: AppContext,
-    requestor: Authenticated,
+    admin: UnscopedRuntimeAdmin,
     path: web::Path<(ClassId, TaskId)>,
     http_request: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
@@ -422,12 +408,11 @@ pub async fn cancel_schema_work(
     let class = class_id.instance(&context).await?;
     can!(
         &context,
-        &requestor.principal,
-        requestor.scopes(),
+        admin.principal(),
+        None,
         [Permissions::UpdateClass],
         class
     );
-    require_admin(&context, &requestor).await?;
     let existing = storage_handle(&context).get_schema_work(task_id).await?;
     if existing.target().class_id() != class_id {
         return Err(ApiError::NotFound(
@@ -438,7 +423,7 @@ pub async fn cancel_schema_work(
         &context,
         CollectionId::new(class.collection_id)?,
         task_id,
-        &requestor.event_context(&http_request),
+        &admin.event_context(&http_request),
     )
     .await?;
     Ok(ApiResponse::new(result, StatusCode::OK))
