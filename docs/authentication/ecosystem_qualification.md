@@ -87,6 +87,14 @@ the server and frontend images, the PostgreSQL and Valkey fixtures, the workflow
 runs and artifact digests. Its source and image pins apply to these two sign-ins.
 The automated matrix retains the inputs used for its own runs.
 
+The manifest abbreviates the Valkey repository as `valkey`. To reproduce the
+live run, pull the same digest from the `valkey/valkey` repository used by the
+frontend fixture.
+
+```sh
+docker pull docker.io/valkey/valkey:9.1.2-alpine3.24@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+```
+
 The [security candidate guide](../security_candidates.md) defines deployment
 locks, private credentials, exact revision/receipt fences and offline recovery.
 Local accounts stay configured. A remote Treetop outage fails privileged access
