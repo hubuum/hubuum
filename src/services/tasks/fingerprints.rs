@@ -52,6 +52,7 @@ pub(crate) fn legacy_task_fingerprint(
         return Ok(TaskFingerprint::LegacyUnverifiable);
     };
     match task.kind() {
+        TaskKind::HistoryExpiry => Ok(TaskFingerprint::LegacyUnverifiable),
         TaskKind::Import | TaskKind::Backup | TaskKind::SchemaProfiling => service
             .legacy_fingerprint(task.kind(), digest)
             .map(TaskFingerprint::LegacyV1),

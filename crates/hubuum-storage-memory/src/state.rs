@@ -86,6 +86,8 @@ impl MemoryState {
         let deletion_control = DeletionControlState::empty(Uuid::new_v4(), Uuid::new_v4())
             .expect("generated control identities");
         let mut state = Self {
+            history_lifecycle: HistoryLifecycleControl::empty(),
+            history_publications: HistoryPublicationRegistry::default(),
             task_control: TaskControlState::initial(
                 deletion_control.lineage(),
                 deletion_control.epoch(),

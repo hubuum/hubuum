@@ -997,6 +997,7 @@ impl StorageSchemaProfileArtifact {
 /// Completion data whose variant determines the only compatible task kind.
 #[derive(Clone, Debug, PartialEq)]
 pub enum StorageTaskCompletionPayload {
+    HistoryExpiry,
     Import,
     Reindex,
     SchemaValidation,
@@ -1010,6 +1011,7 @@ impl StorageTaskCompletionPayload {
     #[must_use]
     pub const fn task_kind(&self) -> StorageTaskKind {
         match self {
+            Self::HistoryExpiry => StorageTaskKind::HistoryExpiry,
             Self::Import => StorageTaskKind::Import,
             Self::SchemaProfiling(_) => StorageTaskKind::SchemaProfiling,
             Self::SchemaValidation => StorageTaskKind::SchemaValidation,

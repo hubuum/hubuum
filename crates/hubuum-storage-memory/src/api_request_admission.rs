@@ -99,7 +99,7 @@ impl ApiRequestAdmissionStorage for MemoryStorage {
         _class: ApiRequestClass,
         input_bytes: u64,
     ) -> Result<StorageApiRequestPermit, StorageError> {
-        let state = self.state.write().await?;
+        let state = self.state.write_api_request_admission().await?;
         if state
             .ensure_application_permit(&StorageExecutionPermit::new(
                 None,

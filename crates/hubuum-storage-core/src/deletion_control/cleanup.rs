@@ -3,7 +3,7 @@ use std::fmt;
 use uuid::Variant;
 
 use super::*;
-use crate::StorageRecordIdentity;
+use crate::{HistoryRuntimeProtocol, StorageRecordIdentity};
 
 /// Registrations are retained until their owner proves a clean shutdown.
 pub const DELETION_CONTROL_MAX_RUNTIMES: usize = 1024;
@@ -13,6 +13,7 @@ pub const DELETION_CONTROL_MAX_RUNTIMES: usize = 1024;
 pub struct RuntimeRegistration {
     id: Uuid,
     ownership_token: Uuid,
+    history_protocol: HistoryRuntimeProtocol,
 }
 
 impl RuntimeRegistration {
@@ -21,11 +22,20 @@ impl RuntimeRegistration {
         Self {
             id: Uuid::new_v4(),
             ownership_token: Uuid::new_v4(),
+            history_protocol: HistoryRuntimeProtocol::Legacy,
         }
     }
 
+    /// Adapter boundary only for a successful history-aware registration.
+    /// This is not permission to enable expiry before all producers are fenced.
+    pub fn generate_history_aware() -> Self {
+        let mut registration = Self::generate();
+        registration.history_protocol = HistoryRuntimeProtocol::OnlineV1;
+        registration
+    }
+
     pub fn owner(&self) -> RuntimeOwner {
-        RuntimeOwner::new(self.id, self.ownership_token)
+        RuntimeOwner::new(self.id, self.ownership_token, self.history_protocol)
     }
 
     pub const fn id(&self) -> Uuid {

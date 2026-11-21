@@ -178,6 +178,9 @@ impl TaskRow {
             }
         };
         let phase = match (self.import_effects_committed_at, self.remote_dispatched_at) {
+            (None, None) if kind == StorageTaskKind::HistoryExpiry => {
+                StorageTaskExecutionPhase::HistoryAuthority
+            }
             (None, None) => StorageTaskExecutionPhase::Uncommitted,
             (Some(at), None) => StorageTaskExecutionPhase::ImportCommitted { at: at.and_utc() },
             (None, Some(at)) => StorageTaskExecutionPhase::RemoteDispatched { at: at.and_utc() },

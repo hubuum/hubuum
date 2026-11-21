@@ -31,6 +31,9 @@ impl StorageTaskControl {
         let phase = match (import, remote) {
             (Some(at), None) => StorageTaskExecutionPhase::ImportCommitted { at },
             (None, Some(at)) => StorageTaskExecutionPhase::RemoteDispatched { at },
+            (None, None) if kind == StorageTaskKind::HistoryExpiry => {
+                StorageTaskExecutionPhase::HistoryAuthority
+            }
             (None, None) => StorageTaskExecutionPhase::Uncommitted,
             _ => return Err(invalid("Task cannot have both import and remote effects")),
         };
@@ -59,7 +62,8 @@ impl StorageTaskControl {
     /// Backend-neutral logical fields used by backup capture and restore.
     pub fn snapshot_fields(&self) -> Map<String, Value> {
         let (import, remote) = match self.phase {
-            StorageTaskExecutionPhase::Uncommitted => (None, None),
+            StorageTaskExecutionPhase::Uncommitted
+            | StorageTaskExecutionPhase::HistoryAuthority => (None, None),
             StorageTaskExecutionPhase::ImportCommitted { at } => (Some(at), None),
             StorageTaskExecutionPhase::RemoteDispatched { at } => (None, Some(at)),
         };

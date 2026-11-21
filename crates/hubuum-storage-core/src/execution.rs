@@ -10,7 +10,9 @@ use hubuum_domain::{
 use hubuum_events_core::MutationProvenance;
 use hubuum_task_core::TaskExecutionContext;
 
-use crate::{StorageApiRequestPermit, StorageExecutionPermit, StorageQueryBudget};
+use crate::{
+    HistoryReadContext, StorageApiRequestPermit, StorageExecutionPermit, StorageQueryBudget,
+};
 
 /// Bounded attribution for storage work initiated by one application
 /// subsystem.
@@ -133,6 +135,8 @@ pub struct StorageRevisionPrecondition {
 /// without accidentally resetting each other.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StorageExecutionScope {
+    storage_callback: bool,
+    history_read: Option<HistoryReadContext>,
     api_request: Option<StorageApiRequestPermit>,
     application_access: Option<StorageExecutionPermit>,
     call_site: Option<StorageCallSite>,
@@ -143,6 +147,122 @@ pub struct StorageExecutionScope {
 }
 
 impl StorageExecutionScope {
+    /// Compose nested work without refreshing inherited ownership. A history
+    /// context may acquire additional local restrictions, never weaker ones.
+    #[must_use]
+    pub fn nested_within(mut self, parent: &Self) -> Self {
+        self.storage_callback |= parent.storage_callback;
+        self.history_read = match (&parent.history_read, &self.history_read) {
+            (Some(parent), Some(child)) if child.is_restriction_of(parent) => Some(child.clone()),
+            (Some(parent), _) => Some(parent.clone()),
+            (None, _) => self.history_read,
+        };
+        self.application_access = parent
+            .application_access
+            .clone()
+            .or(self.application_access);
+        self.api_request = parent.api_request.clone().or(self.api_request);
+        self.task_execution = self
+            .task_execution
+            .or_else(|| parent.task_execution.clone());
+        self.call_site = self.call_site.or(parent.call_site);
+        self.mutation_provenance = self
+            .mutation_provenance
+            .or_else(|| parent.mutation_provenance.clone());
+        self.revision_precondition = self
+            .revision_precondition
+            .or_else(|| parent.revision_precondition.clone());
+        self.query_budget = self.query_budget.or(parent.query_budget);
+        if let Some(context) = &self.history_read
+            && let Some(binding) = self.history_binding().restriction_of(context.binding())
+        {
+            self.history_read = Some(context.with_binding(binding));
+        }
+        // Invalid changes retain the old proof and fail its exact validation
+        // on productive entry; scope installation itself has a generic result.
+        self
+    }
+
+    pub(crate) fn restriction_of(&self, parent: &Self) -> Option<Self> {
+        let mut expected = parent.clone();
+        if expected
+            .revision_precondition
+            .as_ref()
+            .is_none_or(Option::is_none)
+        {
+            expected.revision_precondition = self.revision_precondition.clone();
+        }
+        if expected.query_budget.flatten().is_none_or(|original| {
+            self.query_budget
+                .flatten()
+                .is_some_and(|budget| budget.as_millis() <= original.as_millis())
+        }) {
+            expected.query_budget = self.query_budget;
+        }
+        (self == &expected).then(|| self.clone())
+    }
+
+    /// Restrictive marker for a DB callback or its captured descendants. Scope
+    /// layering must OR this bit; callers cannot clear an inherited marker.
+    #[must_use]
+    pub fn with_storage_callback(mut self) -> Self {
+        self.storage_callback = true;
+        self
+    }
+    pub const fn storage_callback_active(&self) -> bool {
+        self.storage_callback
+    }
+
+    pub(crate) fn resume_history_binding(&self, original: &Self) -> Self {
+        let mut value = self.clone();
+        if value.application_access.is_none() {
+            value.application_access = original.application_access.clone();
+        }
+        if value.api_request.is_none() {
+            value.api_request = original.api_request.clone();
+        }
+        if value.task_execution.is_none() {
+            value.task_execution = original.task_execution.clone();
+        }
+        if value.query_budget.is_none() {
+            value.query_budget = original.query_budget;
+        }
+        if value.mutation_provenance.is_none() {
+            value.mutation_provenance = original.mutation_provenance.clone();
+        }
+        if value.revision_precondition.is_none() {
+            value.revision_precondition = original.revision_precondition.clone();
+        }
+        value
+    }
+
+    /// Effective authority binding; diagnostic attribution and the inherited
+    /// history context do not mint productive authority. Explicitly absent
+    /// optional overrides normalize to the same effective empty value.
+    pub(crate) fn history_binding(&self) -> Self {
+        let mut value = self.clone();
+        value.storage_callback = false;
+        value.history_read = None;
+        value.call_site = None;
+        value.task_execution = Some(value.task_execution.flatten());
+        value.query_budget = Some(value.query_budget.flatten());
+        value.mutation_provenance = Some(value.mutation_provenance.flatten());
+        value.revision_precondition = Some(value.revision_precondition.flatten());
+        value
+    }
+
+    /// Retain the original publication epoch across nested and blocking work.
+    #[must_use]
+    pub fn with_history_read(mut self, context: HistoryReadContext) -> Self {
+        self.history_read = Some(context);
+        self
+    }
+
+    #[must_use]
+    pub const fn history_read_override(&self) -> Option<&HistoryReadContext> {
+        self.history_read.as_ref()
+    }
+
     #[must_use]
     pub fn with_api_request(mut self, permit: StorageApiRequestPermit) -> Self {
         self.api_request = Some(permit);

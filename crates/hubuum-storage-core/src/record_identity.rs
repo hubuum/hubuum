@@ -6,10 +6,13 @@ use serde::{Deserialize, Serialize};
 /// Integer IDs and revision counters may repeat after restoring an older
 /// application timeline. This pair is preserved by restore; subsequent writes
 /// preserve the resource identity and mint a fresh version identity.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StorageRecordIdentity {
+    #[cfg_attr(feature = "openapi", schema(value_type = String, format = "uuid"))]
     resource: ResourceIdentity,
+    #[cfg_attr(feature = "openapi", schema(value_type = String, format = "uuid"))]
     version: VersionIdentity,
 }
 

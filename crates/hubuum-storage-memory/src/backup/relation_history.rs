@@ -62,6 +62,10 @@ pub(crate) fn list_relation_history(
             id.id(),
         ),
     };
+    let family = match query.resource() {
+        StorageRelationHistoryResource::Class(_) => StorageIdentityHistoryKind::ClassRelation,
+        StorageRelationHistoryResource::Object(_) => StorageIdentityHistoryKind::ObjectRelation,
+    };
     let options = query.options();
     let descending = options.sort()[0].descending;
     let key = |id: i64| if descending { -id } else { id };
@@ -89,6 +93,14 @@ pub(crate) fn list_relation_history(
                 || row.time("valid_from")? > at
                 || row.optional_time("valid_to")?.is_some_and(|end| at >= end))
         {
+            continue;
+        }
+        if !state.raw_history_visible(family, value)? {
+            if matches!(query.selection(), StorageRelationHistorySelection::At(_)) {
+                return Err(StorageError::not_found(
+                    "Historical relation version is expired",
+                ));
+            }
             continue;
         }
         total += 1;
@@ -150,13 +162,10 @@ pub(crate) fn list_relation_history(
         let Some(times) = requests.get(&resource) else {
             continue;
         };
-        for slots in times
-            .range((
-                Included(entry.valid_from),
-                entry.valid_to.map_or(Unbounded, Excluded),
-            ))
-            .map(|(_, slots)| slots)
-        {
+        for (&at, slots) in times.range((
+            Included(entry.valid_from),
+            entry.valid_to.map_or(Unbounded, Excluded),
+        )) {
             for &slot in slots {
                 let captured = records[slot / 2].endpoint_identities()[slot % 2];
                 let actual = entry
@@ -167,6 +176,12 @@ pub(crate) fn list_relation_history(
                 if captured.is_none() || captured != actual {
                     continue;
                 }
+                state.require_history_as_of(
+                    entry.family(),
+                    Some(&entry.logical_identity),
+                    at,
+                    entry.valid_from,
+                )?;
                 if endpoints[slot].is_none_or(|previous| previous.id < entry.id) {
                     endpoints[slot] = Some(entry);
                 }

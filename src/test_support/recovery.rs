@@ -5,8 +5,12 @@ use hubuum_domain::{
 };
 use hubuum_storage_core::*;
 use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
-use hubuum_storage_postgres::{PostgresFaultController, PostgresFaultPoint, PostgresPool};
+use hubuum_storage_memory::MemoryStorage;
+use hubuum_storage_postgres::{
+    PostgresFaultController, PostgresFaultPoint, PostgresPool, PostgresStorage,
+};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::errors::ApiError;
@@ -56,6 +60,17 @@ impl RestoreContractFixture {
         &self.storage
     }
 
+    /// Separate runtime-role productive handle for native read certification;
+    /// the memory adapter preserves its existing complete opaque instance.
+    pub fn runtime_read_storage(&self, runtime_pool: PostgresPool) -> StorageHandle {
+        match self.kind {
+            StorageBackendKind::Postgres => {
+                super::restore_contract_storage(self.kind, runtime_pool)
+            }
+            StorageBackendKind::Memory => self.storage.clone(),
+        }
+    }
+
     /// Close the fixture collection through the ordinary observed mutation boundary.
     pub async fn close_collection_history(&self) -> Result<(), ApiError> {
         self.storage
@@ -88,8 +103,71 @@ impl RestoreContractFixture {
             .into_value())
     }
 
+    pub async fn create_collection(
+        &self,
+        name: &str,
+        description: &str,
+    ) -> Result<StorageCollection, ApiError> {
+        Ok(self
+            .storage
+            .collection_store()
+            .create_collection(
+                StorageCollectionCreate::new(
+                    name,
+                    description,
+                    hubuum_domain::GroupId::new(1)?,
+                    None,
+                ),
+                &EventContext::system(),
+            )
+            .await?
+            .into_value())
+    }
+
+    pub async fn update_collection_description(
+        &self,
+        id: CollectionId,
+        description: String,
+    ) -> Result<(), ApiError> {
+        self.storage
+            .collection_store()
+            .update_collection(
+                id,
+                StorageCollectionUpdate::new(None, Some(description)),
+                &EventContext::system(),
+            )
+            .await?
+            .into_value();
+        Ok(())
+    }
+
     pub async fn new(kind: StorageBackendKind, pool: PostgresPool) -> Result<Self, ApiError> {
         let storage = super::restore_contract_storage(kind, pool);
+        Self::with_storage(kind, storage).await
+    }
+
+    /// Observe the complete restore/reapplication service on either real adapter.
+    pub async fn new_with_observer(
+        kind: StorageBackendKind,
+        pool: PostgresPool,
+        observer: Arc<dyn StorageObserver>,
+    ) -> Result<Self, ApiError> {
+        let storage = match kind {
+            StorageBackendKind::Postgres => StorageHandle::from_registered_backend_with_observer(
+                PostgresStorage::unobserved(pool),
+                observer,
+            ),
+            StorageBackendKind::Memory => {
+                StorageHandle::from_registered_backend_with_observer(MemoryStorage::new(), observer)
+            }
+        };
+        Self::with_storage(kind, storage).await
+    }
+
+    async fn with_storage(
+        kind: StorageBackendKind,
+        storage: StorageHandle,
+    ) -> Result<Self, ApiError> {
         let original = storage
             .capture_backup_replay(
                 true,
@@ -358,6 +436,18 @@ impl RestoreContractFixture {
             .await
             .map(|_| ())
     }
+    /// Restore fixture data while retaining and independently protecting the
+    /// actual current authority; fixture-only control teardown follows later.
+    pub async fn restore_original_with_recovery(
+        &self,
+        directory: &std::path::Path,
+        key: &std::path::Path,
+    ) -> Result<(), ApiError> {
+        self.restore_with_recovery(self.original.clone(), directory, key)
+            .await
+            .map(|_| ())
+    }
+
     pub async fn capture(&self, include_history: bool) -> Result<StorageBackupSnapshot, ApiError> {
         let document = capture_backup_document(
             &self.storage,
@@ -377,6 +467,55 @@ impl RestoreContractFixture {
         snapshot: StorageBackupSnapshot,
     ) -> Result<StorageRestoreIdentityContext, ApiError> {
         restore_snapshot(&self.storage, snapshot).await
+    }
+
+    /// Initialize fixture repositories only before any policy or decision exists.
+    pub async fn initialize_recovery(
+        &self,
+        directory: &std::path::Path,
+        key: &std::path::Path,
+    ) -> Result<(), ApiError> {
+        crate::services::deletion_recovery::checkpoint(&self.storage, directory, key, true)
+            .await
+            .map(|_| ())
+    }
+
+    /// Use the same explicit protected recovery options as administrator restore.
+    pub async fn restore_with_recovery(
+        &self,
+        snapshot: StorageBackupSnapshot,
+        directory: &std::path::Path,
+        key: &std::path::Path,
+    ) -> Result<StorageRestoreIdentityContext, ApiError> {
+        crate::services::deletion_recovery::checkpoint(&self.storage, directory, key, false)
+            .await?;
+        let options: crate::config::ControlRecoveryOptions =
+            serde_json::from_value(json!({"directory":directory,"key":key})).map_err(|_| {
+                ApiError::InternalServerError("Invalid recovery fixture paths".into())
+            })?;
+        restore_versioned_snapshot_with_recovery(
+            &self.storage,
+            snapshot,
+            CURRENT_BACKUP_VERSION,
+            Some(&options),
+        )
+        .await
+    }
+
+    /// Retry only the supported post-commit phase; never replay committed data
+    /// or mark a committed restore failed to make fixture cleanup succeed.
+    pub async fn resume_restore_with_recovery(
+        &self,
+        directory: &std::path::Path,
+        key: &std::path::Path,
+    ) -> Result<(), ApiError> {
+        let options: crate::config::ControlRecoveryOptions =
+            serde_json::from_value(json!({"directory":directory,"key":key})).map_err(|_| {
+                ApiError::InternalServerError("Invalid recovery fixture paths".into())
+            })?;
+        crate::restores::execute_confirmed_restore_with_recovery(&self.storage, &options)
+            .await
+            .map(|_| ())
     }
 
     pub async fn restore_legacy(
@@ -668,13 +807,28 @@ async fn restore_versioned_snapshot(
     snapshot: StorageBackupSnapshot,
     version: i32,
 ) -> Result<StorageRestoreIdentityContext, ApiError> {
+    restore_versioned_snapshot_with_recovery(storage, snapshot, version, None).await
+}
+
+async fn restore_versioned_snapshot_with_recovery(
+    storage: &StorageHandle,
+    snapshot: StorageBackupSnapshot,
+    version: i32,
+    recovery: Option<&crate::config::ControlRecoveryOptions>,
+) -> Result<StorageRestoreIdentityContext, ApiError> {
     let (id, capability) = stage_and_confirm_snapshot(storage, snapshot, version).await?;
     let context = storage
         .get_restore_artifact(id)
         .await?
         .identity_context()
         .map_err(|error| ApiError::Conflict(error.to_string()))?;
-    if !execute_confirmed_restore(storage).await? {
+    let executed = match recovery {
+        Some(options) => {
+            crate::restores::execute_confirmed_restore_with_recovery(storage, options).await?
+        }
+        None => execute_confirmed_restore(storage).await?,
+    };
+    if !executed {
         return Err(ApiError::InternalServerError(
             "restore did not execute".to_string(),
         ));
@@ -736,4 +890,92 @@ async fn stage_and_confirm_snapshot(
     )
     .await?;
     Ok((id, capability))
+}
+
+/// Prepare retained read-gate evidence through the real protected recovery
+/// pipeline. This fixture never enables generic expiry or removes history.
+pub async fn prepare_history_read_fixture(
+    storage: &StorageHandle,
+    required: HistoryLifecycleAuthority,
+    directory: &std::path::Path,
+    key: &std::path::Path,
+) -> Result<(), ApiError> {
+    crate::services::deletion_recovery::prepare_history_read_fixture(
+        storage, required, directory, key,
+    )
+    .await
+}
+
+/// Provision one simple original/current history pair through the configured
+/// opaque handle; integration tests never select native stores themselves.
+pub async fn create_history_remapping_object(
+    storage: &StorageHandle,
+    group: hubuum_domain::GroupId,
+    name: &str,
+) -> Result<StorageObject, ApiError> {
+    let event = EventContext::system();
+    let collection = storage
+        .collection_store()
+        .create_collection(
+            StorageCollectionCreate::new(format!("{name}_collection"), "remap", group, None),
+            &event,
+        )
+        .await?
+        .into_value();
+    let class = storage
+        .class_store()
+        .create_class(
+            StorageClassCreate::builder(format!("{name}_class"), collection.id(), "remap").build(),
+            &event,
+        )
+        .await?
+        .into_value();
+    let resolved = storage
+        .class_store()
+        .resolve_class(StorageClassSelector::Id(class.id()))
+        .await?;
+    let object = storage
+        .object_store()
+        .create_object(
+            &resolved,
+            StorageObjectCreate::new(
+                "original_member",
+                collection.id(),
+                class.id(),
+                json!({"private_payload":true}),
+                "private description",
+            ),
+            &event,
+        )
+        .await?
+        .into_value();
+    Ok(storage
+        .object_store()
+        .update_object(
+            &storage.object_store().get_object(object.id()).await?,
+            StorageObjectUpdate::builder()
+                .name(Some("current_member".into()))
+                .build(),
+            &event,
+        )
+        .await?
+        .into_value())
+}
+
+/// Exercise the configured application authorization service, never a backend
+/// policy substitute, while preserving its caller's existing execution scope.
+pub async fn history_population_as_of(
+    context: &crate::permissions::AppContext,
+    subject: &(impl crate::traits::AuthzSubject + ?Sized),
+    query: StorageClassObjectsAsOfQuery,
+) -> Result<(Vec<crate::models::HubuumObjectHistory>, i64), ApiError> {
+    crate::services::history::class_objects_as_of(context, subject, None, query).await
+}
+
+/// Explicit configured policy composition for integration read-gate fixtures.
+pub fn history_application_context(
+    storage: StorageHandle,
+    permissions: std::sync::Arc<dyn crate::permissions::PermissionBackend>,
+) -> crate::permissions::AppContext {
+    crate::permissions::AppContext::new(storage, permissions)
 }

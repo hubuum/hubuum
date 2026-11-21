@@ -860,15 +860,19 @@ impl StorageTaskBuilder {
         if self.task.checkpoint.is_some()
             && (!matches!(
                 self.task.kind,
-                StorageTaskKind::Export | StorageTaskKind::Backup
+                StorageTaskKind::Export | StorageTaskKind::Backup | StorageTaskKind::HistoryExpiry
             ) || self.task.status.is_terminal()
                 || self.task.started_at.is_none()
                 || self.task.attempt_count == 0
                 || self.task.control.deadline().is_none()
-                || self.task.control.phase() != StorageTaskExecutionPhase::Uncommitted)
+                || !matches!(
+                    self.task.control.phase(),
+                    StorageTaskExecutionPhase::Uncommitted
+                        | StorageTaskExecutionPhase::HistoryAuthority
+                ))
         {
             return Err(StorageValidationError::invalid(
-                "A checkpoint requires a started, uncommitted export or backup task with its original deadline",
+                "A checkpoint requires a started export, backup or history expiry task with its original deadline and supported execution phase",
             ));
         }
         if self.task.updated_at < self.task.created_at {
@@ -927,7 +931,9 @@ impl StorageTaskBuilder {
                 (self.task.started_at.is_none()
                     || (matches!(
                         self.task.kind,
-                        StorageTaskKind::SchemaValidation | StorageTaskKind::Reindex
+                        StorageTaskKind::SchemaValidation
+                            | StorageTaskKind::Reindex
+                            | StorageTaskKind::HistoryExpiry
                     ) && self.task.attempt_count > 0)
                     || self.task.checkpoint.is_some())
                     && self.task.finished_at.is_none()

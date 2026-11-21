@@ -60,7 +60,7 @@ use hubuum_events_core::{Action, EntityType, EventEntityId, MutationProvenance, 
 use hubuum_storage_postgres::PostgresStorage;
 use hubuum_storage_postgres::{capture_queries, with_connection};
 
-async fn create_worker_test_task(
+pub(super) async fn create_worker_test_task(
     context: &TestContext,
     kind: StorageTaskKind,
     payload: serde_json::Value,
@@ -111,7 +111,7 @@ async fn create_worker_test_task_with_trace(
     .expect("worker test task should be loadable")
 }
 
-async fn claim_worker_test_task(
+pub(super) async fn claim_worker_test_task(
     context: &TestContext,
     task_id: i32,
 ) -> crate::services::tasks::ClaimedTask {

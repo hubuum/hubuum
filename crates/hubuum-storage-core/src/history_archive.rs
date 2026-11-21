@@ -19,9 +19,12 @@ use crate::{
     ApplicationFence, StorageBackupHistorySection, StorageCollection, StorageError,
     StorageExecutionPermit, StorageIdentityEvidence, StorageRecordIdentity, StorageRecordMetadata,
 };
+use execution::HistoryArchiveExecutionBinding;
 
-/// A combined runtime must not advertise online history expiry while this is true.
-pub const HISTORY_ARCHIVE_REQUIRES_LEGACY_RUNTIME: bool = true;
+/// The combined adapter supports original publication/producer ownership for
+/// both protocols. Production must still qualify every producer before enabling
+/// online expiry; this compatibility fact does not authorize physical deletion.
+pub const HISTORY_ARCHIVE_REQUIRES_LEGACY_RUNTIME: bool = false;
 pub const HISTORY_ARCHIVE_ROW_BYTES: usize = 4 * 1024 * 1024;
 pub const HISTORY_ARCHIVE_CATALOG_BYTES: usize = 4 * 1024 * 1024;
 pub const HISTORY_ARCHIVE_MAX_VERSIONS: usize = 10_000;
@@ -574,6 +577,7 @@ pub struct HistoryArchiveBudgetEvidence {
     captured_at: DateTime<Utc>,
     available_until: DateTime<Utc>,
     authorization: Option<HistoryArchiveAuthorization>,
+    execution: Option<HistoryArchiveExecutionBinding>,
 }
 impl std::fmt::Debug for HistoryArchiveBudgetEvidence {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -581,6 +585,17 @@ impl std::fmt::Debug for HistoryArchiveBudgetEvidence {
     }
 }
 impl HistoryArchiveBudgetEvidence {
+    pub fn validate_execution(
+        &self,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<(), StorageError> {
+        if self.execution.as_ref() != Some(&permit.binding()) {
+            return Err(StorageError::unavailable(
+                "Archive budget facts belong to a different original producer",
+            ));
+        }
+        Ok(())
+    }
     pub fn authorization(&self) -> Option<&HistoryArchiveAuthorization> {
         self.authorization.as_ref()
     }
@@ -627,6 +642,8 @@ pub struct HistoryArchiveCapture {
     archive: Option<HistoryArchiveDescriptor>,
     coverage: HistoryArchiveCoverageState,
     reserved_read_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    execution: Option<HistoryArchiveExecutionBinding>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -644,6 +661,8 @@ struct CaptureInput {
     archive: Option<HistoryArchiveDescriptor>,
     coverage: HistoryArchiveCoverageState,
     reserved_read_bytes: u64,
+    #[serde(default)]
+    execution: Option<HistoryArchiveExecutionBinding>,
 }
 impl TryFrom<CaptureInput> for HistoryArchiveCapture {
     type Error = StorageError;
@@ -662,6 +681,7 @@ impl TryFrom<CaptureInput> for HistoryArchiveCapture {
             archive: raw.archive,
             coverage: raw.coverage,
             reserved_read_bytes: raw.reserved_read_bytes,
+            execution: raw.execution,
         };
         capture.validate()?;
         Ok(capture)
@@ -677,7 +697,7 @@ impl HistoryArchiveCapture {
         now: DateTime<Utc>,
     ) -> Result<Self, StorageError> {
         let owner = permit.owner().ok_or_else(|| {
-            StorageError::unavailable("Archive reads require a registered Legacy runtime")
+            StorageError::unavailable("Archive reads require their original registered runtime")
         })?;
         catalog.validate()?;
         if request.generation != catalog.generation
@@ -811,6 +831,7 @@ impl HistoryArchiveCapture {
             archive,
             coverage,
             reserved_read_bytes: 0,
+            execution: None,
         };
         capture.validate()?;
         Ok(capture)
@@ -826,6 +847,7 @@ impl HistoryArchiveCapture {
             captured_at: self.captured_at,
             available_until: self.available_until,
             authorization: self.authorization.clone(),
+            execution: self.execution.clone(),
         })
     }
     pub const fn id(&self) -> Uuid {
@@ -874,6 +896,13 @@ impl HistoryArchiveCapture {
     }
     fn validate(&self) -> Result<(), StorageError> {
         if self
+            .execution
+            .as_ref()
+            .is_some_and(|binding| !binding.valid_for(self.fence))
+        {
+            return Err(invalid("Invalid persisted archive execution binding"));
+        }
+        if self
             .authorization
             .as_ref()
             .is_some_and(|facts| facts.identity().resource() != self.selection.resource())
@@ -921,6 +950,41 @@ impl HistoryArchiveCapture {
         history_archive_encoded_bytes(self, HISTORY_ARCHIVE_CAPTURE_BYTES)?;
         Ok(())
     }
+    /// Trusted adapter initial preparation, before persistence. Reload never
+    /// calls this to replace an old capture's binding with a fresh producer.
+    pub fn bind_execution(
+        mut self,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<Self, StorageError> {
+        self.validate_access(self.principal, permit.application())?;
+        let binding = permit.binding();
+        if self.execution.as_ref().is_some_and(|old| old != &binding) {
+            return Err(StorageError::unavailable(
+                "Archive capture cannot change execution ownership",
+            ));
+        }
+        self.execution = Some(binding);
+        if let Err(error) = self.validate() {
+            return Err(if error.kind() == crate::StorageErrorKind::InputTooLarge {
+                self.staging_budget_error()
+            } else {
+                error
+            });
+        }
+        Ok(self)
+    }
+    pub fn validate_execution(
+        &self,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<(), StorageError> {
+        self.validate_access(self.principal, permit.application())?;
+        if self.execution.as_ref() != Some(&permit.binding()) {
+            return Err(StorageError::unavailable(
+                "Archive capture belongs to a different original producer",
+            ));
+        }
+        Ok(())
+    }
     pub fn validate_access(
         &self,
         principal: PrincipalIdentity,
@@ -957,36 +1021,56 @@ impl HistoryArchiveCapture {
 
 #[async_trait]
 pub trait HistoryArchiveStorage: Send + Sync {
+    async fn claim_history_archive_publication(
+        &self,
+        request: HistoryArchivePublicationRequest,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<HistoryArchivePublicationClaim, StorageError>;
+
     async fn history_archive_catalog(
         &self,
         resource: ResourceIdentity,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCatalog, StorageError>;
     async fn publish_history_archive(
         &self,
         expected: HistoryArchiveCatalogGeneration,
         descriptors: Vec<HistoryArchiveDescriptor>,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCatalog, StorageError>;
     async fn capture_history_archive(
         &self,
         request: HistoryArchiveCaptureRequest,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCapture, StorageError>;
     async fn history_archive_capture(
         &self,
         id: Uuid,
         principal: PrincipalIdentity,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<Option<HistoryArchiveCapture>, StorageError>;
     async fn reserve_history_archive_read(
         &self,
         id: Uuid,
         principal: PrincipalIdentity,
         bytes: u64,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCapture, StorageError>;
 }
 
 #[cfg(test)]
 mod tests;
+
+mod execution;
+pub use execution::{
+    HistoryArchiveExecutionOwner, HistoryArchiveExecutionPermit, HistoryArchiveExecutionSettlement,
+};
+
+mod publication;
+pub use publication::{
+    HISTORY_ARCHIVE_PUBLICATION_BYTES, HISTORY_ARCHIVE_PUBLICATION_MANIFEST_BYTES,
+    HistoryArchivePublicationClaim, HistoryArchivePublicationManifest,
+};
+
+mod artifact_intent;
+pub use artifact_intent::{HistoryArchiveEncodedArtifactIntent, HistoryArchivePublicationRequest};

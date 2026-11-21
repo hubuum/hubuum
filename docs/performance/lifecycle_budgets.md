@@ -92,6 +92,73 @@ throughput. RSS includes process baseline; a two-slot worker still has one
 Resident space and cumulative transferred bytes have different lifetimes.
 Artifacts larger than H4 stream across bounded batches without memory aggregation.
 
+### Gated scoped-history worker qualification
+
+`tests/python/run.py integration history-expiry` runs the production task claim,
+heartbeat, dispatch and finalization pipeline through a test-only integration
+entry point. Production registration and the standard worker kind set stay
+gated. The dedicated workflow uses `ci:validate` temporarily to measure local
+and shared profiles, with one warm-up and five fresh processes per input shape.
+Each measured process has two CPUs, a 512 MiB memory ceiling and total pool
+capacity eight (two administrative/control connections and six runtime
+connections). Local runs use one combined API/worker process with one task slot;
+shared runs use two separate combined API/worker processes with two slots each.
+Both run the ordinary HTTP router and middleware with two HTTP workers.
+PostgreSQL has the declared profile resources. A separate unmeasured fixture
+coordinator prepares the shared database and later performs offline restore;
+its memory never substitutes for worker RSS evidence.
+Before task execution, each replica opens a real authenticated, near-4 MiB
+collection response through a constrained receive window. The recipe requires
+native admission with no physical removals while these earlier responses remain
+blocked, then drops the clients and requires both worker replicas to execute
+queued work, retire their HTTP publications and finish all original tasks.
+Every retained admitted batch must also have complete receipts before workers
+stop. Shared runs retain native database round-trip samples and require their
+p95 to remain within the profile's 2 ms ceiling.
+
+The row shape reaches 1,000 scanned native source rows, recorded in committed
+task events. Ineligible baseline rows still consume the scan budget, so selected
+membership may be smaller. The byte shape approaches 16 MiB using full
+native encoded-row sizes, independently summed before deletion. The large-row
+shape exercises supported rows approaching the 4 MiB backup ceiling. The
+oversized shape retains a row above the 16 MiB expiry ceiling, verifies an
+explicit task warning and verifies backup rejection before publication.
+Selection also stops before exhausting the retained journal or control envelope,
+including reserved removal/cancellation and hold completion evidence. Concurrent
+workers can therefore admit smaller fixed manifests without evicting earlier
+obligations or increasing any ceiling. An eligible first member that cannot fit
+has an explicit capacity failure; an empty scan needs no new journal capacity.
+The authority shape measures the real composite publisher with 10,000 task
+receipts, maximum-count task/deletion fixtures and history filled to its actual
+completion-reserved admission ceiling, then populated with terminal receipts.
+It records encoded sizes and includes fixture construction in RSS and elapsed
+time. This supported count/reservation shape does not represent every possible
+4 MiB history encoding; its synthetic receipts provide serialization and resource
+evidence.
+The supported worker shapes also restore the actual full-history image through
+signed coordinator replay and check original receipts and quarantine release.
+Unsupported backup rows and the authority serialization probe do not claim that
+replay evidence. Raw samples retain
+20 ms RSS and kernel high-water measurements, including process baseline, and
+reject unexpected child processes. Build features and binary digests accompany
+the results. These finite runs do not establish P6's steady-state lag or orphan
+cleanup target, which remains explicitly deferred to #561.
+
+The `census` shape additionally keeps 100,800 unselected collection-history
+versions (100,400 closed and 400 open) beside the ordinary scoped workload.
+The versions come from normal native writes on distinct resources. Every original
+age-or-size task must record unavailable size accounting, admit age-only members
+and finish under the existing phase bounds. The combined processes retain the
+same HTTP slow-consumer, slot, pool, CPU and memory requirements. Signed
+full-history restore must preserve the filler version fingerprint, original
+removal receipts, active hold and unchanged pressure state. Current/open exposure
+must remain within the existing 1,000-row/1-MiB recovery budget; no limit is raised.
+Larger live inventories still require explicit reconciliation under quarantine.
+The narrow
+`ci:history-envelope` label measures this row-census shape only; it does not
+qualify the seven-shape profile or the combined maximum-metadata and
+maximum-count authority envelopes.
+
 ## Performance targets
 
 Use five fresh runs after declared warm-up; report all samples and median/p95

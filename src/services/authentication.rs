@@ -1,5 +1,5 @@
 use chrono::SubsecRound;
-use hubuum_domain::PrincipalId;
+use hubuum_domain::{PrincipalId, PrincipalKind};
 use hubuum_events_core::EventSubject;
 use tracing::{Instrument, field, info_span};
 
@@ -123,7 +123,9 @@ impl ExecutionPrincipal {
         crate::auth::refresh_principal_if_needed(context, principal_id).await?;
         let principal =
             crate::models::principal::load_principal_by_id(context, principal_id).await?;
-        if crate::services::identity::is_service_account_disabled(context, principal_id).await? {
+        if principal.kind == PrincipalKind::ServiceAccount
+            && crate::services::identity::is_service_account_disabled(context, principal_id).await?
+        {
             return Err(ApiError::Forbidden(
                 "Submitting service account is disabled; task will not run".to_string(),
             ));
@@ -204,10 +206,51 @@ pub(crate) async fn issue_login_token(
 #[cfg(test)]
 mod tests {
     use super::ExecutionPrincipal;
+    use crate::errors::ApiError;
+    use crate::events::EventContext;
     use crate::storage::{ExternalIdentityStorage, StorageExternalUserSync, storage_handle};
+    use crate::storage::{
+        ServiceAccountStorage, StorageHandle, StorageServiceAccountCreate,
+        StorageServiceAccountMutation,
+    };
     use crate::tests::TestContext;
     use diesel_async::RunQueryDsl;
     use hubuum_storage_postgres::with_transaction;
+
+    #[rstest::rstest]
+    #[case::enabled(false)]
+    #[case::disabled(true)]
+    #[actix_web::test]
+    async fn execution_rechecks_service_account_enabled_state(#[case] disabled: bool) {
+        let storage = StorageHandle::memory();
+        let account = storage
+            .create_service_account(StorageServiceAccountCreate::new(
+                "execution",
+                "task principal",
+                hubuum_domain::GroupId::new(1).unwrap(),
+                None,
+                EventContext::system(),
+            ))
+            .await
+            .unwrap()
+            .into_value();
+        if disabled {
+            storage
+                .disable_service_account(StorageServiceAccountMutation::new(
+                    account.id(),
+                    EventContext::system(),
+                ))
+                .await
+                .unwrap()
+                .into_value();
+        }
+        let result = ExecutionPrincipal::resolve(&storage, account.id().id()).await;
+        if disabled {
+            assert!(matches!(result, Err(ApiError::Forbidden(_))));
+        } else {
+            assert_eq!(result.unwrap().id(), account.id().id());
+        }
+    }
 
     #[actix_web::test]
     async fn execution_rejects_external_identity_without_a_refresh_provider() {

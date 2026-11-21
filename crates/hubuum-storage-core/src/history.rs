@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
     ClassId, CollectionId, HistoryRecordId, ObjectId, PrincipalId, PrincipalIdentity, ResourceId,
-    ResourceRevision, TaskId,
+    ResourceIdentity, ResourceRevision, TaskId,
 };
 use hubuum_query::{FilterField, QueryOptions, SortParam};
 
@@ -231,6 +231,7 @@ fn validate_object_history_options(
 pub struct StorageClassObjectsAsOfQuery {
     class_id: ClassId,
     at: DateTime<Utc>,
+    expected_resource: Option<ResourceIdentity>,
     options: QueryOptions,
     collection_scope: StorageHistoryCollectionScope,
     include_deleted: bool,
@@ -251,6 +252,7 @@ impl StorageClassObjectsAsOfQuery {
         Ok(Self {
             class_id,
             at,
+            expected_resource: None,
             options,
             collection_scope: StorageHistoryCollectionScope::All,
             include_deleted: false,
@@ -269,8 +271,23 @@ impl StorageClassObjectsAsOfQuery {
     }
 
     pub fn with_options(self, options: QueryOptions) -> Result<Self, StorageValidationError> {
-        Ok(Self::try_new(self.class_id, self.at, options)?
-            .visibility(self.collection_scope, self.include_deleted))
+        let mut next = Self::try_new(self.class_id, self.at, options)?
+            .visibility(self.collection_scope, self.include_deleted);
+        next.expected_resource = self.expected_resource;
+        Ok(next)
+    }
+
+    /// Original canonical class selection, resolved before population I/O.
+    /// This expected identity is not authorization; the adapter rechecks it
+    /// under the original productive scope before COUNT or page selection.
+    #[must_use]
+    pub const fn for_resource(mut self, resource: ResourceIdentity) -> Self {
+        self.expected_resource = Some(resource);
+        self
+    }
+
+    pub const fn expected_resource(&self) -> Option<ResourceIdentity> {
+        self.expected_resource
     }
 
     #[must_use]
@@ -300,12 +317,30 @@ impl StorageClassObjectsAsOfQuery {
 pub struct StorageHistoryAsOfQuery {
     entity_id: ResourceId,
     at: DateTime<Utc>,
+    expected_resource: Option<ResourceIdentity>,
 }
 
 impl StorageHistoryAsOfQuery {
     #[must_use]
     pub const fn new(entity_id: ResourceId, at: DateTime<Utc>) -> Self {
-        Self { entity_id, at }
+        Self {
+            entity_id,
+            at,
+            expected_resource: None,
+        }
+    }
+
+    /// Original canonical identity resolved by the caller before history I/O.
+    /// This is an expected selection input, not authorization or a validated
+    /// read proof. The adapter must compare it in its productive snapshot.
+    #[must_use]
+    pub const fn for_resource(mut self, resource: ResourceIdentity) -> Self {
+        self.expected_resource = Some(resource);
+        self
+    }
+
+    pub const fn expected_resource(&self) -> Option<ResourceIdentity> {
+        self.expected_resource
     }
 
     #[must_use]
@@ -320,6 +355,7 @@ pub struct StorageObjectHistoryAsOfQuery {
     object_id: ObjectId,
     class_id: ClassId,
     at: DateTime<Utc>,
+    expected_resource: Option<ResourceIdentity>,
 }
 
 impl StorageObjectHistoryAsOfQuery {
@@ -329,7 +365,20 @@ impl StorageObjectHistoryAsOfQuery {
             object_id,
             class_id,
             at,
+            expected_resource: None,
         }
+    }
+
+    /// Original canonical object identity captured before historical I/O.
+    /// This selection binding is not an authorization or publication proof.
+    #[must_use]
+    pub const fn for_resource(mut self, resource: ResourceIdentity) -> Self {
+        self.expected_resource = Some(resource);
+        self
+    }
+
+    pub const fn expected_resource(&self) -> Option<ResourceIdentity> {
+        self.expected_resource
     }
 
     #[must_use]
@@ -810,6 +859,27 @@ mod tests {
                 CollectionId::new(5).unwrap(),
             ])
         );
+    }
+
+    #[test]
+    fn population_pagination_preserves_original_class_and_visibility() {
+        let original = ResourceIdentity::generate();
+        let scope = StorageHistoryCollectionScope::Visible(vec![CollectionId::new(3).unwrap()]);
+        let query = StorageClassObjectsAsOfQuery::try_new(
+            ClassId::new(7).unwrap(),
+            Utc::now(),
+            QueryOptions::new(vec![], vec![], Some(10), None, false).unwrap(),
+        )
+        .unwrap()
+        .for_resource(original)
+        .visibility(scope.clone(), true);
+        let next = query
+            .with_options(QueryOptions::new(vec![], vec![], Some(2), None, true).unwrap())
+            .unwrap();
+        assert_eq!(next.expected_resource(), Some(original));
+        assert_eq!(next.collection_scope(), &scope);
+        assert!(next.include_deleted());
+        assert_eq!(next.options().limit(), Some(2));
     }
 
     #[test]

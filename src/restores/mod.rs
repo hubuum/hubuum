@@ -8,8 +8,8 @@ use hubuum_storage_core::{
 };
 pub use maintenance::MaintenanceActivityGuard;
 pub(crate) use maintenance::{
-    active_maintenance_work, application_work_is_settled, track_application_completion,
-    with_application_work,
+    ApplicationWorkCompletion, active_maintenance_work, application_work_is_settled,
+    track_application_completion, with_application_work,
 };
 
 use hubuum_domain::{JsonSchemaLimits, PrincipalId};

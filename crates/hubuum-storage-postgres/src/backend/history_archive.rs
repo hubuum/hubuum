@@ -2,7 +2,9 @@
 use super::*;
 use crate::PostgresConnection;
 use chrono::{DateTime, Utc};
-use diesel::sql_types::{BigInt, Bool, Jsonb, Nullable, Text, Timestamptz, Uuid as SqlUuid};
+use diesel::sql_types::{
+    BigInt, Binary, Bool, Jsonb, Nullable, Text, Timestamptz, Uuid as SqlUuid,
+};
 use diesel::{QueryableByName, sql_query};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{PrincipalIdentity, ResourceIdentity};
@@ -107,6 +109,15 @@ async fn hot_on(
     if selection.family() != StorageBackupHistorySection::CollectionHistory {
         return Ok(HistoryArchiveInput::Unavailable);
     }
+    let visible =
+        sql_query("SELECT public.hubuum_history_archive_resource_available($1) AS allowed")
+            .bind::<SqlUuid, _>(Uuid::from_bytes(*selection.resource().as_bytes()))
+            .get_result::<Allowed>(connection)
+            .await?
+            .allowed;
+    if !visible {
+        return Ok(HistoryArchiveInput::Unavailable);
+    }
     let (version, at) = match selection.point() {
         HistoryArchivePoint::Exact { version } => (
             Some(Uuid::from_bytes(*version.as_bytes()).to_string()),
@@ -183,13 +194,59 @@ async fn save_on(
     .await?;
     Ok(saved.allowed)
 }
+// Returns metadata only inside the transaction; a usable affine claim is
+// constructed by the adapter AFTER with_history_archive_claim_transaction commits.
+async fn publication_claim_on(
+    connection: &mut PostgresConnection,
+    request: HistoryArchivePublicationRequest,
+    permit: &HistoryArchiveExecutionPermit,
+) -> Result<HistoryArchivePublicationRequest, PostgresStorageError> {
+    let manifest = request.manifest();
+    let capture = capture_on(
+        connection,
+        manifest.capture(),
+        manifest.principal(),
+        true,
+        permit.application(),
+    )
+    .await?
+    .ok_or_else(|| PostgresStorageError::unavailable("Original archive capture is unavailable"))?;
+    let now = sql_query("SELECT clock_timestamp() AS recorded_at")
+        .get_result::<Clock>(connection)
+        .await?
+        .recorded_at;
+    request.validate_capture(&capture, permit, now)?;
+    let producer = permit.producer();
+    let saved = sql_query("SELECT public.hubuum_history_archive_publication_claim($1,$2,$3,$4,$5,$6,$7,$8,$9) AS allowed")
+                .bind::<SqlUuid,_>(producer.parent().id())
+                .bind::<SqlUuid,_>(producer.parent().ownership_token())
+                .bind::<SqlUuid,_>(producer.id())
+                .bind::<SqlUuid,_>(producer.ownership_token())
+                .bind::<SqlUuid,_>(permit.application().owner().expect("validated original owner").id())
+                .bind::<SqlUuid,_>(permit.application().owner().expect("validated original owner").ownership_token())
+                    .bind::<Binary, _>(history_archive_encoded_bytes(manifest, HISTORY_ARCHIVE_PUBLICATION_MANIFEST_BYTES)?)
+    .bind::<Binary, _>(request.intent().encoded())
+                .bind::<Jsonb,_>(json(&capture,HISTORY_ARCHIVE_CAPTURE_BYTES)?)
+                .get_result::<Allowed>(connection).await?;
+    if !saved.allowed {
+        return Err(PostgresStorageError::conflict(
+            "Publication claim is unavailable or already assigned",
+        ));
+    }
+    Ok::<_, PostgresStorageError>(request)
+}
+
 impl PostgresStorage {
-    fn require_archive_owner(&self, permit: &StorageExecutionPermit) -> Result<(), StorageError> {
-        if permit.owner().is_none()
+    fn require_archive_owner(
+        &self,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<(), StorageError> {
+        permit.validate_scope(&self.current_execution_scope())?;
+        if permit.application().owner().is_none()
             || self
                 .runtime()
                 .runtime_owner()
-                .is_some_and(|bound| Some(bound) != permit.owner())
+                .is_some_and(|bound| Some(bound) != permit.application().owner())
         {
             return Err(StorageError::unavailable(
                 "Archive requires its original registered Legacy owner",
@@ -200,15 +257,32 @@ impl PostgresStorage {
 }
 #[async_trait]
 impl HistoryArchiveStorage for PostgresStorage {
+    async fn claim_history_archive_publication(
+        &self,
+        request: HistoryArchivePublicationRequest,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<HistoryArchivePublicationClaim, StorageError> {
+        self.require_archive_owner(permit)?;
+        let request = self
+            .runtime()
+            .with_history_archive_claim_transaction(permit, async move |connection| {
+                publication_claim_on(connection, request, permit).await
+            })
+            .await
+            .map_err(StorageError::from)?;
+        // No usable claim escapes the transaction before its commit succeeds.
+        HistoryArchivePublicationClaim::from_committed(request, permit)
+    }
+
     async fn history_archive_catalog(
         &self,
         resource: ResourceIdentity,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCatalog, StorageError> {
         self.require_archive_owner(permit)?;
         self.runtime()
-            .with_connection(async |connection| {
-                catalog_on(connection, resource, false, permit).await
+            .with_history_archive_connection(permit, async |connection| {
+                catalog_on(connection, resource, false, permit.application()).await
             })
             .await
             .map_err(StorageError::from)
@@ -217,17 +291,17 @@ impl HistoryArchiveStorage for PostgresStorage {
         &self,
         expected: HistoryArchiveCatalogGeneration,
         descriptors: Vec<HistoryArchiveDescriptor>,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCatalog, StorageError> {
         self.require_archive_owner(permit)?;
+        self.runtime().with_history_archive_transaction(permit, async move |connection| {
         let resource = descriptors
             .as_slice()
             .first()
             .ok_or_else(|| StorageError::invalid_input("Empty archive publication"))?
             .identity()
             .resource();
-        self.runtime().with_transaction(async move |connection| {
-            let current=catalog_on(connection,resource,true,permit).await?;
+            let current=catalog_on(connection,resource,true,permit.application()).await?;
             let next=current.publish(expected,descriptors.clone())?;
             let mut scanned=history_archive_encoded_bytes(&descriptors,HISTORY_ARCHIVE_BATCH_BYTES)?.len();
             for descriptor in &descriptors {
@@ -239,7 +313,7 @@ impl HistoryArchiveStorage for PostgresStorage {
                 if !descriptor.matches_row(&hot)? { return Err(PostgresStorageError::conflict("Catalog content differs from retained primary version")); }
             }
             let saved=fenced!(sql_query("SELECT public.hubuum_history_archive_catalog_publish($1,$2,$3,$4,$5,$6,$7) AS allowed")
-                .bind::<SqlUuid,_>(Uuid::from_bytes(*resource.as_bytes())).bind::<BigInt,_>(expected.value()).bind::<Jsonb,_>(json(&next,HISTORY_ARCHIVE_CATALOG_BYTES)?),permit).get_result::<Allowed>(connection).await?;
+                .bind::<SqlUuid,_>(Uuid::from_bytes(*resource.as_bytes())).bind::<BigInt,_>(expected.value()).bind::<Jsonb,_>(json(&next,HISTORY_ARCHIVE_CATALOG_BYTES)?),permit.application()).get_result::<Allowed>(connection).await?;
             if !saved.allowed { return Err(PostgresStorageError::conflict("Catalog generation changed")); }
             Ok::<_,PostgresStorageError>(next)
         }).await.map_err(StorageError::from)
@@ -247,22 +321,33 @@ impl HistoryArchiveStorage for PostgresStorage {
     async fn capture_history_archive(
         &self,
         request: HistoryArchiveCaptureRequest,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCapture, StorageError> {
         self.require_archive_owner(permit)?;
         let (capture, saved) = self
             .runtime()
-            .with_transaction(async move |connection| {
-                let catalog =
-                    catalog_on(connection, request.selection().resource(), true, permit).await?;
+            .with_history_archive_transaction(permit, async move |connection| {
+                let catalog = catalog_on(
+                    connection,
+                    request.selection().resource(),
+                    true,
+                    permit.application(),
+                )
+                .await?;
                 let input = hot_on(connection, request.selection()).await?;
                 let now = sql_query("SELECT clock_timestamp() AS recorded_at")
                     .get_result::<Clock>(connection)
                     .await?
                     .recorded_at;
-                let capture =
-                    HistoryArchiveCapture::capture(request, &catalog, permit, input, now)?;
-                let saved = save_on(connection, &capture, None, permit).await?;
+                let capture = HistoryArchiveCapture::capture(
+                    request,
+                    &catalog,
+                    permit.application(),
+                    input,
+                    now,
+                )?
+                .bind_execution(permit)?;
+                let saved = save_on(connection, &capture, None, permit.application()).await?;
                 // Capacity rejection must commit the bounded expired-pin cleanup
                 // so later admissions can reclaim the next batch.
                 Ok::<_, PostgresStorageError>((capture, saved))
@@ -279,12 +364,17 @@ impl HistoryArchiveStorage for PostgresStorage {
         &self,
         id: Uuid,
         principal: PrincipalIdentity,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<Option<HistoryArchiveCapture>, StorageError> {
         self.require_archive_owner(permit)?;
         self.runtime()
-            .with_connection(async |connection| {
-                capture_on(connection, id, principal, false, permit).await
+            .with_history_archive_connection(permit, async |connection| {
+                let capture =
+                    capture_on(connection, id, principal, false, permit.application()).await?;
+                if let Some(capture) = &capture {
+                    capture.validate_execution(permit)?;
+                }
+                Ok::<_, PostgresStorageError>(capture)
             })
             .await
             .map_err(StorageError::from)
@@ -294,19 +384,20 @@ impl HistoryArchiveStorage for PostgresStorage {
         id: Uuid,
         principal: PrincipalIdentity,
         bytes: u64,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCapture, StorageError> {
         self.require_archive_owner(permit)?;
         self.runtime()
-            .with_transaction(async |connection| {
-                let mut capture = capture_on(connection, id, principal, true, permit)
+            .with_history_archive_transaction(permit, async |connection| {
+                let mut capture = capture_on(connection, id, principal, true, permit.application())
                     .await?
                     .ok_or_else(|| {
                         PostgresStorageError::not_found("Archive capture unavailable")
                     })?;
+                capture.validate_execution(permit)?;
                 let expected = capture.reserved_read_bytes() as i64;
                 capture.reserve(bytes, Utc::now())?;
-                if !save_on(connection, &capture, Some(expected), permit).await? {
+                if !save_on(connection, &capture, Some(expected), permit.application()).await? {
                     return Err(PostgresStorageError::from(capture.staging_budget_error()));
                 }
                 Ok::<_, PostgresStorageError>(capture)

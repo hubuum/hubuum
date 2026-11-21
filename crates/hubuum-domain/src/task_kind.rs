@@ -9,10 +9,11 @@ pub enum TaskKind {
     RemoteCall,
     SchemaValidation,
     SchemaProfiling,
+    HistoryExpiry,
 }
 
 impl TaskKind {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Import,
         Self::Export,
         Self::Backup,
@@ -20,6 +21,7 @@ impl TaskKind {
         Self::RemoteCall,
         Self::SchemaValidation,
         Self::SchemaProfiling,
+        Self::HistoryExpiry,
     ];
 
     #[must_use]
@@ -32,6 +34,7 @@ impl TaskKind {
             Self::SchemaValidation => "schema_validation",
             Self::SchemaProfiling => "schema_profiling",
             Self::RemoteCall => "remote_call",
+            Self::HistoryExpiry => "history_expiry",
         }
     }
 
@@ -45,6 +48,7 @@ impl TaskKind {
             "schema_validation" => Some(Self::SchemaValidation),
             "schema_profiling" => Some(Self::SchemaProfiling),
             "remote_call" => Some(Self::RemoteCall),
+            "history_expiry" => Some(Self::HistoryExpiry),
             _ => None,
         }
     }

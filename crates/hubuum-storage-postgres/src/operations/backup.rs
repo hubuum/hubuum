@@ -563,7 +563,23 @@ pub(super) fn retained_export_output_sql() -> String {
 impl SnapshotFilter {
     fn sql(self, table: &str) -> Result<Option<String>, PostgresStorageError> {
         let predicate = match (self, table) {
-            (Self::All, _) => return Ok(None),
+            (Self::All, _) => {
+                let family = match table {
+                    "collections_history" => "collection",
+                    "hubuumclass_history" => "class",
+                    "hubuumobject_history" => "object",
+                    "hubuumclass_relation_history" => "class_relation",
+                    "hubuumobject_relation_history" => "object_relation",
+                    "export_templates_history" => "export_template",
+                    "remote_targets_history" => "remote_target",
+                    "computed_field_history" => "computed_definitions",
+                    "class_schema_history" => "class_schema",
+                    _ => return Ok(None),
+                };
+                format!(
+                    "public.hubuum_history_version_visible('{family}',snapshot_row.logical_identity)"
+                )
+            }
             (Self::TerminalTasks, "tasks") => {
                 format!("status IN {TERMINAL_STATUSES} AND public.hubuum_task_details_visible(id)")
             }

@@ -9,6 +9,7 @@ pub(super) fn capture(
     payload: &Value,
 ) -> Result<StorageTaskMetadata, ApiError> {
     let data = match kind {
+        StorageTaskKind::HistoryExpiry => json!({"kind":"history_expiry"}),
         StorageTaskKind::Import => json!({
             "kind": "import", "dry_run": payload["dry_run"].as_bool().unwrap_or(false),
             "atomicity": payload["mode"]["atomicity"].as_str().unwrap_or("strict"),

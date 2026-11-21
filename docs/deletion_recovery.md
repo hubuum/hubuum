@@ -369,6 +369,17 @@ while the coordinator invokes protected reapplication. Only exact checkpointed
 completion releases maintenance and application access. A post-commit failure
 keeps the restored image quarantined for an administrator retry.
 
+For scoped history expiry, protected reapplication uses the original finite
+manifest before advancing the generic deletion fence. It requires the current
+quarantined image, authenticated independent authority, and positive runtime and
+publication drain. Full-history backups preserve exact version UUIDs: replay
+rechecks current policy, holds, intervals and dependencies before deleting each
+retained exact copy. A first receipt requires one actual deletion. An absent
+already-receipted copy is idempotent; a reintroduced copy is removed again without
+changing its first receipt, clock or canonical audit identity. Old task leases
+and application images cannot authorize replay. Exposure release separately
+rejects incomplete receipts and remaining excluded exact or derived copies.
+
 A history-free backup is not evidence that deleted versions are absent: current
 object identities are checked too. Synthesized baseline versions retain their
 original source version and all earlier restore sources in validated identity

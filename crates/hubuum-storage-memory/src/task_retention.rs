@@ -116,7 +116,7 @@ impl TaskRetentionStorage for MemoryStorage {
                 .with_task_reapplication(proof.clone())
                 .map_err(invalid_contract_value)?;
         }
-        Ok(capture)
+        Ok(capture.with_history_lifecycle(state.history_lifecycle.authority().clone()))
     }
     async fn commit_task_control(
         &self,

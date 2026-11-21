@@ -1,36 +1,19 @@
-use diesel::QueryableByName;
-use diesel::sql_types::{BigInt, Jsonb, Nullable};
+use diesel::{ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
+use serde_json::Value;
 
 use super::*;
+use crate::schema::{
+    class_schema_history, class_schema_revisions, collections, collections_history,
+    computed_field_definitions, computed_field_history, event_sinks, event_subscriptions,
+    export_templates, export_templates_history, groups, hubuumclass, hubuumclass_history,
+    hubuumclass_relation, hubuumclass_relation_history, hubuumobject, hubuumobject_history,
+    hubuumobject_relation, hubuumobject_relation_history, identity_scopes, principals,
+    query_usage_declarations, remote_targets, remote_targets_history, tasks,
+};
 
 #[cfg(all(test, feature = "integration-test-support"))]
 mod tests;
-
-#[derive(QueryableByName)]
-struct IdentityRow {
-    #[diesel(sql_type = Nullable<Jsonb>)]
-    logical_identity: Option<serde_json::Value>,
-}
-
-fn resource_table(kind: StorageIdentityResourceKind) -> &'static str {
-    use StorageIdentityResourceKind as Kind;
-    match kind {
-        Kind::Collection => "collections",
-        Kind::Class => "hubuumclass",
-        Kind::Object => "hubuumobject",
-        Kind::ClassRelation => "hubuumclass_relation",
-        Kind::ObjectRelation => "hubuumobject_relation",
-        Kind::ExportTemplate => "export_templates",
-        Kind::RemoteTarget => "remote_targets",
-        Kind::IdentityScope => "identity_scopes",
-        Kind::Group => "groups",
-        Kind::ComputedDefinition => "computed_field_definitions",
-        Kind::EventSink => "event_sinks",
-        Kind::EventSubscription => "event_subscriptions",
-        Kind::QueryUsageDeclaration => "query_usage_declarations",
-    }
-}
 
 #[async_trait]
 impl LogicalIdentityStorage for PostgresStorage {
@@ -39,55 +22,72 @@ impl LogicalIdentityStorage for PostgresStorage {
         target: StorageIdentityTarget,
     ) -> Result<StorageIdentityEvidence, StorageError> {
         use StorageIdentityHistoryKind as History;
+        use StorageIdentityResourceKind as Resource;
         use StorageIdentityTarget as Target;
-        let (table, key, id, revision) = match target {
-            Target::Resource { kind, id } => (resource_table(kind), "id", i64::from(id.id()), 0),
-            Target::Principal(id) => ("principals", "id", i64::from(id.id()), 0),
-            Target::Task(id) => ("tasks", "id", i64::from(id.id()), 0),
-            Target::History { kind, id } => {
-                let table = match kind {
-                    History::Collection => "collections_history",
-                    History::Class => "hubuumclass_history",
-                    History::Object => "hubuumobject_history",
-                    History::ClassRelation => "hubuumclass_relation_history",
-                    History::ObjectRelation => "hubuumobject_relation_history",
-                    History::ExportTemplate => "export_templates_history",
-                    History::RemoteTarget => "remote_targets_history",
-                    History::ComputedDefinitions => "computed_field_history",
-                    History::ClassSchema => "class_schema_history",
-                };
-                let key = if kind == History::ClassSchema {
-                    "id"
-                } else {
-                    "history_id"
-                };
-                (table, key, id.id(), 0)
-            }
-            Target::SchemaRevision { class_id, revision } => (
-                "class_schema_revisions",
-                "class_id",
-                i64::from(class_id.id()),
-                revision.get(),
-            ),
-        };
-        // Identifiers come only from the closed target vocabulary; values are
-        // bound, and the evidence is read together in one database snapshot.
-        let predicate = if revision == 0 {
-            "$2 = 0"
-        } else {
-            "revision = $2"
-        };
-        let sql =
-            format!("SELECT logical_identity FROM public.{table} WHERE {key} = $1 AND {predicate}");
-        let evidence = self
-            .runtime
+
+        self.runtime
             .with_connection(async move |connection| {
-                let row = diesel::sql_query(sql)
-                    .bind::<BigInt, _>(id)
-                    .bind::<BigInt, _>(revision)
-                    .get_result::<IdentityRow>(connection)
-                    .await?;
-                let value = row.logical_identity.ok_or_else(|| {
+                // The closed target vocabulary selects generated Diesel tables
+                // and their native key types. Values remain bound parameters.
+                macro_rules! read {
+                    ($table:ident, $key:ident, $id:expr) => {
+                        $table::table
+                            .filter($table::$key.eq($id))
+                            .select($table::logical_identity)
+                            .get_result::<Option<Value>>(connection)
+                            .await?
+                    };
+                }
+                let value = match target {
+                    Target::Resource { kind, id } => match kind {
+                        Resource::Collection => read!(collections, id, id.id()),
+                        Resource::Class => read!(hubuumclass, id, id.id()),
+                        Resource::Object => read!(hubuumobject, id, id.id()),
+                        Resource::ClassRelation => read!(hubuumclass_relation, id, id.id()),
+                        Resource::ObjectRelation => read!(hubuumobject_relation, id, id.id()),
+                        Resource::ExportTemplate => read!(export_templates, id, id.id()),
+                        Resource::RemoteTarget => read!(remote_targets, id, id.id()),
+                        Resource::IdentityScope => read!(identity_scopes, id, id.id()),
+                        Resource::Group => read!(groups, id, id.id()),
+                        Resource::ComputedDefinition => {
+                            read!(computed_field_definitions, id, id.id())
+                        }
+                        Resource::EventSink => read!(event_sinks, id, id.id()),
+                        Resource::EventSubscription => read!(event_subscriptions, id, id.id()),
+                        Resource::QueryUsageDeclaration => {
+                            read!(query_usage_declarations, id, id.id())
+                        }
+                    },
+                    Target::Principal(id) => read!(principals, id, id.id()),
+                    Target::Task(id) => read!(tasks, id, id.id()),
+                    Target::History { kind, id } => match kind {
+                        History::Collection => read!(collections_history, history_id, id.id()),
+                        History::Class => read!(hubuumclass_history, history_id, id.id()),
+                        History::Object => read!(hubuumobject_history, history_id, id.id()),
+                        History::ClassRelation => {
+                            read!(hubuumclass_relation_history, history_id, id.id())
+                        }
+                        History::ObjectRelation => {
+                            read!(hubuumobject_relation_history, history_id, id.id())
+                        }
+                        History::ExportTemplate => {
+                            read!(export_templates_history, history_id, id.id())
+                        }
+                        History::RemoteTarget => read!(remote_targets_history, history_id, id.id()),
+                        History::ComputedDefinitions => {
+                            read!(computed_field_history, history_id, id.id())
+                        }
+                        History::ClassSchema => read!(class_schema_history, id, id.id()),
+                    },
+                    Target::SchemaRevision { class_id, revision } => {
+                        class_schema_revisions::table
+                            .find((class_id.id(), revision.get()))
+                            .select(class_schema_revisions::logical_identity)
+                            .get_result::<Option<Value>>(connection)
+                            .await?
+                    }
+                };
+                let value = value.ok_or_else(|| {
                     PostgresStorageError::database("Logical identity backfill is incomplete")
                 })?;
                 let evidence: StorageIdentityEvidence =
@@ -99,7 +99,7 @@ impl LogicalIdentityStorage for PostgresStorage {
                     })?;
                 crate::validate_persisted("logical identity target", evidence.for_target(target))
             })
-            .await?;
-        Ok(evidence)
+            .await
+            .map_err(Into::into)
     }
 }

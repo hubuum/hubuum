@@ -54,7 +54,8 @@ pub struct HistoricalClassObjects {
         (status = 400, description = "Invalid query or mismatched continuation", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse),
-        (status = 404, description = "Class history unavailable at this instant", body = ApiErrorResponse)
+        (status = 404, description = "Class history unavailable or authorized population history expired", body = ApiErrorResponse),
+        (status = 503, description = "Original identity or retained population coverage cannot be proved", body = ApiErrorResponse)
     )
 )]
 #[get("/{class_id}/objects/history/as-of")]

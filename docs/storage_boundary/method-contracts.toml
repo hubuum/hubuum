@@ -1163,3 +1163,20 @@ profile = "task_retention_candidates"
 effect = "batch_read"
 carrier = "TaskPurgeBudget"
 profile = "task_retention_candidates"
+
+[query_profiles.history_lifecycle_candidates]
+shape = "candidate"
+filters = ["history family", "captured deployment/collection/class UUID scope"]
+sorts = ["adapter-owned stable identity order within the selected family"]
+cursor = "none; bounded inspection is not an expiry progress watermark"
+visibility = "internal authorized administrator policy inspection; both captured relation endpoints govern inclusion"
+count = "scanned and unresolved source counts, not an unbounded total"
+snapshot = "one native source snapshot; application later rechecks issued authority/incarnation/deletion fences"
+bounds = "at most 1000 source rows and 1 MiB identity metadata without payloads; a full limit or unresolved identity is bounded"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
+[methods."HistoryLifecycleStorage::scan_history_lifecycle"]
+effect = "candidate_read"
+carrier = "HistoryLifecycleScan"
+profile = "history_lifecycle_candidates"

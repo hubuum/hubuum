@@ -75,152 +75,201 @@ async fn logical_restore_preserves_catalog_and_invalidates_old_captures(
             .capture_application_execution(Some(registration.owner()))
             .await
             .unwrap();
-        let setup = async {
-            let selection = HistoryArchiveSelection::new(
-                StorageBackupHistorySection::CollectionHistory,
-                identity.resource(),
-                HistoryArchivePoint::Exact {
-                    version: identity.version(),
-                },
-            );
-            let captured = storage
-                .capture_history_archive(
-                    HistoryArchiveCaptureRequest::new(
-                        principal,
-                        selection,
-                        HistoryArchiveCatalogGeneration::default(),
-                        Utc::now() + TimeDelta::hours(1),
-                    ),
-                    &permit,
-                )
-                .await?;
-            let row = captured
-                .hot()
-                .ok_or_else(|| StorageError::not_found("Closed fixture version unavailable"))?;
-            let destination_id = DestinationId::generate();
-            let destination = Destination::new(
-                destination_id,
-                format!("restore-history-{}", String::from(destination_id)),
-            )?;
-            storage.register_destination(&destination).await?;
-            let scope = SegmentScope::new(
-                StorageBackupHistorySection::CollectionHistory,
-                identity.resource(),
-            );
-            let record = SegmentRecord::new(
-                scope.clone(),
-                VersionInterval::new(
-                    identity.resource(),
-                    identity.version(),
-                    row.valid_from(),
-                    row.valid_to().unwrap(),
-                )?,
-                row.payload().clone(),
-            );
-            let segment = HistorySegment::stage(
-                storage,
-                ArtifactIdentity::new(destination.id()),
-                scope,
-                vec![record],
+        let work = storage
+            .run_in_scope(
+                StorageExecutionScope::default().with_application_access(permit),
+                storage.admit_history_archive_execution(),
             )
-            .await?;
-            let reference = storage.publish(segment.proof()).await?;
-            let descriptor = HistoryArchiveDescriptor::new(row, vec![], 1, reference)?;
-            let published = storage
-                .publish_history_archive(
-                    HistoryArchiveCatalogGeneration::default(),
-                    vec![descriptor],
-                    &permit,
+            .await
+            .unwrap();
+        let permit = work.permit().clone();
+        let setup = storage
+            .run_in_scope(permit.execution_scope().clone(), async {
+                let selection = HistoryArchiveSelection::new(
+                    StorageBackupHistorySection::CollectionHistory,
+                    identity.resource(),
+                    HistoryArchivePoint::Exact {
+                        version: identity.version(),
+                    },
+                );
+                let captured = storage
+                    .capture_history_archive(
+                        HistoryArchiveCaptureRequest::new(
+                            principal,
+                            selection,
+                            HistoryArchiveCatalogGeneration::default(),
+                            Utc::now() + TimeDelta::hours(1),
+                        ),
+                        &permit,
+                    )
+                    .await?;
+                let row = captured
+                    .hot()
+                    .ok_or_else(|| StorageError::not_found("Closed fixture version unavailable"))?;
+                let destination_id = DestinationId::generate();
+                let destination = Destination::new(
+                    destination_id,
+                    format!("restore-history-{}", String::from(destination_id)),
+                )?;
+                storage.register_destination(&destination).await?;
+                let scope = SegmentScope::new(
+                    StorageBackupHistorySection::CollectionHistory,
+                    identity.resource(),
+                );
+                let record = SegmentRecord::new(
+                    scope.clone(),
+                    VersionInterval::new(
+                        identity.resource(),
+                        identity.version(),
+                        row.valid_from(),
+                        row.valid_to().unwrap(),
+                    )?,
+                    row.payload().clone(),
+                );
+                let segment = HistorySegment::stage(
+                    storage,
+                    ArtifactIdentity::new(destination.id()),
+                    scope,
+                    vec![record],
                 )
                 .await?;
-            Ok::<_, Box<dyn std::error::Error>>((captured, published))
-        }
-        .await;
-        storage.unregister_runtime(registration).await.unwrap();
+                let reference = storage.publish(segment.proof()).await?;
+                let descriptor = HistoryArchiveDescriptor::new(row, vec![], 1, reference)?;
+                let published = storage
+                    .publish_history_archive(
+                        HistoryArchiveCatalogGeneration::default(),
+                        vec![descriptor],
+                        &permit,
+                    )
+                    .await?;
+                Ok::<_, Box<dyn std::error::Error>>((captured, published))
+            })
+            .await;
+        // Only joined fixture stage/readback/publish/CAS, no transport output.
+        // Failure retains ownership rather than manufacturing completion.
         let (captured, published) = setup.unwrap();
+        let completed = work
+            .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+            .await
+            .unwrap();
+        storage
+            .settle_history_producer(completed.producer())
+            .await
+            .unwrap();
+        storage
+            .settle_history_publication(completed.into_publication())
+            .await
+            .unwrap();
+        storage.unregister_runtime(registration).await.unwrap();
         fixture.restore(source).await.unwrap();
         let new_registration = storage.register_runtime().await.unwrap();
         let new_permit = storage
             .capture_application_execution(Some(new_registration.owner()))
             .await
             .unwrap();
-        let catalog = storage
-            .history_archive_catalog(identity.resource(), &new_permit)
-            .await;
-        let restored_capture = if older_open_hot || closure_gap_micros.is_some() {
-            let selection = HistoryArchiveSelection::new(
-                StorageBackupHistorySection::CollectionHistory,
-                identity.resource(),
-                HistoryArchivePoint::AsOf {
-                    at: closure_gap_micros.map_or_else(
-                        || captured.hot().unwrap().valid_from(),
-                        |micros| {
-                            captured.hot().unwrap().valid_to().unwrap()
-                                + TimeDelta::microseconds(micros)
-                        },
-                    ),
-                },
-            );
-            Some(
-                storage
-                    .capture_history_archive(
-                        HistoryArchiveCaptureRequest::new(
-                            principal,
-                            selection,
-                            published.generation(),
-                            Utc::now() + TimeDelta::hours(1),
-                        ),
-                        &new_permit,
-                    )
-                    .await,
+        let new_work = storage
+            .run_in_scope(
+                StorageExecutionScope::default().with_application_access(new_permit),
+                storage.admit_history_archive_execution(),
             )
-        } else if !old_input {
-            Some(
-                storage
-                    .capture_history_archive(
-                        HistoryArchiveCaptureRequest::new(
-                            principal,
-                            HistoryArchiveSelection::new(
-                                StorageBackupHistorySection::CollectionHistory,
-                                identity.resource(),
-                                HistoryArchivePoint::Exact {
-                                    version: identity.version(),
+            .await
+            .unwrap();
+        let new_permit = new_work.permit().clone();
+        storage
+            .run_in_scope(new_permit.execution_scope().clone(), async {
+                let catalog = storage
+                    .history_archive_catalog(identity.resource(), &new_permit)
+                    .await;
+                let restored_capture = if older_open_hot || closure_gap_micros.is_some() {
+                    let selection = HistoryArchiveSelection::new(
+                        StorageBackupHistorySection::CollectionHistory,
+                        identity.resource(),
+                        HistoryArchivePoint::AsOf {
+                            at: closure_gap_micros.map_or_else(
+                                || captured.hot().unwrap().valid_from(),
+                                |micros| {
+                                    captured.hot().unwrap().valid_to().unwrap()
+                                        + TimeDelta::microseconds(micros)
                                 },
                             ),
-                            published.generation(),
-                            Utc::now() + TimeDelta::hours(1),
-                        ),
-                        &new_permit,
+                        },
+                    );
+                    Some(
+                        storage
+                            .capture_history_archive(
+                                HistoryArchiveCaptureRequest::new(
+                                    principal,
+                                    selection,
+                                    published.generation(),
+                                    Utc::now() + TimeDelta::hours(1),
+                                ),
+                                &new_permit,
+                            )
+                            .await,
                     )
-                    .await,
-            )
-        } else {
-            None
-        };
-        let old = storage
-            .history_archive_capture(captured.id(), principal, &new_permit)
+                } else if !old_input {
+                    Some(
+                        storage
+                            .capture_history_archive(
+                                HistoryArchiveCaptureRequest::new(
+                                    principal,
+                                    HistoryArchiveSelection::new(
+                                        StorageBackupHistorySection::CollectionHistory,
+                                        identity.resource(),
+                                        HistoryArchivePoint::Exact {
+                                            version: identity.version(),
+                                        },
+                                    ),
+                                    published.generation(),
+                                    Utc::now() + TimeDelta::hours(1),
+                                ),
+                                &new_permit,
+                            )
+                            .await,
+                    )
+                } else {
+                    None
+                };
+                let old = storage
+                    .history_archive_capture(captured.id(), principal, &new_permit)
+                    .await;
+                if older_open_hot || closure_gap_micros.is_some() {
+                    let restored = restored_capture.unwrap().unwrap();
+                    assert_eq!(restored.selection().resource(), identity.resource());
+                    assert_eq!(restored.generation(), published.generation());
+                    assert_eq!(
+                        restored.coverage(Utc::now()),
+                        HistoryArchiveCoverageState::Unavailable
+                    );
+                } else if old_input {
+                    assert!(old.is_err());
+                } else {
+                    let compatible = restored_capture.unwrap().unwrap();
+                    assert_eq!(
+                        compatible.coverage(Utc::now()),
+                        HistoryArchiveCoverageState::Complete
+                    );
+                    assert_eq!(compatible.hot().unwrap().identity(), identity);
+                    assert_eq!(compatible.archive(), published.versions().first());
+                    assert_eq!(catalog.unwrap(), published);
+                }
+            })
             .await;
+        // Acceptance assertions above finish before exact owned cleanup; no
+        // authority reset, stale permit refresh or old-capture rebinding.
+        let completed = new_work
+            .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+            .await
+            .unwrap();
+        storage
+            .settle_history_producer(completed.producer())
+            .await
+            .unwrap();
+        storage
+            .settle_history_publication(completed.into_publication())
+            .await
+            .unwrap();
         storage.unregister_runtime(new_registration).await.unwrap();
-        if older_open_hot || closure_gap_micros.is_some() {
-            let restored = restored_capture.unwrap().unwrap();
-            assert_eq!(restored.selection().resource(), identity.resource());
-            assert_eq!(restored.generation(), published.generation());
-            assert_eq!(
-                restored.coverage(Utc::now()),
-                HistoryArchiveCoverageState::Unavailable
-            );
-        } else if old_input {
-            assert!(old.is_err());
-        } else {
-            let compatible = restored_capture.unwrap().unwrap();
-            assert_eq!(
-                compatible.coverage(Utc::now()),
-                HistoryArchiveCoverageState::Complete
-            );
-            assert_eq!(compatible.hot().unwrap().identity(), identity);
-            assert_eq!(compatible.archive(), published.versions().first());
-            assert_eq!(catalog.unwrap(), published);
-        }
     })
     .await;
 }

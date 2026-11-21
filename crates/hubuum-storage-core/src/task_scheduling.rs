@@ -28,7 +28,10 @@ impl TaskWorkerId {
 pub struct TaskWorkerKinds(u8);
 
 impl TaskWorkerKinds {
-    pub const ALL: Self = Self(127);
+    pub const ALL: Self = Self(u8::MAX);
+    /// Enabled application kinds. Expiry execution remains behind its safety
+    /// gates and must not be advertised by production workers yet.
+    pub const STANDARD: Self = Self(127);
 
     pub fn new(kinds: &[StorageTaskKind]) -> Result<Self, StorageValidationError> {
         if kinds.is_empty() {
@@ -157,7 +160,7 @@ pub struct TaskSchedulingPolicy {
     internal_reserved_slots: u16,
     promotion_interval: u16,
     overdue_seconds: u32,
-    weights: [TaskKindWeight; 7],
+    weights: [TaskKindWeight; 8],
 }
 
 #[derive(Deserialize)]
@@ -167,7 +170,7 @@ struct SchedulingWire {
     internal_reserved_slots: u16,
     promotion_interval: u16,
     overdue_seconds: u32,
-    weights: [TaskKindWeight; 7],
+    weights: [TaskKindWeight; 8],
 }
 
 impl TryFrom<SchedulingWire> for TaskSchedulingPolicy {

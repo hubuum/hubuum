@@ -5,6 +5,7 @@ pub(crate) async fn execute_export_task<C>(
     task: &ClaimedTask,
     subject: &ExecutionPrincipal,
     scopes: Option<&TokenScope>,
+    publication: &mut crate::services::artifacts::TaskPublication,
 ) -> Result<TaskStatus, ApiError>
 where
     C: AuthorizationContext,
@@ -73,7 +74,7 @@ where
         .and_utc();
     let spool_bytes = crate::services::artifacts::spool_limit();
     let output = crate::services::artifacts::TaskOutput::begin(
-        backend,
+        publication,
         task,
         max_bytes,
         spool_bytes.max(max_bytes as u64),
@@ -135,10 +136,7 @@ where
         finish_export_task(pool, task, artifact, total_metric).await
     }
     .await;
-    if result.is_err() || matches!(result, Ok(TaskStatus::Cancelled)) {
-        let _ = output.store.abort(&output.identity).await;
-    }
-    result
+    output.finish(publication, result).await
 }
 
 struct ExportRenderInput {

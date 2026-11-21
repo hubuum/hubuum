@@ -735,7 +735,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         E::EventSink => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ExternalIdentitySync => &[A::Succeeded, A::Failed],
         E::Restore => &[A::Succeeded],
-        E::Lifecycle => &[A::Queued, A::Updated, A::Succeeded],
+        E::Lifecycle => &[A::Created, A::Queued, A::Updated, A::Succeeded],
         E::Authentication => &[A::Updated, A::Revoked, A::Succeeded],
         E::RemoteTarget => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ClassRelation => &[A::Created, A::Updated, A::Deleted],

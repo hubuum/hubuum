@@ -86,7 +86,7 @@ impl ApiRequestAdmissionStorage for PostgresStorage {
             StorageError::api_request(hubuum_storage_core::ApiRequestRejection::InputBytes)
         })?;
         self.runtime()
-            .with_transaction(async move |connection| {
+            .with_api_request_admission(async move |connection| {
                 let row = diesel::sql_query(
                     "SELECT public.hubuum_api_request_admit($1,$2,$3) AS material",
                 )

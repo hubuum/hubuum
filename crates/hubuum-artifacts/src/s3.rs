@@ -17,9 +17,12 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use crate::owned::{StoreScope, authorize};
 use crate::{
-    ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReference,
-    ArtifactResult, ArtifactStore, Destination, VerifiedArtifact,
+    ArtifactCreationIntent, ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest,
+    ArtifactReference, ArtifactResult, ArtifactStore, Destination, OwnedArtifact,
+    OwnedArtifactAdmission, OwnedArtifactPhase, OwnedArtifactResolution, OwnedArtifactResult,
+    OwnedArtifactStore, VerifiedArtifact,
 };
 
 const CONTROL_BYTES: usize = 8 * 1024 * 1024;
@@ -72,6 +75,8 @@ pub struct S3ArtifactStore {
     client: Client,
     config: Arc<S3Config>,
     cursor: Arc<Mutex<Option<String>>>,
+    #[cfg(test)]
+    lose_save_reply: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -85,6 +90,7 @@ struct Block {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 enum Phase {
+    Preparing,
     Staging,
     Sealed,
     Published,
@@ -94,6 +100,8 @@ enum Phase {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct State {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner: Option<ArtifactCreationIntent>,
     identity: ArtifactIdentity,
     limits: [u64; 4],
     expires: u64,
@@ -115,7 +123,11 @@ impl State {
             .blocks(state.limits[2].try_into().map_err(|_| invalid())?)
             .manifest_bytes(state.limits[3].try_into().map_err(|_| invalid())?)
             .build()?;
-        if limits.blocks() > MAX_BLOCKS
+        if (state.owner.is_none() && state.phase == Phase::Preparing)
+            || state.owner.as_ref().is_some_and(|intent| {
+                intent.identity() != &state.identity || intent.limits() != limits
+            })
+            || limits.blocks() > MAX_BLOCKS
             || limits.manifest_bytes() > ArtifactLimits::default().manifest_bytes()
             || state.blocks.len() > limits.blocks() as usize
             || state.blocks.iter().any(|block| {
@@ -144,13 +156,14 @@ impl State {
         Ok(state)
     }
     fn writable(&self) -> ArtifactResult<()> {
-        if self.phase != Phase::Staging || self.expires <= now()? {
+        if self.phase != Phase::Staging || (self.owner.is_none() && self.expires <= now()?) {
             return Err(conflict());
         }
         Ok(())
     }
     fn readable(&self) -> ArtifactResult<()> {
-        if self.phase == Phase::Published || (self.phase == Phase::Sealed && self.expires > now()?)
+        if self.phase == Phase::Published
+            || (self.phase == Phase::Sealed && (self.owner.is_some() || self.expires > now()?))
         {
             Ok(())
         } else {
@@ -266,6 +279,8 @@ impl S3ArtifactStore {
             client,
             config: Arc::new(config),
             cursor: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
+            lose_save_reply: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         store
             .register_destination(&store.config.destination)
@@ -386,7 +401,17 @@ impl S3ArtifactStore {
             ));
         }
         self.put_control(&self.state_key(&state.identity), bytes, etag)
-            .await
+            .await?;
+        #[cfg(test)]
+        if self
+            .lose_save_reply
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(ArtifactError::Backend(
+                "injected committed state reply loss".into(),
+            ));
+        }
+        Ok(())
     }
 
     async fn put_control(
@@ -602,7 +627,10 @@ impl S3ArtifactStore {
     }
 
     async fn reconcile(&self, state: &mut State, etag: &str) -> ArtifactResult<u32> {
-        if matches!(state.phase, Phase::Staging | Phase::Sealed) {
+        if matches!(
+            state.phase,
+            Phase::Preparing | Phase::Staging | Phase::Sealed
+        ) {
             return Ok(0);
         }
         let prefix = self.data_prefix(&state.identity);
@@ -759,6 +787,12 @@ impl ArtifactStore for S3ArtifactStore {
                 "S3 v1 supports at most 1,024 blocks and a 256 KiB manifest".into(),
             ));
         }
+        // Reject an owned or rebound attempt before even reserving legacy IDs.
+        match self.load(identity).await {
+            Ok((state, _)) if state.owner.is_some() => return Err(conflict()),
+            Ok(_) | Err(ArtifactError::NotFound) => {}
+            Err(error) => return Err(error),
+        }
         let ownership = serde_json::to_vec(identity).map_err(|_| conflict())?;
         for (kind, id) in [
             ("attempts", String::from(identity.attempt())),
@@ -774,6 +808,7 @@ impl ArtifactStore for S3ArtifactStore {
             limits.manifest_bytes() as u64,
         ];
         let state = State {
+            owner: None,
             identity: identity.clone(),
             limits,
             expires: now()? + 3600,
@@ -786,6 +821,9 @@ impl ArtifactStore for S3ArtifactStore {
             Ok(()) => Ok(()),
             Err(ArtifactError::Conflict(_)) => {
                 let (old, _) = self.load(identity).await?;
+                if old.owner.is_some() {
+                    return Err(conflict());
+                }
                 old.writable()?;
                 if old.limits == limits {
                     Ok(())
@@ -803,74 +841,11 @@ impl ArtifactStore for S3ArtifactStore {
         ordinal: u32,
         bytes: &[u8],
     ) -> ArtifactResult<()> {
-        let (mut state, etag) = self.load(identity).await?;
-        state.writable()?;
-        if let Some(old) = state.blocks.get(ordinal as usize) {
-            return if old.bytes as usize == bytes.len()
-                && old.sha256 == <[u8; 32]>::from(Sha256::digest(bytes))
-            {
-                Ok(())
-            } else {
-                Err(conflict())
-            };
-        }
-        let size: u64 = state.blocks.iter().map(|block| block.bytes as u64).sum();
-        if ordinal as usize != state.blocks.len()
-            || bytes.is_empty()
-            || bytes.len() as u64 > state.limits[0]
-            || size + bytes.len() as u64 > state.limits[1]
-            || ordinal as u64 >= state.limits[2]
-            || 117 + (ordinal as u64 + 1) * 36 > state.limits[3]
-            || state
-                .blocks
-                .last()
-                .is_some_and(|block| block.bytes as u64 != state.limits[0])
-        {
-            return Err(ArtifactError::Limit(
-                "S3 artifact block is out of order or exceeds attempt limits".into(),
-            ));
-        }
-        state.blocks.push(self.upload(identity, bytes).await?);
-        // Recheck expiry after transfer. The CAS also fences concurrent abort.
-        state.writable()?;
-        self.save(&state, Some(&etag)).await
+        self.append_checked(identity, ordinal, bytes, None).await
     }
-
     async fn seal(&self, manifest: &ArtifactManifest) -> ArtifactResult<()> {
-        let (mut state, etag) = self.load(manifest.identity()).await?;
-        if matches!(state.phase, Phase::Sealed | Phase::Published) {
-            state.readable()?;
-            return if state.manifest.as_deref() == Some(manifest.encode().as_slice()) {
-                Ok(())
-            } else {
-                Err(conflict())
-            };
-        }
-        state.writable()?;
-        let bytes = manifest.encode();
-        let limits = ArtifactLimits::builder()
-            .block_bytes(state.limits[0] as u32)
-            .artifact_bytes(state.limits[1])
-            .blocks(state.limits[2] as u32)
-            .manifest_bytes(state.limits[3] as u32)
-            .build()?;
-        ArtifactManifest::decode(&bytes, manifest.identity(), limits)?;
-        if manifest.block_bytes() as u64 != state.limits[0]
-            || manifest.block_count() as usize != state.blocks.len()
-            || manifest.byte_size()
-                != state
-                    .blocks
-                    .iter()
-                    .map(|block| block.bytes as u64)
-                    .sum::<u64>()
-        {
-            return Err(conflict());
-        }
-        state.phase = Phase::Sealed;
-        state.manifest = Some(bytes);
-        self.save(&state, Some(&etag)).await
+        self.seal_checked(manifest, None).await
     }
-
     async fn manifest(&self, identity: &ArtifactIdentity) -> ArtifactResult<Vec<u8>> {
         let (state, _) = self.load(identity).await?;
         state.readable()?;
@@ -923,30 +898,11 @@ impl ArtifactStore for S3ArtifactStore {
     }
 
     async fn publish(&self, verified: &VerifiedArtifact) -> ArtifactResult<ArtifactReference> {
-        let (mut state, etag) = self.load(verified.manifest().identity()).await?;
-        state.readable()?;
-        if state.manifest.as_deref() != Some(verified.manifest().encode().as_slice()) {
-            return Err(conflict());
-        }
-        if state.phase != Phase::Published {
-            state.phase = Phase::Published;
-            self.save(&state, Some(&etag)).await?;
-        }
-        Ok(verified.reference())
+        self.publish_checked(verified, None).await
     }
-
     async fn abort(&self, identity: &ArtifactIdentity) -> ArtifactResult<()> {
-        let (mut state, etag) = self.load(identity).await?;
-        if state.phase == Phase::Published {
-            return Err(conflict());
-        }
-        if state.phase != Phase::Deleting {
-            state.phase = Phase::Deleting;
-            self.save(&state, Some(&etag)).await?;
-        }
-        Ok(())
+        self.abort_checked(identity, None).await
     }
-
     async fn cleanup(&self) -> ArtifactResult<u32> {
         let mut cursor = self.cursor.lock().await;
         let page = self
@@ -971,7 +927,7 @@ impl ArtifactStore for S3ArtifactStore {
         {
             return Err(conflict());
         }
-        if state.phase != Phase::Published && state.expires <= now()? {
+        if state.owner.is_none() && state.phase != Phase::Published && state.expires <= now()? {
             self.abort(&state.identity).await?;
             (state, etag) = self.load(&state.identity).await?;
         }
@@ -981,3 +937,301 @@ impl ArtifactStore for S3ArtifactStore {
 
 #[cfg(test)]
 mod tests;
+
+impl S3ArtifactStore {
+    async fn append_checked(
+        &self,
+        identity: &ArtifactIdentity,
+        ordinal: u32,
+        bytes: &[u8],
+        artifact: Option<&OwnedArtifact>,
+    ) -> ArtifactResult<()> {
+        let (mut state, etag) = self.load(identity).await?;
+        authorize(state.owner.as_ref(), &self.scope(), artifact)?;
+        state.writable()?;
+        if let Some(old) = state.blocks.get(ordinal as usize) {
+            return if old.bytes as usize == bytes.len()
+                && old.sha256 == <[u8; 32]>::from(Sha256::digest(bytes))
+            {
+                Ok(())
+            } else {
+                Err(conflict())
+            };
+        }
+        let size: u64 = state.blocks.iter().map(|block| block.bytes as u64).sum();
+        if ordinal as usize != state.blocks.len()
+            || bytes.is_empty()
+            || bytes.len() as u64 > state.limits[0]
+            || size + bytes.len() as u64 > state.limits[1]
+            || ordinal as u64 >= state.limits[2]
+            || 117 + (ordinal as u64 + 1) * 36 > state.limits[3]
+            || state
+                .blocks
+                .last()
+                .is_some_and(|block| block.bytes as u64 != state.limits[0])
+        {
+            return Err(ArtifactError::Limit(
+                "S3 artifact block is out of order or exceeds attempt limits".into(),
+            ));
+        }
+        state.blocks.push(self.upload(identity, bytes).await?);
+        // Recheck expiry after transfer. The CAS also fences concurrent abort.
+        state.writable()?;
+        self.save(&state, Some(&etag)).await
+    }
+
+    async fn seal_checked(
+        &self,
+        manifest: &ArtifactManifest,
+        artifact: Option<&OwnedArtifact>,
+    ) -> ArtifactResult<()> {
+        let (mut state, etag) = self.load(manifest.identity()).await?;
+        authorize(state.owner.as_ref(), &self.scope(), artifact)?;
+        if matches!(state.phase, Phase::Sealed | Phase::Published) {
+            state.readable()?;
+            return if state.manifest.as_deref() == Some(manifest.encode().as_slice()) {
+                Ok(())
+            } else {
+                Err(conflict())
+            };
+        }
+        state.writable()?;
+        let bytes = manifest.encode();
+        let limits = ArtifactLimits::builder()
+            .block_bytes(state.limits[0] as u32)
+            .artifact_bytes(state.limits[1])
+            .blocks(state.limits[2] as u32)
+            .manifest_bytes(state.limits[3] as u32)
+            .build()?;
+        ArtifactManifest::decode(&bytes, manifest.identity(), limits)?;
+        if manifest.block_bytes() as u64 != state.limits[0]
+            || manifest.block_count() as usize != state.blocks.len()
+            || manifest.byte_size()
+                != state
+                    .blocks
+                    .iter()
+                    .map(|block| block.bytes as u64)
+                    .sum::<u64>()
+        {
+            return Err(conflict());
+        }
+        state.phase = Phase::Sealed;
+        state.manifest = Some(bytes);
+        self.save(&state, Some(&etag)).await
+    }
+
+    async fn publish_checked(
+        &self,
+        verified: &VerifiedArtifact,
+        artifact: Option<&OwnedArtifact>,
+    ) -> ArtifactResult<ArtifactReference> {
+        let (mut state, etag) = self.load(verified.manifest().identity()).await?;
+        authorize(state.owner.as_ref(), &self.scope(), artifact)?;
+        state.readable()?;
+        if state.manifest.as_deref() != Some(verified.manifest().encode().as_slice()) {
+            return Err(conflict());
+        }
+        if state.phase != Phase::Published {
+            state.phase = Phase::Published;
+            self.save(&state, Some(&etag)).await?;
+        }
+        Ok(verified.reference())
+    }
+
+    async fn abort_checked(
+        &self,
+        identity: &ArtifactIdentity,
+        artifact: Option<&OwnedArtifact>,
+    ) -> ArtifactResult<()> {
+        let (mut state, etag) = self.load(identity).await?;
+        authorize(state.owner.as_ref(), &self.scope(), artifact)?;
+        if state.phase == Phase::Published {
+            return Err(conflict());
+        }
+        if state.phase != Phase::Deleting {
+            state.phase = Phase::Deleting;
+            self.save(&state, Some(&etag)).await?;
+        }
+        Ok(())
+    }
+
+    async fn check_identity_claims(&self, identity: &ArtifactIdentity) -> ArtifactResult<()> {
+        let expected = serde_json::to_vec(identity).map_err(|_| conflict())?;
+        for (kind, id) in [
+            ("attempts", String::from(identity.attempt())),
+            ("versions", String::from(identity.version())),
+        ] {
+            match self
+                .get_bytes(&format!("{}{kind}/{id}", self.root()), None, CONTROL_BYTES)
+                .await
+            {
+                Ok((old, _)) if old != expected => return Err(conflict()),
+                Ok(_) | Err(ArtifactError::NotFound) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+    fn scope(&self) -> StoreScope {
+        StoreScope::S3 {
+            bucket: self.config.bucket.clone(),
+            region: self.config.region.clone(),
+            endpoint: self.config.endpoint.clone(),
+        }
+    }
+    fn owned_resolution(&self, state: &State) -> ArtifactResult<OwnedArtifactResolution> {
+        let Some(intent) = &state.owner else {
+            return Err(conflict());
+        };
+        let phase = match state.phase {
+            Phase::Preparing => return Ok(OwnedArtifactResolution::Pending),
+            Phase::Staging => OwnedArtifactPhase::Staging,
+            Phase::Sealed => OwnedArtifactPhase::Sealed,
+            Phase::Published => {
+                let bytes = state.manifest.as_ref().ok_or_else(conflict)?;
+                let manifest = ArtifactManifest::decode(bytes, &state.identity, intent.limits())?;
+                OwnedArtifactPhase::Published(ArtifactReference::from_catalog(
+                    state.identity.clone(),
+                    manifest.manifest_digest(),
+                ))
+            }
+            Phase::Deleting => OwnedArtifactPhase::Fenced,
+        };
+        Ok(OwnedArtifactResolution::Established {
+            artifact: OwnedArtifact::checked(intent.clone(), self.scope()),
+            phase,
+        })
+    }
+}
+
+#[async_trait]
+impl OwnedArtifactStore for S3ArtifactStore {
+    type Receipt = OwnedArtifact;
+    async fn create_owned(
+        &self,
+        intent: &ArtifactCreationIntent,
+    ) -> OwnedArtifactResult<OwnedArtifactAdmission> {
+        let limits = intent.limits();
+        if limits.blocks() > MAX_BLOCKS
+            || limits.manifest_bytes() > ArtifactLimits::default().manifest_bytes()
+        {
+            return Err(
+                ArtifactError::Limit("S3 owned intent exceeds supported limits".into()).into(),
+            );
+        }
+        let identity = intent.identity();
+        if identity.destination() != self.destination().id() {
+            return Err(conflict().into());
+        }
+        let mut created = false;
+        let (mut state, etag) = match self.load(identity).await {
+            Ok(value) => value,
+            Err(ArtifactError::NotFound) => {
+                // Known collisions cause no allocation; races still fail closed
+                // when the durable uniqueness claims are conditionally acquired.
+                self.check_identity_claims(identity).await?;
+                let state = State {
+                    owner: Some(intent.clone()),
+                    identity: identity.clone(),
+                    limits: [
+                        u64::from(limits.block_bytes()),
+                        limits.artifact_bytes(),
+                        u64::from(limits.blocks()),
+                        u64::from(limits.manifest_bytes()),
+                    ],
+                    expires: now()?,
+                    phase: Phase::Preparing,
+                    blocks: Vec::new(),
+                    manifest: None,
+                    cleanup_after: None,
+                };
+                match self.save(&state, None).await {
+                    Ok(()) => {
+                        created = true;
+                    }
+                    // A concurrent conditional winner may be this same owner.
+                    Err(ArtifactError::Conflict(_)) => {}
+                    Err(error) => return Err(error.into()),
+                }
+                self.load(identity).await?
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if state.owner.as_ref() != Some(intent) {
+            return Err(conflict().into());
+        }
+        if state.phase == Phase::Preparing {
+            let ownership = serde_json::to_vec(identity).map_err(|_| conflict())?;
+            for (kind, id) in [
+                ("attempts", String::from(identity.attempt())),
+                ("versions", String::from(identity.version())),
+            ] {
+                self.claim(&format!("{}{kind}/{id}", self.root()), ownership.clone())
+                    .await?;
+            }
+            state.phase = Phase::Staging;
+            self.save(&state, Some(&etag)).await?;
+            (state, _) = self.load(identity).await?;
+            if state.owner.as_ref() != Some(intent) {
+                return Err(conflict().into());
+            }
+        }
+        match self.owned_resolution(&state)? {
+            OwnedArtifactResolution::Established { artifact, phase } => {
+                if created && phase == OwnedArtifactPhase::Staging {
+                    Ok(OwnedArtifactAdmission::Created(artifact))
+                } else {
+                    Ok(OwnedArtifactAdmission::ResumedSameOwner { artifact, phase })
+                }
+            }
+            OwnedArtifactResolution::Pending => Err(conflict().into()),
+        }
+    }
+    async fn resolve_owned(
+        &self,
+        intent: &ArtifactCreationIntent,
+    ) -> OwnedArtifactResult<OwnedArtifactResolution> {
+        let state = match self.load(intent.identity()).await {
+            Ok((state, _)) => state,
+            Err(ArtifactError::NotFound) => return Ok(OwnedArtifactResolution::Pending),
+            Err(error) => return Err(error.into()),
+        };
+        if state.owner.as_ref() != Some(intent) {
+            return Err(conflict().into());
+        }
+        self.owned_resolution(&state).map_err(Into::into)
+    }
+    async fn append_owned(
+        &self,
+        artifact: &OwnedArtifact,
+        ordinal: u32,
+        bytes: &[u8],
+    ) -> OwnedArtifactResult<()> {
+        self.append_checked(artifact.intent().identity(), ordinal, bytes, Some(artifact))
+            .await
+            .map_err(Into::into)
+    }
+    async fn seal_owned(
+        &self,
+        artifact: &OwnedArtifact,
+        manifest: &ArtifactManifest,
+    ) -> OwnedArtifactResult<()> {
+        self.seal_checked(manifest, Some(artifact))
+            .await
+            .map_err(Into::into)
+    }
+    async fn publish_owned(
+        &self,
+        artifact: &OwnedArtifact,
+        verified: &VerifiedArtifact,
+    ) -> OwnedArtifactResult<ArtifactReference> {
+        self.publish_checked(verified, Some(artifact))
+            .await
+            .map_err(Into::into)
+    }
+    async fn abort_owned(&self, artifact: &OwnedArtifact) -> OwnedArtifactResult<()> {
+        self.abort_checked(artifact.intent().identity(), Some(artifact))
+            .await
+            .map_err(Into::into)
+    }
+}

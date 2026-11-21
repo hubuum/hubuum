@@ -4,18 +4,60 @@ use serde_json::json;
 #[derive(Clone, Default)]
 pub(super) struct MemoryHistoryArchive {
     catalogs: BTreeMap<ResourceIdentity, HistoryArchiveCatalog>,
+    pub(super) claims: BTreeMap<Uuid, HistoryArchivePublicationRequest>,
+    pub(super) publication_claim_bytes: usize,
     captures: BTreeMap<Uuid, HistoryArchiveCapture>,
     staging_bytes: usize,
     capture_reservations: BTreeMap<Uuid, usize>,
 }
 
-fn entry(state: &MemoryState, permit: &StorageExecutionPermit) -> Result<(), StorageError> {
-    if permit.owner().is_none() {
+impl MemoryHistoryArchive {
+    pub(super) fn require_no_publication_claim(&self, parent: Uuid) -> Result<(), StorageError> {
+        if self.claims.contains_key(&parent) {
+            return Err(StorageError::unavailable(
+                "Publication still owns an unfinished artifact claim",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+impl MemoryHistoryArchive {
+    pub(super) fn remove_execution_binding_for_fixture(&mut self, id: Uuid) {
+        let mut wire =
+            serde_json::to_value(self.captures.get(&id).expect("owned fixture capture")).unwrap();
+        wire.as_object_mut().unwrap().remove("execution");
+        self.captures
+            .insert(id, serde_json::from_value(wire).unwrap());
+    }
+    pub(super) fn reserved_for_fixture(&self, id: Uuid) -> u64 {
+        self.captures
+            .get(&id)
+            .expect("fixture capture")
+            .reserved_read_bytes()
+    }
+}
+
+fn entry(state: &MemoryState, permit: &HistoryArchiveExecutionPermit) -> Result<(), StorageError> {
+    let owner = permit.application().owner().ok_or_else(|| {
+        StorageError::unavailable("Archive reads require their original registered runtime")
+    })?;
+    state.ensure_application_permit(permit.application())?;
+    if state
+        .runtime_registrations
+        .get(&owner.id())
+        .is_none_or(|registration| {
+            registration.history_protocol != owner.history_protocol()
+                || (!registration.history_protocol.supports_online()
+                    && !state.history_lifecycle.authority().expiry().is_empty())
+        })
+    {
         return Err(StorageError::unavailable(
-            "Archive reads require a registered Legacy runtime",
+            "Archive runtime ownership or history protocol is unavailable",
         ));
     }
-    state.ensure_application_permit(permit)
+    Ok(())
 }
 fn row(entry: &MemoryHistoryEntry) -> Result<Option<HistoryArchiveRow>, StorageError> {
     let MemoryHistoryValue::Collection(collection) = &entry.value else {
@@ -38,6 +80,20 @@ fn select(
     selection: &HistoryArchiveSelection,
     examined: &mut usize,
 ) -> Result<HistoryArchiveInput, StorageError> {
+    if state
+        .history_lifecycle
+        .authority()
+        .expiry()
+        .intents()
+        .iter()
+        .flat_map(|intent| intent.manifest().members())
+        .any(|member| {
+            member.family() == StorageIdentityHistoryKind::Collection
+                && member.target().resource() == selection.resource()
+        })
+    {
+        return Ok(HistoryArchiveInput::Unavailable);
+    }
     if selection.family() != StorageBackupHistorySection::CollectionHistory {
         return Ok(HistoryArchiveInput::Unavailable);
     }
@@ -127,12 +183,63 @@ fn select(
 
 #[async_trait]
 impl HistoryArchiveStorage for MemoryStorage {
+    async fn claim_history_archive_publication(
+        &self,
+        request: HistoryArchivePublicationRequest,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<HistoryArchivePublicationClaim, StorageError> {
+        let mut state = self.state.write_history_archive(permit).await?;
+        entry(&state, permit)?;
+        let parent = permit.producer().parent().id();
+        if state.history_archive.claims.contains_key(&parent) {
+            return Err(StorageError::conflict(
+                "Publication claim is already assigned",
+            ));
+        }
+        let capture = state
+            .history_archive
+            .captures
+            .get(&request.manifest().capture())
+            .ok_or_else(|| StorageError::unavailable("Original archive capture is unavailable"))?;
+        request.validate_capture(capture, permit, Utc::now())?;
+        if state
+            .history_archive
+            .claims
+            .values()
+            .any(|claim| claim.manifest().capture() == capture.id())
+        {
+            return Err(StorageError::conflict("Archive capture is already claimed"));
+        }
+        let retained = request.retained_manifest_bytes()?;
+        let total = state
+            .history_archive
+            .publication_claim_bytes
+            .checked_add(retained)
+            .filter(|total| {
+                *total
+                    <= HistoryPublicationRegistry::MAX_OWNERS
+                        * (HISTORY_ARCHIVE_PUBLICATION_MANIFEST_BYTES + 128)
+            })
+            .ok_or_else(|| {
+                StorageError::unavailable("Publication claim metadata capacity exhausted")
+            })?;
+        // The outer archive write gate checked this SAME original epoch while
+        // holding the state lock. Never recapture application/API authority.
+        state
+            .history_publications
+            .claim_archive_producer(permit.producer(), permit.producer().parent().epoch())?;
+        state.history_archive.publication_claim_bytes = total;
+        state.history_archive.claims.insert(parent, request.clone());
+        drop(state);
+        HistoryArchivePublicationClaim::from_committed(request, permit)
+    }
+
     async fn history_archive_catalog(
         &self,
         resource: ResourceIdentity,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCatalog, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read_history_archive(permit).await?;
         entry(&state, permit)?;
         Ok(state
             .history_archive
@@ -145,15 +252,15 @@ impl HistoryArchiveStorage for MemoryStorage {
         &self,
         expected: HistoryArchiveCatalogGeneration,
         descriptors: Vec<HistoryArchiveDescriptor>,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCatalog, StorageError> {
+        let mut state = self.state.write_history_archive(permit).await?;
+        entry(&state, permit)?;
         let resource = descriptors
             .first()
             .ok_or_else(|| StorageError::invalid_input("Empty archive publication"))?
             .identity()
             .resource();
-        let mut state = self.state.write().await?;
-        entry(&state, permit)?;
         let current = state
             .history_archive
             .catalogs
@@ -206,9 +313,9 @@ impl HistoryArchiveStorage for MemoryStorage {
     async fn capture_history_archive(
         &self,
         request: HistoryArchiveCaptureRequest,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCapture, StorageError> {
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write_history_archive(permit).await?;
         entry(&state, permit)?;
         let resource = request.selection().resource();
         let catalog = state
@@ -219,12 +326,21 @@ impl HistoryArchiveStorage for MemoryStorage {
             .unwrap_or_else(|| HistoryArchiveCatalog::empty(resource));
         let input = select(&state, request.selection(), &mut 0)?;
         let now = Utc::now();
-        let capture = HistoryArchiveCapture::capture(request, &catalog, permit, input, now)?;
+        let capture =
+            HistoryArchiveCapture::capture(request, &catalog, permit.application(), input, now)?
+                .bind_execution(permit)?;
         let expired: Vec<_> = state
             .history_archive
             .captures
             .iter()
-            .filter(|(_, c)| c.available_until() <= now)
+            .filter(|(id, c)| {
+                c.available_until() <= now
+                    && !state
+                        .history_archive
+                        .claims
+                        .values()
+                        .any(|claim| claim.manifest().capture() == **id)
+            })
             .take(16)
             .map(|(id, _)| *id)
             .collect();
@@ -260,9 +376,9 @@ impl HistoryArchiveStorage for MemoryStorage {
         &self,
         id: Uuid,
         principal: PrincipalIdentity,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<Option<HistoryArchiveCapture>, StorageError> {
-        let state = self.state.read().await?;
+        let state = self.state.read_history_archive(permit).await?;
         entry(&state, permit)?;
         let Some(capture) = state
             .history_archive
@@ -272,7 +388,8 @@ impl HistoryArchiveStorage for MemoryStorage {
         else {
             return Ok(None);
         };
-        capture.validate_access(principal, permit)?;
+        capture.validate_access(principal, permit.application())?;
+        capture.validate_execution(permit)?;
         Ok(Some(capture.clone()))
     }
     async fn reserve_history_archive_read(
@@ -280,9 +397,9 @@ impl HistoryArchiveStorage for MemoryStorage {
         id: Uuid,
         principal: PrincipalIdentity,
         bytes: u64,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCapture, StorageError> {
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write_history_archive(permit).await?;
         entry(&state, permit)?;
         let capture = state
             .history_archive
@@ -290,7 +407,8 @@ impl HistoryArchiveStorage for MemoryStorage {
             .get_mut(&id)
             .filter(|c| c.principal() == principal)
             .ok_or_else(|| StorageError::not_found("Archive capture unavailable"))?;
-        capture.validate_access(principal, permit)?;
+        capture.validate_access(principal, permit.application())?;
+        capture.validate_execution(permit)?;
         capture.reserve(bytes, Utc::now())?;
         Ok(capture.clone())
     }
