@@ -14,15 +14,19 @@ use uuid::Uuid;
 use super::*;
 use crate::storage::StorageHandle;
 
-struct Fixture {
-    root: PathBuf,
-    directory: PathBuf,
-    key: PathBuf,
-    storage: StorageHandle,
+pub(crate) struct Fixture {
+    pub(crate) root: PathBuf,
+    pub(crate) directory: PathBuf,
+    pub(crate) key: PathBuf,
+    pub(crate) storage: StorageHandle,
 }
 
 impl Fixture {
     async fn new() -> Self {
+        Self::with_storage(StorageHandle::memory()).await
+    }
+
+    pub(crate) async fn with_storage(storage: StorageHandle) -> Self {
         let root = std::env::temp_dir().join(format!("hubuum-recovery-test-{}", Uuid::new_v4()));
         let directory = root.join("repository");
         fs::create_dir_all(&directory).unwrap();
@@ -30,7 +34,6 @@ impl Fixture {
         let key = root.join("key");
         fs::write(&key, [37; 32]).unwrap();
         fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
-        let storage = StorageHandle::memory();
         checkpoint(&storage, &directory, &key, true).await.unwrap();
         Self {
             root,
@@ -86,7 +89,7 @@ impl Drop for Fixture {
 // concurrent fork may briefly retain its CLOEXEC lock descriptor until exec,
 // as covered by repository::tests::after_lock_release. Recovery must still
 // acquire both real locks; live-owner rejection and missing proof stay strict.
-async fn after_repository_release<T, F, Fut>(mut operation: F) -> Result<T, ApiError>
+pub(crate) async fn after_repository_release<T, F, Fut>(mut operation: F) -> Result<T, ApiError>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, ApiError>>,

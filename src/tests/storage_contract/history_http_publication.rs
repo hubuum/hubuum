@@ -10,6 +10,9 @@ use crate::middlewares::history_publication::tests::{
     NativeResponse, Observations, ResponseMode, verify_middleware, verify_native_delivery,
 };
 
+#[cfg(all(test, unix, feature = "integration-test-support"))]
+mod crash;
+
 #[rstest]
 #[case::buffered(false)]
 #[case::pipelined(true)]

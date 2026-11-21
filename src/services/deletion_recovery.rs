@@ -368,7 +368,7 @@ fn invalid_control(error: StorageValidationError) -> ApiError {
 }
 
 #[cfg(all(test, unix))]
-mod tests;
+pub(crate) mod tests;
 
 /// Integration-only authority fixture. It exercises the real checkpoint,
 /// exclusive isolation, recovery and reapplication paths without enabling
