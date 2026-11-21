@@ -4989,12 +4989,12 @@ They never fail over to one another as scrape targets.</p>
 </tr>
 <tr>
 <td><code>PROMETHEUS_IMAGE</code></td>
-<td>Prometheus 3.13.1, digest-pinned</td>
+<td>Prometheus 3.16.0, digest-pinned</td>
 <td>Override with <code>--prometheus-image</code></td>
 </tr>
 <tr>
 <td><code>GRAFANA_IMAGE</code></td>
-<td>Grafana 13.2.3, digest-pinned</td>
+<td>Grafana 13.3.1, digest-pinned</td>
 <td>Override with <code>--grafana-image</code></td>
 </tr>
 <tr>
@@ -5072,7 +5072,7 @@ credentials in your shell; preserve them securely for later restarts:</p>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">GRAFANA_SECRET_KEY</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> </span><span class="m">32</span><span class="k">)</span><span class="s2">"</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">PROMETHEUS_PASSWORD</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>openssl<span class="w"> </span>rand<span class="w"> </span>-hex<span class="w"> </span><span class="m">24</span><span class="k">)</span><span class="s2">"</span>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="nb">export</span><span class="w"> </span><span class="nv">PROMETHEUS_PASSWORD_HASH</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span><span class="nb">printf</span><span class="w"> </span><span class="s1">'%s\n'</span><span class="w"> </span><span class="s2">"</span><span class="nv">$PROMETHEUS_PASSWORD</span><span class="s2">"</span><span class="w"> </span><span class="p">|</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>-i<span class="w"> </span>caddy:2-alpine<span class="w"> </span>caddy<span class="w"> </span>hash-password<span class="k">)</span><span class="s2">"</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>-i<span class="w"> </span>caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0<span class="w"> </span>caddy<span class="w"> </span>hash-password<span class="k">)</span><span class="s2">"</span>
 <a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1"># These public configuration assets must be readable by the container users.</span>
 <a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>chmod<span class="w"> </span>-R<span class="w"> </span>a+rX<span class="w"> </span>observability
 <a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker-compose.yml<span class="w"> </span>-f<span class="w"> </span>observability/compose.monitoring.yml<span class="w"> </span><span class="se">\</span>
