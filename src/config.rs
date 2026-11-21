@@ -2581,6 +2581,25 @@ mod tests {
         );
     }
 
+    #[rstest::rstest]
+    #[case::export(300, 1)]
+    #[case::backup(1, 300)]
+    fn runtime_output_limits_must_fit_the_worker_reservation(
+        #[case] export_mib: usize,
+        #[case] backup_mib: usize,
+    ) {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let mut candidate = AppConfig::try_parse_from(["hubuum-server"]).unwrap();
+        candidate.artifacts.worker_resident_bytes = 512 << 20;
+        candidate.export_max_output_bytes = export_mib << 20;
+        candidate.backup_max_output_bytes = backup_mib << 20;
+        let error = super::runtime::validate(&candidate).unwrap_err();
+        assert!(
+            error.to_string().contains("worker resident bytes"),
+            "{error}"
+        );
+    }
+
     #[test]
     fn tls_backend_env_var_is_parsed_by_clap_and_test_config_loader() {
         let _lock = TEST_ENV_LOCK.lock().unwrap();

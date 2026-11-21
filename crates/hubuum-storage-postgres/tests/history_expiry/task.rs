@@ -642,14 +642,14 @@ async fn vocabulary_upgrade_preserves_every_existing_task_limit() {
     // Exercise only the vocabulary portion of the real migration. The full
     // lifecycle rollback has independent publication/history refusal guards;
     // this test does not bypass those guards to claim rollback is safe.
-    let down = include_str!("../../migrations/2026-11-03-000005_history_lifecycle/down.sql")
+    let down = include_str!("../../migrations/2026-11-19-000002_history_lifecycle/down.sql")
         .split_once("-- No retained eighth-kind work exists after the rollback guard above.\n")
         .unwrap()
         .1
         .split_once("CREATE OR REPLACE FUNCTION public.hubuum_manage_logical_identity()")
         .unwrap()
         .0;
-    let up = include_str!("../../migrations/2026-11-03-000005_history_lifecycle/up.sql")
+    let up = include_str!("../../migrations/2026-11-19-000002_history_lifecycle/up.sql")
         .split_once("-- Coordinated closed task vocabulary upgrade.")
         .unwrap()
         .1

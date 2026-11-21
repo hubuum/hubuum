@@ -42,7 +42,7 @@ checkpoint, merge and recovery; preserve exact clocks and actors. Keep pressure
 progress out of history read revisions because it changes no exclusion or
 permission. Return `HistorySizeObservation` for independent protection by the
 trusted service before acknowledgement. This capability authorizes no deletion.
-Upgrade matching adapters, binaries, lifecycle migration 000005 and grants
+Upgrade matching adapters, binaries, the history lifecycle migration and grants
 together; older decoders cannot retain pressure evidence. See the
 [accounting contract](history_retention.md#scope-and-original-clocks).
 
@@ -270,10 +270,10 @@ Use `None` for legacy origins/metadata; new periodic requests should use
 `HistoryExpiryTaskSubmission::periodic` with their retained policy record.
 
 Stop older API, worker, restore and administrator processes, back up the database,
-and apply lifecycle 000005 with refreshed grants before starting matching binaries. Its
-coordinated policy revision adds the eighth kind and weight without resetting
-existing configuration. Policy edits must include all eight entries. Rollback is
-refused after eighth-kind task/accounting/receipt evidence is retained; preserve
+and apply the history lifecycle migration with refreshed grants before starting
+matching binaries. The policy revision adds the eighth kind and weight without
+resetting existing configuration. Policy edits must include all eight entries.
+Rollback is refused after eighth-kind task/accounting/receipt evidence is retained; preserve
 independent recovery evidence and roll forward. Production manual/periodic admission and physical removal remain gated pending qualification.
 
 Upgrade complete adapters and refresh runtime grants from the existing new
@@ -315,8 +315,8 @@ protected HTTP/export owners after actual exclusive process isolation and native
 application fencing. Parent-only HTTP/export owners and external publication
 claims stay charged; process death does not reconcile a provider outcome.
 
-Deploy `2026-11-03-000005_history_lifecycle` after the landed archive migration
-000004, refresh runtime grants, and retain independent format-3 recovery material.
+Deploy `2026-11-19-000002_history_lifecycle` after the idle scheduler migration,
+refresh runtime grants, and retain independent format-3 recovery material.
 Never rewrite the shipped admission/archive migrations. Once retained expiry
 exists, preserve its original authority and roll forward rather than downgrade.
 
@@ -354,9 +354,9 @@ captured identities, intervals, generation, owner and deadline. Never refresh an
 old permit after external work. Catalog replacement must not rebind existing
 pins. Keep capture/catalog allocations and cumulative physical work bounded.
 
-Deploy migrations `2026-11-03-000004_history_archive_reads` and
-`2026-11-11-000001_archive_runtime_compatibility`, then refresh runtime function
-grants before running this server. It installs a protected fixed-true
+Deploy migrations through `2026-11-19-000001_idle_task_scheduling` and refresh
+runtime function grants before running this server. The archive migrations
+install a protected fixed-true
 `hubuum_archive_history_requires_legacy_runtime()` hook. A combined runtime must
 refuse OnlineV1 registration while this hook is true; this archive slice cannot
 participate in retained online expiry until a later reviewed migration integrates
@@ -938,6 +938,12 @@ Local producers must stop within `LOCAL_SPOOL_CLEANUP_GRACE` after ownership
 loss. Keep their reservation through that interval after fencing an abandoned
 attempt; a cleanup call returning zero can still have deferred physical work.
 
+Task artifact stores can report an idle cleanup pass explicitly through
+`TaskArtifactStore::cleanup_batch`. Report `Progress` when discarding an empty
+attempt or starting a spool grace period. Existing adapters keep their block
+count API and are polled on the next worker tick until they implement idle
+detection.
+
 Export and backup completion can carry `VerifiedArtifact` rather than complete
 values. Preserve the proof through the completion transaction and fence the
 claim, cancellation, output retention and attempt state before publishing it.
@@ -1261,7 +1267,7 @@ that has ever assigned a producer, also keep full-revision fencing. A control
 owner whose full epoch changed cannot subsequently admit a producer. Native
 adapters must retain and compare the captured proof atomically, rather than
 recompute and substitute a current epoch for the original owner. Deploy matching
-adapters and lifecycle migration 000005 together during the offline upgrade.
+adapters and the history lifecycle migration together during the offline upgrade.
 
 ### Unreleased producer slot contract
 

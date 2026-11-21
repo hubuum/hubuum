@@ -432,6 +432,15 @@ impl ArtifactStore for MemoryStorage {
         Ok(())
     }
     async fn cleanup(&self) -> ArtifactResult<u32> {
+        self.cleanup_batch()
+            .await
+            .map(ArtifactCleanupBatch::removed_blocks)
+    }
+}
+
+#[async_trait]
+impl TaskArtifactStore for MemoryStorage {
+    async fn cleanup_batch(&self) -> ArtifactResult<ArtifactCleanupBatch> {
         let mut state = self.state.write().await.map_err(boundary)?;
         let now = Utc::now();
         let candidate = state
@@ -498,7 +507,7 @@ impl ArtifactStore for MemoryStorage {
             })
             .map(|(id, _)| *id);
         let Some(id) = candidate else {
-            return Ok(0);
+            return Ok(ArtifactCleanupBatch::Idle);
         };
         let attempt = state
             .artifacts
@@ -513,7 +522,7 @@ impl ArtifactStore for MemoryStorage {
             owner.cleanup_after = Some(
                 now + Duration::from_std(LOCAL_SPOOL_CLEANUP_GRACE).expect("finite cleanup grace"),
             );
-            return Ok(0);
+            return Ok(ArtifactCleanupBatch::Progress { removed_blocks: 0 });
         }
         let mut deleted = 0;
         while deleted < 16 && attempt.blocks.pop_first().is_some() {
@@ -524,12 +533,11 @@ impl ArtifactStore for MemoryStorage {
             attempt.manifest = None;
             attempt.owner = None;
         }
-        Ok(deleted)
+        Ok(ArtifactCleanupBatch::Progress {
+            removed_blocks: deleted,
+        })
     }
-}
 
-#[async_trait]
-impl TaskArtifactStore for MemoryStorage {
     async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
         if self.current_execution_scope().storage_callback_active() {
             return Err(conflict());

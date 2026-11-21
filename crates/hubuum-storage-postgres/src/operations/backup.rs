@@ -550,80 +550,68 @@ enum SnapshotFilter {
     TerminalDeliveries,
 }
 
+const TERMINAL_STATUSES: &str = "('succeeded', 'partially_succeeded', 'failed', 'cancelled')";
+
+/// Both output metadata and portable bytes use the same snapshot_row alias and predicate.
+pub(super) fn retained_export_output_sql() -> String {
+    format!(
+        "public.hubuum_task_outputs_visible(snapshot_row.task_id) AND EXISTS \
+        (SELECT 1 FROM tasks t WHERE t.id = snapshot_row.task_id AND t.status IN {TERMINAL_STATUSES})"
+    )
+}
+
 impl SnapshotFilter {
-    fn sql(self, table: &str) -> Result<Option<&'static str>, PostgresStorageError> {
-        if matches!(self, Self::All) {
-            let history = match table {
-                "collections_history" => Some(
-                    "public.hubuum_history_version_visible('collection',snapshot_row.logical_identity)",
-                ),
-                "hubuumclass_history" => Some(
-                    "public.hubuum_history_version_visible('class',snapshot_row.logical_identity)",
-                ),
-                "hubuumobject_history" => Some(
-                    "public.hubuum_history_version_visible('object',snapshot_row.logical_identity)",
-                ),
-                "hubuumclass_relation_history" => Some(
-                    "public.hubuum_history_version_visible('class_relation',snapshot_row.logical_identity)",
-                ),
-                "hubuumobject_relation_history" => Some(
-                    "public.hubuum_history_version_visible('object_relation',snapshot_row.logical_identity)",
-                ),
-                "export_templates_history" => Some(
-                    "public.hubuum_history_version_visible('export_template',snapshot_row.logical_identity)",
-                ),
-                "remote_targets_history" => Some(
-                    "public.hubuum_history_version_visible('remote_target',snapshot_row.logical_identity)",
-                ),
-                "computed_field_history" => Some(
-                    "public.hubuum_history_version_visible('computed_definitions',snapshot_row.logical_identity)",
-                ),
-                "class_schema_history" => Some(
-                    "public.hubuum_history_version_visible('class_schema',snapshot_row.logical_identity)",
-                ),
-                _ => None,
-            };
-            if history.is_some() {
-                return Ok(history);
+    fn sql(self, table: &str) -> Result<Option<String>, PostgresStorageError> {
+        let predicate = match (self, table) {
+            (Self::All, _) => {
+                let family = match table {
+                    "collections_history" => "collection",
+                    "hubuumclass_history" => "class",
+                    "hubuumobject_history" => "object",
+                    "hubuumclass_relation_history" => "class_relation",
+                    "hubuumobject_relation_history" => "object_relation",
+                    "export_templates_history" => "export_template",
+                    "remote_targets_history" => "remote_target",
+                    "computed_field_history" => "computed_definitions",
+                    "class_schema_history" => "class_schema",
+                    _ => return Ok(None),
+                };
+                format!(
+                    "public.hubuum_history_version_visible('{family}',snapshot_row.logical_identity)"
+                )
             }
-        }
-        match self {
-            Self::All => Ok(None),
-            Self::TerminalTasks if table == "tasks" => Ok(Some(
-                "status IN ('succeeded', 'partially_succeeded', 'failed', 'cancelled') AND public.hubuum_task_details_visible(id)",
-            )),
-            Self::TerminalTaskResults if table == "export_task_outputs" => Ok(Some(
-                "public.hubuum_task_outputs_visible(snapshot_row.task_id) AND EXISTS (SELECT 1 FROM tasks t WHERE t.id=snapshot_row.task_id AND t.status IN ('succeeded','partially_succeeded','failed','cancelled'))",
-            )),
-            Self::TerminalTaskResults
-                if matches!(
-                    table,
-                    "import_task_results" | "export_task_outputs" | "remote_call_results"
-                ) =>
-            {
-                Ok(Some(
-                    "EXISTS (SELECT 1 FROM tasks t WHERE t.id = snapshot_row.task_id AND public.hubuum_task_details_visible(t.id) AND t.status IN \
-                     ('succeeded', 'partially_succeeded', 'failed', 'cancelled') OFFSET 0)",
-                ))
+            (Self::TerminalTasks, "tasks") => {
+                format!("status IN {TERMINAL_STATUSES} AND public.hubuum_task_details_visible(id)")
             }
-            Self::HistoryEvents if table == "events" => Ok(Some(
-                "snapshot_row.entity_type <> 'task' OR NOT EXISTS \
-                 (SELECT 1 FROM tasks t WHERE t.id=snapshot_row.entity_id \
-                  AND t.logical_identity #>> '{subject,identity,identity}'=snapshot_row.logical_identity #>> '{references,/entity_id,reference,identity}' \
-                  AND t.status IN ('queued','validating','running') OFFSET 0)",
-            )),
-            Self::TerminalDeliveries if table == "event_deliveries" => Ok(Some(
+            (Self::TerminalTaskResults, "export_task_outputs") => retained_export_output_sql(),
+            (Self::TerminalTaskResults, "import_task_results" | "remote_call_results") => format!(
+                "EXISTS (SELECT 1 FROM tasks t WHERE t.id = snapshot_row.task_id AND public.hubuum_task_details_visible(t.id) AND t.status IN {TERMINAL_STATUSES} OFFSET 0)"
+            ),
+            (Self::HistoryEvents, "events") => retained_event_sql("snapshot_row"),
+            (Self::TerminalDeliveries, "event_deliveries") => format!(
                 "snapshot_row.status IN ('succeeded', 'dead') AND EXISTS \
-                 (SELECT 1 FROM events e WHERE e.id=snapshot_row.event_id AND (e.entity_type <> 'task' OR NOT EXISTS \
-                  (SELECT 1 FROM tasks t WHERE t.id=e.entity_id \
-                   AND t.logical_identity #>> '{subject,identity,identity}'=e.logical_identity #>> '{references,/entity_id,reference,identity}' \
-                   AND t.status IN ('queued','validating','running') OFFSET 0)) OFFSET 0)",
-            )),
-            _ => Err(PostgresStorageError::database(
-                "Refused an invalid backup snapshot filter/table combination",
-            )),
-        }
+                 (SELECT 1 FROM events e WHERE e.id=snapshot_row.event_id AND ({}) OFFSET 0)",
+                retained_event_sql("e")
+            ),
+            _ => {
+                return Err(PostgresStorageError::database(
+                    "Refused an invalid backup snapshot filter/table combination",
+                ));
+            }
+        };
+        Ok(Some(predicate))
     }
+}
+
+// The alias comes only from the two static event paths above. A historical event
+// can outlive its task or refer to an earlier incarnation of the same numeric ID.
+fn retained_event_sql(event: &str) -> String {
+    format!(
+        "{event}.entity_type <> 'task' OR NOT EXISTS \
+        (SELECT 1 FROM tasks t WHERE t.id={event}.entity_id \
+         AND t.logical_identity #>> '{{subject,identity,identity}}'={event}.logical_identity #>> '{{references,/entity_id,reference,identity}}' \
+         AND t.status NOT IN {TERMINAL_STATUSES} OFFSET 0)"
+    )
 }
 
 #[cfg(feature = "scale-benchmark-support")]
@@ -684,7 +672,7 @@ async fn stream_capture_rows(
     mut retain: impl FnMut(StorageBackupRow) -> Result<(), PostgresStorageError>,
 ) -> Result<(), PostgresStorageError> {
     let key = snapshot_key(table)?;
-    let predicate = filter.sql(table)?.unwrap_or("TRUE");
+    let predicate = filter.sql(table)?.unwrap_or_else(|| "TRUE".into());
     // Evaluate eligibility per source row so excluded rows also consume work.
     // A NO SCROLL, WITHOUT HOLD cursor cannot materialize a held snapshot.
     let max_chars = progress
@@ -901,6 +889,41 @@ mod tests {
             restored["occurred_at"],
             json!("2026-09-11T12:34:56.123456Z")
         );
+    }
+
+    #[cfg(feature = "integration-test-support")]
+    #[rstest]
+    #[case::audit("events", SnapshotFilter::HistoryEvents)]
+    #[case::delivery("event_deliveries", SnapshotFilter::TerminalDeliveries)]
+    #[tokio::test]
+    async fn waiting_task_events_are_excluded_from_terminal_history(
+        #[case] table: &str,
+        #[case] filter: SnapshotFilter,
+    ) {
+        use crate::test_support::integration_test_pool;
+        use crate::with_transaction;
+        use diesel_async::SimpleAsyncConnection;
+
+        with_transaction(&integration_test_pool(1), async |conn| -> Result<(), crate::PostgresStorageError> {
+            conn.batch_execute(r#"
+                CREATE TEMP TABLE tasks(id int, logical_identity jsonb, status text) ON COMMIT DROP;
+                CREATE TEMP TABLE events(id int, entity_type text, entity_id int, logical_identity jsonb) ON COMMIT DROP;
+                CREATE TEMP TABLE event_deliveries(id int, event_id int, status text) ON COMMIT DROP;
+                INSERT INTO tasks VALUES (1,'{"subject":{"identity":{"identity":"first"}}}','waiting'),
+                                         (2,'{"subject":{"identity":{"identity":"second"}}}','succeeded');
+                INSERT INTO events SELECT id,'task',id,jsonb_build_object('references',jsonb_build_object('/entity_id',
+                    jsonb_build_object('reference',logical_identity #> '{subject,identity}'))) FROM tasks;
+                INSERT INTO event_deliveries SELECT id,id,'succeeded' FROM events;
+            "#).await?;
+            let mut progress = StorageBackupCaptureProgress::new(StorageBackupBudget::new(65536, 10).unwrap());
+            let mut retained = Vec::new();
+            super::stream_capture_rows(conn, table, filter, &mut progress, |_| Ok(()), |row| {
+                retained.push(row.get("id").unwrap().as_i64().unwrap());
+                Ok(())
+            }).await?;
+            assert_eq!(retained, [2]);
+            Ok(())
+        }).await.unwrap();
     }
 
     #[cfg(feature = "integration-test-support")]

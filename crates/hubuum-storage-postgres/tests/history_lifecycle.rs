@@ -773,7 +773,7 @@ async fn publication_registry_rollback_preserves_revision_zero_obligations(
                 .execute(connection).await?;
         }
         connection.batch_execute("SAVEPOINT rejected_history_rollback").await?;
-        let rejected = connection.batch_execute(include_str!("../migrations/2026-11-03-000005_history_lifecycle/down.sql")).await;
+        let rejected = connection.batch_execute(include_str!("../migrations/2026-11-19-000002_history_lifecycle/down.sql")).await;
         assert!(rejected.unwrap_err().to_string().contains("Retained history lifecycle authority prevents rollback"));
         connection.batch_execute("ROLLBACK TO SAVEPOINT history_rollback_fixture").await?;
         Ok::<_, PostgresStorageError>(())

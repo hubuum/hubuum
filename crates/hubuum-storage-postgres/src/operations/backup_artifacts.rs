@@ -56,8 +56,15 @@ pub(super) async fn capture(
     builder: &mut StorageBackupReplayBuilder,
     progress: &mut StorageBackupCaptureProgress,
 ) -> Result<(), PostgresStorageError> {
-    diesel::sql_query("DECLARE hubuum_backup_artifacts NO SCROLL CURSOR WITHOUT HOLD FOR SELECT o.task_id,o.output_expires_at AT TIME ZONE 'UTC' AS expires_at,o.artifact_reference AS reference,a.manifest FROM export_task_outputs o JOIN tasks t ON t.id=o.task_id JOIN artifact_attempts a ON a.artifact_id=(o.artifact_reference #>> '{identity,artifact}')::UUID WHERE t.status IN ('succeeded','partially_succeeded','failed','cancelled') AND a.state='published' ORDER BY o.id")
-        .execute(conn).await?;
+    let retained = super::backup::retained_export_output_sql();
+    diesel::sql_query(format!(
+        "DECLARE hubuum_backup_artifacts NO SCROLL CURSOR WITHOUT HOLD FOR \
+         SELECT snapshot_row.task_id, snapshot_row.output_expires_at AT TIME ZONE 'UTC' AS expires_at, \
+                snapshot_row.artifact_reference AS reference, a.manifest \
+         FROM export_task_outputs snapshot_row JOIN artifact_attempts a \
+           ON a.artifact_id=(snapshot_row.artifact_reference #>> '{{identity,artifact}}')::UUID \
+         WHERE {retained} AND a.state='published' ORDER BY snapshot_row.id"
+    )).execute(conn).await?;
     loop {
         crate::runtime::task_execution_checkpoint()?;
         let Some(row) = diesel::sql_query("FETCH FORWARD 1 FROM hubuum_backup_artifacts")

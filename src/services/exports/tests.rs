@@ -17,7 +17,7 @@ use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::{ResourceFields, ResourceKind};
 
 use super::{
-    AuthorizationCandidates, ExportRuntime, HydrationBudget, ObjectGraphEdge,
+    AuthorizationCandidates, CandidateBudget, ExportRuntime, HydrationBudget, ObjectGraphEdge,
     PermissionAwareExport, RelationHydrationPlan, build_template_items, inferred_relation_alias,
     load_hydration_class_metadata, normalize_alias_segment, object_with_root_path, pluralize_alias,
     take_related_within_budget, validate_export_limits, validate_export_submission,
@@ -125,6 +125,7 @@ async fn permission_aware_export_uses_external_backend_visibility() {
         .objects(
             QueryOptions::new(Vec::new(), Vec::new(), Some(10), None, false)
                 .expect("test query must be valid"),
+            &mut CandidateBudget::default(),
         )
         .await
         .unwrap();
@@ -195,7 +196,10 @@ async fn export_observes_one_query_across_authorization_batches() {
         class.id,
     ))
     .unwrap();
-    let objects = exporter.objects(options).await.unwrap();
+    let objects = exporter
+        .objects(options, &mut CandidateBudget::default())
+        .await
+        .unwrap();
     assert_eq!(objects.len(), 140);
     assert!(policy.authorization_batch_sizes().len() > 1);
     let report = serde_json::to_value(

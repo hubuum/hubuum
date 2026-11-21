@@ -7,9 +7,9 @@ use diesel::sql_types::{Binary, Integer, Uuid as SqlUuid};
 use diesel_async::{RunQueryDsl, SimpleAsyncConnection};
 use futures_util::FutureExt;
 use hubuum_artifacts::{
-    ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReader,
-    ArtifactReference, ArtifactStore, ArtifactWriter, AttemptId, Destination, DestinationId,
-    ManifestBuilder, verify, verify_and_publish,
+    ArtifactCleanupBatch, ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest,
+    ArtifactReader, ArtifactReference, ArtifactStore, ArtifactWriter, AttemptId, Destination,
+    DestinationId, ManifestBuilder, TaskArtifactStore, verify, verify_and_publish,
 };
 use hubuum_storage_postgres::test_support::{
     database_role_tests_enabled, integration_test_database_roles, integration_test_database_url,
@@ -339,6 +339,24 @@ async fn expiry_fences_publication_and_retains_cleanup_obligations() {
         assert!(verify_and_publish(&context.store, &manifest).await.is_err());
         assert_eq!(context.store.cleanup().await.unwrap(), 1);
     }).await;
+}
+
+#[tokio::test]
+async fn discarding_an_empty_attempt_reports_cleanup_progress() {
+    TestContext::run(async |context| {
+        let id = context.identity();
+        context.store.stage(&id, limits()).await.unwrap();
+        context.store.abort(&id).await.unwrap();
+        assert_eq!(
+            context.store.cleanup_batch().await.unwrap(),
+            ArtifactCleanupBatch::Progress { removed_blocks: 0 }
+        );
+        assert_eq!(
+            context.store.cleanup_batch().await.unwrap(),
+            ArtifactCleanupBatch::Idle
+        );
+    })
+    .await;
 }
 
 #[tokio::test]

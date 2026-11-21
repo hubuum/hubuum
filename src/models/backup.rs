@@ -15,6 +15,8 @@ use crate::models::{REDACTED_DEBUG_VALUE, redacted_debug_option};
 use super::principal::Principal;
 
 pub const CURRENT_BACKUP_VERSION: i32 = 12;
+pub(crate) const SUPPORTED_BACKUP_VERSIONS: std::ops::RangeInclusive<i32> =
+    6..=CURRENT_BACKUP_VERSION;
 // Formats 6–12 originally used this exact manifest.
 // Keep it independent of the current writer's exclusions for compatibility.
 pub(crate) const HISTORICAL_BACKUP_MANIFEST_EXCLUSIONS: &[&str] = &[
@@ -261,10 +263,12 @@ impl BackupDocument {
                 "Backup version 9 requires query_usage_declarations".into(),
             ));
         }
-        if ![6, 7, 8, 9, 10, 11, CURRENT_BACKUP_VERSION].contains(&self.backup_version) {
+        if !SUPPORTED_BACKUP_VERSIONS.contains(&self.backup_version) {
             return Err(ApiError::BadRequest(format!(
-                "Unsupported backup version '{}'; expected 6, 7, 8, 9 or {}",
-                self.backup_version, CURRENT_BACKUP_VERSION
+                "Unsupported backup version '{}'; expected {} through {}",
+                self.backup_version,
+                SUPPORTED_BACKUP_VERSIONS.start(),
+                SUPPORTED_BACKUP_VERSIONS.end()
             )));
         }
         Ok(())

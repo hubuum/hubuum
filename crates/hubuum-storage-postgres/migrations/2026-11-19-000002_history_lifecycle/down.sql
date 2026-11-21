@@ -244,6 +244,15 @@ BEGIN
             lock_wait)
         ON CONFLICT(worker_identity) DO UPDATE SET kinds=EXCLUDED.kinds,expires_at=EXCLUDED.expires_at,generation=EXCLUDED.generation,
             task_identity=NULL,lease_token=NULL,last_lock_wait_us=EXCLUDED.last_lock_wait_us;
+    -- Register idle workers before returning so reserved capacity still reflects
+    -- the live worker population. Read one supported head in tasks_scheduler_queue
+    -- order. Unordered EXISTS can scan the heap past an arbitrarily long
+    -- prefix of terminal tasks or unsupported kinds.
+    IF (SELECT t.id FROM public.tasks t WHERE t.status='queued' AND t.kind=ANY(supported)
+        ORDER BY t.kind, coalesce((t.logical_identity #>> '{references,/submitted_by,reference,identity}')::UUID,
+            '00000000-0000-0000-0000-000000000000'::UUID), t.created_at, t.id LIMIT 1) IS NULL THEN
+        RETURN NULL;
+    END IF;
     snapshot := public.hubuum_task_scheduling_snapshot();
     settings := p.policy->'scheduling';
     reserved := (settings->>'internal_reserved_slots')::BIGINT;
@@ -300,7 +309,7 @@ BEGIN
     INTO selected FROM groups g CROSS JOIN LATERAL (
             SELECT t.id,t.created_at FROM public.tasks t
             WHERE t.status='queued' AND t.kind=g.kind
-                AND public.hubuum_task_admission_allowed(t.id)
+                AND hubuum_control.task_row_admission_allowed(t)
                 AND coalesce((t.logical_identity #>> '{references,/submitted_by,reference,identity}')::UUID,
                     '00000000-0000-0000-0000-000000000000'::UUID)=g.principal_identity
                 -- Keep eligibility as a per-row lookup so LIMIT can stop the
@@ -639,11 +648,10 @@ BEGIN
         EXECUTE 'SELECT history_protocol=0 FROM hubuum_control.runtime_registrations WHERE id=$1 AND ownership_token=$2 FOR SHARE'
             INTO STRICT legacy USING registration,ownership;
     ELSE
-        -- Both checkpoints qualify the same unversioned Legacy registry. The
-        -- synchronized runtime-settings migrations can remain applied when
-        -- this earlier lifecycle migration is rolled back independently.
-        IF COALESCE((SELECT max(version) FROM public.__diesel_schema_migrations), '')
-            NOT IN ('20261103000004', '20261111000001') THEN
+        -- The migrator removes the lifecycle checkpoint after running this SQL.
+        -- Qualify the remaining scheduler schema, including after that removal.
+        IF (SELECT max(version) FROM public.__diesel_schema_migrations
+             WHERE version <> '20261119000002') IS DISTINCT FROM '20261119000001' THEN
             RAISE EXCEPTION 'Unversioned archive runtime schema is not supported';
         END IF;
         SELECT TRUE INTO STRICT legacy FROM hubuum_control.runtime_registrations

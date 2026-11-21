@@ -50,7 +50,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking storage SDK 0.20 accounting capability:** complete adapters must
   implement `HistoryLifecycleStorage::observe_history_size` and preserve pressure
   transition lineage and reserved terminal capacity through recovery. Deploy
-  matching adapters and binaries with lifecycle migration 000005 and refreshed
+  matching adapters and binaries with the history lifecycle migration and refreshed
   grants; older binaries cannot decode retained pressure facts.
 
 - **Breaking storage SDK 0.20 recovery capability:** complete adapters must
@@ -110,7 +110,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   subsequent native batches preserve all earlier retained membership.
   Implement exact nonproductive
   `TaskArtifactStore::abort_task` cleanup using the original attempt/task/claim. Deploy the new
-  `2026-11-03-000005_history_lifecycle` migration after shipped archive 000004;
+  `2026-11-19-000002_history_lifecycle` migration after the idle scheduler migration;
   refresh grants and preserve signed format-3 authority for roll-forward recovery.
   Archive entries now preserve the original history publication and producer
   owners for both supported protocols, and retained collection expiry prevents
@@ -138,7 +138,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Upgrade adapters and exhaustive kind matches
   together. Stop older API, worker, restore
   and administrator processes, back up the database, apply lifecycle migration
-  000005 and refresh grants before starting matching binaries. Include the eighth kind and scheduling
+  and refresh grants before starting matching binaries. Include the eighth kind and scheduling
   weight when editing task policy. Migration preserves all existing limits and
   adds one execution, 64 outstanding runs, 64 MiB resident capacity, one run per
   principal and weight one. Admission, required audit, exclusions and the original
@@ -541,7 +541,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Gated history expiry control reads retain their original owner across
   receipt-only progress. Policy, hold and exclusion changes still fence them;
   response and external producer scopes keep full-revision fencing. Deploy
-  matching storage SDK adapters and lifecycle migration 000005 together as part
+  matching storage SDK adapters and the history lifecycle migration together as part
   of the coordinated offline upgrade.
 
 - Retained history visibility uses indexed exact-copy and restore-ancestor
@@ -563,7 +563,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   workers select concurrently.
 
 - Rolling back the unmerged history lifecycle migration preserves Legacy archive
-  entry when the synchronized runtime-settings checkpoint remains installed.
+  entry when the idle scheduler checkpoint remains installed.
   Unknown future checkpoints still fail closed; retained lifecycle authority
   continues to prevent rollback.
 
@@ -598,6 +598,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Keep query-usage analysis available when a PostgreSQL index disappears during
   catalog inspection; omit vanished indexes from native resource coverage.
+
+- Full-history backups omit export bytes as soon as retention hides their output
+  and exclude audit events and deliveries for waiting tasks. Backup diagnostics
+  and the operational contract report the supported versions, 6 through 12.
+- Streamed export and backup downloads retain their original execution permit.
+  Related-object exports support graph sort fields across pages, share one
+  authorization candidate budget, and account for final template hydration in
+  both the stage timeout and the reported duration.
+- Runtime export and backup limits must fit the configured artifact worker
+  reservation. Ordinary object-name lookups avoid history and audit admission
+  limits. Artifact cleanup continues after a zero-block state transition, and
+  idle worker polls avoid scanning historical principals. The scheduler migration
+  also qualifies the Legacy archive registry at its new schema checkpoint.
 
 - The runtime permission proxy preserves external task-read, bulk-read and
   cancellation decisions instead of substituting default owner/admin behavior.

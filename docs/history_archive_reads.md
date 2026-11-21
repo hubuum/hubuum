@@ -21,7 +21,7 @@ authorization completes, before admitting a handle or returning a result.
 
 Migration `2026-11-03-000004_history_archive_reads` initially installed the
 protected, fixed-true `hubuum_archive_history_requires_legacy_runtime()` hook.
-The subsequent `2026-11-03-000005_history_lifecycle` migration replaces that
+The subsequent `2026-11-19-000002_history_lifecycle` migration replaces that
 restriction with the shared history-authority and original publication/producer
 entry. Both adapters accept Legacy before retained expiry and OnlineV1 with its
 original history scope. Unknown protocols, schema or permission errors fail
@@ -136,12 +136,17 @@ activate the service alongside retained online expiry.
 ## Synchronizing runtime migrations
 
 Apply `2026-11-11-000001_archive_runtime_compatibility` after bringing the runtime
-settings migrations into the project branch. It updates the exact supported
-checkpoint for unversioned Legacy registrations; it preserves the fixed Legacy
-restriction, original owner/application checks, and refusal of unknown future
-checkpoints. Both upgrade and rollback leave an already installed versioned
-history protocol unchanged, so application order cannot replace its gate.
-Rollback on an unversioned registry restores the original archive checkpoint
-restriction; with newer runtime migrations still present, archive calls then
-refuse until the compatible migration is reapplied. Follow the runtime-policy
-offline upgrade and rollback procedure for the combined deployment.
+settings migrations into the project branch. The subsequent migration
+`2026-11-19-000001_idle_task_scheduling` qualifies its scheduler-only change
+and restores the prior checkpoint on rollback. Each migration updates the exact
+supported checkpoint for unversioned Legacy registrations. Both preserve the fixed
+Legacy restriction and original owner/application checks. Unknown future
+checkpoints still fail closed. Both upgrade and rollback preserve the gate of an
+already installed versioned history protocol. The later history lifecycle
+migration retains the scheduler's bounded idle check and restores Legacy entry at
+the scheduler checkpoint on rollback. Rolling back the scheduler migration then
+restores the November 11 checkpoint.
+Rolling back the November 11 compatibility migration while the newer runtime
+settings remain installed blocks archive calls until that compatibility
+migration is reapplied. Follow the runtime-policy offline upgrade and rollback
+procedure for the combined deployment.

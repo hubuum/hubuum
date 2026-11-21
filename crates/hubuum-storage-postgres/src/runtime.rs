@@ -1500,9 +1500,9 @@ mod tests {
     #[case::artifact_outputs(Some("20261029000001"))]
     #[case::project_waiting(Some("20261101000001"))]
     #[case::project_archive(Some("20261103000004"))]
-    #[case::project_history_lifecycle(Some("20261103000005"))]
     #[case::runtime_settings(Some("20261106000001"))]
     #[case::runtime_policies(Some("20261110000001"))]
+    #[case::idle_task_scheduling(Some("20261119000001"))]
     #[case::latest(Some(REQUIRED_DATABASE_MIGRATION_VERSION))]
     #[tokio::test]
     async fn readiness_requires_every_schema_checkpoint(#[case] missing: Option<&str>) {

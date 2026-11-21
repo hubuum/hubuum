@@ -195,7 +195,7 @@ where
         )
         .await?;
     }
-    let query_metric =
+    let mut query_metric =
         metrics::export_phase_timer(metrics::ExportMetricPhase::Query, metric_template_id);
     let mut rows = hubuum_templates::TemplateRows::new(crate::services::artifacts::spool_limit())
         .map_err(|error| ApiError::PayloadTooLarge(error.to_string()))?;
@@ -204,37 +204,42 @@ where
     let mut collected = 0;
     let mut warnings = Vec::new();
     let mut source = None;
+    let aggregate_template = runtime.template.is_some()
+        && matches!(runtime.scope, ValidatedExportScope::RelatedObjects { .. });
+    let mut hydration_metric = None;
     let mut related_items = Vec::new();
     let mut related_bytes = 0;
     let mut hydration_budget = HydrationBudget::new(max_hydrated_template_objects());
+    let mut candidate_budget = CandidateBudget::default();
     let truncated = loop {
         crate::tasks::control::checkpoint()?;
         let page_size = 4.min(max_items - collected);
         query_options.set_limit(Some(page_size + 1))?;
-        let (mut items, page_warnings, more) = export_storage
+        let ExportPage {
+            mut items,
+            continuation,
+        } = export_storage
             .run_in_scope(
                 StorageExecutionScope::default().with_query_budget(query_budget),
-                execute_scope(exporter, runtime.scope, query_options.clone()),
+                execute_scope(
+                    exporter,
+                    runtime.scope,
+                    query_options.clone(),
+                    &mut candidate_budget,
+                ),
             )
             .await?;
-        let continuation = items
-            .last()
-            .map(|last| page_continuation(runtime.scope, last, &query_options))
-            .transpose()?;
         collected += items.len();
-        warnings.extend(page_warnings);
         export_storage
             .run_in_scope(
                 StorageExecutionScope::default().with_query_budget(query_budget),
                 apply_export_includes(exporter, &runtime.export, &mut items),
             )
             .await?;
-        if runtime.template.is_some()
-            && matches!(runtime.scope, ValidatedExportScope::RelatedObjects { .. })
-        {
-            // Related-object templates expose one aggregate source graph. Bound
-            // that graph explicitly; ordinary exports never retain prior pages.
-            for item in items {
+        let last_page = continuation.is_none() || collected == max_items;
+        if aggregate_template {
+            // A related-object template hydrates one bounded source graph.
+            for item in items.drain(..) {
                 related_bytes += encoded_row_size(&item)?;
                 if related_bytes > 8 * 1024 * 1024 {
                     return Err(ApiError::PayloadTooLarge(
@@ -243,8 +248,20 @@ where
                 }
                 related_items.push(item);
             }
-        } else if runtime.template.is_some() {
-            let (hydrated, _) = export_storage
+            if last_page {
+                items = std::mem::take(&mut related_items);
+            }
+        }
+        if runtime.template.is_some() && (!aggregate_template || last_page) {
+            query_metric.pause();
+            let timer = hydration_metric.get_or_insert_with(|| {
+                metrics::export_phase_timer(
+                    metrics::ExportMetricPhase::Hydration,
+                    metric_template_id,
+                )
+            });
+            timer.resume();
+            let (hydrated, root) = export_storage
                 .run_in_scope(
                     StorageExecutionScope::default().with_query_budget(query_budget),
                     build_template_page(
@@ -256,6 +273,11 @@ where
                     ),
                 )
                 .await?;
+            timer.pause();
+            query_metric.resume();
+            if aggregate_template {
+                source = root;
+            }
             for item in hydrated {
                 rows.push(&item)
                     .map_err(|error| ApiError::PayloadTooLarge(error.to_string()))?;
@@ -266,34 +288,21 @@ where
                     .map_err(|error| ApiError::PayloadTooLarge(error.to_string()))?;
             }
         }
-        enforce_export_stage_timeout(query_metric.elapsed(), "query execution and hydration")?;
-        if !more || collected == max_items {
-            break more;
+        let elapsed = query_metric.elapsed()
+            + hydration_metric
+                .as_ref()
+                .map_or(Duration::ZERO, metrics::ExportPhaseTimer::elapsed);
+        enforce_export_stage_timeout(elapsed, "query execution and hydration")?;
+        let Some(continuation) = continuation else {
+            break false;
+        };
+        if collected == max_items {
+            break true;
         }
-        query_options.set_continuation(continuation.ok_or_else(|| {
-            ApiError::InternalServerError("Export pagination did not advance".into())
-        })?);
+        query_options.set_continuation(continuation);
     };
-    if runtime.template.is_some()
-        && matches!(runtime.scope, ValidatedExportScope::RelatedObjects { .. })
-    {
-        let (hydrated, root) = export_storage
-            .run_in_scope(
-                StorageExecutionScope::default().with_query_budget(query_budget),
-                build_template_page(
-                    exporter,
-                    runtime,
-                    &related_items,
-                    relation_hydration,
-                    &mut hydration_budget,
-                ),
-            )
-            .await?;
-        for item in hydrated {
-            rows.push(&item)
-                .map_err(|error| ApiError::PayloadTooLarge(error.to_string()))?;
-        }
-        source = root;
+    if let Some(timer) = hydration_metric {
+        timings.hydration = timer.finish(metrics::ExportMetricOutcome::Success);
     }
     timings.query = query_metric.finish(metrics::ExportMetricOutcome::Success);
     add_truncation_warning(&mut warnings, truncated);
@@ -412,7 +421,7 @@ fn normalize_page_order(
             normalized_sorts::<HubuumObjectRelation>(options.sort())?
         }
         ValidatedExportScope::RelatedObjects { .. } => {
-            normalized_sorts::<HubuumObjectWithPath>(options.sort())?
+            normalized_sorts::<RelatedObjectGraphRow>(options.sort())?
         }
     };
     let mut prepared = sorts;
@@ -424,29 +433,4 @@ fn normalize_page_order(
         options.sort_mut().append_tie_breaker(sort)?;
     }
     Ok(())
-}
-
-fn page_continuation(
-    scope: ValidatedExportScope,
-    item: &serde_json::Value,
-    options: &QueryOptions,
-) -> Result<hubuum_query::QueryContinuation, ApiError> {
-    use crate::pagination::{CursorBoundary, CursorPaginated};
-    fn boundary<T: CursorPaginated + serde::de::DeserializeOwned>(
-        item: &serde_json::Value,
-        options: &QueryOptions,
-    ) -> Result<hubuum_query::QueryContinuation, ApiError> {
-        CursorBoundary::from_item(&serde_json::from_value::<T>(item.clone())?, options.sort())?
-            .into_continuation()
-    }
-    match scope {
-        ValidatedExportScope::Collections => boundary::<Collection>(item, options),
-        ValidatedExportScope::Classes => boundary::<HubuumClassExpanded>(item, options),
-        ValidatedExportScope::ObjectsInClass(_) => boundary::<HubuumObject>(item, options),
-        ValidatedExportScope::ClassRelations => boundary::<HubuumClassRelation>(item, options),
-        ValidatedExportScope::ObjectRelations => boundary::<HubuumObjectRelation>(item, options),
-        ValidatedExportScope::RelatedObjects { .. } => {
-            boundary::<HubuumObjectWithPath>(item, options)
-        }
-    }
 }

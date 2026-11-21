@@ -477,7 +477,7 @@ bounded contract.
 Recovery across a changed application incarnation remains a separate qualification
 gate. Production workers do not yet enable this maintenance path.
 
-Lifecycle migration 000005 appends the new per-kind capacity and weight in one
+The history lifecycle migration appends the new per-kind capacity and weight in one
 policy revision while preserving all existing limits, lanes and reservations.
 Persisted eighth-kind work prevents downgrade. Stop older API, worker, restore
 and administrator processes, back up the database, apply the migration and
@@ -585,7 +585,7 @@ implement `HistoryLifecycleStorage`, atomic canonical audit, bounded source
 inspection, compare-and-swap fencing, restore isolation and quarantine-only
 recovery. Upgrade all exact SDK dependencies together to the coordinated
 incompatible 0.20 release. Deploy migration
-`2026-11-03-000005_history_lifecycle` after the shipped archive migration and
+`2026-11-19-000002_history_lifecycle` after the idle scheduler migration and
 refresh runtime grants. The combined archive adapter accepts both registered
 protocols through original publication/producer ownership; retained collection
 expiry makes archive capture unavailable. Production still registers Legacy and

@@ -20,6 +20,7 @@ use crate::config::environment::{
     Exposure, PROCESS_ENVIRONMENT, configuration_bounds, configuration_constraints,
 };
 use crate::events::{Action, ActorKind, EntityType, valid_actions};
+use crate::models::backup::SUPPORTED_BACKUP_VERSIONS;
 use crate::models::{
     BackupDocument, BackupManifest, BackupState, CURRENT_BACKUP_VERSION, CURRENT_IMPORT_VERSION,
     ExportContentType, ExportMissingDataPolicy, ExportScopeKind, ExportTemplateKind, ImportGraph,
@@ -1245,7 +1246,7 @@ struct VersionedDocumentContract {
     required_fields: Vec<String>,
     optional_fields: Vec<String>,
     sections: Vec<String>,
-    rejection_policy: &'static str,
+    rejection_policy: String,
 }
 
 #[derive(Serialize)]
@@ -2694,14 +2695,18 @@ fn document_contracts() -> DocumentContracts {
                 )
                 .map(str::to_string)
                 .collect(),
-            rejection_policy: "accept backup versions 6 through 10; normalize legacy event defaults, missing query usage declarations and missing shared computed definition history; observe new definition history at the restore boundary",
+            rejection_policy: format!(
+                "accept backup versions {} through {}; normalize legacy event defaults, missing query usage declarations and missing shared computed definition history; observe new definition history at the restore boundary",
+                SUPPORTED_BACKUP_VERSIONS.start(),
+                SUPPORTED_BACKUP_VERSIONS.end()
+            ),
         },
         import: VersionedDocumentContract {
             version: Some(CURRENT_IMPORT_VERSION),
             required_fields: import_fields.required,
             optional_fields: import_fields.optional,
             sections: serialized_section_names(&ImportGraph::default()),
-            rejection_policy: "reject any import version other than the current version",
+            rejection_policy: "reject any import version other than the current version".into(),
         },
         export: ExportContract {
             scope_kinds: ExportScopeKind::ALL

@@ -3,8 +3,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use hubuum_storage_core::artifacts::{
-    ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReference, ArtifactReservation,
-    ArtifactResult, ArtifactStore, Destination, TaskArtifactStore, VerifiedArtifact,
+    ArtifactCleanupBatch, ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReference,
+    ArtifactReservation, ArtifactResult, ArtifactStore, Destination, TaskArtifactStore,
+    VerifiedArtifact,
 };
 use hubuum_storage_core::{
     DeletionControlStorage, HistoryLifecycleStorage, StorageTaskLease, TaskWorkerId,
@@ -55,9 +56,9 @@ impl ArtifactStore for PausedCleanup {
         self.store.abort(id).await
     }
     async fn cleanup(&self) -> ArtifactResult<u32> {
-        self.entered.notify_one();
-        self.release.notified().await;
-        self.store.cleanup().await
+        self.cleanup_batch()
+            .await
+            .map(ArtifactCleanupBatch::removed_blocks)
     }
 }
 
@@ -65,6 +66,12 @@ impl ArtifactStore for PausedCleanup {
 impl TaskArtifactStore for PausedCleanup {
     async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
         self.store.abort_task(cleanup).await
+    }
+
+    async fn cleanup_batch(&self) -> ArtifactResult<ArtifactCleanupBatch> {
+        self.entered.notify_one();
+        self.release.notified().await;
+        self.store.cleanup_batch().await
     }
 
     async fn bind_task(

@@ -130,6 +130,16 @@ impl TaskArtifactStore for StorageHandle {
         .await
     }
 
+    async fn cleanup_batch(&self) -> ArtifactResult<ArtifactCleanupBatch> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Artifact,
+            "cleanup_batch",
+            async { dispatch_backend!(self, |backend| backend.cleanup_batch().await) },
+        )
+        .await
+    }
+
     async fn bind_task(
         &self,
         identity: &ArtifactIdentity,

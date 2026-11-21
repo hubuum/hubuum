@@ -226,7 +226,7 @@ for path in "$@"; do
       container=true
       artifacts=true
       ;;
-    .github/workflows/benchmarks.yml | .github/workflows/benchmark-report.yml | \
+    scripts/build-template-worker.sh | .github/workflows/benchmarks.yml | .github/workflows/benchmark-report.yml | \
       .github/workflows/benchmark-cache.yml | .github/benchmark-policy.json | \
       scripts/benchmark-*.py | scripts/benchmark_github.py | \
       tests/python/unit/tooling/test_benchmark*.py)

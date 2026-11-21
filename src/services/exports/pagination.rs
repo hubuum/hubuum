@@ -5,10 +5,23 @@ use crate::pagination::{CursorBoundary, CursorPaginated, prepare_db_pagination};
 pub(super) const CANDIDATE_PAGE_SIZE: usize = 8;
 pub(super) const MAX_AUTHORIZATION_CANDIDATES: usize = 10_000;
 
+pub(super) struct CandidateBudget {
+    remaining: usize,
+}
+
+impl Default for CandidateBudget {
+    fn default() -> Self {
+        Self {
+            remaining: MAX_AUTHORIZATION_CANDIDATES,
+        }
+    }
+}
+
 /// Scan candidates in storage order, retaining only the requested authorized
 /// output. Both the live batch and total candidate work have explicit bounds.
 pub(super) async fn authorized_storage_page<T, Fetch, Authorize>(
     query: &QueryOptions,
+    budget: &mut CandidateBudget,
     fetch: Fetch,
     authorize: Authorize,
 ) -> Result<Vec<T>, ApiError>
@@ -23,9 +36,13 @@ where
     let mut options = prepare_db_pagination::<T>(query)?;
     options.set_include_total(false);
     let mut output = Vec::new();
-    let mut scanned = 0;
     while output.len() < wanted {
-        let page_size = CANDIDATE_PAGE_SIZE.min(MAX_AUTHORIZATION_CANDIDATES - scanned);
+        if budget.remaining == 0 {
+            return Err(ApiError::BadRequest(format!(
+                "export authorization exceeded {MAX_AUTHORIZATION_CANDIDATES} candidates; narrow the export query"
+            )));
+        }
+        let page_size = CANDIDATE_PAGE_SIZE.min(budget.remaining);
         options.set_limit(Some(page_size + 1))?;
         let mut candidates = fetch(options.clone()).await?;
         if candidates.len() > page_size + 1 {
@@ -35,7 +52,7 @@ where
         }
         let has_more = candidates.len() > page_size;
         candidates.truncate(page_size);
-        scanned += candidates.len();
+        budget.remaining -= candidates.len();
         let next_boundary = candidates
             .last()
             .map(|row| CursorBoundary::from_item(row, options.sort()));
@@ -47,11 +64,6 @@ where
         );
         if output.len() == wanted || !has_more {
             break;
-        }
-        if scanned == MAX_AUTHORIZATION_CANDIDATES {
-            return Err(ApiError::BadRequest(format!(
-                "export authorization exceeded {MAX_AUTHORIZATION_CANDIDATES} candidates; narrow the export query"
-            )));
         }
         options.set_continuation(
             next_boundary
@@ -103,6 +115,7 @@ mod tests {
         query.set_limit(Some(1)).unwrap();
         let result = authorized_storage_page(
             &query,
+            &mut CandidateBudget::default(),
             async |options| {
                 assert!(options.limit().unwrap() <= CANDIDATE_PAGE_SIZE + 1);
                 assert_eq!(options.has_cursor(), pages.get() > 0);
@@ -165,6 +178,7 @@ mod tests {
         let pages = Cell::new(0);
         let result = authorized_storage_page(
             &query,
+            &mut CandidateBudget::default(),
             async |options| {
                 pages.set(pages.get() + 1);
                 paginate_in_memory(candidates.clone(), &options)
@@ -186,6 +200,28 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn output_pages_share_the_candidate_work_budget() {
+        let mut budget = CandidateBudget {
+            remaining: CANDIDATE_PAGE_SIZE,
+        };
+        let mut query = QueryOptions::empty();
+        query.set_limit(Some(1)).unwrap();
+        let fetch = async |options: QueryOptions| {
+            Ok((1..=options.limit().unwrap() as i32)
+                .map(Candidate)
+                .collect())
+        };
+        let allow = async |rows| Ok(rows);
+        authorized_storage_page(&query, &mut budget, fetch, allow)
+            .await
+            .unwrap();
+        assert!(matches!(
+            authorized_storage_page(&query, &mut budget, fetch, allow).await,
+            Err(ApiError::BadRequest(_))
+        ));
+    }
+
+    #[actix_web::test]
     async fn denied_export_stops_at_candidate_work_budget() {
         let pages = Cell::new(0);
         let authorized_candidates = Cell::new(0);
@@ -194,6 +230,7 @@ mod tests {
         let started = std::time::Instant::now();
         let result = authorized_storage_page(
             &query,
+            &mut CandidateBudget::default(),
             async |options| {
                 let start = pages.get() * CANDIDATE_PAGE_SIZE;
                 pages.set(pages.get() + 1);

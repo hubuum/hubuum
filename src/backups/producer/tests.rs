@@ -1,5 +1,6 @@
 use hubuum_artifacts::{
-    ArtifactIdentity, ArtifactLimits, ArtifactStore, Destination, DestinationId,
+    ArtifactCleanupBatch, ArtifactIdentity, ArtifactLimits, ArtifactStore, Destination,
+    DestinationId, TaskArtifactStore,
 };
 use hubuum_storage_postgres::PostgresStorage;
 
@@ -42,5 +43,5 @@ async fn captured_backup_stages_the_exact_snapshot() {
     store.abort(&identity).await.unwrap();
     // Chunks are reclaimed; attempt/destination fences deliberately survive
     // until this runner-owned database is discarded.
-    while store.cleanup().await.unwrap() != 0 {}
+    while store.cleanup_batch().await.unwrap() != ArtifactCleanupBatch::Idle {}
 }

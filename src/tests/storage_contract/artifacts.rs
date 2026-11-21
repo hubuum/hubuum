@@ -204,7 +204,7 @@ async fn replica_can_verify_and_atomically_publish_without_the_producer_spool(#[
         };
         assert_eq!(output.artifact_reference(), Some(&reference));
         fixture.cleanup().await;
-        while store.cleanup().await.unwrap() > 0 {}
+        while store.cleanup_batch().await.unwrap() != ArtifactCleanupBatch::Idle {}
     }
 }
 

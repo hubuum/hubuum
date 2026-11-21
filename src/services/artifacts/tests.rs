@@ -6,14 +6,16 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use hubuum_artifacts::{
-    ArtifactManifest, ArtifactResult, ArtifactStore, ManifestBuilder, VerifiedArtifact,
+    ArtifactManifest, ArtifactResult, ArtifactStore, ArtifactWriter, ManifestBuilder,
+    VerifiedArtifact,
 };
-use hubuum_storage_core::StorageTaskLease;
+use hubuum_storage_core::{StorageExecutionPermit, StorageTaskLease};
+use hubuum_storage_memory::MemoryStorage;
 use hubuum_task_core::{TaskExecutionContext, TaskStopReason};
 use rstest::rstest;
 
 use super::*;
-use crate::storage::StorageHandle;
+use crate::storage::{StorageHandle, StorageObservation, StorageObserver};
 
 const PAYLOAD: &[u8] = b"verified download";
 
@@ -304,4 +306,56 @@ async fn download_keeps_its_original_scope_after_the_handler_returns() {
         [Some(TaskStopReason::Cancelled); 3],
         "manifest, payload and exact-EOF reads must retain the original scope"
     );
+}
+
+struct DownloadObservations {
+    backend: MemoryStorage,
+    permits: Mutex<Vec<Option<StorageExecutionPermit>>>,
+}
+impl StorageObserver for DownloadObservations {
+    fn operation_finished(&self, call: &StorageObservation) {
+        if matches!(call.operation(), "published_manifest" | "block") {
+            self.permits.lock().unwrap().push(
+                self.backend
+                    .current_execution_scope()
+                    .application_access_override()
+                    .cloned(),
+            );
+        }
+    }
+}
+
+#[actix_web::test]
+async fn artifact_producer_inherits_the_download_scope_for_all_reads() {
+    let backend = MemoryStorage::new();
+    let destination = Destination::new(DestinationId::generate(), "download-scope").unwrap();
+    backend.register_destination(&destination).await.unwrap();
+    let limits = ArtifactLimits::builder()
+        .block_bytes(4)
+        .artifact_bytes(12)
+        .blocks(3)
+        .build()
+        .unwrap();
+    let mut writer = ArtifactWriter::new(&backend, ArtifactIdentity::new(destination.id()), limits)
+        .await
+        .unwrap();
+    writer.write(b"three blocks").await.unwrap();
+    let reference = writer.finish().await.unwrap();
+    let observations = Arc::new(DownloadObservations {
+        backend: backend.clone(),
+        permits: Mutex::default(),
+    });
+    let storage =
+        StorageHandle::from_registered_backend_with_observer(backend, observations.clone());
+    let permit = storage.admit_application_work().await.unwrap();
+    let scope = storage
+        .current_execution_scope()
+        .with_application_access(permit.clone());
+    let mut stream = Box::pin(storage.run_in_scope_sync(scope, || download(&storage, reference)));
+    while let Some(block) = stream.next().await {
+        block.unwrap();
+    }
+    let reads = observations.permits.lock().unwrap();
+    assert!(reads.len() >= 4);
+    assert!(reads.iter().all(|read| read.as_ref() == Some(&permit)));
 }
