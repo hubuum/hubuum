@@ -391,6 +391,21 @@
         "d48652fd03dd",
         "dcace9091fc2"
       ]
+    },
+    {
+      "id": "v0.0.23-security-candidates",
+      "baseline": "v0.0.23",
+      "expires": "2027-01-31",
+      "reason": "Security configuration writes now require a non-live verified candidate and exact-operation fresh local-administrator approval. Legacy direct writes and releases return Conflict.",
+      "migration": "Stop all older replicas before the security-candidates migration, upgrade OpenAPI clients and complete Rust storage adapters, and explicitly allow private authentication targets when needed.",
+      "changelog_entry": "**Breaking (deployment and administrator clients):** authentication preflight",
+      "fingerprints": [
+        "6314621ba47c",
+        "91476c3512ee",
+        "91ad18fc139c",
+        "d48652fd03dd",
+        "dcace9091fc2"
+      ]
     }
   ]
 }
