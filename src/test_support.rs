@@ -698,3 +698,15 @@ pub fn archive_test_runtime_database_url() -> String {
     std::env::var("HUBUUM_ARCHIVE_TEST_DATABASE_URL")
         .expect("The test runner must provide isolated archive fixture storage")
 }
+
+/// Recovery authority for subprocess tests that advance the application generation.
+pub fn crash_test_migration_database_url() -> String {
+    std::env::var("HUBUUM_CRASH_TEST_MIGRATION_DATABASE_URL")
+        .expect("The test runner must provide isolated crash recovery authority")
+}
+
+/// Runtime role for the independently provisioned crash recovery fixture.
+pub fn crash_test_runtime_database_url() -> String {
+    std::env::var("HUBUUM_CRASH_TEST_DATABASE_URL")
+        .expect("The test runner must provide isolated crash recovery storage")
+}

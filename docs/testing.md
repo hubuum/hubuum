@@ -55,9 +55,10 @@ The runner includes PostgreSQL adapter tests and a resource-limited JSON Schema
 probe. Python applies the probe's process limits; its assertions remain in Rust.
 Destructive restore contracts use a second runner-owned database with the same
 database role configuration. Archive overflow and retained-publication tests use
-a third database: their oversized rows must not enter ordinary backups, and their
-deliberately unsettled owners must not block later restore certification. The
-runner migrates and removes all three databases, including on test failure.
+a third database because their oversized rows and unsettled owners could interfere
+with backup and restore certification. HTTP crash recovery uses a fourth
+database so its application generation and checkpoint stay separate from restore
+fixtures. The runner migrates and removes these databases, including on failure.
 
 By default, the runner provisions separate owner, migrator and runtime roles,
 requiring a test login with `CREATEDB` and `CREATEROLE`. For a disposable instance

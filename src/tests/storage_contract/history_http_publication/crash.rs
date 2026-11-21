@@ -29,8 +29,8 @@ use crate::services::deletion_recovery::{
 };
 use crate::storage::{ExecutionStorage, StorageHandle};
 use crate::test_support::{
-    RESTORE_TEST_LOCK, postgres_test_pool, restore_test_migration_database_url,
-    restore_test_runtime_database_url,
+    archive_test_runtime_database_url, crash_test_migration_database_url,
+    crash_test_runtime_database_url, postgres_test_pool, restore_test_runtime_database_url,
 };
 
 const RESPONSE_CHUNK: &[u8] = b"undrained-history-response";
@@ -103,7 +103,7 @@ async fn http_crash_server() {
         tracing_subscriber::registry().with(PauseRenderer(Mutex::new(Some(paused)))),
     )
     .unwrap();
-    let pool = postgres_test_pool(&restore_test_runtime_database_url(), 4);
+    let pool = postgres_test_pool(&crash_test_runtime_database_url(), 4);
     let storage = StorageHandle::postgres(pool);
     let root = std::env::current_dir().unwrap();
     let options = serde_json::from_value(serde_json::json!({
@@ -219,14 +219,17 @@ async fn admits_old_runtime(pool: &PostgresPool, runtime: Uuid, token: Uuid) -> 
 
 #[actix_web::test]
 async fn crashed_http_publication_retires_only_after_the_renderer_exits() {
-    let _serial = RESTORE_TEST_LOCK.lock().await;
-    let target = IsolatedRestoreTarget::new(
-        &restore_test_runtime_database_url(),
-        &integration_test_database_url(),
-    )
-    .unwrap();
-    let pool = postgres_test_pool(&restore_test_runtime_database_url(), 4);
-    let owner_pool = postgres_test_pool(&restore_test_migration_database_url(), 2);
+    let runtime_url = crash_test_runtime_database_url();
+    let target =
+        IsolatedRestoreTarget::new(&runtime_url, &integration_test_database_url()).unwrap();
+    for unrelated in [
+        restore_test_runtime_database_url(),
+        archive_test_runtime_database_url(),
+    ] {
+        IsolatedRestoreTarget::new(&runtime_url, &unrelated).unwrap();
+    }
+    let pool = postgres_test_pool(&runtime_url, 4);
+    let owner_pool = postgres_test_pool(&crash_test_migration_database_url(), 2);
     target
         .validate_connection(&mut pool.get().await.unwrap())
         .await

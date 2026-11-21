@@ -324,8 +324,9 @@ close-on-exec enabled. Killing the parent cannot release exclusion while a
 renderer descendant still holds that lock. Successful supervisor shutdown drops
 its pin only after all children are reaped; uncertain shutdown retains it.
 
-A Unix PostgreSQL integration test pauses a real renderer and kills the server
-after the client receives the first chunk of an unfinished owned HTTP response.
+A Unix integration test uses a dedicated PostgreSQL database. It pauses a real
+renderer and kills the server after the client receives the first chunk of an
+unfinished owned HTTP response.
 Offline recovery must preserve that exact publication while the renderer holds
 the inherited lock. After the renderer exits, recovery retires the publication
 and reapplication releases the database while the original runtime stays fenced.
