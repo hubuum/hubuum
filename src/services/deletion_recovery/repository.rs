@@ -1027,11 +1027,14 @@ mod tests {
         let fixture = Fixture::new();
         fixture.repository.publish(&fixture.initial, true).unwrap();
         let next = fixture.next();
-        fixture.repository.publish(&next, false).unwrap();
+        after_lock_release(|| fixture.repository.publish(&next, false));
         let reopened =
             CheckpointRepository::open(&fixture.repository.root, &fixture.root.join("key"))
                 .unwrap();
-        assert_eq!(reopened.latest().unwrap().state(), next.state());
+        assert_eq!(
+            after_lock_release(|| reopened.latest()).state(),
+            next.state()
+        );
     }
 
     #[test]

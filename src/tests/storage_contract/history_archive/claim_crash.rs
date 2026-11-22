@@ -5,7 +5,8 @@ use crate::services::deletion_recovery::{
     tests::{Fixture, after_repository_release},
 };
 use crate::test_support::{
-    archive_test_runtime_database_url, crash_test_runtime_database_url, postgres_test_pool,
+    archive_test_runtime_database_url, claim_test_migration_database_url,
+    claim_test_runtime_database_url, crash_test_runtime_database_url, postgres_test_pool,
     restore_test_runtime_database_url,
 };
 use diesel::{QueryableByName, sql_query, sql_types};
@@ -23,15 +24,12 @@ use tokio::process::Command;
 use tokio::time::{sleep, timeout};
 use uuid::Uuid;
 
-fn claim_runtime_url() -> String {
-    std::env::var("HUBUUM_CLAIM_TEST_DATABASE_URL").expect("isolated archive claim database")
-}
-
 #[tokio::test]
 #[ignore = "subprocess for a committed archive claim interrupted during file staging"]
 async fn archive_producer() {
     let root = std::env::current_dir().unwrap();
-    let storage = StorageHandle::postgres(postgres_test_pool(&claim_runtime_url(), 4));
+    let storage =
+        StorageHandle::postgres(postgres_test_pool(&claim_test_runtime_database_url(), 4));
     let options = serde_json::from_value(json!({
         "directory": root.join("repository"),
         "key": root.join("key"),
@@ -222,7 +220,7 @@ async fn assert_claim_blocks_release(fixture: &Fixture) {
 
 #[tokio::test]
 async fn interrupted_filesystem_publication_keeps_recovery_quarantined() {
-    let runtime = claim_runtime_url();
+    let runtime = claim_test_runtime_database_url();
     let target = IsolatedRestoreTarget::new(&runtime, &integration_test_database_url()).unwrap();
     for unrelated in [
         restore_test_runtime_database_url(),
@@ -231,9 +229,7 @@ async fn interrupted_filesystem_publication_keeps_recovery_quarantined() {
     ] {
         IsolatedRestoreTarget::new(&runtime, &unrelated).unwrap();
     }
-    let admin = std::env::var("HUBUUM_CLAIM_TEST_MIGRATION_DATABASE_URL")
-        .expect("isolated claim recovery authority");
-    let admin = postgres_test_pool(&admin, 2);
+    let admin = postgres_test_pool(&claim_test_migration_database_url(), 2);
     target
         .validate_connection(&mut admin.get().await.unwrap())
         .await

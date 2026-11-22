@@ -710,3 +710,15 @@ pub fn crash_test_runtime_database_url() -> String {
     std::env::var("HUBUUM_CRASH_TEST_DATABASE_URL")
         .expect("The test runner must provide isolated crash recovery storage")
 }
+
+#[cfg(all(test, unix))]
+pub(crate) fn claim_test_migration_database_url() -> String {
+    std::env::var("HUBUUM_CLAIM_TEST_MIGRATION_DATABASE_URL")
+        .expect("The test runner must provide isolated archive claim recovery authority")
+}
+
+#[cfg(all(test, unix))]
+pub(crate) fn claim_test_runtime_database_url() -> String {
+    std::env::var("HUBUUM_CLAIM_TEST_DATABASE_URL")
+        .expect("The test runner must provide isolated archive claim storage")
+}
