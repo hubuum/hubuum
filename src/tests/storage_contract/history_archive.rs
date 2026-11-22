@@ -1289,3 +1289,6 @@ async fn staging_exhaustion_requires_original_historical_authority(#[case] scena
 }
 
 mod supervision;
+
+#[cfg(all(unix, feature = "integration-test-support"))]
+mod claim_crash;

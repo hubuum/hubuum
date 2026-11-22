@@ -340,6 +340,13 @@ Unknown domains/protocols and orphaned ownership block recovery. Claimed externa
 publication outcomes remain charged until independently reconciled. PostgreSQL
 recovery refuses lock contention instead of waiting in an exact-settlement cycle.
 
+A committed archive claim pins its original capture while a filesystem producer
+stages bytes. If that process dies, offline recovery retains the claim and
+reapplication keeps the database quarantined. Reopening the filesystem store
+with the original intent can identify and fence the same attempt. The database
+still requires evidence of physical cleanup before it can release that claim.
+The current provider contract supplies no such receipt.
+
 Production composition still registers Legacy, so these integrations do not
 activate online expiry. Restored descendants, external-claim reconciliation, complete worker
 entry/cleanup qualification, all-family native races and measured

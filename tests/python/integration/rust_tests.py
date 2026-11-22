@@ -1,4 +1,4 @@
-"""Run Rust tests with separate split-role restore, archive, and crash databases."""
+"""Run Rust tests with separate split-role restore, archive, crash, and claimed-publication databases."""
 
 import argparse
 import os
@@ -16,6 +16,7 @@ def run_tests(command, admin, database_url, *, execute=None):
     database = f"hubuum_restore_{suffix}"
     archive_database = f"hubuum_archive_{suffix}"
     crash_database = f"hubuum_crash_{suffix}"
+    claim_database = f"hubuum_claim_{suffix}"
     owner, migrator, runtime = (f"hubuum_{role}_{suffix}" for role in ("owner", "migrator", "runtime"))
     password = secrets.token_hex(24)
     source = urlsplit(database_url)
@@ -42,13 +43,14 @@ def run_tests(command, admin, database_url, *, execute=None):
             f"GRANT {owner} TO {migrator};\n"
             f"CREATE DATABASE {database} OWNER {owner};\n"
             f"CREATE DATABASE {archive_database} OWNER {owner};\n"
-            f"CREATE DATABASE {crash_database} OWNER {owner};\n")
+            f"CREATE DATABASE {crash_database} OWNER {owner};\n"
+            f"CREATE DATABASE {claim_database} OWNER {owner};\n")
         migration_env = {**os.environ,
                          "HUBUUM_DATABASE_ROLE_MODE": "split",
                          "HUBUUM_DATABASE_OWNER_ROLE": owner,
                          "HUBUUM_DATABASE_MIGRATOR_ROLE": migrator,
                          "HUBUUM_DATABASE_RUNTIME_ROLE": runtime}
-        for target in (database, archive_database, crash_database):
+        for target in (database, archive_database, crash_database, claim_database):
             env = {**migration_env,
                    "HUBUUM_DATABASE_URL": url(runtime, target),
                    "HUBUUM_MIGRATION_DATABASE_URL": url(migrator, target)}
@@ -59,12 +61,15 @@ def run_tests(command, admin, database_url, *, execute=None):
                     "HUBUUM_ARCHIVE_TEST_DATABASE_URL": url(runtime, archive_database),
                     "HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL": url(migrator, archive_database),
                     "HUBUUM_CRASH_TEST_DATABASE_URL": url(runtime, crash_database),
-                    "HUBUUM_CRASH_TEST_MIGRATION_DATABASE_URL": url(migrator, crash_database)}
+                    "HUBUUM_CRASH_TEST_MIGRATION_DATABASE_URL": url(migrator, crash_database),
+                    "HUBUUM_CLAIM_TEST_DATABASE_URL": url(runtime, claim_database),
+                    "HUBUUM_CLAIM_TEST_MIGRATION_DATABASE_URL": url(migrator, claim_database)}
         if execute is not None:
             return execute(command, test_env)
         return subprocess.run(command, env=test_env, cwd=ROOT, check=False).returncode
     finally:
-        sql(f"DROP DATABASE IF EXISTS {crash_database} WITH (FORCE);\n"
+        sql(f"DROP DATABASE IF EXISTS {claim_database} WITH (FORCE);\n"
+            f"DROP DATABASE IF EXISTS {crash_database} WITH (FORCE);\n"
             f"DROP DATABASE IF EXISTS {archive_database} WITH (FORCE);\n"
             f"DROP DATABASE IF EXISTS {database} WITH (FORCE);\n"
             f"DROP ROLE IF EXISTS {runtime};\n"

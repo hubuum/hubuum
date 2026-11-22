@@ -20,7 +20,9 @@ class RustCiFixtureTests(unittest.TestCase):
                     failure == "archive_migration" and
                     "/hubuum_archive_" in kwargs["env"]["HUBUUM_DATABASE_URL"] or
                     failure == "crash_migration" and
-                    "/hubuum_crash_" in kwargs["env"]["HUBUUM_DATABASE_URL"]):
+                    "/hubuum_crash_" in kwargs["env"]["HUBUUM_DATABASE_URL"] or
+                    failure == "claim_migration" and
+                    "/hubuum_claim_" in kwargs["env"]["HUBUUM_DATABASE_URL"]):
                 raise subprocess.CalledProcessError(17, command)
             return subprocess.CompletedProcess(command, 23 if command[0] == "cargo" else 0)
 
@@ -61,9 +63,10 @@ class RustCiFixtureTests(unittest.TestCase):
         targets = {urlsplit(env[key]).path for key in (
             "HUBUUM_DATABASE_URL", "HUBUUM_RESTORE_TEST_DATABASE_URL",
             "HUBUUM_ARCHIVE_TEST_DATABASE_URL", "HUBUUM_CRASH_TEST_DATABASE_URL",
+            "HUBUUM_CLAIM_TEST_DATABASE_URL",
         )}
-        self.assertEqual(len(targets), 4)
-        for fixture in ("ARCHIVE", "CRASH"):
+        self.assertEqual(len(targets), 5)
+        for fixture in ("ARCHIVE", "CRASH", "CLAIM"):
             with self.subTest(fixture=fixture):
                 runtime = urlsplit(env[f"HUBUUM_{fixture}_TEST_DATABASE_URL"])
                 migrator = urlsplit(env[f"HUBUUM_{fixture}_TEST_MIGRATION_DATABASE_URL"])
@@ -78,12 +81,12 @@ class RustCiFixtureTests(unittest.TestCase):
                 self.assertIn(f"DROP DATABASE IF EXISTS {runtime.path[1:]}", calls[-1][1]["input"])
 
     def test_isolated_migration_failure_cleans_up_all_databases(self):
-        for failure in ("archive_migration", "crash_migration"):
+        for failure in ("archive_migration", "crash_migration", "claim_migration"):
             with self.subTest(failure=failure):
                 code, calls = self.exercise(failure)
                 self.assertEqual(code, 17)
                 self.assertFalse(any(command[0] == "cargo" for command, _ in calls))
-                self.assertEqual(calls[-1][1]["input"].count("DROP DATABASE IF EXISTS"), 3)
+                self.assertEqual(calls[-1][1]["input"].count("DROP DATABASE IF EXISTS"), 4)
 
     def test_failed_test_command_preserves_its_exit_code_and_cleans_up(self):
         code, calls = self.exercise()

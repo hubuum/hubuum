@@ -36,6 +36,7 @@ for key in ("HUBUUM_DATABASE_URL", "HUBUUM_MIGRATION_DATABASE_URL",
             "HUBUUM_RESTORE_TEST_DATABASE_URL", "HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL",
             "HUBUUM_ARCHIVE_TEST_DATABASE_URL", "HUBUUM_ARCHIVE_TEST_MIGRATION_DATABASE_URL",
             "HUBUUM_CRASH_TEST_DATABASE_URL", "HUBUUM_CRASH_TEST_MIGRATION_DATABASE_URL",
+            "HUBUUM_CLAIM_TEST_DATABASE_URL", "HUBUUM_CLAIM_TEST_MIGRATION_DATABASE_URL",
             "HUBUUM_DATABASE_ROLE_TESTS", "HUBUUM_DATABASE_ROLE_MODE",
             "HUBUUM_DATABASE_OWNER_ROLE", "HUBUUM_DATABASE_MIGRATOR_ROLE",
             "HUBUUM_DATABASE_RUNTIME_ROLE", "PGOPTIONS", "CARGO_BIN_EXE_hubuum-template-worker"):
@@ -51,10 +52,12 @@ if name == "cargo":
     restore_migration = "--migrate" in args and (call["HUBUUM_DATABASE_URL"] or "").endswith("_restore")
     archive_migration = "--migrate" in args and (call["HUBUUM_DATABASE_URL"] or "").endswith("_archive")
     crash_migration = "--migrate" in args and (call["HUBUUM_DATABASE_URL"] or "").endswith("_crash")
+    claim_migration = "--migrate" in args and (call["HUBUUM_DATABASE_URL"] or "").endswith("_claim")
     application_tests = args == ["test", "--features", "integration-test-support,embedded-migrations"]
     if (os.environ["RUNNER_FAILURE"] == "migration" and restore_migration
             or os.environ["RUNNER_FAILURE"] == "archive_migration" and archive_migration
             or os.environ["RUNNER_FAILURE"] == "crash_migration" and crash_migration
+            or os.environ["RUNNER_FAILURE"] == "claim_migration" and claim_migration
             or os.environ["RUNNER_FAILURE"] == "tests" and application_tests):
         sys.exit(17)
 if name == "diesel" and os.environ["RUNNER_FAILURE"] == "diesel":
@@ -162,7 +165,8 @@ if name == "python3" and args[:1] == ["-c"]:
                              call["HUBUUM_CRASH_TEST_MIGRATION_DATABASE_URL"])
         first_test = calls.index(tests[0])
         for key in ("HUBUUM_DATABASE_URL", "HUBUUM_RESTORE_TEST_DATABASE_URL",
-                    "HUBUUM_ARCHIVE_TEST_DATABASE_URL", "HUBUUM_CRASH_TEST_DATABASE_URL"):
+                    "HUBUUM_ARCHIVE_TEST_DATABASE_URL", "HUBUUM_CRASH_TEST_DATABASE_URL",
+                    "HUBUUM_CLAIM_TEST_DATABASE_URL"):
             database_url = tests[0][key]
             self.assertTrue(any(
                 call["tool"] == "cargo" and "--migrate" in call["args"]
@@ -196,7 +200,8 @@ if name == "python3" and args[:1] == ["-c"]:
         self.assertNotIn(" OWNER ", sql)
 
     def test_single_login_failure_removes_every_created_database_without_roles(self):
-        for failure in ("diesel", "migration", "archive_migration", "crash_migration", "tests"):
+        for failure in ("diesel", "migration", "archive_migration", "crash_migration",
+                        "claim_migration", "tests"):
             with self.subTest(failure=failure):
                 result, calls = self.run_fixture(failure, role_tests="false")
                 self.assertNotEqual(result.returncode, 0)
@@ -253,9 +258,10 @@ if name == "python3" and args[:1] == ["-c"]:
         targets = {urlsplit(tests[key]).path for key in (
             "HUBUUM_DATABASE_URL", "HUBUUM_RESTORE_TEST_DATABASE_URL",
             "HUBUUM_ARCHIVE_TEST_DATABASE_URL", "HUBUUM_CRASH_TEST_DATABASE_URL",
+            "HUBUUM_CLAIM_TEST_DATABASE_URL",
         )}
-        self.assertEqual(len(targets), 4)
-        for fixture in ("ARCHIVE", "CRASH"):
+        self.assertEqual(len(targets), 5)
+        for fixture in ("ARCHIVE", "CRASH", "CLAIM"):
             with self.subTest(fixture=fixture):
                 runtime = urlsplit(tests[f"HUBUUM_{fixture}_TEST_DATABASE_URL"])
                 migrator = urlsplit(tests[f"HUBUUM_{fixture}_TEST_MIGRATION_DATABASE_URL"])
@@ -269,7 +275,7 @@ if name == "python3" and args[:1] == ["-c"]:
                 ))
 
     def test_failure_removes_all_databases_before_removing_shared_roles(self):
-        for failure in ("migration", "archive_migration", "crash_migration", "tests"):
+        for failure in ("migration", "archive_migration", "crash_migration", "claim_migration", "tests"):
             with self.subTest(failure=failure):
                 result, calls = self.run_fixture(failure)
                 self.assertNotEqual(result.returncode, 0)
@@ -279,6 +285,7 @@ if name == "python3" and args[:1] == ["-c"]:
                 application_name = restore_name.removesuffix("_restore")
                 sql = [call["args"][-1] for call in calls
                        if call["tool"] == "psql" and "-c" in call["args"]]
-                for name in (restore_name, application_name, application_name + "_archive", application_name + "_crash"):
+                for name in (restore_name, application_name, application_name + "_archive",
+                             application_name + "_crash", application_name + "_claim"):
                     self.assertIn(f"DROP DATABASE IF EXISTS {name};", sql)
                 self.assertIn("DROP ROLE IF EXISTS", sql[-1])

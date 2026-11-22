@@ -315,6 +315,12 @@ pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
         sensitive
     ),
     option!("HUBUUM_ARCHIVE_TEST_DATABASE_URL", Operations, sensitive),
+    option!("HUBUUM_CLAIM_TEST_DATABASE_URL", Operations, sensitive),
+    option!(
+        "HUBUUM_CLAIM_TEST_MIGRATION_DATABASE_URL",
+        Operations,
+        sensitive
+    ),
     option!("HUBUUM_CRASH_TEST_DATABASE_URL", Operations, sensitive),
     option!(
         "HUBUUM_CRASH_TEST_MIGRATION_DATABASE_URL",
