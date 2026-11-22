@@ -87,17 +87,26 @@ async fn with_table_lock<T, F: Future<Output = T>>(
     result
 }
 
-async fn copy_present(connection: &mut PostgresConnection, target: StorageRecordIdentity) -> bool {
+async fn copy_present(
+    connection: &mut PostgresConnection,
+    family: StorageIdentityHistoryKind,
+    target: StorageRecordIdentity,
+) -> bool {
     #[derive(QueryableByName)]
     struct Copy {
         #[diesel(sql_type = Bool)]
         present: bool,
     }
-    sql_query(
-        "SELECT EXISTS(SELECT 1 FROM public.collections_history
-        WHERE logical_identity #>> '{subject,identity,identity}'=$1
-          AND logical_identity #>> '{subject,version}'=$2) AS present",
-    )
+    let table = match family {
+        StorageIdentityHistoryKind::Collection => "collections_history",
+        StorageIdentityHistoryKind::Class => "hubuumclass_history",
+        _ => panic!("unsupported restore fixture family: {family:?}"),
+    };
+    sql_query(format!(
+        "SELECT EXISTS(SELECT 1 FROM public.{table}
+        WHERE logical_identity #>> '{{subject,identity,identity}}'=$1
+          AND logical_identity #>> '{{subject,version}}'=$2) AS present"
+    ))
     .bind::<Text, _>(target.resource().to_string())
     .bind::<Text, _>(target.version().to_string())
     .get_result::<Copy>(connection)
@@ -117,10 +126,15 @@ pub(super) async fn restore_with_queued_replay<T>(
         return;
     }
     let (recovery, recovery_pid) = recovery_session().await;
+    let family = request.member().family();
     let target = request.target();
+    let mut observer = pool.get().await.unwrap();
+    assert_eq!(
+        copy_present(&mut observer, family, target).await,
+        !request.has_receipt()
+    );
     let replay = recovery.reapply_history_expiry(request);
     tokio::pin!(restore, replay);
-    let mut observer = pool.get().await.unwrap();
     // Backup reads can proceed. Restore rotates the application before requesting
     // exclusive locks to replace the backed-up tables.
     let (restored, stale) = with_table_lock(pool, "LOCK TABLE public.export_templates_history IN ACCESS SHARE MODE", async |gate, release| {
@@ -145,7 +159,7 @@ pub(super) async fn restore_with_queued_replay<T>(
             .contains("Protected recovery authority or application image changed"),
         "{stale}"
     );
-    assert!(!copy_present(&mut observer, target).await);
+    assert!(!copy_present(&mut observer, family, target).await);
 }
 
 pub(super) async fn replay_with_queued_restore(
@@ -155,6 +169,7 @@ pub(super) async fn replay_with_queued_restore(
     trace: &ReplayTrace,
 ) {
     let (recovery, recovery_pid) = recovery_session().await;
+    let family = request.member().family();
     let target = request.target();
     let batch = request.batch();
     let checkpoint = request.protection().checkpoint().clone();
@@ -163,7 +178,7 @@ pub(super) async fn replay_with_queued_restore(
     let replay = recovery.reapply_history_expiry(request);
     tokio::pin!(replay, restore);
     let mut observer = pool.get().await.unwrap();
-    assert!(copy_present(&mut observer, target).await);
+    assert!(copy_present(&mut observer, family, target).await);
     // The required first-removal audit holds expiry inside its transaction.
     // Only poll restore through the observed wait until we read the first receipt.
     with_table_lock(pool, "LOCK TABLE public.events IN SHARE MODE", async |gate, release| {
@@ -193,7 +208,7 @@ pub(super) async fn replay_with_queued_restore(
     };
     assert_eq!(first.target(), target);
     assert_eq!(first.checkpoint(), &checkpoint);
-    assert!(!copy_present(&mut observer, target).await);
+    assert!(!copy_present(&mut observer, family, target).await);
 
     // The coordinator yields to read control after its data transaction commits.
     // Inspect that committed image before allowing signed reapplication to run.
@@ -205,9 +220,9 @@ pub(super) async fn replay_with_queued_restore(
     let application = recovery.read_application_control().await.unwrap();
     assert_ne!(application.fence().incarnation(), original.incarnation());
     assert!(!application.is_released_for(&recovery.read_deletion_control().await.unwrap()));
-    assert!(copy_present(&mut observer, target).await);
+    assert!(copy_present(&mut observer, family, target).await);
     restore.await.unwrap();
-    assert!(!copy_present(&mut observer, target).await);
+    assert!(!copy_present(&mut observer, family, target).await);
     let after = recovery.capture_history_lifecycle().await.unwrap();
     assert_eq!(
         after

@@ -103,6 +103,26 @@ impl RestoreContractFixture {
             .into_value())
     }
 
+    pub async fn update_class_description(
+        &self,
+        id: ClassId,
+        description: String,
+    ) -> Result<(), ApiError> {
+        let classes = self.storage.class_store();
+        let class = classes.resolve_class(StorageClassSelector::Id(id)).await?;
+        classes
+            .update_class(
+                &class,
+                StorageClassUpdate::builder()
+                    .description(Some(description))
+                    .build(),
+                &EventContext::system(),
+            )
+            .await?
+            .into_value();
+        Ok(())
+    }
+
     pub async fn create_collection(
         &self,
         name: &str,
