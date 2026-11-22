@@ -104,7 +104,7 @@ pub struct FilesystemArtifactStore {
     fail_sync: Arc<std::sync::atomic::AtomicIsize>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct State {
     format: u8,
@@ -127,7 +127,7 @@ enum Phase {
     Deleting,
     Discarded,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Limits {
     block: u32,
@@ -162,7 +162,7 @@ impl State {
         if !matches!(
             (state.format, state.owner.is_some()),
             (1, false) | (2, true)
-        ) || (state.owner.is_none() && state.phase == Phase::Preparing)
+        ) || (state.phase == Phase::Preparing && (state.owner.is_none() || state.blocks != 0))
             || state.owner.as_ref().is_some_and(|intent| {
                 intent.identity() != &state.identity
                     || intent.limits() != state.limits.validated().expect("validated above")
@@ -334,19 +334,24 @@ impl FilesystemArtifactStore {
             ("versions", key(identity.version().as_bytes())),
         ];
         // Preflight both keys before writing either. A crash between claims
-        // may conservatively reserve an ID, but can never transfer ownership.
+        // may leave only the attempt key. A version key alone cannot result
+        // from this write order.
+        let mut missing = false;
         for (directory, name) in &claims {
             let directory = open_dir(&self.root, *directory)?;
             private(&directory, true)?;
             match read(&directory, name, STATE_LIMIT) {
                 Ok(bytes) => {
                     let owner: ArtifactIdentity = decode(&bytes)?;
-                    if &owner != identity {
+                    if &owner != identity || missing {
                         return Err(conflict());
                     }
                 }
                 Err(FilesystemError::Io(error))
-                    if !require_existing && error.kind() == io::ErrorKind::NotFound => {}
+                    if !require_existing && error.kind() == io::ErrorKind::NotFound =>
+                {
+                    missing = true;
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -779,7 +784,7 @@ impl FilesystemArtifactStore {
         Ok(())
     }
 
-    /// Discard one bounded batch of a bound, admitted, unpublished attempt.
+    /// Discard one bounded batch of a bound, owned, unpublished attempt.
     /// Keep the durable tombstone to exclude delayed retries. A subsequent
     /// process may reissue the same evidence after an ambiguous database commit.
     pub async fn discard_owned_step(
@@ -793,26 +798,30 @@ impl FilesystemArtifactStore {
                 return Err(conflict());
             }
             let (directory, mut state) = store.state(intent.identity())?;
-            if state.owner.as_ref() != Some(&intent)
-                || matches!(state.phase, Phase::Preparing | Phase::Published)
-            {
+            if state.owner.as_ref() != Some(&intent) || state.phase == Phase::Published {
                 return Err(conflict());
             }
-            store.check_identities(intent.identity(), true)?;
-            if state.phase != Phase::Discarded {
-                store.discard_step(&directory, &mut state)?;
+            if state.phase == Phase::Preparing {
+                // Ownership was recorded before either index. No payload could
+                // have been admitted. Finish reserving the IDs and go directly
+                // to the tombstone while the original root is locked.
+                store.check_cleanup_directory(&directory, &state)?;
+                store.claim_identities(intent.identity())?;
+                state.phase = Phase::Discarded;
+                store.save(&directory, &state)?;
+            } else {
+                store.check_identities(intent.identity(), true)?;
                 if state.phase != Phase::Discarded {
-                    return Ok(None);
+                    store.discard_step(&directory, &mut state)?;
                 }
+            }
+            if state.phase != Phase::Discarded {
+                return Ok(None);
             }
             if state.cleanup_next != state.blocks {
                 return Err(invalid());
             }
-            for entry in Dir::read_from(&directory)? {
-                if !matches!(entry?.file_name().to_bytes(), b"." | b".." | b"state") {
-                    return Err(invalid());
-                }
-            }
+            store.check_cleanup_directory(&directory, &state)?;
             store.sync(&directory)?;
             Ok(Some(ArtifactCleanupReceipt::from_provider(
                 intent.encode()?,
@@ -820,6 +829,30 @@ impl FilesystemArtifactStore {
             )?))
         })
         .await
+    }
+
+    fn check_cleanup_directory(&self, directory: &File, state: &State) -> Result<()> {
+        for entry in Dir::read_from(directory)? {
+            match entry?.file_name().to_bytes() {
+                b"." | b".." | b"state" => {}
+                b"pending" if state.phase == Phase::Preparing => {
+                    // Both indexes precede either possible next state write.
+                    // A crash can leave a partial write before the rename.
+                    self.check_identities(&state.identity, true)?;
+                    let pending = read(directory, "pending", STATE_LIMIT)?;
+                    let mut next = state.clone();
+                    next.phase = Phase::Staging;
+                    if !encode(&next)?.starts_with(&pending) {
+                        next.phase = Phase::Discarded;
+                        if !encode(&next)?.starts_with(&pending) {
+                            return Err(invalid());
+                        }
+                    }
+                }
+                _ => return Err(invalid()),
+            }
+        }
+        Ok(())
     }
 
     async fn append_checked(

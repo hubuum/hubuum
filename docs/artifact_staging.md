@@ -275,6 +275,13 @@ acknowledged; a crash between claims may conservatively reserve an ID. Exact
 retries may resume it, but another artifact cannot take it. Cleanup retains both
 ownership records, including for discarded attempts and incomplete stages.
 
+For a filesystem-bound intent in `Preparing`, offline cleanup verifies the
+original owner and checks that the directory contains only its state and an
+optional bounded, private pending metadata write. The attempt index is written
+before the version index. Under the same root lock, cleanup verifies the
+existing indexes, finishes reserving the pair and writes a `Discarded`
+tombstone. A later create for the same intent observes the fence.
+
 A newly staged `state` is UTF-8 JSON with these fields (example IDs and timestamp):
 
 ```json

@@ -1417,6 +1417,160 @@ async fn cleanup_receipt_requires_synced_empty_attempt_on_every_retry() {
     assert!(ArtifactCleanupReceipt::from_provider(intent.encode().unwrap(), [9; 32]).is_err());
 }
 
+// Interrupt the actual create path after writing Preparing, before it can
+// return a staging receipt. Reopen the store to drop the injected fault.
+async fn interrupted_preparation(fail_after: isize) -> (Fixture, ArtifactCreationIntent) {
+    let fixture = Fixture::new().await;
+    let intent = fixture
+        .store
+        .bind_intent(owned_intent(fixture.identity(), 1))
+        .await
+        .unwrap();
+    fixture.store.fail_sync.store(fail_after, Ordering::SeqCst);
+    assert!(fixture.store.create_owned(&intent).await.is_err());
+    let (_, state) = fixture.store.state(intent.identity()).unwrap();
+    assert!(state.phase == Phase::Preparing);
+    (fixture, intent)
+}
+
+#[rstest]
+#[case::before_attempt_index(4, false, false)]
+#[case::before_version_index(6, true, false)]
+#[case::before_staging_state(8, true, true)]
+#[tokio::test]
+async fn cleanup_fences_interrupted_preparation(
+    #[case] fail_after: isize,
+    #[case] attempt_exists: bool,
+    #[case] version_exists: bool,
+) {
+    let (fixture, intent) = interrupted_preparation(fail_after).await;
+    let identity = intent.identity();
+    for (index, id, exists) in [
+        ("attempts", identity.attempt().as_bytes(), attempt_exists),
+        ("versions", identity.version().as_bytes(), version_exists),
+    ] {
+        assert_eq!(
+            fixture.root.path().join(index).join(key(id)).exists(),
+            exists
+        );
+    }
+    let store = fixture.reopen().await;
+    let proof = store.discard_owned_step(&intent).await.unwrap().unwrap();
+    assert_eq!(proof.encoded_intent(), intent.encode().unwrap());
+    store.check_identities(identity, true).unwrap();
+    let restarted = fixture.reopen().await;
+    let OwnedArtifactAdmission::ResumedSameOwner {
+        artifact,
+        phase: OwnedArtifactPhase::Fenced,
+    } = restarted.create_owned(&intent).await.unwrap()
+    else {
+        panic!("a delayed create must find the tombstone");
+    };
+    assert!(restarted.append_owned(&artifact, 0, b"abcd").await.is_err());
+    assert!(
+        restarted
+            .discard_owned_step(&intent)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn preparing_cleanup_retries_an_interrupted_tombstone_write() {
+    let (fixture, intent) = interrupted_preparation(4).await;
+    let store = fixture.reopen().await;
+    // The two index writes succeed. The pending tombstone write fails its
+    // sync before rename, so the durable state still says Preparing.
+    store.fail_sync.store(5, Ordering::SeqCst);
+    assert!(store.discard_owned_step(&intent).await.is_err());
+    assert!(store.state(intent.identity()).unwrap().1.phase == Phase::Preparing);
+    let pending = fixture.directory(intent.identity()).join("pending");
+    let mut partial = std::fs::read(&pending).unwrap();
+    assert!(State::decode(&partial).unwrap().phase == Phase::Discarded);
+    partial.pop();
+    std::fs::write(&pending, partial).unwrap();
+    let proof = fixture
+        .reopen()
+        .await
+        .discard_owned_step(&intent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.encoded_intent(), intent.encode().unwrap());
+}
+
+#[rstest]
+#[case::payload_without_admission("00000000.block")]
+#[case::manifest_without_admission("manifest")]
+#[case::foreign_version_claim("foreign")]
+#[case::version_without_attempt_claim("version_only")]
+#[tokio::test]
+async fn inconsistent_preparation_keeps_original_evidence(#[case] condition: &str) {
+    let (fixture, intent) = interrupted_preparation(4).await;
+    let identity = intent.identity();
+    let (path, bytes) = match condition {
+        "foreign" | "version_only" => {
+            let bytes = if condition == "foreign" {
+                encode(&fixture.identity()).unwrap()
+            } else {
+                encode(identity).unwrap()
+            };
+            (
+                fixture
+                    .root
+                    .path()
+                    .join("versions")
+                    .join(key(identity.version().as_bytes())),
+                bytes,
+            )
+        }
+        name => (
+            fixture.directory(identity).join(name),
+            b"unexpected".to_vec(),
+        ),
+    };
+    std::fs::write(&path, &bytes).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let store = fixture.reopen().await;
+    assert!(store.discard_owned_step(&intent).await.is_err());
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+    assert!(store.state(identity).unwrap().1.phase == Phase::Preparing);
+    assert!(
+        !fixture
+            .root
+            .path()
+            .join("attempts")
+            .join(key(identity.attempt().as_bytes()))
+            .exists()
+    );
+}
+
+#[rstest]
+#[case::unexpected_pending_contents(false)]
+#[case::pending_transition_missing_version_index(true)]
+#[tokio::test]
+async fn preparing_cleanup_requires_evidence_for_pending_state(#[case] missing_version: bool) {
+    let (fixture, intent) = interrupted_preparation(8).await;
+    let identity = intent.identity();
+    let pending = fixture.directory(identity).join("pending");
+    if missing_version {
+        let version = fixture
+            .root
+            .path()
+            .join("versions")
+            .join(key(identity.version().as_bytes()));
+        std::fs::remove_file(version).unwrap();
+    } else {
+        std::fs::write(&pending, b"unexpected").unwrap();
+    }
+    let before = std::fs::read(&pending).unwrap();
+    let store = fixture.reopen().await;
+    assert!(store.discard_owned_step(&intent).await.is_err());
+    assert_eq!(std::fs::read(pending).unwrap(), before);
+    assert!(store.state(identity).unwrap().1.phase == Phase::Preparing);
+}
+
 #[tokio::test]
 async fn cleanup_receipt_waits_for_the_last_bounded_batch() {
     let fixture = Fixture::new().await;

@@ -350,7 +350,11 @@ with `--recover-control DIRECTORY --control-checkpoint-key KEY`,
 `--archive-cleanup-publication PUBLICATION_UUID` and
 `--archive-cleanup-root ABSOLUTE_PROVIDER_ROOT`. Use the original private root
 on the original filesystem. Recovery removes the unpublished attempt in batches
-of up to 16 blocks and syncs its tombstone. The provider then answers the
+of up to 16 blocks and syncs its tombstone. If the producer stopped after
+recording ownership but before staging, recovery checks the empty attempt,
+finishes reserving its IDs and writes the tombstone directly. A missing owner
+record, conflicting index or unexpected payload keeps the claim quarantined.
+The provider then answers the
 per-attempt commitment recorded before admission. Control verifies the exact
 claim before retiring its parent and child and unpinning the original capture.
 The database stays quarantined until ordinary signed `--reapply-control` passes.

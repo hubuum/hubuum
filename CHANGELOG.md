@@ -20,7 +20,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Added
 
 - Offline recovery can reconcile an interrupted filesystem archive publication
-  against its original private root and committed v2 intent. Signed reapplication
+  against its original private root and committed v2 intent, including a crash
+  while reserving IDs before staging begins. Signed reapplication
   can release quarantine after physical cleanup and retirement of all obligations.
   Older unbound claims stay quarantined. Upgrade all writers and preserve the root
   and its issuer file before using v2 intents.
