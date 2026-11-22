@@ -57,6 +57,18 @@ impl MemoryRuntimeSettings {
             .accept_verification(candidate, Utc::now())
             .map_err(|error| StorageError::conflict(error.to_string()))
     }
+    pub(super) fn apply_interaction_verification(
+        &mut self,
+        result: hubuum_storage_core::StorageCandidateVerification,
+    ) -> Result<(), StorageError> {
+        let candidate = self
+            .candidates
+            .get_mut(&result.id())
+            .ok_or_else(|| StorageError::not_found("Security candidate not found"))?;
+        result
+            .apply(candidate, Utc::now())
+            .map_err(|error| StorageError::conflict(error.to_string()))
+    }
     pub(super) fn discard_candidates(&mut self) {
         self.candidates.clear();
     }

@@ -114,7 +114,17 @@ pub async fn verify(
         .with_transaction(async move |connection| verify_on_connection(connection, candidate).await)
         .await
 }
-pub(super) async fn verify_on_connection(
+pub(super) async fn apply_interaction_verification(
+    connection: &mut PostgresConnection,
+    result: hubuum_storage_core::StorageCandidateVerification,
+) -> Result<(), PostgresStorageError> {
+    let mut stored = lock(connection, result.id()).await?;
+    result
+        .apply(&mut stored, database_now(connection).await?)
+        .map_err(|error| PostgresStorageError::conflict(error.to_string()))?;
+    save(connection, &stored).await
+}
+async fn verify_on_connection(
     connection: &mut PostgresConnection,
     candidate: StorageSecurityCandidate,
 ) -> Result<(), PostgresStorageError> {
@@ -221,7 +231,7 @@ pub async fn purge(runtime: &PostgresRuntime) -> Result<usize, PostgresStorageEr
     runtime
         .with_connection(async |connection| -> Result<_, PostgresStorageError> {
             Ok(
-                sql_query("DELETE FROM security_candidates WHERE expires_at <= clock_timestamp()")
+                sql_query("DELETE FROM security_candidates WHERE id IN (SELECT id FROM security_candidates WHERE expires_at <= clock_timestamp() FOR UPDATE SKIP LOCKED)")
                     .execute(connection)
                     .await?,
             )

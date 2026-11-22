@@ -9,6 +9,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Expiry of a retained OAuth access token retires that grant and lets another
+  session verify the same identity. Other sessions and personal tokens retain
+  their existing freshness requirements. Bulk logout attempts upstream
+  revocation for every retained grant. Admin logout by expired access token
+  captures the grant when it revokes the still-live refresh family.
+- Hosted sign-in supports concurrent entry forms. Large provider allowlists
+  can complete hosted verification, and expired-record cleanup runs
+  independently from security settings reconciliation.
+- **Breaking for storage adapters on the unreleased 0.11 SDK**. Return the
+  captured upstream grant from `revoke_token_by_hash` in the committed audit
+  outcome. Retire `CredentialExpired` grants without recording a principal
+  sync failure. Report deferred retries separately from missing credentials.
+  Apply hosted verification results to the locked candidate.
+
 - Require `url` 2.5.9 or later in the 2.x series to fix a stack overflow in
   URL origin resolution. This also updates the standalone fuzz workspace.
   [RustSec advisory RUSTSEC-2026-0592](https://rustsec.org/advisories/RUSTSEC-2026-0592.html)

@@ -498,11 +498,13 @@ async fn revoking_the_initiating_credential_invalidates_a_ready_approval() {
 }
 
 #[rstest::rstest]
-#[case::last_check(false)]
-#[case::another_provider_pending(true)]
+#[case::last_check(false, false)]
+#[case::another_provider_pending(true, false)]
+#[case::large_provider_configuration(false, true)]
 #[tokio::test]
 async fn provider_verification_consumes_only_the_exact_candidate_without_issuing_or_provisioning(
     #[case] another_pending: bool,
+    #[case] large: bool,
 ) {
     use hubuum_domain::InteractionActor;
     let f = Fixture::new().await;
@@ -518,6 +520,27 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
     let provider_binding = StorageProviderIdentityBinding::from_provider(&provider).unwrap();
     let second_id = Uuid::new_v4();
     let mut proposed = vec![provider];
+    if large {
+        let subjects: Vec<_> = (0..1000).map(|_| Uuid::new_v4().to_string()).collect();
+        for n in 0..8 {
+            let definition = serde_json::json!({
+                "issuer": format!("https://id-{n}.example"), "client_id": "hubuum",
+                "client_authentication": "client_secret_basic", "scopes": ["openid"],
+                "signing_algorithms": ["RS256"],
+                "membership": {"mode":"local_only","refresh_interval_seconds":300,"max_stale_seconds":900},
+                "admission": {"mode":"subject_allowlist","subjects":subjects}
+            });
+            let provider = StorageAuthenticationProvider::try_new(
+                format!("oidc-{n}"),
+                StorageAuthenticationProviderKind::Oidc,
+                definition,
+            )
+            .unwrap()
+            .with_id(Uuid::new_v4())
+            .unwrap();
+            proposed.push(provider);
+        }
+    }
     if another_pending {
         proposed.push(
             StorageAuthenticationProvider::deployment(
@@ -537,57 +560,6 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
         ResourceRevision::INITIAL,
         context(),
     );
-    let pending_candidate = || {
-        StorageSecurityCandidate::try_new(
-            Uuid::new_v4(),
-            owner(),
-            &update,
-            StorageSecurityCandidateBinding::new(digest('a'), digest('b'), digest('c')),
-        )
-        .unwrap()
-        .with_checks(vec![
-            StorageSecurityCheck::try_new(
-                StorageSecurityCheckKind::Configuration,
-                StorageSecurityCheckStatus::NotRun,
-                None,
-                "awaiting_verification",
-            )
-            .unwrap(),
-        ])
-        .unwrap()
-    };
-    let candidate = pending_candidate();
-    let other_candidate = pending_candidate();
-    assert_eq!(
-        other_candidate.state(Utc::now()),
-        StorageSecurityCandidateState::Unverified
-    );
-    backend
-        .create_security_candidate(candidate.clone())
-        .await
-        .unwrap();
-    backend
-        .create_security_candidate(other_candidate.clone())
-        .await
-        .unwrap();
-    let authority = InteractionAuthority::verification(
-        InteractionActor::new(owner().actor_id(), owner().token_id()),
-        candidate.id(),
-        StorageInteractionAuthentication::candidate_digest(&candidate),
-    )
-    .unwrap();
-    let interaction =
-        privileged_interaction(&backend, authority, Some(provider_binding.clone())).await;
-    let StorageInteractionOutcome::Claim(claim) = backend
-        .advance_auth_interaction(StorageInteractionCommand::new(
-            StorageInteractionAuthorization::Redemption(interaction.access.clone()),
-            StorageInteractionAction::Claim(Uuid::new_v4()),
-        ))
-        .await
-        .unwrap()
-    else {
-        panic!("claim rejected")
-    };
     let mut checks: Vec<_> = [
         StorageSecurityCheckKind::Configuration,
         StorageSecurityCheckKind::RecoveryAdministrator,
@@ -619,6 +591,67 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
             .unwrap(),
         );
     }
+    let mut pending_checks = checks.clone();
+    let identity_check = pending_checks
+        .iter_mut()
+        .find(|c| {
+            c.kind() == StorageSecurityCheckKind::Identity
+                && c.provider_id() == Some(provider_binding.id())
+        })
+        .unwrap();
+    *identity_check = StorageSecurityCheck::try_new(
+        StorageSecurityCheckKind::Identity,
+        StorageSecurityCheckStatus::NotRun,
+        Some(provider_binding.id()),
+        "awaiting_verification",
+    )
+    .unwrap();
+    let pending_candidate = || {
+        StorageSecurityCandidate::try_new(
+            Uuid::new_v4(),
+            owner(),
+            &update,
+            StorageSecurityCandidateBinding::new(digest('a'), digest('b'), digest('c')),
+        )
+        .unwrap()
+        .with_checks(pending_checks.clone())
+        .unwrap()
+    };
+    let candidate = pending_candidate();
+    if large {
+        assert!(candidate.to_document().to_string().len() > MAX_AUTH_INTERACTION_DOCUMENT_BYTES);
+    }
+    let other_candidate = pending_candidate();
+    assert_eq!(
+        other_candidate.state(Utc::now()),
+        StorageSecurityCandidateState::Unverified
+    );
+    backend
+        .create_security_candidate(candidate.clone())
+        .await
+        .unwrap();
+    backend
+        .create_security_candidate(other_candidate.clone())
+        .await
+        .unwrap();
+    let authority = InteractionAuthority::verification(
+        InteractionActor::new(owner().actor_id(), owner().token_id()),
+        candidate.id(),
+        StorageInteractionAuthentication::candidate_digest(&candidate),
+    )
+    .unwrap();
+    let interaction =
+        privileged_interaction(&backend, authority, Some(provider_binding.clone())).await;
+    let StorageInteractionOutcome::Claim(claim) = backend
+        .advance_auth_interaction(StorageInteractionCommand::new(
+            StorageInteractionAuthorization::Redemption(interaction.access.clone()),
+            StorageInteractionAction::Claim(Uuid::new_v4()),
+        ))
+        .await
+        .unwrap()
+    else {
+        panic!("claim rejected")
+    };
     let mut verified = candidate.clone().with_checks(checks).unwrap();
     if !another_pending {
         verified = verified.verify(digest('d')).unwrap();

@@ -696,7 +696,7 @@ impl TokenStorage for PostgresStorage {
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<Option<StorageUpstreamSession>>, StorageError> {
         crate::operations::token::revoke_token_by_hash(self.runtime(), request)
             .await
             .map_err(StorageError::from)

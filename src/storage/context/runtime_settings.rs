@@ -193,8 +193,6 @@ impl StorageHandle {
         self.inner
             .runtime_settings
             .refresh(async {
-                self.purge_security_candidates().await?;
-                self.purge_auth_interactions(128).await?;
                 let snapshot = self.load_runtime_settings().await?;
                 let deployment = crate::config::get_config()
                     .map_err(|error| StorageError::invalid_input(error.to_string()))?;
@@ -287,11 +285,48 @@ impl StorageHandle {
                 }
             }
         };
-        if let Some(listener) = listener {
-            tokio::join!(listener, refresh);
-        } else {
-            refresh.await;
-        }
+        let cleanup = async {
+            let mut interval = tokio::time::interval_at(
+                tokio::time::Instant::now() + refresh_interval,
+                refresh_interval,
+            );
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                // Use at most one pool slot and release it promptly for authoritative reads.
+                const CLEANUP_TIMEOUT: Duration = Duration::from_secs(1);
+                let candidates =
+                    tokio::time::timeout(CLEANUP_TIMEOUT, self.purge_security_candidates()).await;
+                let interactions =
+                    tokio::time::timeout(CLEANUP_TIMEOUT, self.purge_auth_interactions(128)).await;
+                for (scope, result) in [
+                    ("security candidates", candidates),
+                    ("authentication interactions", interactions),
+                ] {
+                    match result {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(error)) => {
+                            tracing::warn!(%scope, %error, "Authentication cleanup failed")
+                        }
+                        Err(_) => tracing::warn!(%scope, "Authentication cleanup timed out"),
+                    }
+                }
+            }
+        };
+        let cleanup_until_shutdown = async {
+            tokio::select! {
+                () = shutdown.requested() => {},
+                () = cleanup => {},
+            }
+        };
+        let reconcile = async {
+            if let Some(listener) = listener {
+                tokio::join!(listener, refresh);
+            } else {
+                refresh.await;
+            }
+        };
+        tokio::join!(reconcile, cleanup_until_shutdown);
     }
 }
 
@@ -336,6 +371,27 @@ mod tests {
                 }
             })
         }
+    }
+
+    #[tokio::test]
+    async fn authoritative_refresh_does_not_depend_on_cleanup_writes() {
+        let observer = Arc::new(hubuum_storage_conformance::RecordingStorageObserver::default());
+        let storage = StorageHandle::from_registered_backend_with_observer(
+            MemoryStorage::new(),
+            observer.clone(),
+        );
+        storage
+            .refresh_runtime_settings()
+            .await
+            .unwrap()
+            .ensure_security_current()
+            .unwrap();
+        let operations: Vec<_> = observer
+            .observations()
+            .iter()
+            .map(|o| o.operation())
+            .collect();
+        assert_eq!(operations, ["load_runtime_settings"]);
     }
 
     async fn set_page_limit(storage: &StorageHandle, limit: u64) {

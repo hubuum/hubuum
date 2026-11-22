@@ -764,7 +764,10 @@ impl TokenStorage for CompleteExternalAdapter {
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<
+        StorageMutationOutcome<Option<hubuum_storage_core::StorageUpstreamSession>>,
+        StorageError,
+    > {
         fixture_result()
     }
 

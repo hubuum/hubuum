@@ -9,6 +9,7 @@ use actix_web::{
 use hubuum_domain::InteractionId;
 use hubuum_storage_core::StorageInteractionView;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -148,6 +149,12 @@ fn cookie_name(settings: &BrowserSettings, id: Option<InteractionId>) -> String 
             .unwrap_or_else(|| "entry".into())
     )
 }
+fn entry_cookie_name(settings: &BrowserSettings, csrf: &str) -> String {
+    let digest = Sha256::digest(csrf.as_bytes());
+    let selector = crate::models::security_candidate::hex(&digest[..16]);
+    format!("{}-{selector}", cookie_name(settings, None))
+}
+
 fn cookie(
     settings: &BrowserSettings,
     id: Option<InteractionId>,
@@ -166,14 +173,19 @@ fn session(
     settings: &BrowserSettings,
     id: Option<InteractionId>,
 ) -> Result<BrowserSession, ApiError> {
-    let name = cookie_name(settings, id);
+    named_session(req, &cookie_name(settings, id))?.ok_or_else(|| InteractionError::Invalid.into())
+}
+
+fn named_session(req: &HttpRequest, name: &str) -> Result<Option<BrowserSession>, ApiError> {
     let cookies = req.cookies().map_err(|_| InteractionError::Invalid)?;
     let mut matches = cookies.iter().filter(|cookie| cookie.name() == name);
-    let value = matches.next().ok_or(InteractionError::Invalid)?;
+    let Some(value) = matches.next() else {
+        return Ok(None);
+    };
     if matches.next().is_some() {
         return Err(InteractionError::Invalid.into());
     }
-    BrowserSession::parse(value.value())
+    BrowserSession::parse(value.value()).map(Some)
 }
 fn with_cookie(
     mut response: HttpResponse,
@@ -214,15 +226,32 @@ pub async fn entry(context: AppContext, req: HttpRequest) -> Result<impl Respond
         let settings = service::settings(&context)?;
         check_request(&req, &settings, false)?;
         let session = BrowserSession::generate();
-        with_cookie(
+        let mut entry_cookie = cookie(&settings, None, &session);
+        entry_cookie.set_name(entry_cookie_name(&settings, session.csrf()));
+        let mut page = with_cookie(
             response(
                 StatusCode::OK,
                 BrowserPage::Entry {
                     csrf: session.csrf(),
                 },
             ),
-            cookie(&settings, None, &session),
-        )
+            entry_cookie,
+        )?;
+        // Bound cookie-header growth when entry pages are opened but never submitted.
+        let prefix = format!("{}-", cookie_name(&settings, None));
+        let cookies = req.cookies().map_err(|_| InteractionError::Invalid)?;
+        let entries: Vec<_> = cookies
+            .iter()
+            .filter(|c| c.name().starts_with(&prefix))
+            .collect();
+        for old in entries.iter().take(entries.len().saturating_sub(7)) {
+            let mut expired = cookie(&settings, None, &session);
+            expired.set_name(old.name().to_owned());
+            expired.make_removal();
+            page.add_cookie(&expired)
+                .map_err(|_| InteractionError::Invalid)?;
+        }
+        Ok(page)
     })()
     .unwrap_or_else(failure))
 }
@@ -237,7 +266,15 @@ pub async fn attach(
     Ok(async {
         let settings = service::settings(&context)?;
         check_request(&req, &settings, true)?;
-        let session = session(&req, &settings, None)?;
+        let entry_name = entry_cookie_name(&settings, &form.csrf);
+        let (session, entry_name) = match named_session(&req, &entry_name)? {
+            Some(session) => (session, entry_name),
+            // Entry forms served immediately before an upgrade use the shared cookie.
+            None => (
+                session(&req, &settings, None)?,
+                cookie_name(&settings, None),
+            ),
+        };
         session.validate_csrf(&form.csrf)?;
         let view =
             service::attach(&context, BrowserUserCode::parse(&form.user_code)?, &session).await?;
@@ -247,6 +284,7 @@ pub async fn attach(
             cookie(&settings, Some(id), &session),
         )?;
         let mut old = cookie(&settings, None, &session);
+        old.set_name(entry_name);
         old.make_removal();
         response
             .add_cookie(&old)

@@ -515,7 +515,7 @@ pub async fn revoke_token_by_hash(
     principal_id: Option<i32>,
     credentials: Vec<crate::storage::StorageAuthenticationCredential>,
     event_context: &EventContext,
-) -> Result<usize, ApiError> {
+) -> Result<Option<hubuum_storage_core::StorageUpstreamSession>, ApiError> {
     let request = StorageTokenHashRevoke::try_candidates(
         principal_id.map(PrincipalId::new).transpose()?,
         credentials,

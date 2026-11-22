@@ -353,11 +353,14 @@ impl OAuthAdapter {
         // the exact definition here too, before sending a bearer anywhere.
         if credentials.definition_digest != definition_digest(&self.definition)
             || credentials.client_id != self.definition.client_id()
-            || credentials
-                .expires
-                .is_some_and(|expiry| expiry <= Utc::now())
         {
             return Err(OAuthError::Denied);
+        }
+        if credentials
+            .expires
+            .is_some_and(|expiry| expiry <= Utc::now())
+        {
+            return Err(OAuthError::CredentialExpired);
         }
         validate_token(&credentials.access)
     }

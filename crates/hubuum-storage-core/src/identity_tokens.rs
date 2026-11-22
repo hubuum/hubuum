@@ -726,7 +726,7 @@ pub trait TokenStorage: Send + Sync {
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
+    ) -> Result<StorageMutationOutcome<Option<crate::StorageUpstreamSession>>, StorageError>;
 
     async fn revoke_all_principal_tokens(
         &self,

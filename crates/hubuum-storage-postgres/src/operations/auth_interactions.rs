@@ -469,7 +469,8 @@ pub async fn complete(
                     StorageInteractionIssuance::ProviderVerification,
                 ) => {
                     let id = candidate.id();
-                    security_candidates::verify_on_connection(connection, *candidate).await?;
+                    security_candidates::apply_interaction_verification(connection, *candidate)
+                        .await?;
                     (
                         StorageInteractionCompletion::ProviderVerification(id),
                         InteractionIssuedResult::ProviderVerification(id),

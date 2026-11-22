@@ -3139,7 +3139,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 .into_value(),
             1
         );
-        assert_eq!(
+        assert!(
             backend
                 .revoke_token_by_hash(StorageTokenHashRevoke::new(
                     Some(contract_principal_id),
@@ -3148,8 +3148,7 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 ))
                 .await
                 .expect("certified backend should revoke HMAC-keyed tokens")
-                .into_value(),
-            1
+                .is_committed()
         );
         let third_hash = prefix("complete_revoke_all_token_hash");
         backend

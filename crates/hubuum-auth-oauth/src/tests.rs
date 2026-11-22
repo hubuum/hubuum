@@ -305,11 +305,16 @@ async fn renewal_rejects_credentials_before_network(#[case] expired: bool) {
         calls.set(calls.get() + 1);
         std::future::ready(Err(OAuthError::Denied))
     };
-    assert!(
+    assert_eq!(
         adapter
             .authenticate_using(credential, &context, &client)
             .await
-            .is_err()
+            .err(),
+        Some(if expired {
+            OAuthError::CredentialExpired
+        } else {
+            OAuthError::Denied
+        })
     );
     assert_eq!(calls.get(), 0);
 }

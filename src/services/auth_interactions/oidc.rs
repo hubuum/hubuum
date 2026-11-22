@@ -421,25 +421,55 @@ pub(crate) async fn renew(
     revision: hubuum_domain::ResourceRevision,
     provider: &StorageAuthenticationProvider,
 ) -> Result<bool, ApiError> {
-    use hubuum_storage_core::{
-        ExternalIdentityStorage, StorageEncryptedUpstreamCredential, StorageUpstreamClaimOutcome,
-        StorageUpstreamFailure, StorageUpstreamRenewal,
-    };
+    use hubuum_storage_core::StorageUpstreamClaimOutcome;
     if !retain_credentials(provider) {
         return Ok(false);
     }
-    let claim = match storage
-        .claim_upstream_credential(revision, principal)
-        .await?
-    {
-        StorageUpstreamClaimOutcome::Unavailable => return Ok(false),
-        StorageUpstreamClaimOutcome::Busy => {
-            return Err(ApiError::ServiceUnavailable(
-                "External identity refresh is in progress".into(),
-            ));
+    loop {
+        let claim = match storage
+            .claim_upstream_credential(revision, principal)
+            .await?
+        {
+            StorageUpstreamClaimOutcome::Unavailable
+                if matches!(
+                    provider.browser_definition(),
+                    Some(StorageBrowserProviderDefinition::Oauth(_))
+                ) =>
+            {
+                return Err(ApiError::Unauthorized(
+                    "External identity requires a new upstream sign-in".into(),
+                ));
+            }
+            StorageUpstreamClaimOutcome::Unavailable | StorageUpstreamClaimOutcome::RetryLater => {
+                return Ok(false);
+            }
+            StorageUpstreamClaimOutcome::Busy => {
+                return Err(ApiError::ServiceUnavailable(
+                    "External identity refresh is in progress".into(),
+                ));
+            }
+            StorageUpstreamClaimOutcome::Claim(claim) => *claim,
+        };
+        match attempt_renewal(storage, claim, provider).await? {
+            RenewalAttempt::Refreshed => return Ok(true),
+            RenewalAttempt::Unavailable => return Ok(false),
+            RenewalAttempt::ExpiredCredential => continue,
         }
-        StorageUpstreamClaimOutcome::Claim(claim) => *claim,
-    };
+    }
+}
+
+enum RenewalAttempt {
+    Refreshed,
+    Unavailable,
+    ExpiredCredential,
+}
+
+async fn attempt_renewal(
+    storage: &crate::storage::StorageHandle,
+    claim: hubuum_storage_core::StorageUpstreamClaim,
+    provider: &StorageAuthenticationProvider,
+) -> Result<RenewalAttempt, ApiError> {
+    use hubuum_storage_core::{StorageUpstreamFailure, StorageUpstreamRenewal};
     // Bound the complete attempt, including secret resolution, to the claim lease.
     let submitted = std::sync::atomic::AtomicBool::new(false);
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(25), async {
@@ -466,13 +496,17 @@ pub(crate) async fn renew(
             .await?,
         )
         .map_err(error)?;
-        let authentication = configured_adapter(provider)
+        let authentication = match configured_adapter(provider)
             .await?
             .refresh(credentials, &provider_context, || {
                 submitted.store(true, std::sync::atomic::Ordering::Relaxed)
             })
             .await
-            .map_err(error)?;
+        {
+            Ok(authentication) => authentication,
+            Err(OidcError::CredentialExpired) => return Ok(None),
+            Err(failure) => return Err(error(failure)),
+        };
         let (proof, credentials) = authentication.into_parts();
         let credentials = match credentials {
             Some(credentials) => Some(
@@ -489,14 +523,21 @@ pub(crate) async fn renew(
             None => None,
         };
         StorageUpstreamRenewal::new(claim.clone(), proof, credentials)
+            .map(Some)
             .map_err(|_| ApiError::from(InteractionError::Invalid))
     })
     .await
     .unwrap_or_else(|_| Err(InteractionError::ProviderUnavailable.into()));
     match outcome {
-        Ok(renewal) => {
+        Ok(None) => {
+            storage
+                .fail_upstream_renewal(claim, StorageUpstreamFailure::CredentialExpired)
+                .await?;
+            Ok(RenewalAttempt::ExpiredCredential)
+        }
+        Ok(Some(renewal)) => {
             storage.finish_upstream_renewal(renewal).await?;
-            Ok(true)
+            Ok(RenewalAttempt::Refreshed)
         }
         Err(failure) => {
             let temporary = matches!(
@@ -518,7 +559,7 @@ pub(crate) async fn renew(
                 )
                 .await?;
             if temporary {
-                Ok(false)
+                Ok(RenewalAttempt::Unavailable)
             } else {
                 Err(ApiError::Unauthorized(
                     "External identity is no longer valid; sign in again".into(),
@@ -572,62 +613,78 @@ pub(crate) fn revoke_provider_best_effort(
     queue_revocations(records, RevocationProvider::Previous(provider));
 }
 
-#[derive(Clone)]
 enum RevocationProvider {
     Live(AppContext),
     Previous(StorageAuthenticationProvider),
 }
 
 fn queue_revocations(records: Vec<StorageUpstreamSession>, selection: RevocationProvider) {
-    static REVOCATIONS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(32);
-    for record in records {
-        let Ok(permit) = REVOCATIONS.try_acquire() else {
-            tracing::warn!(
-                message = "Upstream revocation capacity reached; local logout remains complete"
-            );
-            continue;
-        };
-        let selection = selection.clone();
+    if !records.is_empty() {
         tokio::spawn(async move {
-            let _permit = permit;
-            let result = tokio::time::timeout(std::time::Duration::from_secs(25), async {
-                let Some(credential) = record.credential() else {
-                    return Ok::<_, ApiError>(());
-                };
-                let selected = match selection {
-                    RevocationProvider::Live(context) => {
-                        super::external::provider_at_revision(
-                            &context,
-                            record.binding().provider(),
-                            record.current_revision(),
-                        )
-                        .await?
-                    }
-                    RevocationProvider::Previous(provider) => provider,
-                };
-                let credentials = RetainedCredentials::restore(
-                    &unprotect(
-                        record.binding(),
-                        &format!("upstream:{}", record.subject()),
-                        credential.ciphertext(),
-                    )
-                    .await?,
-                )
-                .map_err(error)?;
-                configured_adapter(&selected)
-                    .await?
-                    .revoke(credentials)
-                    .await
-                    .map_err(error)?;
-                Ok(())
-            })
-            .await;
-            if !matches!(result, Ok(Ok(()))) {
-                tracing::warn!(
-                    message = "Upstream revocation unavailable; local logout remains complete"
-                );
-            }
+            dispatch_revocations(records, |record| selection.revoke(record)).await
         });
+    }
+}
+
+// Share capacity across concurrent logouts, and keep pending work in each batch.
+async fn dispatch_revocations<T, F: std::future::Future<Output = ()>>(
+    records: Vec<T>,
+    revoke: impl Fn(T) -> F,
+) {
+    use futures_util::{StreamExt, stream};
+    const CONCURRENCY: usize = 32;
+    static REVOCATIONS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(CONCURRENCY);
+    let revoke = &revoke;
+    stream::iter(records)
+        .for_each_concurrent(CONCURRENCY, |record| async move {
+            let _permit = REVOCATIONS
+                .acquire()
+                .await
+                .expect("revocation semaphore stays open");
+            revoke(record).await;
+        })
+        .await;
+}
+
+impl RevocationProvider {
+    async fn revoke(&self, record: StorageUpstreamSession) {
+        let result = tokio::time::timeout(std::time::Duration::from_secs(25), async {
+            let Some(credential) = record.credential() else {
+                return Ok::<_, ApiError>(());
+            };
+            let selected = match self {
+                RevocationProvider::Live(context) => {
+                    super::external::provider_at_revision(
+                        context,
+                        record.binding().provider(),
+                        record.current_revision(),
+                    )
+                    .await?
+                }
+                RevocationProvider::Previous(provider) => provider.clone(),
+            };
+            let credentials = RetainedCredentials::restore(
+                &unprotect(
+                    record.binding(),
+                    &format!("upstream:{}", record.subject()),
+                    credential.ciphertext(),
+                )
+                .await?,
+            )
+            .map_err(error)?;
+            configured_adapter(&selected)
+                .await?
+                .revoke(credentials)
+                .await
+                .map_err(error)?;
+            Ok(())
+        })
+        .await;
+        if !matches!(result, Ok(Ok(()))) {
+            tracing::warn!(
+                message = "Upstream revocation unavailable; local logout remains complete"
+            );
+        }
     }
 }
 
@@ -638,5 +695,34 @@ fn retain_credentials(provider: &StorageAuthenticationProvider) -> bool {
         }
         Some(StorageBrowserProviderDefinition::Oauth(_)) => true,
         None => false,
+    }
+}
+
+#[cfg(test)]
+mod revocation_tests {
+    use super::dispatch_revocations;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn overlapping_bulk_logouts_dispatch_every_grant_with_bounded_concurrency() {
+        let active = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+        let seen: Vec<_> = (0..80).map(|_| AtomicUsize::new(0)).collect();
+        let revoke = async |id: usize| {
+            let running = active.fetch_add(1, Ordering::Relaxed) + 1;
+            peak.fetch_max(running, Ordering::Relaxed);
+            tokio::task::yield_now().await;
+            seen[id].fetch_add(1, Ordering::Relaxed);
+            active.fetch_sub(1, Ordering::Relaxed);
+        };
+        tokio::join!(
+            dispatch_revocations((0..40).collect(), &revoke),
+            dispatch_revocations((40..80).collect(), &revoke)
+        );
+        assert!(peak.load(Ordering::Relaxed) <= 32);
+        assert!(
+            seen.iter()
+                .all(|attempts| attempts.load(Ordering::Relaxed) == 1)
+        );
     }
 }

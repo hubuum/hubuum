@@ -15,13 +15,12 @@ use hubuum_events_core::{EventContext, EventSubject};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::{
     SessionCredentials, SessionPolicy, StorageCredentialApprovalMetadata, StorageCredentialClaim,
-    StorageLogin, StorageMutationOutcome, StorageSecurityCandidate, StorageSecurityCandidateState,
-    StorageSessionIssued, StorageUser, StorageValidationError,
+    StorageLogin, StorageMutationOutcome, StorageSecurityCandidate, StorageSessionIssued,
+    StorageUser, StorageValidationError,
 };
 
 pub const MAX_AUTH_INTERACTIONS: usize = 65_536;
@@ -31,11 +30,24 @@ pub const MAX_ACTIVE_AUTH_INTERACTIONS_PER_ACTOR: usize = 32;
 pub const AUTH_INTERACTION_CLEANUP_SECONDS: i64 = 3600;
 pub const MAX_AUTH_INTERACTION_DOCUMENT_BYTES: usize = 262_144;
 
+mod verification;
+pub use verification::StorageCandidateVerification;
+
 mod protocol;
 pub use protocol::{StorageProtectedAuthenticationState, StorageProtocolClaim};
 
 fn invalid() -> StorageValidationError {
     StorageValidationError::invalid("Invalid authentication interaction")
+}
+
+fn document_digest(value: Value) -> InteractionDigest {
+    InteractionDigest::new(
+        Sha256::digest(value.to_string().as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>(),
+    )
+    .expect("SHA-256 is a lowercase hexadecimal digest")
 }
 
 /// Hashes arrive from the service's domain-separated secret hashing; plaintext
@@ -285,7 +297,7 @@ impl StorageInteractionLogin {
 #[derive(Clone, Debug)]
 pub enum StorageInteractionEvidence {
     Login(StorageInteractionLogin),
-    Verification(Box<StorageSecurityCandidate>),
+    Verification(Box<StorageCandidateVerification>),
 }
 
 #[derive(Clone, Debug)]
@@ -333,41 +345,10 @@ impl StorageInteractionAuthentication {
         proof: VerifiedInteractionSubject,
         candidate: StorageSecurityCandidate,
     ) -> Result<Self, StorageValidationError> {
-        let binding = proof.binding();
-        let authority = binding.authority();
-        let actor = authority.actor().ok_or_else(invalid)?;
-        let Some(crate::StorageRuntimeSettingsValue::Authentication(providers)) =
-            candidate.verification_assignment().value()
-        else {
-            return Err(invalid());
-        };
-        if !providers
-            .providers()
-            .iter()
-            .any(|provider| provider.id() == binding.provider().external_id())
-            || !candidate.checks().iter().any(|check| {
-                check.kind() == crate::StorageSecurityCheckKind::Identity
-                    && check.status() == crate::StorageSecurityCheckStatus::Passed
-                    && check.provider_id() == binding.provider().external_id()
-            })
-            || candidate.assignment().group() != crate::StorageRuntimeSettingsGroup::Authentication
-            || authority.purpose() != InteractionPurpose::ProviderVerification
-            || authority.candidate_id() != Some(candidate.id())
-            || authority.candidate_digest() != Some(&Self::candidate_digest(&candidate))
-            || actor.principal_id() != candidate.owner().actor_id()
-            || actor.token_id() != candidate.owner().token_id()
-            || binding.revision() != candidate.base_revision()
-            || candidate.verification_receipt().is_some_and(|value| {
-                binding.verification_receipt().is_some_and(|receipt| {
-                    !bool::from(value.as_str().as_bytes().ct_eq(receipt.as_str().as_bytes()))
-                })
-            })
-        {
-            return Err(invalid());
-        }
+        let result = StorageCandidateVerification::new(&candidate, proof.binding())?;
         Ok(Self {
             proof,
-            evidence: StorageInteractionEvidence::Verification(Box::new(candidate)),
+            evidence: StorageInteractionEvidence::Verification(Box::new(result)),
         })
     }
     pub fn candidate_digest(candidate: &StorageSecurityCandidate) -> InteractionDigest {
@@ -380,13 +361,7 @@ impl StorageInteractionAuthentication {
             binding.secrets().as_str(),
             binding.deployment().as_str()
         ]);
-        InteractionDigest::new(
-            Sha256::digest(value.to_string().as_bytes())
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>(),
-        )
-        .expect("SHA-256 is a lowercase hexadecimal digest")
+        document_digest(value)
     }
     pub const fn proof(&self) -> &VerifiedInteractionSubject {
         &self.proof
@@ -680,6 +655,11 @@ impl StorageInteractionRecord {
         Ok(())
     }
     fn validate_bindings(&self) -> Result<(), StorageValidationError> {
+        if let Some(StorageInteractionEvidence::Verification(result)) = &self.authenticated
+            && !result.matches_provider(self.provider.as_ref())
+        {
+            return Err(invalid());
+        }
         if self
             .retained
             .as_ref()

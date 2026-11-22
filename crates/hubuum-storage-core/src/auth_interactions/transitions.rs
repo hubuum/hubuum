@@ -157,28 +157,8 @@ impl StorageInteractionRecord {
                             return Err(InteractionTransitionError::Invalid);
                         }
                     }
-                    StorageInteractionEvidence::Verification(candidate) => {
-                        let Some(crate::StorageRuntimeSettingsValue::Authentication(providers)) =
-                            candidate.verification_assignment().value()
-                        else {
-                            return Err(InteractionTransitionError::Invalid);
-                        };
-                        let selected = providers
-                            .providers()
-                            .iter()
-                            .find(|provider| {
-                                provider.id() == self.lifecycle.binding().provider().external_id()
-                            })
-                            .and_then(|provider| {
-                                StorageProviderIdentityBinding::from_provider(provider).ok()
-                            });
-                        if selected.as_ref() != self.provider.as_ref()
-                            || !matches!(
-                                candidate.state(now),
-                                StorageSecurityCandidateState::Verified
-                                    | StorageSecurityCandidateState::Unverified
-                            )
-                        {
+                    StorageInteractionEvidence::Verification(result) => {
+                        if !result.matches(self.provider.as_ref(), now) {
                             return Err(InteractionTransitionError::Invalid);
                         }
                     }

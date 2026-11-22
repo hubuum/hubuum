@@ -27,8 +27,16 @@ struct ProviderDocument {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum EvidenceDocument {
-    Login { login: StorageInteractionLogin },
-    Verification { candidate: Value },
+    Login {
+        login: StorageInteractionLogin,
+    },
+    // Previous project builds stored the entire candidate.
+    Verification {
+        candidate: Value,
+    },
+    VerificationResult {
+        result: Box<verification::VerificationDocument>,
+    },
 }
 
 impl StorageInteractionRecord {
@@ -38,9 +46,11 @@ impl StorageInteractionRecord {
             StorageInteractionEvidence::Login(login) => EvidenceDocument::Login {
                 login: login.clone(),
             },
-            StorageInteractionEvidence::Verification(candidate) => EvidenceDocument::Verification {
-                candidate: candidate.to_document(),
-            },
+            StorageInteractionEvidence::Verification(result) => {
+                EvidenceDocument::VerificationResult {
+                    result: Box::new(result.document().clone()),
+                }
+            }
         });
         let value = serde_json::to_value(Document {
             lifecycle: self.lifecycle.to_document(),
@@ -84,6 +94,11 @@ impl StorageInteractionRecord {
                             return Err(invalid());
                         }
                         Ok(StorageInteractionEvidence::Login(login))
+                    }
+                    EvidenceDocument::VerificationResult { result } => {
+                        Ok(StorageInteractionEvidence::Verification(Box::new(
+                            StorageCandidateVerification::restore(*result, proof.binding())?,
+                        )))
                     }
                     EvidenceDocument::Verification { candidate } => {
                         let candidate = StorageSecurityCandidate::from_document(candidate)?;

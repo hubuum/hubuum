@@ -271,6 +271,7 @@ pub async fn logout_credentials(
     runtime: &PostgresRuntime,
     target: hubuum_storage_core::StorageUpstreamRevocation,
 ) -> Result<Vec<StorageUpstreamSession>, PostgresStorageError> {
+    use futures_util::TryStreamExt;
     use hubuum_storage_core::StorageUpstreamRevocation;
     let (principal, token, session, provider) = match target {
         StorageUpstreamRevocation::Sessions(SessionRevocation::All(id)) => {
@@ -285,12 +286,20 @@ pub async fn logout_credentials(
         StorageUpstreamRevocation::Provider(binding) => (None, None, None, Some(binding)),
     };
     runtime.with_read_connection(async move |connection| {
-        let rows = sql_query("SELECT c.document FROM auth_upstream_credentials c JOIN auth_sessions s ON s.id=c.session_id WHERE s.revoked_at IS NULL AND (($1 IS NOT NULL AND c.principal_id=$1) OR ($2 IS NOT NULL AND c.session_id=(SELECT auth_session_id FROM tokens WHERE id=$2)) OR ($3 IS NOT NULL AND c.session_id=$3) OR ($4 IS NOT NULL AND c.provider_id=$4 AND c.document->>'namespace'=$5)) ORDER BY c.session_id LIMIT 32")
+        let mut rows = sql_query("SELECT c.document FROM auth_upstream_credentials c JOIN auth_sessions s ON s.id=c.session_id WHERE s.revoked_at IS NULL AND (($1 IS NOT NULL AND c.principal_id=$1) OR ($2 IS NOT NULL AND c.session_id=(SELECT auth_session_id FROM tokens WHERE id=$2)) OR ($3 IS NOT NULL AND c.session_id=$3) OR ($4 IS NOT NULL AND c.provider_id=$4 AND c.document->>'namespace'=$5)) ORDER BY c.session_id")
             .bind::<Nullable<Integer>,_>(principal).bind::<Nullable<Integer>,_>(token).bind::<Nullable<SqlUuid>,_>(session)
             .bind::<Nullable<SqlUuid>,_>(provider.as_ref().map(|binding| binding.id()))
             .bind::<Nullable<Text>,_>(provider.as_ref().map(|binding| binding.namespace()))
-            .load::<Row>(connection).await?;
-        rows.into_iter().map(decode).collect()
+            .load_stream::<Row>(connection).await?;
+        let mut grants = Vec::new();
+        while let Some(row) = rows.try_next().await? {
+            match decode(row) {
+                Ok(grant) if grant.credential().is_some() => grants.push(grant),
+                Ok(_) => {},
+                Err(_) => tracing::warn!("Unreadable upstream grant during local logout"),
+            }
+        }
+        Ok::<_, PostgresStorageError>(grants)
     }).await
 }
 
@@ -338,12 +347,15 @@ pub async fn fail(
                     .execute(connection)
                     .await?;
             }
-            super::external_identity::failure_on_connection(
-                connection,
-                original.principal().id(),
-                failure.sync_failure(),
-            )
-            .await
+            if let Some(failure) = failure.sync_failure() {
+                super::external_identity::failure_on_connection(
+                    connection,
+                    original.principal().id(),
+                    failure,
+                )
+                .await?;
+            }
+            Ok(())
         })
         .await
 }
