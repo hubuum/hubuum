@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
-    ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, PrincipalId, ResourceId,
-    TaskId,
+    ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, ObjectId, PrincipalId,
+    ResourceId, TaskId,
 };
 use hubuum_storage_core::*;
 use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
@@ -115,6 +115,50 @@ impl RestoreContractFixture {
                 &class,
                 StorageClassUpdate::builder()
                     .description(Some(description))
+                    .build(),
+                &EventContext::system(),
+            )
+            .await?
+            .into_value();
+        Ok(())
+    }
+
+    pub async fn create_object(
+        &self,
+        class_id: ClassId,
+        name: &str,
+    ) -> Result<StorageObject, ApiError> {
+        let class = self
+            .storage
+            .class_store()
+            .resolve_class(StorageClassSelector::Id(class_id))
+            .await?;
+        Ok(self
+            .storage
+            .object_store()
+            .create_object(
+                &class,
+                StorageObjectCreate::new(
+                    name,
+                    class.class().collection_id(),
+                    class_id,
+                    json!({}),
+                    "restore fixture",
+                ),
+                &EventContext::system(),
+            )
+            .await?
+            .into_value())
+    }
+
+    pub async fn rename_object(&self, id: ObjectId, name: &str) -> Result<(), ApiError> {
+        let objects = self.storage.object_store();
+        let object = objects.get_object(id).await?;
+        objects
+            .update_object(
+                &object,
+                StorageObjectUpdate::builder()
+                    .name(Some(name.into()))
                     .build(),
                 &EventContext::system(),
             )

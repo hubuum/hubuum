@@ -100,6 +100,7 @@ async fn copy_present(
     let table = match family {
         StorageIdentityHistoryKind::Collection => "collections_history",
         StorageIdentityHistoryKind::Class => "hubuumclass_history",
+        StorageIdentityHistoryKind::Object => "hubuumobject_history",
         _ => panic!("unsupported restore fixture family: {family:?}"),
     };
     sql_query(format!(

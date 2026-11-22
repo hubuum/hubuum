@@ -2,7 +2,8 @@
 use super::*;
 use futures_util::FutureExt;
 use hubuum::test_support::history_replay_fixture_protection;
-use hubuum_domain::PrincipalIdentity;
+use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalIdentity};
+use hubuum_storage_core::StorageIdentityHistoryKind as Family;
 use std::os::unix::fs::PermissionsExt;
 use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::sync::{Arc, Mutex};
@@ -73,34 +74,32 @@ impl ReplayTrace {
 
 #[derive(Clone, Copy, Debug)]
 enum HistorySource {
-    Collection,
-    Class,
+    Collection(CollectionId),
+    Class(ClassId),
+    Object(ObjectId),
 }
 
 impl HistorySource {
-    fn target(self, class: &StorageClass) -> StorageIdentityTarget {
+    fn target(self) -> StorageIdentityTarget {
         let (kind, id) = match self {
-            Self::Collection => (
-                StorageIdentityResourceKind::Collection,
-                class.collection_id().into(),
-            ),
-            Self::Class => (StorageIdentityResourceKind::Class, class.id().into()),
+            Self::Collection(id) => (StorageIdentityResourceKind::Collection, id.into()),
+            Self::Class(id) => (StorageIdentityResourceKind::Class, id.into()),
+            Self::Object(id) => (StorageIdentityResourceKind::Object, id.into()),
         };
         StorageIdentityTarget::Resource { kind, id }
     }
 
-    fn policy(self, identity: ResourceIdentity) -> HistoryPolicyKey {
-        let (family, scope) = match self {
-            Self::Collection => (
-                StorageIdentityHistoryKind::Collection,
-                HistoryPolicyScope::Collection { identity },
-            ),
-            Self::Class => (
-                StorageIdentityHistoryKind::Class,
-                HistoryPolicyScope::Class { identity },
-            ),
-        };
-        HistoryPolicyKey::new(family, scope).unwrap()
+    async fn update(self, fixture: &RestoreContractFixture, value: &str) {
+        match self {
+            Self::Collection(id) => {
+                fixture
+                    .update_collection_description(id, value.into())
+                    .await
+            }
+            Self::Class(id) => fixture.update_class_description(id, value.into()).await,
+            Self::Object(id) => fixture.rename_object(id, value).await,
+        }
+        .unwrap();
     }
 }
 
@@ -118,6 +117,37 @@ async fn current_identity(
         .unwrap()
 }
 
+async fn assert_closed_object_present(
+    fixture: &RestoreContractFixture,
+    object: &StorageObject,
+    expected: StorageRecordIdentity,
+) {
+    let rows = fixture
+        .storage()
+        .list_object_history(StorageObjectHistoryListQuery::new(
+            object.id(),
+            object.class_id(),
+            QueryOptions::empty(),
+            StorageHistoryCollectionScope::All,
+        ))
+        .await
+        .unwrap()
+        .into_parts()
+        .0;
+    assert!(
+        rows.into_iter().any(|row| {
+            let (_, metadata) = row.into_parts();
+            metadata.valid_to().is_some()
+                && metadata
+                    .logical_identity()
+                    .and_then(StorageIdentityEvidence::subject)
+                    .and_then(StorageIdentitySubject::record_identity)
+                    == Some(expected)
+        }),
+        "the sibling class must retain its closed object version"
+    );
+}
+
 #[rstest]
 #[case::postgres_restore_first(StorageBackendKind::Postgres, false)]
 #[case::postgres_expiry_first(StorageBackendKind::Postgres, true)]
@@ -126,7 +156,7 @@ async fn current_identity(
 async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
     #[case] kind: StorageBackendKind,
     #[case] expiry_first: bool,
-    #[values(HistorySource::Collection, HistorySource::Class)] source: HistorySource,
+    #[values(Family::Collection, Family::Class, Family::Object)] family: Family,
     #[values(false, true)] size: bool,
 ) {
     let _guard = RESTORE_TEST_LOCK.lock().await;
@@ -153,8 +183,36 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
     let actor = PrincipalIdentity::generate();
     let result = AssertUnwindSafe(async {
         let class = fixture.create_class("expiry_restore_scope").await.unwrap();
-        let subject = source.target(&class);
-        let key = source.policy(current_identity(&fixture, subject).await.resource());
+        let versions = [
+            "expiry_original",
+            "expiry_second",
+            "expiry_third",
+            "expiry_live",
+        ];
+        let source = match family {
+            Family::Collection => HistorySource::Collection(class.collection_id()),
+            Family::Class => HistorySource::Class(class.id()),
+            Family::Object => HistorySource::Object(
+                fixture
+                    .create_object(class.id(), versions[0])
+                    .await
+                    .unwrap()
+                    .id(),
+            ),
+            _ => unreachable!("unsupported restore fixture family"),
+        };
+        let subject = source.target();
+        let scope = match source {
+            HistorySource::Collection(_) => HistoryPolicyScope::Collection {
+                identity: current_identity(&fixture, subject).await.resource(),
+            },
+            HistorySource::Class(_) | HistorySource::Object(_) => HistoryPolicyScope::Class {
+                identity: current_identity(&fixture, HistorySource::Class(class.id()).target())
+                    .await
+                    .resource(),
+            },
+        };
+        let key = HistoryPolicyKey::new(family, scope).unwrap();
         let proposal = HistoryPolicyChange::new(
             key,
             before
@@ -193,23 +251,27 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             )
             .await
             .unwrap();
+        // Close a version in the same collection but outside the governing class.
+        let sibling = if let HistorySource::Object(_) = source {
+            let other = fixture.create_class("expiry_sibling_class").await.unwrap();
+            let object = fixture
+                .create_object(other.id(), "sibling_original")
+                .await
+                .unwrap();
+            let original =
+                current_identity(&fixture, HistorySource::Object(object.id()).target()).await;
+            fixture
+                .rename_object(object.id(), "sibling_live")
+                .await
+                .unwrap();
+            Some((object, original))
+        } else {
+            None
+        };
         let mut closed = Vec::new();
-        for revision in 0..3 {
+        for next in &versions[1..] {
             closed.push(current_identity(&fixture, subject).await);
-            let description = format!("expiry restore revision {revision}");
-            match source {
-                HistorySource::Collection => {
-                    fixture
-                        .update_collection_description(class.collection_id(), description)
-                        .await
-                }
-                HistorySource::Class => {
-                    fixture
-                        .update_class_description(class.id(), description)
-                        .await
-                }
-            }
-            .unwrap();
+            source.update(&fixture, next).await;
         }
         let live = current_identity(&fixture, subject).await;
         let backup = fixture.capture(true).await.unwrap();
@@ -245,13 +307,23 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             .clone();
         batch = Some(manifest.identity());
         assert_eq!(manifest.members().len(), closed.len());
-        for identity in closed {
-            assert!(
-                manifest
-                    .members()
-                    .iter()
-                    .any(|member| member.family() == key.family() && member.target() == identity)
-            );
+        for (identity, name) in closed.into_iter().zip(versions) {
+            let member = manifest
+                .members()
+                .iter()
+                .find(|member| member.target() == identity)
+                .expect("every closed version is in the manifest");
+            assert_eq!(member.family(), family);
+            if let HistorySource::Object(id) = source {
+                let facts = member
+                    .object_authorization()
+                    .expect("object expiry retains the original authorization facts");
+                assert_eq!(facts.target(), identity);
+                assert_eq!(facts.object_id(), id);
+                assert_eq!(facts.class_id(), class.id());
+                assert_eq!(facts.collection_id(), class.collection_id());
+                assert_eq!(facts.name(), name);
+            }
         }
         let target = manifest.members()[0].target();
         let request = HistoryExpiryReapplication::new(
@@ -296,15 +368,18 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
         }
         trace.assert_captures(manifest.members().len(), usize::from(expiry_first));
         assert_eq!(current_identity(&fixture, subject).await, live);
+        if let Some((object, original)) = &sibling {
+            assert_closed_object_present(&fixture, object, *original).await;
+        }
         let completed = storage.capture_history_lifecycle().await.unwrap();
-        let receipts = completed
+        let completed_intent = completed
             .control()
             .authority()
             .expiry()
             .intent(manifest.identity())
-            .unwrap()
-            .removals()
-            .to_vec();
+            .unwrap();
+        assert_eq!(completed_intent.manifest(), &manifest);
+        let receipts = completed_intent.removals().to_vec();
         assert_eq!(receipts.len(), manifest.members().len());
         assert_ne!(
             completed.fence().incarnation(),
@@ -329,17 +404,18 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
         .await;
         trace.assert_captures(manifest.members().len(), manifest.members().len());
         assert_eq!(current_identity(&fixture, subject).await, live);
+        if let Some((object, original)) = &sibling {
+            assert_closed_object_present(&fixture, object, *original).await;
+        }
         let repeated = storage.capture_history_lifecycle().await.unwrap();
-        assert_eq!(
-            repeated
-                .control()
-                .authority()
-                .expiry()
-                .intent(manifest.identity())
-                .unwrap()
-                .removals(),
-            receipts
-        );
+        let repeated_intent = repeated
+            .control()
+            .authority()
+            .expiry()
+            .intent(manifest.identity())
+            .unwrap();
+        assert_eq!(repeated_intent.manifest(), &manifest);
+        assert_eq!(repeated_intent.removals(), receipts);
         let application = storage.read_application_control().await.unwrap();
         assert!(application.is_released_for(&storage.read_deletion_control().await.unwrap()));
     })
