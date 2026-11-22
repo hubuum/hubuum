@@ -66,6 +66,9 @@ impl Fixture {
         f.owner(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {tables} {APPROVALS} {LEGACY} {SETTINGS} {POLICIES} {CANDIDATES} {INTERACTIONS} {UPSTREAM} {RETENTION} {ADMISSION}
             -- LIKE INCLUDING ALL does not copy triggers. Reuse the production
             -- revision guard so credential revocation cannot bypass its contract.
+            -- Runtime connections search only this fixture schema and pg_catalog.
+            CREATE FUNCTION hubuum_assert_revision_precondition(text, bigint) RETURNS void
+                LANGUAGE sql AS 'SELECT public.hubuum_assert_revision_precondition($1, $2)';
             CREATE TRIGGER tokens_revision BEFORE INSERT OR UPDATE ON tokens
                 FOR EACH ROW EXECUTE FUNCTION public.hubuum_manage_resource_revision('none', 'coalesce', 'last_used_at');
             CREATE SEQUENCE fixture_token_ids START 2;
