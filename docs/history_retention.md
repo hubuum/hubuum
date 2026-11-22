@@ -455,8 +455,14 @@ exposure tests independently admit the batch first, then use the trusted restore
 identity branch in the runner's isolated restore database. A clean newer copy
 passes the gate; a descendant of admitted history keeps exposure quarantined
 without changing the source, restored copy or retained authority. These fixtures
-qualify native admission and exposure checks. Complete backup and logical-restore
-pipeline coverage and concurrent restore execution remain unfinished.
+qualify native admission and exposure checks. The signed full-history restore
+test also queues an exact collection expiry replay behind PostgreSQL's logical
+restore transaction. Once the backup replaces the source rows, the queued
+request rejects its old application incarnation. The coordinator replays with
+fresh protection before releasing quarantine. Both age and size policies cover
+the first restore and a second restore with existing receipts. The reverse lock
+order and concurrent logical restore for the other history families still need
+qualification.
 Primary admission is not independent checkpoint protection:
 its authority must be captured and independently published before the gated
 executor can remove a copy. Complete

@@ -1,10 +1,136 @@
 //! Real signed full-history restore and exact-copy replay through the coordinator.
 use super::*;
+use diesel::QueryableByName;
+use diesel::sql_query;
+use diesel::sql_types::{Bool, Integer, Nullable, Text};
+use diesel_async::SimpleAsyncConnection;
 use futures_util::FutureExt;
+use hubuum::errors::ApiError;
+use hubuum::test_support::history_replay_fixture_protection;
 use hubuum_domain::PrincipalIdentity;
+use hubuum_storage_postgres::{
+    PostgresConnection, PostgresPool, PostgresStorage, PostgresStorageError, with_transaction,
+};
 use std::os::unix::fs::PermissionsExt;
 use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::sync::{Arc, Mutex};
+use tokio::sync::oneshot;
+
+#[derive(QueryableByName)]
+struct BackendPid {
+    #[diesel(sql_type = Integer)]
+    pid: i32,
+}
+
+async fn wait_for_waiter(
+    connection: &mut PostgresConnection,
+    blocker: i32,
+    waiter: Option<i32>,
+) -> i32 {
+    timeout(Duration::from_secs(30), async {
+        loop {
+            let waits = sql_query("SELECT DISTINCT pid FROM pg_locks WHERE NOT granted
+                AND $1 = ANY(pg_blocking_pids(pid))
+                AND (pid = $2 OR ($2 IS NULL AND locktype='relation'
+                    AND relation='public.export_templates_history'::regclass AND mode='AccessExclusiveLock'))")
+                .bind::<Integer,_>(blocker).bind::<Nullable<Integer>,_>(waiter)
+                .load::<BackendPid>(connection).await.unwrap();
+            if let [wait] = waits.as_slice() {
+                return wait.pid;
+            }
+            assert!(waits.is_empty(), "unexpected competing restore sessions");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.expect("expected PostgreSQL lock dependency")
+}
+
+async fn restore_with_queued_replay<T>(
+    kind: StorageBackendKind,
+    pool: &PostgresPool,
+    restore: impl Future<Output = Result<T, ApiError>>,
+    request: HistoryExpiryReapplication,
+) {
+    if kind == StorageBackendKind::Memory {
+        restore.await.unwrap();
+        return;
+    }
+    let recovery_pool =
+        postgres_test_pool_with_timeout(&database_url(), 1, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
+    let mut connection = recovery_pool.get().await.unwrap();
+    let recovery_pid = sql_query("SELECT pg_backend_pid() AS pid")
+        .get_result::<BackendPid>(&mut connection)
+        .await
+        .unwrap()
+        .pid;
+    drop(connection);
+    let recovery = PostgresStorage::unobserved(recovery_pool);
+    let target = request.target();
+    let replay = recovery.reapply_history_expiry(request);
+    tokio::pin!(restore, replay);
+    let mut observer = pool.get().await.unwrap();
+    let (locked, gate_pid) = oneshot::channel();
+    let (release, released) = oneshot::channel();
+    let gate = with_transaction(pool, async move |gate| {
+        // Backup reads can proceed. The full restore must rotate the application
+        // before it requests exclusive locks to replace the backed-up tables.
+        gate.batch_execute("LOCK TABLE public.export_templates_history IN ACCESS SHARE MODE")
+            .await?;
+        locked
+            .send(
+                sql_query("SELECT pg_backend_pid() AS pid")
+                    .get_result::<BackendPid>(gate)
+                    .await?
+                    .pid,
+            )
+            .unwrap();
+        released.await.unwrap();
+        Ok::<_, PostgresStorageError>(())
+    });
+    let race = async {
+        let gate_pid = gate_pid.await.unwrap();
+        let restore_pid = tokio::select! {
+            result = &mut restore => panic!("restore finished before replacing history: {:?}", result.err()),
+            pid = wait_for_waiter(&mut observer, gate_pid, None) => pid,
+        };
+        tokio::select! {
+            _ = &mut restore => panic!("restore escaped its table lock"),
+            result = &mut replay => panic!("expiry replay escaped the restore: {result:?}"),
+            _ = wait_for_waiter(&mut observer, restore_pid, Some(recovery_pid)) => {},
+        }
+        release.send(()).unwrap();
+        tokio::join!(restore, replay)
+    };
+    let (gate, (restored, stale)) = tokio::join!(gate, race);
+    gate.unwrap();
+    restored.unwrap();
+    let stale = stale.unwrap_err();
+    assert_eq!(stale.kind(), StorageErrorKind::ValidationFailed, "{stale}");
+    assert!(
+        stale
+            .message()
+            .contains("Protected recovery authority or application image changed"),
+        "{stale}"
+    );
+    #[derive(QueryableByName)]
+    struct Copy {
+        #[diesel(sql_type = Bool)]
+        present: bool,
+    }
+    let copy = sql_query(
+        "SELECT EXISTS(SELECT 1 FROM public.collections_history
+        WHERE logical_identity #>> '{subject,identity,identity}'=$1
+          AND logical_identity #>> '{subject,version}'=$2) AS present",
+    )
+    .bind::<Text, _>(target.resource().to_string())
+    .bind::<Text, _>(target.version().to_string())
+    .get_result::<Copy>(&mut observer)
+    .await
+    .unwrap();
+    assert!(
+        !copy.present,
+        "the released database retained the restored copy"
+    );
+}
 
 #[derive(Default)]
 struct ReplayTrace(Mutex<Vec<String>>);
@@ -151,7 +277,6 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             .capture_application_execution(Some(runtime.owner()))
             .await
             .unwrap();
-        let fence = application.fence();
         let snapshot = storage.capture_history_lifecycle().await.unwrap();
         let admitted = storage
             .run_in_scope(
@@ -178,26 +303,30 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             .expect("real closed collection is eligible")
             .clone();
         batch = Some(manifest.identity());
-        let protected = storage.capture_history_lifecycle().await.unwrap();
+        let target = manifest.members()[0].target();
         let request = HistoryExpiryReapplication::new(
-            HistoryExposureProtection::new(
-                protected.control().authority().clone(),
-                fence,
-                DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
-            ),
+            history_replay_fixture_protection(storage, &repository, &key_file)
+                .await
+                .unwrap(),
             manifest.identity(),
-            manifest.members()[0].target(),
+            target,
         )
         .unwrap();
         assert!(
-            storage.reapply_history_expiry(request).await.is_err(),
+            storage
+                .reapply_history_expiry(request.clone())
+                .await
+                .is_err(),
             "direct contract call cannot replay a released application"
         );
         trace.0.lock().unwrap().clear();
-        fixture
-            .restore_with_recovery(backup.clone(), &repository, &key_file)
-            .await
-            .unwrap();
+        restore_with_queued_replay(
+            kind,
+            &pool,
+            fixture.restore_with_recovery(backup.clone(), &repository, &key_file),
+            request,
+        )
+        .await;
         trace.assert_captures(manifest.members().len(), true);
         let completed = storage.capture_history_lifecycle().await.unwrap();
         let receipts = completed
@@ -213,11 +342,23 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             completed.fence().incarnation(),
             manifest.fence().incarnation()
         );
+        let request = HistoryExpiryReapplication::new(
+            history_replay_fixture_protection(storage, &repository, &key_file)
+                .await
+                .unwrap(),
+            manifest.identity(),
+            target,
+        )
+        .unwrap();
+        assert!(request.has_receipt());
         trace.0.lock().unwrap().clear();
-        fixture
-            .restore_with_recovery(backup, &repository, &key_file)
-            .await
-            .unwrap();
+        restore_with_queued_replay(
+            kind,
+            &pool,
+            fixture.restore_with_recovery(backup, &repository, &key_file),
+            request,
+        )
+        .await;
         trace.assert_captures(manifest.members().len(), false);
         let repeated = storage.capture_history_lifecycle().await.unwrap();
         assert_eq!(

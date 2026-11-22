@@ -664,6 +664,7 @@ fn restore_contract_storage(
 }
 
 mod recovery;
+pub use crate::services::deletion_recovery::history_replay_fixture_protection;
 pub use recovery::{
     RestoreContractFixture, capture_backup_document, create_history_remapping_object,
     history_application_context, history_population_as_of, prepare_history_read_fixture,

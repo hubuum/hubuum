@@ -20,6 +20,8 @@ pub(crate) use task_receipts::{TaskReceiptService, TaskRetentionSweep};
 
 pub(crate) use cleanup::cleanup_object_history;
 
+#[cfg(feature = "integration-test-support")]
+use hubuum_storage_core::{DeletionCheckpointIdentity, HistoryExposureProtection};
 use hubuum_storage_core::{HistoryArchiveCleanupRequest, HistoryLifecycleStorage};
 use std::path::Path;
 use uuid::Uuid;
@@ -120,6 +122,33 @@ async fn evidence(directory: &Path, key_file: &Path) -> Result<RecoveryEvidence,
     })
     .await
     .map_err(|_| unavailable("Recovery evidence worker failed"))?
+}
+
+/// Capture the same signed authority and application fence used by exact-copy
+/// recovery, so a fixture can queue that request across a logical restore.
+#[cfg(feature = "integration-test-support")]
+pub async fn history_replay_fixture_protection(
+    storage: &impl StorageContext,
+    directory: &Path,
+    key_file: &Path,
+) -> Result<HistoryExposureProtection, ApiError> {
+    checkpoint(storage, directory, key_file, false).await?;
+    let evidence = evidence(directory, key_file).await?;
+    let signed = evidence.checkpoint();
+    let authority = signed
+        .history_lifecycle()
+        .cloned()
+        .ok_or_else(|| unavailable("Missing protected history authority"))?;
+    let identity =
+        DeletionCheckpointIdentity::new(signed.identity().to_owned()).map_err(invalid_control)?;
+    Ok(HistoryExposureProtection::new(
+        authority,
+        storage_handle(storage)
+            .read_application_control()
+            .await?
+            .fence(),
+        identity,
+    ))
 }
 
 /// Restore executors need current authority and process exclusion while they
