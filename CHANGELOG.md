@@ -9,6 +9,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Update the locked URL parser to 2.5.9 to fix a stack overflow during URL
+  origin calculation (RUSTSEC-2026-0592).
+
 - Require Actix Web 4.18.2 or later and use the patched Actix HTTP dependency
   to reject malformed chunked request trailers and bound compressed request-body
   decoding, including large-window Brotli streams (RUSTSEC-2026-0446,

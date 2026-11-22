@@ -355,6 +355,15 @@ per-attempt commitment recorded before admission. Control verifies the exact
 claim before retiring its parent and child and unpinning the original capture.
 The database stays quarantined until ordinary signed `--reapply-control` passes.
 
+If the producer exited before reporting its publication UUID, the recovery
+database role can list outstanding claim IDs without reading captured payloads.
+
+```sql
+SELECT publication_id
+FROM hubuum_control.history_archive_publication_claims
+ORDER BY publication_id;
+```
+
 A missing issuer, an unbound v1 intent, a copied root, a published attempt or
 unaccounted files leave the claim charged. Preserve the original root, including
 its private `issuer` file, and upgrade all writers before using bound intents.
