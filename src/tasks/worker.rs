@@ -24,9 +24,9 @@ use crate::errors::ApiError;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{NewTaskEventRecord, TaskKind, TaskStatus};
 use crate::observability::{metrics, tracing as telemetry};
+use crate::permissions::AppContext;
 #[cfg(test)]
 use crate::permissions::LocalPermissionBackend;
-use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::restores::{MaintenanceActivityGuard, track_application_completion};
 use crate::services::authentication::ExecutionPrincipal;
 use crate::services::deletion_recovery::TaskRetentionSweep;
@@ -924,10 +924,6 @@ async fn process_claimed_task(
     })?;
     let principal = ExecutionPrincipal::resolve(context, submitted_by).await?;
 
-    if task_kind == TaskKind::Backup {
-        require_unscoped_runtime_admin(context, &principal, task.submitted_token_scoped).await?;
-    }
-
     // Reconstruct the submitting token's scope boundary from the snapshot,
     // failing closed on any unknown permission or resource entry. Import,
     // export, and remote-call workers enforce the persisted boundary.
@@ -955,9 +951,7 @@ async fn process_claimed_task(
         }
         TaskKind::Import => execute_import_task(context, task, &principal, scopes).await,
         TaskKind::Export => execute_export_task(context, task, &principal, scopes).await,
-        TaskKind::Backup => {
-            execute_backup_task(context, task, &principal, scopes, backup_settings).await
-        }
+        TaskKind::Backup => execute_backup_task(context, task, &principal, backup_settings).await,
         TaskKind::RemoteCall => execute_remote_call_task(context, task, &principal, scopes).await,
         TaskKind::Reindex | TaskKind::SchemaValidation => {
             unreachable!("reindex tasks are dispatched before principal loading")
