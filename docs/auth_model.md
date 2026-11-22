@@ -640,9 +640,9 @@ or service account. Unchanged mutations are no-ops and do not emit an event.
 
 ## Request authority: extractors and gates
 
-Each handler declares the authority it requires. There are two families.
+Each handler declares the authority it requires through its extractor.
 
-**Scope-aware (the only family that accepts scoped tokens and service accounts):**
+### Scope-aware resource access
 
 - `Authenticated` — resolves the principal and, if the token is scoped, its scope
   set. Every downstream authority decision threads the scopes into the
@@ -650,13 +650,21 @@ Each handler declares the authority it requires. There are two families.
   extractor. Imports, exports, and remote-target invocation retain ordinary
   scope-aware authorization.
 
-**Human/IAM (privilege-separated):**
+### Runtime administrator access
+
+- `UnscopedRuntimeAdmin` accepts a human or service account with an unscoped
+  token when the configured permission backend grants administrator authority.
+  Backup, query-usage analysis, and administrative schema routes use this
+  extractor. Class, template, and task permissions still apply where required.
+
+### Human/IAM access
 
 - `UserAccess`, `AdminAccess`, `AdminOrSelfAccess`, `ManagementAccess` — used for
   human-only and credential/IAM operations (user CRUD, service-account CRUD,
   principal token management, admin/all-token logout, group-member mutation).
 
-The human/IAM extractors apply two gates, in order, **before** any admin/self check:
+Before checking admin or self access, the human/IAM extractors verify both the
+token scope and the principal kind.
 
 1. **Kind gate** — the principal must be `kind = 'human'`. A service account is
    rejected with `403 Forbidden` (cleanly, never a `500`), even if it is in the

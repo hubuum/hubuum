@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM docker.io/library/rust:1.99.0-alpine3.24@sha256:a96ea6d18d4062e38f16cfbadd8b4541d622f2527dd0a5eca1fb36d301da4e88 AS builder
+FROM docker.io/library/rust:1.100.0-alpine3.24@sha256:8d0e82abfdf9a38071e07cabc5afba4ddbe077631a80e4e742a760c38beadc33 AS builder
 
 ARG CARGO_BUILD_FLAGS="-F tls-rustls -F tls-openssl --locked --release"
 
@@ -98,7 +98,7 @@ COPY --from=builder /tmp/hubuum-server /hubuum-server
 COPY --from=builder /tmp/hubuum-admin /hubuum-admin
 COPY --from=builder /tmp/hubuum-template-worker /hubuum-template-worker
 
-FROM docker.io/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM docker.io/library/alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
 ARG HUBUUM_UID="10001"
 ARG HUBUUM_GID="10001"

@@ -36,6 +36,15 @@ class ImageTagTests(InstallerFixture):
                     ):
                         self.assertEqual(actual[key], original[key], key)
 
+    def test_dependency_image_override_persists_on_reinstall(self):
+        self.install()
+        for service in ("caddy", "postgres", "valkey"):
+            with self.subTest(service=service):
+                image = f"registry.example/{service}:pinned"
+                self.install(f"--{service}-image", image)
+                self.install()
+                self.assertEqual(self.values()[f"{service.upper()}_IMAGE"], image)
+
     def test_legacy_installation_accepts_current_scripts_from_stdin(self):
         for script in ("install-single-host.sh", "update-single-host.sh"):
             for options, server_tag in (((), "main"), (("--server-tag", "v0.0.14"), "v0.0.14")):

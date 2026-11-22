@@ -1,7 +1,8 @@
 /// Check whether a subject has permissions for a set of resources.
 ///
 /// The scope argument is mandatory. Request handlers pass
-/// `requestor.scopes()`; intentionally unscoped internal callers pass `None`.
+/// `requestor.scopes()` for `Authenticated` or `None` for `UnscopedRuntimeAdmin`.
+/// Intentionally unscoped internal callers also pass `None`.
 #[macro_export]
 macro_rules! can {
     ($context:expr, $subject:expr, $scopes:expr, [$($permission:expr),+], $($resource:expr),+) => {{

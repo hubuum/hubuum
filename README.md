@@ -17,8 +17,8 @@ The website opens the latest released documentation. Select a release version
 or explicitly choose `main` for development documentation, and check
 [client compatibility](docs/integrations/clients.md#choose-compatible-versions).
 
-The latest release is [Hubuum `0.0.22`](https://github.com/hubuum/hubuum/releases/tag/v0.0.22),
-published on November 9, 2026. Hubuum is suitable for evaluation and early deployments,
+The latest release is [Hubuum `0.0.23`](https://github.com/hubuum/hubuum/releases/tag/v0.0.23),
+published on November 21, 2026. Hubuum is suitable for evaluation and early deployments,
 but its API and configuration may change before `1.0.0`. Pin deployments to an explicit
 version instead of using the moving `main` image tag. See [Releases](#releases) for recent
 changes and upgrade guidance.
@@ -39,7 +39,7 @@ Install matching versions of all three together; template rendering and validati
 require the worker executable beside the server and administrator binaries.
 
 ```sh
-docker pull ghcr.io/hubuum/hubuum-server:v0.0.22
+docker pull ghcr.io/hubuum/hubuum-server:v0.0.23
 ```
 
 Run `hubuum-admin --migrate` as a one-shot workload before starting or upgrading the
@@ -308,6 +308,7 @@ Recent published releases:
 
 | Release | Date | Highlights |
 | --- | --- | --- |
+| [0.0.23](https://github.com/hubuum/hubuum/releases/tag/v0.0.23) | 2026-11-21 | Updates HTTP and SMTP dependencies and the single-host container images. Adds runtime controls for operational policies and requires an offline database migration. |
 | [0.0.22](https://github.com/hubuum/hubuum/releases/tag/v0.0.22) | 2026-11-09 | Adds audited, revision-checked runtime settings for pagination, query observations, authentication providers, and authorization. Clients discover editable fields, types, limits, explanations, and enum help from the server. Requires a migration, coordinated process upgrades, and migration away from the legacy query-observation endpoints; advances the storage SDK source contract to 0.7. |
 | [0.0.21](https://github.com/hubuum/hubuum/releases/tag/v0.0.21) | 2026-10-26 | Adds bounded field discovery and asynchronous schema suggestions with policy presets and sampled replay. Streams backup/restore through disk spools, moves computed read repair to durable workers, and fixes deletion contention with those workers. Requires migrations, writable temporary storage, and clients that recognize profiling tasks; advances the storage SDK to 0.6. |
 | [0.0.20](https://github.com/hubuum/hubuum/releases/tag/v0.0.20) | 2026-10-22 | Adds rotating interactive sessions, credential provenance and source history, historical object populations, relationships and computed values, directional relation labels, and shared query-observation controls. Requires an offline migration and upgraded clients; introduces backup format 10. |
@@ -320,6 +321,21 @@ Recent published releases:
 | [0.0.13](https://github.com/hubuum/hubuum/releases/tag/v0.0.13) | 2026-09-09 | Fixes full-restore coordination with live servers and preserves JSON `null` during PostgreSQL restores. Existing format 5 backups remain compatible. |
 | [0.0.12](https://github.com/hubuum/hubuum/releases/tag/v0.0.12) | 2026-09-08 | Adds OpenTelemetry tracing, mounted-file secrets, token hash key rotation, backup verification, optional split database roles, and isolated template and restore execution. Includes breaking deployment and resource-limit changes. |
 | [0.0.11](https://github.com/hubuum/hubuum/releases/tag/v0.0.11) | 2026-08-30 | Adds the experimental memory storage backend and a coordinated public storage adapter SDK, with bounded authorization queries. |
+
+### Upgrading from 0.0.22 to 0.0.23
+
+- Stop API and worker replicas and take a database snapshot. Run the matching
+  `hubuum-admin --migrate`, then start the 0.0.23 processes. To roll back,
+  restore the pre-upgrade snapshot before starting 0.0.22.
+- Give each worker its own bind address and port or network namespace. Workers
+  now open an HTTP listener even when metrics are disabled.
+- Update administrator clients with closed enums to accept the new runtime
+  policy groups and effect values. Backup, query-usage analysis, and schema
+  administration require an unscoped administrator token.
+- Existing single-host installations retain their saved image references. Pass
+  the desired dependency images explicitly when refreshing an installation. See
+  the [single-host deployment options](docs/deployment.md)
+  and the [runtime policy upgrade guide](docs/runtime_settings.md#upgrade-and-rollback).
 
 Before upgrading from `0.0.21` to `0.0.22`:
 

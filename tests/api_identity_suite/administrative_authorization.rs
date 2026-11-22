@@ -5,14 +5,18 @@ use rstest::rstest;
 use serde_json::json;
 
 use crate::events::EventContext;
-use crate::models::{Group, Permissions, PrincipalID, PrincipalTokenCreateRequest, User};
-use crate::permissions::AppContext;
-use crate::permissions::test_support::mock_treetop::MockTreetopBackend;
+use crate::models::{
+    Group, HubuumClassID, Permissions, PrincipalID, PrincipalTokenCreateRequest,
+    TokenResourceScope, User,
+};
+use crate::permissions::test_support::mock_treetop::{MockAllowRule, MockTreetopBackend};
+use crate::permissions::{AppContext, ResourceFields, ResourceKind};
 use crate::services::identity::delete_service_account;
 use crate::tests::asserts::assert_response_status;
 use crate::tests::{
     TestContext, app_context, app_context_with_permission_backend, create_groups_with_prefix,
-    create_test_service_account, persisted_test_token, scoped_token, service_account_token,
+    create_test_classes, create_test_service_account, persisted_test_token, resource_scoped_token,
+    scoped_token, service_account_token,
 };
 
 const PRINCIPALS: &str = "/api/v1/iam/principals";
@@ -575,4 +579,72 @@ async fn external_admin_grant_preserves_human_unscoped_management_boundary(
         .await
         .unwrap();
     fixture.cleanup().await;
+}
+
+#[rstest]
+#[case::unscoped_admin(true, true, false, StatusCode::OK)]
+#[case::resource_scoped_admin(true, true, true, StatusCode::FORBIDDEN)]
+#[case::admin_without_class_read(true, false, false, StatusCode::FORBIDDEN)]
+#[case::class_reader_without_admin(false, true, false, StatusCode::FORBIDDEN)]
+#[actix_web::test]
+async fn query_usage_analysis_authorizes_service_accounts(
+    #[case] is_admin: bool,
+    #[case] can_read_class: bool,
+    #[case] resource_scoped: bool,
+    #[case] expected: StatusCode,
+) {
+    let context = TestContext::new().await;
+    let classes = create_test_classes(&context, &context.scoped_name("runtime_admin")).await;
+    let class_id = HubuumClassID::new(classes[0].id).unwrap();
+    let group = &classes.collection.owner_group;
+    let account = create_test_service_account(&context.pool, group, None).await;
+    group
+        .add_member_without_events(&context.pool, &account)
+        .await
+        .unwrap();
+    let token = if resource_scoped {
+        resource_scoped_token(
+            &context.pool,
+            account.id,
+            vec![TokenResourceScope::Class(class_id)],
+        )
+        .await
+    } else {
+        service_account_token(&context.pool, &account, None, None).await
+    };
+
+    let policy = MockTreetopBackend::new();
+    if is_admin {
+        policy.add_admin_rule(group.id);
+    }
+    if can_read_class {
+        policy.add_rule(MockAllowRule {
+            group_id: group.id,
+            action: Permissions::ReadClass,
+            resource_kind: ResourceKind::Class,
+            resource_id: Some(class_id.id()),
+            attrs: ResourceFields::default(),
+        });
+    }
+    let app = test::init_service(
+        App::new()
+            .app_data(Data::new(app_context_with_permission_backend(
+                context.pool.get_ref().clone(),
+                Arc::new(policy),
+            )))
+            .configure(crate::api::config),
+    )
+    .await;
+    let response = test::TestRequest::post()
+        .uri(&format!("/api/v1/classes/{class_id}/query-usage/analysis"))
+        .insert_header(("Authorization", format!("Bearer {token}")))
+        .set_json(json!({"proposed": []}))
+        .send_request(&app)
+        .await;
+    assert_response_status(response, expected).await;
+
+    delete_service_account(&context.pool, account.id, &EventContext::system())
+        .await
+        .unwrap();
+    classes.cleanup().await.unwrap();
 }

@@ -8,13 +8,14 @@ use crate::models::{
     PrincipalKind, PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsPatchDocument,
     StructuredSearchRequest, TokenResourceScope, TokenScope,
 };
-use crate::permissions::AppContext;
+use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::storage::{
     AuthenticationStorage, StorageAuthenticatedToken, StorageAuthenticationHuman,
     StorageAuthenticationPrincipal, StorageAuthenticationResourceScope,
     StorageAuthenticationTokenScope, StorageAuthenticationTokenScopeQuery, StorageContext,
     storage_handle,
 };
+use hubuum_domain::TokenId;
 
 use actix_web::{
     FromRequest, HttpMessage, HttpRequest, dev::Payload, error::JsonPayloadError, web::JsonBody,
@@ -230,6 +231,38 @@ impl Authenticated {
     pub fn scopes(&self) -> Option<&TokenScope> {
         self.scope.as_ref()
     }
+
+    pub(crate) async fn into_runtime_admin(
+        self,
+        context: &AppContext,
+    ) -> Result<UnscopedRuntimeAdmin, ApiError> {
+        self.require_runtime_admin(context).await?;
+        Ok(UnscopedRuntimeAdmin {
+            principal: self.principal,
+            token_id: self.token_meta.id(),
+        })
+    }
+
+    pub(crate) async fn require_runtime_admin(&self, context: &AppContext) -> Result<(), ApiError> {
+        require_unscoped_runtime_admin(context, &self.principal, self.token_meta.is_scoped()).await
+    }
+}
+
+/// A human or service account authenticated with an unscoped token and authorized
+/// as a runtime administrator by the configured permission backend.
+pub struct UnscopedRuntimeAdmin {
+    principal: StorageAuthenticationPrincipal,
+    token_id: TokenId,
+}
+
+impl UnscopedRuntimeAdmin {
+    pub fn principal(&self) -> &StorageAuthenticationPrincipal {
+        &self.principal
+    }
+
+    pub fn token_id(&self) -> TokenId {
+        self.token_id
+    }
 }
 
 /// A human user with a valid, **unscoped** token. Scoped tokens and service
@@ -262,6 +295,12 @@ pub trait AccessEventContext {
 }
 
 impl AccessEventContext for Authenticated {
+    fn event_context(&self, req: &HttpRequest) -> EventContext {
+        user_event_context(req, self.principal.id().id())
+    }
+}
+
+impl AccessEventContext for UnscopedRuntimeAdmin {
     fn event_context(&self, req: &HttpRequest) -> EventContext {
         user_event_context(req, self.principal.id().id())
     }
@@ -506,6 +545,21 @@ impl FromRequest for Authenticated {
                 }
                 None => build_authenticated(&backend, token).await,
             }
+        }
+        .boxed_local()
+    }
+}
+
+impl FromRequest for UnscopedRuntimeAdmin {
+    type Error = ApiError;
+    type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future {
+        let context = backend_from_req(req);
+        let authenticated = Authenticated::from_request(req, payload);
+        async move {
+            let context = context?;
+            authenticated.await?.into_runtime_admin(&context).await
         }
         .boxed_local()
     }

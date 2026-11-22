@@ -2,7 +2,7 @@
 services:
   prometheus:
     profiles: [monitoring]
-    image: docker.io/prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
+    image: docker.io/prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -19,7 +19,7 @@ services:
       - monitoring_prometheus_data:/prometheus
   grafana:
     profiles: [monitoring]
-    image: docker.io/grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+    image: docker.io/grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
     environment:
       GF_SERVER_ROOT_URL: https://localhost:9443/grafana/
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
@@ -39,7 +39,7 @@ services:
       - monitoring_grafana_data:/var/lib/grafana
   monitoring-proxy:
     profiles: [monitoring]
-    image: docker.io/library/caddy:2-alpine
+    image: docker.io/library/caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     ports:
       - "127.0.0.1:9443:443"
     environment:
