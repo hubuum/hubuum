@@ -8,6 +8,8 @@ use hubuum_task_core::TaskExecutionLimit;
 use std::future::{Future, ready};
 use std::panic::{AssertUnwindSafe, resume_unwind};
 
+mod removal_race;
+
 async fn phase<T>(
     fixture: &Fixture,
     scope: &StorageExecutionScope,

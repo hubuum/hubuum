@@ -431,8 +431,16 @@ actual hold, policy edit or competing expiry batch retains the authority lock
 while its required audit append is blocked. After that transition commits, the
 waiting admission must reject its stale fence without publishing an exclusion
 or overwriting the winner. PostgreSQL lock observations establish both waits;
-elapsed time alone does not establish their order. Bounded-pass tests cover held
-prefixes and later appends on both adapters across all nine families, plus native
+elapsed time alone does not establish their order.
+
+Native tests also race a new hold against the first physical removal from an
+already admitted batch in each of the nine families. If the hold commits first,
+the worker preserves the exact copy and records no removal receipt. If removal
+commits first, the hold prepared against the previous revision conflicts. The
+original batch retains one receipt for the version that was removed.
+
+Bounded-pass tests cover held prefixes and later appends on both adapters
+across all nine families, plus native
 late commits for all nine and late closure for the eight interval families.
 Native dependency tests cover all nine families through current rows, protected
 open intervals and retained schema revisions. They restore descendants twice,

@@ -118,6 +118,7 @@ for policy_storage_input in crates/hubuum-storage-postgres/tests/history_lifecyc
   crates/hubuum-storage-postgres/tests/history_expiry/mod.rs \
   crates/hubuum-storage-postgres/tests/history_expiry/bounded_scan.rs \
   crates/hubuum-storage-postgres/tests/history_expiry/task.rs \
+  crates/hubuum-storage-postgres/tests/history_expiry/task/removal_race.rs \
   crates/hubuum-storage-postgres/src/operations/history_expiry_task.rs \
   crates/hubuum-storage-memory/src/history_lifecycle/expiry/task_tests.rs \
   src/services/deletion_recovery/history_expiry.rs \
