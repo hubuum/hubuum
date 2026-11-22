@@ -433,11 +433,15 @@ waiting admission must reject its stale fence without publishing an exclusion
 or overwriting the winner. PostgreSQL lock observations establish both waits;
 elapsed time alone does not establish their order.
 
-Native tests also race a new hold against the first physical removal from an
-already admitted batch in each of the nine families. If the hold commits first,
-the worker preserves the exact copy and records no removal receipt. If removal
-commits first, the hold prepared against the previous revision conflicts. The
-original batch retains one receipt for the version that was removed.
+Native tests race the first physical removal from an admitted batch against a
+hold or a policy edit in all nine families. A hold that commits first preserves
+the exact copy without a receipt. So does a reviewed edit to its governing
+policy with a cutoff at the copy's retention anchor, even when the new revision
+keeps identical expiry terms. A prospective edit, or a retrospective cutoff one
+microsecond before the anchor, leaves the original revision in force and the
+worker can remove the copy. When removal commits first, the prepared hold or
+policy edit conflicts. Each successful removal leaves one receipt identifying
+the exact version and its protected checkpoint in the original batch.
 
 Bounded-pass tests cover held prefixes and later appends on both adapters
 across all nine families, plus native

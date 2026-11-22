@@ -56,7 +56,7 @@ async fn commit_in_order(
     test: &TaskFixture,
     (first_pid, first): (i32, impl Future<Output = Result<(), StorageError>>),
     (second_pid, second): (i32, impl Future<Output = Result<(), StorageError>>),
-) -> StorageError {
+) -> Result<(), StorageError> {
     tokio::pin!(first, second);
     let mut observer = test.fixture.owner_pool.get().await.unwrap();
     let (locked, gate_pid) = oneshot::channel();
@@ -94,10 +94,119 @@ async fn commit_in_order(
         .await
         .expect("both operations must finish after the audit lock is released")
     };
-    let (gate, (winner, loser)) = tokio::join!(gate, compete);
+    let (gate, (first, second)) = tokio::join!(gate, compete);
     gate.unwrap();
-    winner.unwrap();
-    loser.expect_err("the queued operation must recheck the committed authority")
+    first.unwrap();
+    second
+}
+
+#[derive(Clone, Copy, Debug)]
+enum AdminChange {
+    Hold,
+    DisableProspectively,
+    DisableBeforeAnchor,
+    DisableThroughAnchor,
+    ReissueThroughAnchor,
+}
+
+impl AdminChange {
+    fn blocks_removal(self) -> bool {
+        matches!(
+            self,
+            Self::Hold | Self::DisableThroughAnchor | Self::ReissueThroughAnchor
+        )
+    }
+
+    async fn prepare(
+        self,
+        test: &TaskFixture,
+        snapshot: &HistoryLifecycleSnapshot,
+        manifest: &HistoryExpiryManifest,
+    ) -> HistoryLifecycleControlChange {
+        let principal = PrincipalIdentity::generate();
+        let member = &manifest.members()[0];
+        let anchor = member.anchor().at();
+        assert!(anchor < snapshot.observed_at());
+        let application = match self {
+            Self::Hold => {
+                let hold = HistoryRetentionHold::new(
+                    Uuid::new_v4(),
+                    manifest.key(),
+                    snapshot.observed_at(),
+                    None,
+                    principal,
+                )
+                .unwrap();
+                return snapshot
+                    .control()
+                    .create_hold(hold, snapshot.fence())
+                    .unwrap();
+            }
+            Self::DisableProspectively => HistoryPolicyApplication::Prospective,
+            Self::DisableBeforeAnchor => HistoryPolicyApplication::Retrospective {
+                closed_through: anchor - Duration::microseconds(1),
+            },
+            Self::DisableThroughAnchor | Self::ReissueThroughAnchor => {
+                HistoryPolicyApplication::Retrospective {
+                    closed_through: anchor,
+                }
+            }
+        };
+        let policies = snapshot.control().authority().policies();
+        let source = &member.policies()[0];
+        let binding = if matches!(self, Self::ReissueThroughAnchor) {
+            policies.exact(source).unwrap().binding().clone()
+        } else {
+            HistoryPolicyBinding::DisabledExpiry
+        };
+        let proposal = HistoryPolicyChange::new(
+            source.key(),
+            policies.current_revision(source.key()),
+            binding,
+            application,
+        )
+        .unwrap();
+        let issued;
+        let (current, review) = if matches!(
+            proposal.application(),
+            HistoryPolicyApplication::Retrospective { .. }
+        ) {
+            let preview = HistoryPolicyPreview::issue(
+                principal,
+                proposal.clone(),
+                snapshot.fence(),
+                snapshot.observed_at(),
+                HistoryPreviewImpact::new(HistoryPreviewCoverage::Bounded, 0, 0, Vec::new())
+                    .unwrap(),
+            )
+            .unwrap();
+            let reference = preview.reference().clone();
+            let issuance = snapshot
+                .control()
+                .issue_preview(preview, snapshot.fence())
+                .unwrap();
+            let storage = &test.fixture.storage;
+            issued = storage
+                .run_in_scope(
+                    test.scope.clone(),
+                    storage.commit_history_lifecycle(issuance),
+                )
+                .await
+                .unwrap();
+            (&issued, Some(reference))
+        } else {
+            (snapshot, None)
+        };
+        current
+            .control()
+            .apply(
+                HistoryPolicyApplyRequest::new(proposal, review),
+                principal,
+                current.fence(),
+                current.observed_at(),
+            )
+            .unwrap()
+    }
 }
 
 #[rstest::rstest]
@@ -111,9 +220,17 @@ async fn commit_in_order(
 #[case::computed(StorageIdentityHistoryKind::ComputedDefinitions)]
 #[case::schema(StorageIdentityHistoryKind::ClassSchema)]
 #[tokio::test]
-async fn hold_and_first_copy_removal_serialize(
+async fn admin_change_and_first_copy_removal_serialize(
     #[case] family: StorageIdentityHistoryKind,
-    #[values(true, false)] hold_first: bool,
+    #[values(
+        AdminChange::Hold,
+        AdminChange::DisableProspectively,
+        AdminChange::DisableBeforeAnchor,
+        AdminChange::DisableThroughAnchor,
+        AdminChange::ReissueThroughAnchor
+    )]
+    edit: AdminChange,
+    #[values(true, false)] edit_first: bool,
 ) {
     let _guard = CONTROL_LOCK.lock().await;
     let test = TaskFixture::new(family).await;
@@ -124,47 +241,47 @@ async fn hold_and_first_copy_removal_serialize(
         let manifest = checkpoint.retained_manifest(&admitted).unwrap();
         let target = manifest.members()[0].target();
         assert_eq!(copy_count(&test, family, target).await, 1);
-        let hold = HistoryRetentionHold::new(
-            Uuid::new_v4(),
-            manifest.key(),
-            admitted.observed_at(),
-            None,
-            PrincipalIdentity::generate(),
-        )
-        .unwrap();
-        let change = admitted
-            .control()
-            .create_hold(hold, admitted.fence())
-            .unwrap();
-        let expected_hold = change.next().clone();
+        let change = edit.prepare(&test, &admitted, manifest).await;
+        let expected_control = if edit_first {
+            change.next()
+        } else {
+            change.expected()
+        }
+        .clone();
         let (administrator, admin_pid) = runtime_session(&test).await;
         let (worker, worker_pid) = runtime_session(&test).await;
-        let commit_hold = administrator
+        let commit = administrator
             .run_in_scope(
                 test.scope.clone(),
                 administrator.commit_history_lifecycle(change),
             )
             .map_ok(|_| ());
-        let request = HistoryExpiryTaskRequest::new(test.lease.clone(), None)
-            .with_protection(protection(&admitted));
+        let proof = protection(&admitted);
+        let request =
+            HistoryExpiryTaskRequest::new(test.lease.clone(), None).with_protection(proof.clone());
         let remove_copy = worker
             .run_in_scope(
                 test.scope.clone(),
                 worker.process_history_expiry_task(request),
             )
             .map_ok(|_| ());
-        let hold = (admin_pid, commit_hold);
+        let admin = (admin_pid, commit);
         let removal = (worker_pid, remove_copy);
-        if hold_first {
-            let error = commit_in_order(&test, hold, removal).await;
-            assert!(
-                error
-                    .message()
-                    .contains("Current policy, hold or dependency blocks history removal"),
-                "{error}"
-            );
+        if edit_first {
+            let removal = commit_in_order(&test, admin, removal).await;
+            if edit.blocks_removal() {
+                let error = removal.unwrap_err();
+                assert!(
+                    error
+                        .message()
+                        .contains("Current policy, hold or dependency blocks history removal"),
+                    "{error}"
+                );
+            } else {
+                removal.unwrap();
+            }
         } else {
-            let error = commit_in_order(&test, removal, hold).await;
+            let error = commit_in_order(&test, removal, admin).await.unwrap_err();
             assert_eq!(error.kind(), StorageErrorKind::Conflict, "{error}");
         }
         let after = storage.capture_history_lifecycle().await.unwrap();
@@ -176,20 +293,26 @@ async fn hold_and_first_copy_removal_serialize(
             .unwrap();
         assert_eq!(retained.manifest(), manifest);
         let copies = copy_count(&test, family, target).await;
-        if hold_first {
-            assert_eq!(after.control(), &expected_hold);
+        if edit_first && edit.blocks_removal() {
+            assert_eq!(after.control(), &expected_control);
             assert_eq!(copies, 1);
             assert!(retained.removals().is_empty());
         } else {
+            let authority = after.control().authority();
             assert_eq!(
-                after.control().authority().hold_revisions(),
-                admitted.control().authority().hold_revisions()
+                authority.policies(),
+                expected_control.authority().policies()
+            );
+            assert_eq!(
+                authority.hold_revisions(),
+                expected_control.authority().hold_revisions()
             );
             assert_eq!(copies, 0);
             let [receipt] = retained.removals() else {
                 panic!("expected exactly one first-removal receipt")
             };
             assert_eq!(receipt.target(), target);
+            assert_eq!(receipt.checkpoint(), proof.checkpoint());
         }
     })
     .catch_unwind()
