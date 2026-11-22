@@ -13,15 +13,19 @@ use crate::{AuthSessionId, StorageValidationError};
 /// Whether a failed attempt could have spent its rotating refresh token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StorageUpstreamFailure {
+    CredentialExpired,
     UnavailableBeforeSubmission,
     Unavailable,
     Rejected,
 }
 impl StorageUpstreamFailure {
-    pub fn sync_failure(self) -> crate::StorageExternalSyncFailure {
+    pub fn sync_failure(self) -> Option<crate::StorageExternalSyncFailure> {
         match self {
-            Self::Rejected => crate::StorageExternalSyncFailure::Rejected,
-            _ => crate::StorageExternalSyncFailure::Unavailable,
+            Self::CredentialExpired => None,
+            Self::Rejected => Some(crate::StorageExternalSyncFailure::Rejected),
+            Self::Unavailable | Self::UnavailableBeforeSubmission => {
+                Some(crate::StorageExternalSyncFailure::Unavailable)
+            }
         }
     }
 }
@@ -266,7 +270,7 @@ impl StorageUpstreamSession {
 
     pub fn claim(&mut self, now: DateTime<Utc>) -> StorageUpstreamClaimOutcome {
         if self.retry_after.is_some_and(|after| now < after) {
-            return StorageUpstreamClaimOutcome::Unavailable;
+            return StorageUpstreamClaimOutcome::RetryLater;
         }
         self.retry_after = None;
         if self.lease.is_some_and(|(_, deadline)| now < deadline) {
@@ -433,6 +437,7 @@ impl StorageUpstreamClaim {
 #[derive(Clone, Debug)]
 pub enum StorageUpstreamClaimOutcome {
     Unavailable,
+    RetryLater,
     Busy,
     Claim(Box<StorageUpstreamClaim>),
 }
@@ -533,7 +538,7 @@ mod tests {
         ));
         assert!(matches!(
             record.claim(now),
-            StorageUpstreamClaimOutcome::Unavailable
+            StorageUpstreamClaimOutcome::RetryLater
         ));
         let StorageUpstreamClaimOutcome::Claim(retry) = record.claim(now + Duration::seconds(30))
         else {

@@ -517,7 +517,6 @@ fn self_target_id(path: &actix_web::dev::Path<actix_web::dev::Url>) -> Result<i3
 /// A valid local bearer credential authorizes revocation of its own family.
 pub struct LogoutCredential {
     pub token: Token,
-    pub token_id: hubuum_domain::TokenId,
 }
 
 impl FromRequest for LogoutCredential {
@@ -533,17 +532,11 @@ impl FromRequest for LogoutCredential {
             .and_then(|token| resolved_auth(req, token));
         async move {
             let token = token?;
-            let token_meta = match cached.transpose()? {
-                Some(meta) => meta,
-                None => {
-                    crate::services::authentication::authenticate_bearer_token(&backend?, &token)
-                        .await?
-                }
-            };
-            Ok(Self {
-                token,
-                token_id: token_meta.id(),
-            })
+            if cached.transpose()?.is_none() {
+                crate::services::authentication::authenticate_bearer_token(&backend?, &token)
+                    .await?;
+            }
+            Ok(Self { token })
         }
         .boxed_local()
     }

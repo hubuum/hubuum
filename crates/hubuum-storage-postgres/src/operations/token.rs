@@ -674,7 +674,10 @@ pub async fn revoke_token(
 pub async fn revoke_token_by_hash(
     runtime: &PostgresRuntime,
     request: StorageTokenHashRevoke,
-) -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
+) -> Result<
+    StorageMutationOutcome<Option<hubuum_storage_core::StorageUpstreamSession>>,
+    PostgresStorageError,
+> {
     let (principal_id, credentials, event_context) = request.into_parts();
     let principal_id = principal_id.map(|principal_id| principal_id.id());
     if let Some(principal_id) = principal_id {
@@ -726,15 +729,18 @@ pub async fn revoke_token_by_hash(
                 ));
             }
             let Some(token_id) = candidates.pop() else {
-                return Ok(StorageMutationOutcome::unchanged(0));
+                return Ok(StorageMutationOutcome::unchanged(None));
             };
-            let before = crate::schema::tokens::table
+            let (before, session_id) = crate::schema::tokens::table
                 .filter(crate::schema::tokens::id.eq(token_id))
-                .select(TokenRow::as_select())
-                .first::<TokenRow>(connection)
+                .select((
+                    TokenRow::as_select(),
+                    crate::schema::tokens::auth_session_id,
+                ))
+                .first::<(TokenRow, Option<uuid::Uuid>)>(connection)
                 .await?;
             if principal_id.is_some_and(|principal_id| principal_id != before.principal_id) {
-                return Ok(StorageMutationOutcome::unchanged(0));
+                return Ok(StorageMutationOutcome::unchanged(None));
             }
             crate::schema::principals::table
                 .find(before.principal_id)
@@ -742,6 +748,13 @@ pub async fn revoke_token_by_hash(
                 .select(crate::schema::principals::id)
                 .first::<i32>(connection)
                 .await?;
+            let upstream = match session_id {
+                Some(id) => {
+                    super::upstream_authentication::issued_session_credential(connection, id)
+                        .await?
+                }
+                None => None,
+            };
             if let Some(audit) = super::auth_sessions::revoke_access(
                 connection,
                 token_id,
@@ -750,7 +763,7 @@ pub async fn revoke_token_by_hash(
             )
             .await?
             {
-                return Ok(StorageMutationOutcome::committed(1, audit));
+                return Ok(StorageMutationOutcome::committed(upstream, audit));
             }
             let before = crate::schema::tokens::table
                 .find(token_id)
@@ -759,7 +772,7 @@ pub async fn revoke_token_by_hash(
                 .first::<TokenRow>(connection)
                 .await?;
             if before.revoked_at.is_some() {
-                return Ok(StorageMutationOutcome::unchanged(0));
+                return Ok(StorageMutationOutcome::unchanged(None));
             }
             let scope = load_token_scope(
                 connection,
@@ -790,7 +803,7 @@ pub async fn revoke_token_by_hash(
                 Some(after.snapshot(scope.as_ref())),
             )?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
-            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(1, audit))
+            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(None, audit))
         })
         .await
 }

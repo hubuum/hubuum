@@ -498,11 +498,13 @@ async fn revoking_the_initiating_credential_invalidates_a_ready_approval() {
 }
 
 #[rstest::rstest]
-#[case::last_check(false)]
-#[case::another_provider_pending(true)]
+#[case::last_check(false, false)]
+#[case::another_provider_pending(true, false)]
+#[case::large_provider_configuration(false, true)]
 #[tokio::test]
 async fn provider_verification_consumes_only_the_exact_candidate_without_issuing_or_provisioning(
     #[case] another_pending: bool,
+    #[case] large: bool,
 ) {
     use hubuum_domain::InteractionActor;
     let f = Fixture::new().await;
@@ -518,6 +520,16 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
     let provider_binding = StorageProviderIdentityBinding::from_provider(&provider).unwrap();
     let second_id = Uuid::new_v4();
     let mut proposed = vec![provider];
+    if large {
+        let subjects: Vec<_> = (0..1000).map(|_| Uuid::new_v4().to_string()).collect();
+        for n in 0..8 {
+            let provider = StorageAuthenticationProvider::try_new(format!("oidc-{n}"), StorageAuthenticationProviderKind::Oidc,
+                serde_json::json!({"issuer":format!("https://id-{n}.example"),"client_id":"hubuum","client_authentication":"client_secret_basic","scopes":["openid"],"signing_algorithms":["RS256"],
+                "membership":{"mode":"local_only","refresh_interval_seconds":300,"max_stale_seconds":900},
+                "admission":{"mode":"subject_allowlist","subjects":subjects}})).unwrap().with_id(Uuid::new_v4()).unwrap();
+            proposed.push(provider);
+        }
+    }
     if another_pending {
         proposed.push(
             StorageAuthenticationProvider::deployment(
@@ -557,6 +569,9 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
         .unwrap()
     };
     let candidate = pending_candidate();
+    if large {
+        assert!(candidate.to_document().to_string().len() > MAX_AUTH_INTERACTION_DOCUMENT_BYTES);
+    }
     let other_candidate = pending_candidate();
     assert_eq!(
         other_candidate.state(Utc::now()),

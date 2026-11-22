@@ -849,6 +849,7 @@ async fn retained_renewal_updates_membership_and_rotates_atomically() {
 
 #[rstest]
 #[case::temporary(hubuum_storage_core::StorageUpstreamFailure::Unavailable, true)]
+#[case::expired(hubuum_storage_core::StorageUpstreamFailure::CredentialExpired, true)]
 #[case::rejected(hubuum_storage_core::StorageUpstreamFailure::Rejected, false)]
 #[tokio::test]
 async fn failed_memory_renewal_never_reuses_consumed_credentials(

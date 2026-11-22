@@ -1107,7 +1107,7 @@ impl TokenStorage for StorageHandle {
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<Option<StorageUpstreamSession>>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Token,

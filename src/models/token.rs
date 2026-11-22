@@ -433,7 +433,10 @@ impl Token {
         }
     }
 
-    pub async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
+    pub async fn delete<C>(
+        &self,
+        backend: &C,
+    ) -> Result<Option<hubuum_storage_core::StorageUpstreamSession>, ApiError>
     where
         C: StorageContext,
     {
@@ -443,8 +446,7 @@ impl Token {
             self.credentials()?.credentials,
             &EventContext::system(),
         )
-        .await?;
-        Ok(())
+        .await
     }
 
     pub fn storage_hash(&self) -> Result<String, ApiError> {

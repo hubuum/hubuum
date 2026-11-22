@@ -461,7 +461,8 @@ impl MemoryState {
                 StorageInteractionIssuance::ProviderVerification,
             ) => {
                 let id = candidate.id();
-                self.runtime_settings.verify_candidate(*candidate)?;
+                self.runtime_settings
+                    .apply_interaction_verification(*candidate)?;
                 (
                     StorageInteractionCompletion::ProviderVerification(id),
                     InteractionIssuedResult::ProviderVerification(id),

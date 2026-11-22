@@ -313,6 +313,10 @@ impl StorageSecurityCandidate {
         Ok(self)
     }
 
+    pub(crate) const fn verification_revision(&self) -> u32 {
+        self.verification_revision
+    }
+
     pub fn verification_receipt(&self) -> Option<&StorageCredentialFingerprint> {
         self.receipt.as_ref()
     }

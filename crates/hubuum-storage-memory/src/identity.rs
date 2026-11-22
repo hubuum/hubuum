@@ -1051,7 +1051,9 @@ impl ExternalIdentityStorage for MemoryStorage {
         if !record.defer_credential_retry(&claim, provider, failure, now) {
             state.upstream_sessions.remove(&original.session().value());
         }
-        state.external_sync_failure(original.principal(), failure.sync_failure())?;
+        if let Some(failure) = failure.sync_failure() {
+            state.external_sync_failure(original.principal(), failure)?;
+        }
         *live = state;
         Ok(())
     }
@@ -1155,10 +1157,11 @@ impl ExternalIdentityStorage for MemoryStorage {
             .upstream_sessions
             .values()
             .filter(|record| {
-                state
-                    .sessions
-                    .get(&record.session().value())
-                    .is_some_and(|session| !session.revoked)
+                record.credential().is_some()
+                    && state
+                        .sessions
+                        .get(&record.session().value())
+                        .is_some_and(|session| !session.revoked)
                     && match &target {
                         StorageUpstreamRevocation::Sessions(SessionRevocation::All(id)) => {
                             record.principal() == *id
@@ -1175,7 +1178,6 @@ impl ExternalIdentityStorage for MemoryStorage {
                         }
                     }
             })
-            .take(32)
             .cloned()
             .collect())
     }
@@ -2193,75 +2195,31 @@ impl TokenStorage for MemoryStorage {
         &self,
         request: StorageTokenRevoke,
     ) -> Result<StorageMutationOutcome<usize>, StorageError> {
-        let (token_id, principal_id, context) = request.into_parts();
-        let mut state = self.state.write().await;
-        let token = state.tokens.get_mut(&token_id.id()).ok_or_else(|| {
-            StorageError::not_found(format!("Token {} was not found", token_id.id()))
-        })?;
-        if token.principal_id != principal_id {
-            return Err(StorageError::not_found(format!(
-                "Token {} was not found for principal {}",
-                token_id.id(),
-                principal_id.id()
-            )));
-        }
-        if token.revoked_at.is_some() {
-            return Ok(StorageMutationOutcome::unchanged(0));
-        }
-        if state.session_for_token(token_id).is_some() {
-            return state.revoke_sessions(SessionRevocation::Current(token_id), context);
-        }
-        let token = state
-            .tokens
-            .get_mut(&token_id.id())
-            .expect("validated token exists");
-        token.revoked_at = Some(Utc::now());
-        token.revision = token
-            .revision
-            .checked_advance()
-            .map_err(|error| StorageError::internal(error.to_string()))?;
-        let receipt = state.append_simple_event(
-            EntityType::Token,
-            token_id.id(),
-            None,
-            Action::Revoked,
-            &context,
-            format!("Token {} revoked", token_id.id()),
-        )?;
-        Ok(StorageMutationOutcome::committed(1, receipt))
+        self.state.write().await.revoke_owned_token(request)
     }
 
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<Option<StorageUpstreamSession>>, StorageError> {
         let (principal_id, credentials, context) = request.into_parts();
-        let token_id = self
-            .state
-            .read()
-            .await
-            .tokens
-            .values()
-            .find(|token| {
-                credentials
+        let mut state = self.state.write().await;
+        let Some(token) = state.tokens.values().find(|token| {
+            token.revoked_at.is_none()
+                && principal_id.is_none_or(|owner| token.principal_id == owner)
+                && credentials
                     .iter()
                     .any(|credential| token.matches_credential(credential))
-                    && principal_id.is_none_or(|id| token.principal_id == id)
-            })
-            .map(|token| token.id);
-        let Some(token_id) = token_id else {
-            return Ok(StorageMutationOutcome::unchanged(0));
+        }) else {
+            return Ok(StorageMutationOutcome::unchanged(None));
         };
-        let owner = self
-            .state
-            .read()
-            .await
-            .tokens
-            .get(&token_id.id())
-            .expect("token selected by id exists")
-            .principal_id;
-        self.revoke_token(StorageTokenRevoke::new(token_id, owner, context))
-            .await
+        let request = StorageTokenRevoke::new(token.id, token.principal_id, context);
+        let upstream = state
+            .session_for_token(token.id)
+            .and_then(|id| state.upstream_sessions.get(&id))
+            .cloned();
+        let revoked = state.revoke_owned_token(request)?;
+        Ok(revoked.map(|count| if count > 0 { upstream } else { None }))
     }
 
     async fn revoke_all_principal_tokens(
@@ -3568,4 +3526,47 @@ pub(super) fn create_token_in_state(
         metadata,
         StorageAuditReceipts::new(receipt, additional_audits),
     ))
+}
+
+impl MemoryState {
+    fn revoke_owned_token(
+        &mut self,
+        request: StorageTokenRevoke,
+    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+        let (token_id, principal_id, context) = request.into_parts();
+        let token = self.tokens.get_mut(&token_id.id()).ok_or_else(|| {
+            StorageError::not_found(format!("Token {} was not found", token_id.id()))
+        })?;
+        if token.principal_id != principal_id {
+            return Err(StorageError::not_found(format!(
+                "Token {} was not found for principal {}",
+                token_id.id(),
+                principal_id.id()
+            )));
+        }
+        if token.revoked_at.is_some() {
+            return Ok(StorageMutationOutcome::unchanged(0));
+        }
+        if self.session_for_token(token_id).is_some() {
+            return self.revoke_sessions(SessionRevocation::Current(token_id), context);
+        }
+        let token = self
+            .tokens
+            .get_mut(&token_id.id())
+            .expect("validated token exists");
+        token.revoked_at = Some(Utc::now());
+        token.revision = token
+            .revision
+            .checked_advance()
+            .map_err(|error| StorageError::internal(error.to_string()))?;
+        let receipt = self.append_simple_event(
+            EntityType::Token,
+            token_id.id(),
+            None,
+            Action::Revoked,
+            &context,
+            format!("Token {} revoked", token_id.id()),
+        )?;
+        Ok(StorageMutationOutcome::committed(1, receipt))
+    }
 }

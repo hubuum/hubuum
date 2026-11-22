@@ -183,7 +183,16 @@ fn crate_cookie(response: &ServiceResponse, suffix: &str) -> String {
         .unwrap()
 }
 fn cookie(response: &ServiceResponse) -> String {
-    crate_cookie(response, "entry")
+    let cookie = Cookie::parse(
+        response
+            .headers()
+            .get(header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+    )
+    .unwrap();
+    format!("{}={}", cookie.name(), cookie.value())
 }
 fn csrf(html: &str) -> String {
     html.split("name=\"csrf\" value=\"")
@@ -193,6 +202,41 @@ fn csrf(html: &str) -> String {
         .next()
         .unwrap()
         .into()
+}
+
+#[actix_web::test]
+async fn concurrent_entry_forms_attach_their_own_interactions() {
+    let first = Fixture::new(false).await;
+    let second = Fixture::new(false).await;
+    let (first_cookie, first_csrf) = first.entry().await;
+    let (second_cookie, second_csrf) = second.entry().await;
+    let cookies = format!("{first_cookie}; {second_cookie}");
+    let first_response = first
+        .call(Fixture::form(
+            ENTRY,
+            json!({"csrf":first_csrf,"user_code":first.begun["next"]["user_code"]}),
+            &cookies,
+        ))
+        .await;
+    assert_eq!(first_response.status(), StatusCode::SEE_OTHER);
+    let removed = first_response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .filter_map(|h| Cookie::parse(h.to_str().ok()?).ok())
+        .find(|c| c.max_age().is_some_and(|age| age.is_zero()))
+        .unwrap();
+    assert_eq!(removed.name(), first_cookie.split_once('=').unwrap().0);
+    assert_ne!(removed.name(), second_cookie.split_once('=').unwrap().0);
+    let second_response = second
+        .call(Fixture::form(
+            ENTRY,
+            json!({"csrf":second_csrf,"user_code":second.begun["next"]["user_code"]}),
+            &second_cookie,
+        ))
+        .await;
+    assert_eq!(second_response.status(), StatusCode::SEE_OTHER);
+    first.cleanup().await;
+    second.cleanup().await;
 }
 
 #[actix_web::test]

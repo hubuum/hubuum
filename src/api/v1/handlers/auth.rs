@@ -176,14 +176,11 @@ pub async fn logout(
 ) -> Result<impl Responder, ApiError> {
     debug!(message = "token logout requested");
 
-    let upstream =
-        oidc::session_revocations(&context, SessionRevocation::Current(requestor.token_id)).await;
-
     let result = requestor.token.delete(&context).await;
 
     match result {
-        Ok(_) => {
-            crate::services::auth_interactions::oidc::revoke_best_effort(upstream, context);
+        Ok(upstream) => {
+            oidc::revoke_best_effort(upstream.into_iter().collect(), context);
             Ok(ApiResponse::message("Logout successful."))
         }
         Err(e) => {
@@ -265,18 +262,11 @@ pub async fn logout_token(
     let token = Token::try_from(token.into_inner().token)?;
     debug!(message = "administrative token logout requested");
 
-    let upstream = match token.authenticate(&context).await {
-        Ok(authenticated) => {
-            oidc::session_revocations(&context, SessionRevocation::Current(authenticated.id()))
-                .await
-        }
-        Err(_) => Vec::new(),
-    };
     let result = token.delete(&context).await;
 
     match result {
-        Ok(_) => {
-            oidc::revoke_best_effort(upstream, context);
+        Ok(upstream) => {
+            oidc::revoke_best_effort(upstream.into_iter().collect(), context);
             Ok(ApiResponse::message("Logout of token successful."))
         }
         Err(e) => {

@@ -15,6 +15,8 @@ pub enum ProtocolError {
     Unavailable,
     #[error("Authentication response failed validation")]
     InvalidResponse,
+    #[error("The retained access token expired")]
+    CredentialExpired,
     #[error("Authentication was denied or revoked")]
     Denied,
     #[error("Authenticated subject failed membership validation")]

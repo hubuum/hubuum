@@ -116,6 +116,16 @@ impl ExternalFixture {
         self.retained_interaction().await.0
     }
     async fn retained_interaction(&self) -> (PrincipalId, StorageInteractionAccess) {
+        let (session, access, _) = self.retained_session().await;
+        (session.principal_id(), access)
+    }
+    async fn retained_session(
+        &self,
+    ) -> (
+        StorageSessionIssued,
+        StorageInteractionAccess,
+        StorageAuthenticationCredential,
+    ) {
         let (interaction, claim) = self.start(&self.backend).await;
         let command = self.command(&claim, "alice", "alice", json!(["/team"]));
         let StorageInteractionAction::AuthenticateExternal { authentication, .. } =
@@ -145,17 +155,21 @@ impl ExternalFixture {
         else {
             panic!("authenticated")
         };
+        let completion = interaction.complete_with_subject(view.authenticated_subject().cloned());
+        let StorageInteractionIssuance::Session { credentials, .. } = completion.issuance() else {
+            panic!("session issuance")
+        };
+        let access_credential =
+            StorageAuthenticationCredential::from_digest(credentials.access().clone());
         let StorageInteractionCompletion::Session(issued) = self
             .backend
-            .complete_auth_interaction(
-                interaction.complete_with_subject(view.authenticated_subject().cloned()),
-            )
+            .complete_auth_interaction(completion)
             .await
             .unwrap()
         else {
             panic!("session")
         };
-        (issued.into_value().principal_id(), interaction.access)
+        (issued.into_value(), interaction.access, access_credential)
     }
 
     async fn upstream_claim(&self, principal: PrincipalId) -> StorageUpstreamClaim {
@@ -350,6 +364,95 @@ async fn local_revocation_fences_an_inflight_renewal(#[case] change: &str) {
             .await
             .is_err()
     );
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
+async fn credential_expiry_preserves_other_session_and_personal_token() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let (other_session, _, other_credential) = f.retained_session().await;
+    let principal = other_session.principal_id();
+    f.retained_login().await;
+    let pat = StorageAuthenticationCredential::new("personal-token");
+    f.backend
+        .create_token(StorageTokenCreate::new(
+            principal,
+            pat.digest().clone(),
+            StorageTokenIssuancePolicy::try_new(24, 24).unwrap(),
+            EventContext::system(),
+        ))
+        .await
+        .unwrap()
+        .into_value();
+    let claim = f.upstream_claim(principal).await;
+    assert_ne!(claim.session().session(), other_session.session_id());
+    f.backend
+        .fail_upstream_renewal(claim, StorageUpstreamFailure::CredentialExpired)
+        .await
+        .unwrap();
+    assert_eq!(
+        f.upstream_claim(principal).await.session().session(),
+        other_session.session_id()
+    );
+    for credential in [pat, other_credential] {
+        let now = Utc::now();
+        f.backend
+            .authenticate_bearer_token(
+                StorageAuthenticationAttempt::try_new(credential, now, now - Duration::days(1))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
+async fn expired_access_logout_returns_the_retained_family_grant_once() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let (session, _, access) = f.retained_session().await;
+    f.database.owner(&format!("UPDATE tokens SET issued=now()-interval '2 hours', expires_at=now()-interval '1 hour' WHERE id={}",session.access_id().id())).await.unwrap();
+    let request = || {
+        StorageTokenHashRevoke::try_candidates(None, vec![access.clone()], EventContext::system())
+            .unwrap()
+    };
+    let grant = f
+        .backend
+        .revoke_token_by_hash(request())
+        .await
+        .unwrap()
+        .into_value()
+        .unwrap();
+    assert_eq!(grant.session(), session.session_id());
+    assert_eq!(
+        grant.credential().unwrap().ciphertext(),
+        "first-encrypted-token"
+    );
+    assert!(
+        !f.backend
+            .revoke_token_by_hash(request())
+            .await
+            .unwrap()
+            .is_committed()
+    );
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
+async fn bulk_logout_captures_every_retained_grant() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let principal = f.retained_login().await;
+    for _ in 1..35 {
+        f.retained_login().await;
+    }
+    let grants = f
+        .backend
+        .upstream_logout_credentials(SessionRevocation::All(principal).into())
+        .await
+        .unwrap();
+    let sessions: std::collections::HashSet<_> =
+        grants.iter().map(|grant| grant.session().value()).collect();
+    assert_eq!(sessions.len(), 35);
     f.database.cleanup().await;
 }
 
@@ -745,7 +848,7 @@ async fn outage_before_token_submission_retries_the_original_grant_after_backoff
             .claim_upstream_credential(ResourceRevision::INITIAL, principal)
             .await
             .unwrap(),
-        StorageUpstreamClaimOutcome::Unavailable
+        StorageUpstreamClaimOutcome::RetryLater
     ));
     f.database
         .owner("UPDATE auth_upstream_credentials SET document = document - 'retry_after'")
