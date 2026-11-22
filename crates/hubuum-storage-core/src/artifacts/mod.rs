@@ -4,6 +4,8 @@
 //! provider metadata nor a successful upload creates a verification proof.
 //! Retained proof types cross task publication without reconstructing raw metadata.
 
+mod cleanup;
+pub use cleanup::ArtifactCleanupReceipt;
 mod backup;
 pub(crate) use backup::validate_backup_artifacts;
 pub use backup::{

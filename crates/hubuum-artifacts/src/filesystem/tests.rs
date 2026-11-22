@@ -1263,3 +1263,206 @@ async fn owned_view_producer_failure_fences_without_claiming_physical_removal() 
         }
     ));
 }
+
+#[rstest]
+#[case::legacy("legacy")]
+#[case::never_created("absent")]
+#[case::another_intent("foreign")]
+#[case::published("published")]
+#[case::unexpected_file("unexpected")]
+#[case::aliased_payload("hardlink")]
+#[case::missing_attempt_claim("missing_claim")]
+#[tokio::test]
+async fn unresolved_attempt_cannot_issue_physical_cleanup(#[case] scenario: &str) {
+    let fixture = Fixture::new().await;
+    let unbound = owned_intent(fixture.identity(), 1);
+    let intent = if scenario == "legacy" {
+        unbound
+    } else {
+        fixture.store.bind_intent(unbound).await.unwrap()
+    };
+    if scenario != "absent" {
+        let artifact = owned_receipt(fixture.store.create_owned(&intent).await.unwrap());
+        fixture
+            .store
+            .append_owned(&artifact, 0, b"abcd")
+            .await
+            .unwrap();
+        let directory = fixture.directory(intent.identity());
+        match scenario {
+            "published" => {
+                let mut builder = ManifestBuilder::new(intent.identity().clone(), limits());
+                builder.push(b"abcd").unwrap();
+                let manifest = builder.finish().unwrap();
+                fixture
+                    .store
+                    .seal_owned(&artifact, &manifest)
+                    .await
+                    .unwrap();
+                let verified = verify(&fixture.store, &manifest).await.unwrap();
+                fixture
+                    .store
+                    .publish_owned(&artifact, &verified)
+                    .await
+                    .unwrap();
+            }
+            "unexpected" => {
+                std::fs::write(directory.join("unexpected"), b"payload").unwrap();
+            }
+            "missing_claim" => {
+                std::fs::remove_file(
+                    fixture
+                        .root
+                        .path()
+                        .join("attempts")
+                        .join(key(intent.identity().attempt().as_bytes())),
+                )
+                .unwrap();
+            }
+            "hardlink" => {
+                std::fs::hard_link(
+                    directory.join(block_key(0)),
+                    fixture.root.path().join("alias"),
+                )
+                .unwrap();
+            }
+            _ => {}
+        }
+    }
+    let checked = if scenario == "foreign" {
+        fixture
+            .store
+            .bind_intent(owned_intent(intent.identity().clone(), 2))
+            .await
+            .unwrap()
+    } else {
+        intent
+    };
+    assert!(
+        fixture
+            .reopen()
+            .await
+            .discard_owned_step(&checked)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn copied_provider_cannot_attest_original_attempt() {
+    let original = Fixture::new().await;
+    let other = Fixture::new().await;
+    let intent = original
+        .store
+        .bind_intent(owned_intent(original.identity(), 1))
+        .await
+        .unwrap();
+    let receipt = owned_receipt(original.store.create_owned(&intent).await.unwrap());
+    original
+        .store
+        .append_owned(&receipt, 0, b"abcd")
+        .await
+        .unwrap();
+    let replica = other.directory(intent.identity());
+    std::fs::create_dir(&replica).unwrap();
+    std::fs::set_permissions(&replica, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for name in ["state", &block_key(0)] {
+        std::fs::copy(
+            original.directory(intent.identity()).join(name),
+            replica.join(name),
+        )
+        .unwrap();
+    }
+    std::fs::copy(
+        original.root.path().join("issuer"),
+        other.root.path().join("issuer"),
+    )
+    .unwrap();
+    assert!(other.store.discard_owned_step(&intent).await.is_err());
+    assert!(replica.join(block_key(0)).exists());
+    assert!(
+        original
+            .directory(intent.identity())
+            .join(block_key(0))
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn cleanup_receipt_requires_synced_empty_attempt_on_every_retry() {
+    let fixture = Fixture::new().await;
+    let intent = fixture
+        .store
+        .bind_intent(owned_intent(fixture.identity(), 1))
+        .await
+        .unwrap();
+    let receipt = owned_receipt(fixture.store.create_owned(&intent).await.unwrap());
+    fixture
+        .store
+        .append_owned(&receipt, 0, b"abcd")
+        .await
+        .unwrap();
+    fixture.store.abort_owned(&receipt).await.unwrap();
+    fixture.store.cleanup().await.unwrap();
+    fixture.store.fail_sync.store(1, Ordering::SeqCst);
+    assert!(fixture.store.discard_owned_step(&intent).await.is_err());
+    let issued = fixture
+        .reopen()
+        .await
+        .discard_owned_step(&intent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(issued.encoded_intent(), intent.encode().unwrap());
+    assert!(ArtifactCleanupReceipt::from_provider(intent.encode().unwrap(), [9; 32]).is_err());
+}
+
+#[tokio::test]
+async fn cleanup_receipt_waits_for_the_last_bounded_batch() {
+    let fixture = Fixture::new().await;
+    let limits = ArtifactLimits::builder()
+        .block_bytes(4)
+        .blocks(17)
+        .artifact_bytes(68)
+        .build()
+        .unwrap();
+    let intent =
+        ArtifactCreationIntent::new(fixture.identity(), limits, [1; 16], [2; 16], [3; 32]).unwrap();
+    let intent = fixture.store.bind_intent(intent).await.unwrap();
+    let receipt = owned_receipt(fixture.store.create_owned(&intent).await.unwrap());
+    for ordinal in 0..17 {
+        fixture
+            .store
+            .append_owned(&receipt, ordinal, b"abcd")
+            .await
+            .unwrap();
+    }
+    assert!(
+        fixture
+            .store
+            .discard_owned_step(&intent)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .directory(intent.identity())
+            .join(block_key(16))
+            .is_file()
+    );
+    let proof = fixture
+        .reopen()
+        .await
+        .discard_owned_step(&intent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.encoded_intent(), intent.encode().unwrap());
+    assert!(
+        !fixture
+            .directory(intent.identity())
+            .join(block_key(16))
+            .exists()
+    );
+}

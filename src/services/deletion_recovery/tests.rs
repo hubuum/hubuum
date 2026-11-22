@@ -43,6 +43,13 @@ impl Fixture {
         }
     }
 
+    #[cfg(feature = "integration-test-support")]
+    pub(crate) async fn exclusive_isolation(&self) -> RuntimeIsolationGuard {
+        after_repository_release(|| runtime_isolation(&self.directory, &self.key, true))
+            .await
+            .unwrap()
+    }
+
     fn options(&self) -> ControlRecoveryOptions {
         serde_json::from_value(serde_json::json!({
             "directory": self.directory,

@@ -2806,6 +2806,18 @@ impl TaskArtifactStore for CompleteExternalAdapter {
 
 #[async_trait]
 impl HistoryArchiveStorage for CompleteExternalAdapter {
+    async fn load_history_archive_cleanup(
+        &self,
+        request: &HistoryArchiveCleanupRequest,
+    ) -> Result<HistoryArchiveCleanupClaim, StorageError> {
+        fixture_result()
+    }
+    async fn settle_history_archive_cleanup(
+        &self,
+        settlement: HistoryArchiveCleanupSettlement,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
     async fn claim_history_archive_publication(
         &self,
         request: HistoryArchivePublicationRequest,

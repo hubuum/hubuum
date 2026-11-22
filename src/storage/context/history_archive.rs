@@ -2,13 +2,46 @@ use super::*;
 use hubuum_domain::{PrincipalIdentity, ResourceIdentity};
 use hubuum_storage_core::{
     HistoryArchiveCapture, HistoryArchiveCaptureRequest, HistoryArchiveCatalog,
-    HistoryArchiveCatalogGeneration, HistoryArchiveDescriptor, HistoryArchiveExecutionPermit,
+    HistoryArchiveCatalogGeneration, HistoryArchiveCleanupClaim, HistoryArchiveCleanupRequest,
+    HistoryArchiveCleanupSettlement, HistoryArchiveDescriptor, HistoryArchiveExecutionPermit,
     HistoryArchivePublicationClaim, HistoryArchivePublicationRequest, HistoryArchiveStorage,
 };
 use uuid::Uuid;
 
 #[async_trait]
 impl HistoryArchiveStorage for StorageHandle {
+    async fn load_history_archive_cleanup(
+        &self,
+        request: &HistoryArchiveCleanupRequest,
+    ) -> Result<HistoryArchiveCleanupClaim, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "load_history_archive_cleanup",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .load_history_archive_cleanup(request)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn settle_history_archive_cleanup(
+        &self,
+        settlement: HistoryArchiveCleanupSettlement,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "settle_history_archive_cleanup",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .settle_history_archive_cleanup(settlement)
+                    .await)
+            },
+        )
+        .await
+    }
     async fn claim_history_archive_publication(
         &self,
         request: HistoryArchivePublicationRequest,

@@ -22,6 +22,15 @@ intervals and read epochs through typed error evidence and restore remapping.
 Preserve both archive-budget and lifecycle-gap evidence through adapter errors;
 API request rejection reasons keep their existing priority.
 
+**Breaking archive recovery capability.** Complete adapters must implement
+`load_history_archive_cleanup` and `settle_history_archive_cleanup` under
+offline control authority. Load the original, uniquely pinned claim under the
+quarantined application fence and matching runtime isolation. Allow provider I/O
+outside the transaction. Revalidate the complete claim and both ownership tokens
+under lock before atomically settling the claim, child, parent and capture pin.
+Preserve the original capture and check all remaining obligations before exposure.
+Upgrade the adapter together with the 0.20 SDK and recovery binary.
+
 The synchronized 0.20 train also includes the mandatory audited
 `RuntimeSettingsStorage` capability introduced on the parallel main line. Implement
 complete snapshots, atomic revision-checked updates and audit history, preserve

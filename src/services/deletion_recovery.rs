@@ -20,8 +20,9 @@ pub(crate) use task_receipts::{TaskReceiptService, TaskRetentionSweep};
 
 pub(crate) use cleanup::cleanup_object_history;
 
-use hubuum_storage_core::HistoryLifecycleStorage;
+use hubuum_storage_core::{HistoryArchiveCleanupRequest, HistoryLifecycleStorage};
 use std::path::Path;
+use uuid::Uuid;
 
 use hubuum_storage_core::{
     ApplicationControlState, ControlCheckpointCapture, DeletionControlState,
@@ -198,6 +199,15 @@ pub(crate) async fn recover(
     directory: &Path,
     key_file: &Path,
 ) -> Result<ControlRecoveryReport, ApiError> {
+    recover_with_archive_cleanup(context, directory, key_file, None).await
+}
+
+pub(crate) async fn recover_with_archive_cleanup(
+    context: &impl StorageContext,
+    directory: &Path,
+    key_file: &Path,
+    cleanup: Option<(Uuid, &Path)>,
+) -> Result<ControlRecoveryReport, ApiError> {
     // Hold the independent publication lock through commit and read-back.
     // The exact predecessor fences a concurrent primary transition; any error
     // leaves the independent checkpoint intact and can be retried after restart.
@@ -207,7 +217,7 @@ pub(crate) async fn recover(
     let before = storage.read_deletion_control().await?;
     let change = before.recover_from(required.state())
         .map_err(|_| unavailable("Control recovery conflicts with local lineage, epoch, or decisions; keep the deployment quarantined"))?;
-    storage
+    let fence = storage
         .recover_application_control(change, isolation.domain())
         .await?;
     let recovered = storage.read_deletion_control().await?;
@@ -237,7 +247,60 @@ pub(crate) async fn recover(
             "Recovered task authority does not cover independent evidence; keep the deployment quarantined",
         ));
     }
+    if let Some((publication, root)) = cleanup {
+        let request = HistoryArchiveCleanupRequest::new(publication, fence, isolation.domain())?;
+        reconcile_archive_cleanup(context, request, root).await?;
+    }
     Ok(report(&recovered, required.state()))
+}
+
+#[cfg(unix)]
+async fn reconcile_archive_cleanup(
+    context: &impl StorageContext,
+    request: HistoryArchiveCleanupRequest,
+    root: &Path,
+) -> Result<(), ApiError> {
+    use hubuum_artifacts::{ArtifactCreationIntent, FilesystemArtifactStore};
+    use hubuum_storage_core::{HISTORY_ARCHIVE_PUBLICATION_BYTES, HistoryArchiveStorage};
+
+    let storage = storage_handle(context);
+    let claim = storage.load_history_archive_cleanup(&request).await?;
+    let manifest = claim.manifest();
+    let intent = ArtifactCreationIntent::decode(claim.encoded_intent())
+        .map_err(|_| unavailable("Cannot decode the retained filesystem intent"))?;
+    if intent.identity() != manifest.location()
+        || intent.operation() != manifest.producer_id().as_bytes()
+        || intent.incarnation() != manifest.original_history().incarnation().as_bytes()
+        || *intent.request_commitment() != manifest.request_commitment()?
+        || intent.limits().artifact_bytes() > HISTORY_ARCHIVE_PUBLICATION_BYTES
+        || intent.limits().artifact_bytes() < manifest.source_bytes()
+    {
+        return Err(unavailable(
+            "Filesystem intent differs from the original archive claim",
+        ));
+    }
+    let provider = FilesystemArtifactStore::open_existing(root)
+        .await
+        .map_err(|_| unavailable("Cannot open the original filesystem provider"))?;
+    loop {
+        if let Some(receipt) = provider.discard_owned_step(&intent).await.map_err(|_| {
+            unavailable("Cannot prove cleanup of the original filesystem attempt; keep quarantine")
+        })? {
+            storage
+                .settle_history_archive_cleanup(claim.after_cleanup(&receipt)?)
+                .await?;
+            return Ok(());
+        }
+    }
+}
+
+#[cfg(not(unix))]
+async fn reconcile_archive_cleanup(
+    _: &impl StorageContext,
+    _: HistoryArchiveCleanupRequest,
+    _: &Path,
+) -> Result<(), ApiError> {
+    Err(unavailable("Filesystem archive recovery requires Unix"))
 }
 
 #[derive(Serialize)]

@@ -2355,6 +2355,12 @@ fn cli_requirements(command: &str, argument: &str) -> &'static [&'static str] {
             | "recover_control"
             | "reapply_control",
         ) => &["control_checkpoint_key"],
+        ("hubuum-admin", "archive_cleanup_publication") => {
+            &["recover_control", "archive_cleanup_root"]
+        }
+        ("hubuum-admin", "archive_cleanup_root") => {
+            &["recover_control", "archive_cleanup_publication"]
+        }
         ("hubuum-admin", "initialize_control_checkpoint") => &["control_checkpoint"],
         ("hubuum-admin", "delete_object_history_version") => &[
             "history_resource",

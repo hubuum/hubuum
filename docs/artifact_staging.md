@@ -242,6 +242,7 @@ and unrecognized files during initialization fail closed without deleting them.
 root/                                  owner directory: 0700
   format                               binary: 48 55 42 46 01 (HUBF + version 1)
   lock                                 advisory process lock; contents unused
+  issuer                               private 32-byte key for filesystem-bound intents, when used
   destinations                         JSON array of [destination UUID, name] pairs
   pending                              optional uncommitted root metadata write
   attempts/
@@ -331,6 +332,16 @@ Recovery ordering is part of the format contract:
 4. Manifest and pending attempt data are removed before recording `Discarded`.
    A zero cleanup count may represent metadata-only progress; only actual block
    removals contribute to its return value.
+
+For recoverable owned staging, persist the v2 intent returned by
+`FilesystemArtifactStore::bind_intent` before calling `create_owned`. It binds
+the root device and inode and a SHA-256 commitment to an HMAC-SHA-256 response
+over the original intent and root identity. Keep the private `issuer` key with
+the root. The provider issues its receipt after checking both identity indexes,
+removing the attempt's payload and syncing a directory containing only its
+durable tombstone. Reopening the same root can reissue that receipt after a
+lost acknowledgement. Recovery of a committed history claim also requires the
+isolated control transaction described in [History retention](history_retention.md).
 
 Never remove the lock, ownership indexes, state records or tombstones while
 using a root, and never copy only its payload directories for recovery. Preserve

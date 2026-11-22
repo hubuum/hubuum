@@ -1111,6 +1111,9 @@ impl OwnedArtifactStore for S3ArtifactStore {
         &self,
         intent: &ArtifactCreationIntent,
     ) -> OwnedArtifactResult<OwnedArtifactAdmission> {
+        if intent.filesystem().is_some() {
+            return Err(conflict().into());
+        }
         let limits = intent.limits();
         if limits.blocks() > MAX_BLOCKS
             || limits.manifest_bytes() > ArtifactLimits::default().manifest_bytes()
@@ -1191,6 +1194,9 @@ impl OwnedArtifactStore for S3ArtifactStore {
         &self,
         intent: &ArtifactCreationIntent,
     ) -> OwnedArtifactResult<OwnedArtifactResolution> {
+        if intent.filesystem().is_some() {
+            return Err(conflict().into());
+        }
         let state = match self.load(intent.identity()).await {
             Ok((state, _)) => state,
             Err(ArtifactError::NotFound) => return Ok(OwnedArtifactResolution::Pending),

@@ -343,9 +343,25 @@ recovery refuses lock contention instead of waiting in an exact-settlement cycle
 A committed archive claim pins its original capture while a filesystem producer
 stages bytes. If that process dies, offline recovery retains the claim and
 reapplication keeps the database quarantined. Reopening the filesystem store
-with the original intent can identify and fence the same attempt. The database
-still requires evidence of physical cleanup before it can release that claim.
-The current provider contract supplies no such receipt.
+with the original intent can identify and fence the same attempt.
+
+For a filesystem-bound v2 claim, stop the replicas and run `hubuum-admin`
+with `--recover-control DIRECTORY --control-checkpoint-key KEY`,
+`--archive-cleanup-publication PUBLICATION_UUID` and
+`--archive-cleanup-root ABSOLUTE_PROVIDER_ROOT`. Use the original private root
+on the original filesystem. Recovery removes the unpublished attempt in batches
+of up to 16 blocks and syncs its tombstone. The provider then answers the
+per-attempt commitment recorded before admission. Control verifies the exact
+claim before retiring its parent and child and unpinning the original capture.
+The database stays quarantined until ordinary signed `--reapply-control` passes.
+
+A missing issuer, an unbound v1 intent, a copied root, a published attempt or
+unaccounted files leave the claim charged. Preserve the original root, including
+its private `issuer` file, and upgrade all writers before using bound intents.
+After a lost acknowledgement, ordinary reapplication still checks all retained
+claims. If the claim persists, retry cleanup against its original root. The
+receipt covers files managed by this local store. Backups and independent
+copies have their own retention obligations.
 
 Production composition still registers Legacy, so these integrations do not
 activate online expiry. Restored descendants, external-claim reconciliation, complete worker

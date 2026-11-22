@@ -590,6 +590,15 @@ The provider ownership/outcome bridge remains required before external effects;
 current claim admission cannot retire its physical obligation. Production remains
 Legacy, and generic expiry remains disabled.
 
+During isolated offline recovery, `HistoryArchiveStorage::load_history_archive_cleanup`
+reads the original claim and pinned capture under the quarantined application
+fence. Provider I/O runs outside database transactions.
+`HistoryArchiveStorage::settle_history_archive_cleanup` locks and compares the
+same claim and retires its reservation, child and parent while unpinning the
+capture in a single transaction. Only an exact physical cleanup receipt for
+the precommitted filesystem intent permits this transition. Signed reapplication
+checks exposure separately.
+
 ### Native history-expiry admission
 
 `HistoryLifecycleStorage::admit_history_expiry` requires an original OnlineV1

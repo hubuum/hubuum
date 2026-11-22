@@ -1,4 +1,5 @@
 //! Short native catalog/capture transactions; external segment I/O is service-owned.
+mod cleanup;
 use super::*;
 use crate::PostgresConnection;
 use chrono::{DateTime, Utc};
@@ -257,6 +258,30 @@ impl PostgresStorage {
 }
 #[async_trait]
 impl HistoryArchiveStorage for PostgresStorage {
+    async fn load_history_archive_cleanup(
+        &self,
+        request: &HistoryArchiveCleanupRequest,
+    ) -> Result<HistoryArchiveCleanupClaim, StorageError> {
+        self.runtime()
+            .with_control_transaction(async |connection| {
+                cleanup::claim_on(connection, request).await
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn settle_history_archive_cleanup(
+        &self,
+        settlement: HistoryArchiveCleanupSettlement,
+    ) -> Result<(), StorageError> {
+        self.runtime()
+            .with_control_transaction(async move |connection| {
+                cleanup::settle_on(connection, settlement).await
+            })
+            .await
+            .map_err(Into::into)
+    }
+
     async fn claim_history_archive_publication(
         &self,
         request: HistoryArchivePublicationRequest,

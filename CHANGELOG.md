@@ -16,6 +16,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Offline recovery can reconcile an interrupted filesystem archive publication
+  against its original private root and committed v2 intent. Signed reapplication
+  can release quarantine after physical cleanup and retirement of all obligations.
+  Older unbound claims stay quarantined. Upgrade all writers and preserve the root
+  and its issuer file before using v2 intents.
+- **Breaking storage SDK 0.20 change.** Complete adapters must implement
+  `load_history_archive_cleanup` and `settle_history_archive_cleanup` and
+  recheck the pinned claim under the isolated recovery fence. Upgrade adapters
+  and the recovery binary together.
+
 - Gated logical-size expiry selects the oldest eligible original history clocks
   from complete bounded accounting, reserves pending exact copies against the
   lower target, and retains each selected copy's original pressure episode.

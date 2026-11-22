@@ -2289,6 +2289,7 @@
             "load_export_templates_for_audit",
             "load_group_member_principals",
             "load_groups_with_collection_permission",
+            "load_history_archive_cleanup",
             "load_principal_collection_permissions",
             "load_runtime_settings",
             "load_token_metadata_by_ids",
@@ -2392,6 +2393,7 @@
             "select_expired_task_receipts",
             "set_user_password",
             "settle_api_request",
+            "settle_history_archive_cleanup",
             "settle_history_producer",
             "settle_history_publication",
             "stage",
@@ -2802,6 +2804,7 @@
             "load_export_templates_for_audit",
             "load_group_member_principals",
             "load_groups_with_collection_permission",
+            "load_history_archive_cleanup",
             "load_principal_collection_permissions",
             "load_runtime_settings",
             "load_token_metadata_by_ids",
@@ -2905,6 +2908,7 @@
             "select_expired_task_receipts",
             "set_user_password",
             "settle_api_request",
+            "settle_history_archive_cleanup",
             "settle_history_producer",
             "settle_history_publication",
             "stage",
@@ -12143,6 +12147,46 @@
           ],
           "requires": [
             "control_checkpoint_key"
+          ]
+        },
+        {
+          "id": "archive_cleanup_publication",
+          "long": "archive-cleanup-publication",
+          "short": null,
+          "environment": null,
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "recover_control",
+            "archive_cleanup_root"
+          ]
+        },
+        {
+          "id": "archive_cleanup_root",
+          "long": "archive-cleanup-root",
+          "short": null,
+          "environment": null,
+          "value_kind": "path",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": [
+            "recover_control",
+            "archive_cleanup_publication"
           ]
         },
         {

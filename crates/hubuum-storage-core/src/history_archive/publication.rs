@@ -100,6 +100,14 @@ impl HistoryArchivePublicationManifest {
                 "Archive publication capture is unavailable",
             ));
         }
+        Self::from_bound_capture(capture, permit.binding(), location)
+    }
+
+    fn from_bound_capture(
+        capture: &HistoryArchiveCapture,
+        execution: HistoryArchiveExecutionBinding,
+        location: ArtifactIdentity,
+    ) -> Result<Self, StorageError> {
         let row = capture.hot().ok_or_else(|| {
             StorageError::unavailable("Archive publication requires a retained primary version")
         })?;
@@ -117,7 +125,7 @@ impl HistoryArchivePublicationManifest {
             generation: capture.generation,
             captured_at: capture.captured_at,
             available_until: capture.available_until,
-            execution: permit.binding(),
+            execution,
             identity: row.identity(),
             valid_from: row.valid_from(),
             valid_to,
@@ -191,6 +199,36 @@ impl HistoryArchivePublicationManifest {
             ));
         }
         Ok(())
+    }
+    pub(super) fn validate_retained_capture(
+        &self,
+        capture: &HistoryArchiveCapture,
+    ) -> Result<(), StorageError> {
+        let execution = capture
+            .execution
+            .clone()
+            .ok_or_else(|| StorageError::unavailable("Original capture execution is missing"))?;
+        if self != &Self::from_bound_capture(capture, execution, self.location.clone())? {
+            return Err(StorageError::unavailable(
+                "Retained capture differs from the claimed publication",
+            ));
+        }
+        Ok(())
+    }
+    pub(super) fn execution_matches_fence(&self, fence: ApplicationFence) -> bool {
+        self.execution.valid_for(fence)
+    }
+    pub const fn publication_id(&self) -> Uuid {
+        self.execution.parent
+    }
+    pub const fn producer_id(&self) -> Uuid {
+        self.execution.child
+    }
+    pub const fn original_history(&self) -> crate::HistoryReviewFence {
+        self.execution.history
+    }
+    pub const fn publication_generation(&self) -> crate::HistoryPublicationGeneration {
+        self.execution.generation
     }
     pub const fn principal(&self) -> PrincipalIdentity {
         self.principal

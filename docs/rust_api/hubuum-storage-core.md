@@ -287,6 +287,11 @@ Complete adapters must implement `register_history_runtime`, `capture_history_li
 `scan_history_lifecycle`, `observe_history_size`, `admit_history_expiry`,
 `commit_history_lifecycle` and `recover_history_lifecycle`. Capture returns the
 adapter clock with application incarnation and history/deletion revision fences.
+The unreleased 0.20 archive contract also requires `load_history_archive_cleanup`
+and `settle_history_archive_cleanup`. Upgrade every complete adapter to compare
+the provider receipt with the original claim and atomically retire its ownership
+under the same quarantined application fence. Preserve the capture after unpinning.
+
 The unreleased 0.20 contract also requires `reapply_history_expiry`, a trusted
 quarantined exact-copy recovery operation taking `HistoryExpiryReapplication`.
 External adapters must implement positive drain, current protection, preserved

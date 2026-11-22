@@ -34,6 +34,15 @@ struct IntentEncoding {
     operation: [u8; 16],
     incarnation: [u8; 16],
     request_commitment: [u8; 32],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    filesystem: Option<FilesystemBinding>,
+}
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FilesystemBinding {
+    pub(crate) device: u64,
+    pub(crate) inode: u64,
+    pub(crate) cleanup_commitment: [u8; 32],
 }
 impl fmt::Debug for ArtifactCreationIntent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -44,7 +53,12 @@ impl TryFrom<IntentEncoding> for ArtifactCreationIntent {
     type Error = ArtifactError;
     fn try_from(encoded: IntentEncoding) -> ArtifactResult<Self> {
         let intent = Self { encoded };
-        if intent.encoded.protocol != 1
+        if !matches!(
+            (intent.encoded.protocol, &intent.encoded.filesystem),
+            (1, None) | (2, Some(_))
+        ) || intent
+            .filesystem()
+            .is_some_and(|scope| scope.cleanup_commitment == [0; 32])
             || intent.encoded.operation == [0; 16]
             || intent.encoded.incarnation == [0; 16]
         {
@@ -81,8 +95,28 @@ impl ArtifactCreationIntent {
             operation,
             incarnation,
             request_commitment,
+            filesystem: None,
         }
         .try_into()
+    }
+    pub(crate) fn filesystem(&self) -> Option<&FilesystemBinding> {
+        self.encoded.filesystem.as_ref()
+    }
+    #[cfg(unix)]
+    pub(crate) fn unbound_encoding(&self) -> ArtifactResult<Vec<u8>> {
+        let mut intent = self.clone();
+        intent.encoded.protocol = 1;
+        intent.encoded.filesystem = None;
+        intent.encode()
+    }
+    #[cfg(unix)]
+    pub(crate) fn bind_filesystem(mut self, scope: FilesystemBinding) -> ArtifactResult<Self> {
+        if self.filesystem().is_some_and(|bound| bound != &scope) {
+            return Err(owned_conflict());
+        }
+        self.encoded.protocol = 2;
+        self.encoded.filesystem = Some(scope);
+        Ok(self)
     }
     pub fn identity(&self) -> &ArtifactIdentity {
         &self.encoded.identity
@@ -104,7 +138,7 @@ impl ArtifactCreationIntent {
         serde_json::to_vec(self)
             .map_err(|_| ArtifactError::Invalid("Cannot encode owned intent".into()))
     }
-    /// Only the exact canonical v1 bytes are accepted (including field order).
+    /// Only the exact canonical protocol bytes are accepted (including field order).
     pub fn decode(bytes: &[u8]) -> ArtifactResult<Self> {
         if bytes.len() > OWNED_INTENT_BYTES {
             return Err(ArtifactError::Limit("Owned intent exceeds bound".into()));

@@ -16,10 +16,10 @@ use crate::{
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct HistoryArchiveExecutionBinding {
-    parent: Uuid,
-    child: Uuid,
-    history: crate::HistoryReviewFence,
-    generation: crate::HistoryPublicationGeneration,
+    pub(super) parent: Uuid,
+    pub(super) child: Uuid,
+    pub(super) history: crate::HistoryReviewFence,
+    pub(super) generation: crate::HistoryPublicationGeneration,
     commitment: [u8; 32],
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) deadline: Option<chrono::DateTime<chrono::Utc>>,

@@ -575,6 +575,54 @@ impl HistoryPublicationRegistry {
         })
     }
 
+    /// Resolve only the original assigned archive producer while the adapter
+    /// holds isolated control access. Both tokens participate in the settlement CAS.
+    pub fn isolated_archive_ownership(
+        &self,
+        request: &crate::HistoryArchiveCleanupRequest,
+        manifest: &crate::HistoryArchivePublicationManifest,
+    ) -> Result<[Uuid; 2], StorageError> {
+        let id = request.publication();
+        if let Some(parent) = self.owners.get(&id)
+            && parent.kind == HistoryPublicationKind::ArchiveRead
+            && parent.epoch.history() == manifest.original_history()
+            && parent.epoch.generation() == manifest.publication_generation()
+            && self
+                .isolation
+                .get(&id)
+                .and_then(Option::as_ref)
+                .is_some_and(|domain| domain.same_lock(request.isolation()))
+            && let Some(child) = self.producers.get(&id)
+            && !child.retired
+            && child.publication_claimed
+            && child.context.parent() == parent
+            && child.context.id() == manifest.producer_id()
+        {
+            return Ok([parent.ownership_token(), child.context.ownership_token()]);
+        }
+        Err(StorageError::unavailable(
+            "Original isolated archive producer is unavailable",
+        ))
+    }
+
+    pub fn settle_isolated_archive(
+        &mut self,
+        settlement: &crate::HistoryArchiveCleanupSettlement,
+    ) -> Result<(), StorageError> {
+        let claim = settlement.claim();
+        let tokens = self.isolated_archive_ownership(claim.request(), claim.manifest())?;
+        if !claim.matches_ownership(tokens) {
+            return Err(StorageError::conflict(
+                "Original archive ownership changed before settlement",
+            ));
+        }
+        let id = claim.request().publication();
+        self.producers.remove(&id);
+        self.owners.remove(&id);
+        self.isolation.remove(&id);
+        Ok(())
+    }
+
     /// Trusted adapter boundary while holding actual exclusive process isolation
     /// and the application fence. External publication claims retain their owner:
     /// process exit does not reconcile an independently durable provider result.

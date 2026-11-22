@@ -1021,6 +1021,17 @@ impl HistoryArchiveCapture {
 
 #[async_trait]
 pub trait HistoryArchiveStorage: Send + Sync {
+    /// Offline control transaction under exclusive process isolation.
+    async fn load_history_archive_cleanup(
+        &self,
+        request: &HistoryArchiveCleanupRequest,
+    ) -> Result<HistoryArchiveCleanupClaim, StorageError>;
+    /// Re-read the exact pinned obligation under the original recovery fence and
+    /// atomically release its claim, child, parent and capture pin.
+    async fn settle_history_archive_cleanup(
+        &self,
+        settlement: HistoryArchiveCleanupSettlement,
+    ) -> Result<(), StorageError>;
     async fn claim_history_archive_publication(
         &self,
         request: HistoryArchivePublicationRequest,
@@ -1074,3 +1085,6 @@ pub use publication::{
 
 mod artifact_intent;
 pub use artifact_intent::{HistoryArchiveEncodedArtifactIntent, HistoryArchivePublicationRequest};
+
+mod cleanup;
+pub use cleanup::*;

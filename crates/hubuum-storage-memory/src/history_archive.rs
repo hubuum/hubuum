@@ -181,8 +181,86 @@ fn select(
     }))
 }
 
+fn cleanup_claim(
+    state: &MemoryState,
+    request: &HistoryArchiveCleanupRequest,
+) -> Result<HistoryArchiveCleanupClaim, StorageError> {
+    if state.application_control.fence() != request.fence()
+        || state.application_control.released_revision().is_some()
+        || !state.runtime_registrations.is_empty()
+    {
+        return Err(StorageError::unavailable(
+            "Offline archive cleanup requires the same quarantined image",
+        ));
+    }
+    let claim = state
+        .history_archive
+        .claims
+        .get(&request.publication())
+        .ok_or_else(|| StorageError::unavailable("Original archive claim is unavailable"))?;
+    let manifest = claim.manifest();
+    let capture = state
+        .history_archive
+        .captures
+        .get(&manifest.capture())
+        .filter(|_| {
+            state
+                .history_archive
+                .claims
+                .values()
+                .filter(|other| other.manifest().capture() == manifest.capture())
+                .count()
+                == 1
+        })
+        .ok_or_else(|| StorageError::unavailable("Original archive capture pin is unavailable"))?;
+    let ownership = state
+        .history_publications
+        .isolated_archive_ownership(request, manifest)?;
+    HistoryArchiveCleanupClaim::from_retained(
+        request,
+        manifest.clone(),
+        capture,
+        claim.intent().encoded().to_vec(),
+        ownership,
+    )
+}
+
 #[async_trait]
 impl HistoryArchiveStorage for MemoryStorage {
+    async fn load_history_archive_cleanup(
+        &self,
+        request: &HistoryArchiveCleanupRequest,
+    ) -> Result<HistoryArchiveCleanupClaim, StorageError> {
+        let state = self.state.read_control().await;
+        cleanup_claim(&state, request)
+    }
+
+    async fn settle_history_archive_cleanup(
+        &self,
+        settlement: HistoryArchiveCleanupSettlement,
+    ) -> Result<(), StorageError> {
+        let mut state = self.state.write_control().await;
+        let claim = settlement.claim();
+        if cleanup_claim(&state, claim.request())? != *claim {
+            return Err(StorageError::conflict(
+                "Retained archive claim changed before cleanup settlement",
+            ));
+        }
+        let id = claim.request().publication();
+        let bytes = state.history_archive.claims[&id].retained_manifest_bytes()?;
+        let remaining = state
+            .history_archive
+            .publication_claim_bytes
+            .checked_sub(bytes)
+            .ok_or_else(|| StorageError::unavailable("Archive reservation accounting differs"))?;
+        state
+            .history_publications
+            .settle_isolated_archive(&settlement)?;
+        state.history_archive.claims.remove(&id);
+        state.history_archive.publication_claim_bytes = remaining;
+        Ok(())
+    }
+
     async fn claim_history_archive_publication(
         &self,
         request: HistoryArchivePublicationRequest,
