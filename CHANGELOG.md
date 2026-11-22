@@ -58,22 +58,25 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
-- **Breaking (storage SDK 0.11 and deployment):** update all ten SDK crates to
-  `0.11.0` and implement the complete encrypted upstream credential lifecycle.
-  Stop all API and worker replicas, back up the database, apply the OIDC
-  credential migration and role grants, then restart matching binaries and
+- **Breaking (storage SDK and deployment):** when upgrading from Hubuum
+  v0.0.23 (storage SDK `0.7.0`), pin all ten SDK crates to exactly `0.11.0`.
+  Adapters must implement the complete encrypted upstream credential lifecycle
+  and the cumulative contract changes listed below.
+  Stop all API and worker replicas, take a verified backup, and apply all
+  pending migrations and role grants in order. Restart matching binaries and
   begin fresh interactions. Restore the pre-upgrade snapshot before downgrading.
-  Regenerate OpenAPI clients for OIDC browser routes and configuration.
+  Regenerate OpenAPI clients for OIDC browser routes and configuration. See the
+  [adapter migration guide](docs/storage_adapter_sdk.md#upgrading-from-07-to-08)
+  for the contract changes from 0.7 through 0.11.
 
-- **Breaking (storage SDK 0.10):** update all ten SDK dependencies to exactly
-  `0.10.0`. Implement `AuthenticateExternal` in the existing interaction advance
-  operation: preserve verified identity/fresh-authentication proofs, fence the
-  provider revision and claimed interaction, and atomically reconcile stable
-  subjects and provider-owned membership sources. Raw password interaction
-  evidence now accepts only local/LDAP authentication. External adapters must
-  implement the new action and supply an identity-bound, policy-resolved browser
-  session audit subject before upgrading; no database migration is added by
-  this SDK increment.
+- **Breaking (external authentication, introduced in SDK 0.10):** implement
+  `AuthenticateExternal` in the existing interaction advance operation. Preserve
+  verified login and fresh authentication proofs, fence the provider revision
+  and claimed interaction,
+  and atomically reconcile stable subjects and provider-owned membership
+  sources. Raw password interaction evidence now accepts only local/LDAP
+  authentication. External adapters must supply an identity-bound,
+  policy-resolved browser session audit subject.
 
 - Authentication interactions use `ring` HKDF-SHA-256 for derived keys and
   receipts, `subtle` for secret comparisons, and `governor` for continuously
@@ -83,18 +86,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   interactions; previously derived approval/verification capabilities are
   incompatible.
 
-- **Breaking (storage SDK 0.9 and deployment):** update all ten SDK crates to
-  `0.9.0` and implement durable authentication interactions, atomic purpose-bound
-  completion and exact-session cleanup. Stop all API/worker replicas, back up the
-  database, apply the authentication-interactions migration and role grants,
-  then restart matching binaries everywhere. Older recovery/restore tools do not
-  discard this authority; downgrade requires the pre-upgrade snapshot. See the
+- **Breaking (authentication interactions, introduced in SDK 0.9):** implement
+  durable authentication interactions, atomic purpose-bound completion and
+  exact-session cleanup. Use matching recovery and restore tools to discard
+  interaction authority during recovery. See the
   [upgrade guide](docs/authentication_interactions.md#upgrade-and-recovery).
 
-- **Breaking (storage SDK 0.8):** update all ten SDK dependencies to exactly
-  `0.8.0`, implement candidate activation/recovery and provider-binding storage,
-  and construct external login evidence with its authentication revision. See
-  the [adapter migration guide](docs/storage_adapter_sdk.md#upgrading-from-07-to-08).
+- **Breaking (security candidates, introduced in SDK 0.8):** implement
+  candidate activation, recovery and provider-binding storage. Construct
+  external login evidence with its authentication revision.
 
 - **Breaking (deployment and administrator clients):** authentication preflight
   writes and direct authorization/security-group edits now require the candidate
