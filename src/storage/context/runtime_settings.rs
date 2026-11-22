@@ -286,14 +286,19 @@ impl StorageHandle {
             }
         };
         let cleanup = async {
-            let mut interval = tokio::time::interval(refresh_interval);
+            let mut interval = tokio::time::interval_at(
+                tokio::time::Instant::now() + refresh_interval,
+                refresh_interval,
+            );
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
-                let (candidates, interactions) = tokio::join!(
-                    tokio::time::timeout(refresh_interval, self.purge_security_candidates()),
-                    tokio::time::timeout(refresh_interval, self.purge_auth_interactions(128))
-                );
+                // Use at most one pool slot and release it promptly for authoritative reads.
+                const CLEANUP_TIMEOUT: Duration = Duration::from_secs(1);
+                let candidates =
+                    tokio::time::timeout(CLEANUP_TIMEOUT, self.purge_security_candidates()).await;
+                let interactions =
+                    tokio::time::timeout(CLEANUP_TIMEOUT, self.purge_auth_interactions(128)).await;
                 for (scope, result) in [
                     ("security candidates", candidates),
                     ("authentication interactions", interactions),

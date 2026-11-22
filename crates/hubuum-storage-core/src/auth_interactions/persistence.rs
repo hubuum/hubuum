@@ -30,9 +30,10 @@ enum EvidenceDocument {
     Login {
         login: StorageInteractionLogin,
     },
+    // Previous project builds stored the entire candidate.
     Verification {
         candidate: Value,
-    }, // Previous project builds stored the entire candidate.
+    },
     VerificationResult {
         result: Box<verification::VerificationDocument>,
     },

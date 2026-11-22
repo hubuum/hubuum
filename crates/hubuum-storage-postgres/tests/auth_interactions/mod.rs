@@ -523,10 +523,21 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
     if large {
         let subjects: Vec<_> = (0..1000).map(|_| Uuid::new_v4().to_string()).collect();
         for n in 0..8 {
-            let provider = StorageAuthenticationProvider::try_new(format!("oidc-{n}"), StorageAuthenticationProviderKind::Oidc,
-                serde_json::json!({"issuer":format!("https://id-{n}.example"),"client_id":"hubuum","client_authentication":"client_secret_basic","scopes":["openid"],"signing_algorithms":["RS256"],
-                "membership":{"mode":"local_only","refresh_interval_seconds":300,"max_stale_seconds":900},
-                "admission":{"mode":"subject_allowlist","subjects":subjects}})).unwrap().with_id(Uuid::new_v4()).unwrap();
+            let definition = serde_json::json!({
+                "issuer": format!("https://id-{n}.example"), "client_id": "hubuum",
+                "client_authentication": "client_secret_basic", "scopes": ["openid"],
+                "signing_algorithms": ["RS256"],
+                "membership": {"mode":"local_only","refresh_interval_seconds":300,"max_stale_seconds":900},
+                "admission": {"mode":"subject_allowlist","subjects":subjects}
+            });
+            let provider = StorageAuthenticationProvider::try_new(
+                format!("oidc-{n}"),
+                StorageAuthenticationProviderKind::Oidc,
+                definition,
+            )
+            .unwrap()
+            .with_id(Uuid::new_v4())
+            .unwrap();
             proposed.push(provider);
         }
     }
@@ -549,6 +560,52 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
         ResourceRevision::INITIAL,
         context(),
     );
+    let mut checks: Vec<_> = [
+        StorageSecurityCheckKind::Configuration,
+        StorageSecurityCheckKind::RecoveryAdministrator,
+        StorageSecurityCheckKind::Identity,
+    ]
+    .into_iter()
+    .map(|kind| {
+        StorageSecurityCheck::try_new(
+            kind,
+            StorageSecurityCheckStatus::Passed,
+            if kind == StorageSecurityCheckKind::Identity {
+                Some(provider_binding.id())
+            } else {
+                None
+            },
+            "verified",
+        )
+        .unwrap()
+    })
+    .collect();
+    if another_pending {
+        checks.push(
+            StorageSecurityCheck::try_new(
+                StorageSecurityCheckKind::Identity,
+                StorageSecurityCheckStatus::NotRun,
+                Some(second_id),
+                "test_sign_in_required",
+            )
+            .unwrap(),
+        );
+    }
+    let mut pending_checks = checks.clone();
+    let identity_check = pending_checks
+        .iter_mut()
+        .find(|c| {
+            c.kind() == StorageSecurityCheckKind::Identity
+                && c.provider_id() == Some(provider_binding.id())
+        })
+        .unwrap();
+    *identity_check = StorageSecurityCheck::try_new(
+        StorageSecurityCheckKind::Identity,
+        StorageSecurityCheckStatus::NotRun,
+        Some(provider_binding.id()),
+        "awaiting_verification",
+    )
+    .unwrap();
     let pending_candidate = || {
         StorageSecurityCandidate::try_new(
             Uuid::new_v4(),
@@ -557,15 +614,7 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
             StorageSecurityCandidateBinding::new(digest('a'), digest('b'), digest('c')),
         )
         .unwrap()
-        .with_checks(vec![
-            StorageSecurityCheck::try_new(
-                StorageSecurityCheckKind::Configuration,
-                StorageSecurityCheckStatus::NotRun,
-                None,
-                "awaiting_verification",
-            )
-            .unwrap(),
-        ])
+        .with_checks(pending_checks.clone())
         .unwrap()
     };
     let candidate = pending_candidate();
@@ -603,37 +652,6 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
     else {
         panic!("claim rejected")
     };
-    let mut checks: Vec<_> = [
-        StorageSecurityCheckKind::Configuration,
-        StorageSecurityCheckKind::RecoveryAdministrator,
-        StorageSecurityCheckKind::Identity,
-    ]
-    .into_iter()
-    .map(|kind| {
-        StorageSecurityCheck::try_new(
-            kind,
-            StorageSecurityCheckStatus::Passed,
-            if kind == StorageSecurityCheckKind::Identity {
-                Some(provider_binding.id())
-            } else {
-                None
-            },
-            "verified",
-        )
-        .unwrap()
-    })
-    .collect();
-    if another_pending {
-        checks.push(
-            StorageSecurityCheck::try_new(
-                StorageSecurityCheckKind::Identity,
-                StorageSecurityCheckStatus::NotRun,
-                Some(second_id),
-                "test_sign_in_required",
-            )
-            .unwrap(),
-        );
-    }
     let mut verified = candidate.clone().with_checks(checks).unwrap();
     if !another_pending {
         verified = verified.verify(digest('d')).unwrap();

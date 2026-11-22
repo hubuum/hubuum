@@ -231,7 +231,7 @@ pub async fn purge(runtime: &PostgresRuntime) -> Result<usize, PostgresStorageEr
     runtime
         .with_connection(async |connection| -> Result<_, PostgresStorageError> {
             Ok(
-                sql_query("DELETE FROM security_candidates WHERE expires_at <= clock_timestamp()")
+                sql_query("DELETE FROM security_candidates WHERE id IN (SELECT id FROM security_candidates WHERE expires_at <= clock_timestamp() FOR UPDATE SKIP LOCKED)")
                     .execute(connection)
                     .await?,
             )
