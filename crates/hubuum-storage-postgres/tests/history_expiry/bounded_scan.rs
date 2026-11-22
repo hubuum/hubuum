@@ -1208,6 +1208,19 @@ async fn finite_native_pass_revisits_restored_dependency_after_clearance(
     );
 }
 
+pub(super) fn restore_pool(url: String, size: u32) -> PostgresPool {
+    use hubuum_storage_postgres::{PostgresPoolSettings, build_postgres_pool};
+    build_postgres_pool(
+        &PostgresPoolSettings::builder(url)
+            .max_size(size)
+            .statement_timeout_ms(0)
+            .acquire_timeout_ms(5_000)
+            .build()
+            .unwrap(),
+    )
+    .unwrap()
+}
+
 // Use the runner's separately proven restore target: primary archive fixtures
 // may retain real publication owners and must never be erased to open this gate.
 pub(super) async fn restore_fixture() -> (Fixture, IsolatedRestoreTarget) {
@@ -1215,24 +1228,12 @@ pub(super) async fn restore_fixture() -> (Fixture, IsolatedRestoreTarget) {
         integration_test_database_url, integration_test_restore_database_url,
         integration_test_restore_migration_database_url,
     };
-    use hubuum_storage_postgres::{PostgresPoolSettings, build_postgres_pool};
     let runtime = integration_test_restore_database_url();
     let migration = integration_test_restore_migration_database_url();
     let target = IsolatedRestoreTarget::new(&migration, &integration_test_database_url()).unwrap();
     IsolatedRestoreTarget::new(&runtime, &integration_test_database_url()).unwrap();
-    let pool = |url| {
-        build_postgres_pool(
-            &PostgresPoolSettings::builder(url)
-                .max_size(2)
-                .statement_timeout_ms(0)
-                .acquire_timeout_ms(5_000)
-                .build()
-                .unwrap(),
-        )
-        .unwrap()
-    };
-    let runtime = pool(runtime);
-    let migration = pool(migration);
+    let runtime = restore_pool(runtime, 2);
+    let migration = restore_pool(migration, 2);
     for pool in [&runtime, &migration] {
         with_transaction(pool, async |connection| {
             target.validate_connection(connection).await

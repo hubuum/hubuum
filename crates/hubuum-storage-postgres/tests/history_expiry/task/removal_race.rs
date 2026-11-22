@@ -1,6 +1,7 @@
 use super::*;
-use diesel::OptionalExtension;
+use diesel::sql_types::Bool;
 use futures_util::TryFutureExt;
+use hubuum_storage_postgres::test_support::integration_test_restore_database_url;
 use std::time::Duration as WaitDuration;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, timeout};
@@ -11,21 +12,38 @@ struct Backend {
     pid: i32,
 }
 
-async fn waiting_backend(observer: &mut PostgresConnection, blocker: i32) -> i32 {
+async fn runtime_session(test: &TaskFixture) -> (PostgresStorage, i32) {
+    let pool = bounded_scan::restore_pool(integration_test_restore_database_url(), 1);
+    let mut connection = pool.get().await.unwrap();
+    test.restore_target
+        .validate_connection(&mut connection)
+        .await
+        .unwrap();
+    let pid = sql_query("SELECT pg_backend_pid() AS pid")
+        .get_result::<Backend>(&mut connection)
+        .await
+        .unwrap()
+        .pid;
+    drop(connection);
+    (PostgresStorage::unobserved(pool), pid)
+}
+
+async fn wait_for_blocker(observer: &mut PostgresConnection, waiter: i32, blocker: i32) {
+    #[derive(QueryableByName)]
+    struct Wait {
+        #[diesel(sql_type = Bool)]
+        blocked: bool,
+    }
     timeout(WaitDuration::from_secs(5), async {
         loop {
-            let waiter = sql_query(
-                "SELECT pid FROM pg_stat_activity
-                 WHERE datname=current_database() AND backend_type='client backend'
-                   AND $1=ANY(pg_blocking_pids(pid))",
-            )
-            .bind::<Integer, _>(blocker)
-            .get_result::<Backend>(observer)
-            .await
-            .optional()
-            .unwrap();
-            if let Some(waiter) = waiter {
-                return waiter.pid;
+            let wait = sql_query("SELECT $2=ANY(pg_blocking_pids($1)) AS blocked")
+                .bind::<Integer, _>(waiter)
+                .bind::<Integer, _>(blocker)
+                .get_result::<Wait>(observer)
+                .await
+                .unwrap();
+            if wait.blocked {
+                break;
             }
             sleep(WaitDuration::from_millis(5)).await;
         }
@@ -36,8 +54,8 @@ async fn waiting_backend(observer: &mut PostgresConnection, blocker: i32) -> i32
 
 async fn commit_in_order(
     test: &TaskFixture,
-    first: impl Future<Output = Result<(), StorageError>>,
-    second: impl Future<Output = Result<(), StorageError>>,
+    (first_pid, first): (i32, impl Future<Output = Result<(), StorageError>>),
+    (second_pid, second): (i32, impl Future<Output = Result<(), StorageError>>),
 ) -> StorageError {
     tokio::pin!(first, second);
     let mut observer = test.fixture.owner_pool.get().await.unwrap();
@@ -60,14 +78,14 @@ async fn commit_in_order(
         let blocker = gate_pid.await.unwrap();
         // The winner holds history authority while waiting for its required
         // audit append. Start the second operation only after observing this.
-        let winner = tokio::select! {
+        tokio::select! {
             result = &mut first => panic!("first operation escaped the audit lock: {result:?}"),
-            pid = waiting_backend(&mut observer, blocker) => pid,
+            () = wait_for_blocker(&mut observer, first_pid, blocker) => {}
         };
         tokio::select! {
             result = &mut first => panic!("first operation escaped the audit lock: {result:?}"),
             result = &mut second => panic!("second operation escaped the winner: {result:?}"),
-            _ = waiting_backend(&mut observer, winner) => {}
+            () = wait_for_blocker(&mut observer, second_pid, first_pid) => {}
         }
         release.send(()).unwrap();
         timeout(WaitDuration::from_secs(5), async {
@@ -119,12 +137,26 @@ async fn hold_and_first_copy_removal_serialize(
             .create_hold(hold, admitted.fence())
             .unwrap();
         let expected_hold = change.next().clone();
-        let commit_hold = storage
-            .run_in_scope(test.scope.clone(), storage.commit_history_lifecycle(change))
+        let (administrator, admin_pid) = runtime_session(&test).await;
+        let (worker, worker_pid) = runtime_session(&test).await;
+        let commit_hold = administrator
+            .run_in_scope(
+                test.scope.clone(),
+                administrator.commit_history_lifecycle(change),
+            )
             .map_ok(|_| ());
-        let remove_copy = remove(&test, protection(&admitted)).map_ok(|_| ());
+        let request = HistoryExpiryTaskRequest::new(test.lease.clone(), None)
+            .with_protection(protection(&admitted));
+        let remove_copy = worker
+            .run_in_scope(
+                test.scope.clone(),
+                worker.process_history_expiry_task(request),
+            )
+            .map_ok(|_| ());
+        let hold = (admin_pid, commit_hold);
+        let removal = (worker_pid, remove_copy);
         if hold_first {
-            let error = commit_in_order(&test, commit_hold, remove_copy).await;
+            let error = commit_in_order(&test, hold, removal).await;
             assert!(
                 error
                     .message()
@@ -132,7 +164,7 @@ async fn hold_and_first_copy_removal_serialize(
                 "{error}"
             );
         } else {
-            let error = commit_in_order(&test, remove_copy, commit_hold).await;
+            let error = commit_in_order(&test, removal, hold).await;
             assert_eq!(error.kind(), StorageErrorKind::Conflict, "{error}");
         }
         let after = storage.capture_history_lifecycle().await.unwrap();
