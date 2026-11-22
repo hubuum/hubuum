@@ -1,158 +1,47 @@
 //! Real signed full-history restore and exact-copy replay through the coordinator.
 use super::*;
-use diesel::QueryableByName;
-use diesel::sql_query;
-use diesel::sql_types::{Bool, Integer, Nullable, Text};
-use diesel_async::SimpleAsyncConnection;
 use futures_util::FutureExt;
-use hubuum::errors::ApiError;
 use hubuum::test_support::history_replay_fixture_protection;
 use hubuum_domain::PrincipalIdentity;
-use hubuum_storage_postgres::{
-    PostgresConnection, PostgresPool, PostgresStorage, PostgresStorageError, with_transaction,
-};
 use std::os::unix::fs::PermissionsExt;
 use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::sync::{Arc, Mutex};
-use tokio::sync::oneshot;
+use tokio::sync::Notify;
 
-#[derive(QueryableByName)]
-struct BackendPid {
-    #[diesel(sql_type = Integer)]
-    pid: i32,
-}
-
-async fn wait_for_waiter(
-    connection: &mut PostgresConnection,
-    blocker: i32,
-    waiter: Option<i32>,
-) -> i32 {
-    timeout(Duration::from_secs(30), async {
-        loop {
-            let waits = sql_query("SELECT DISTINCT pid FROM pg_locks WHERE NOT granted
-                AND $1 = ANY(pg_blocking_pids(pid))
-                AND (pid = $2 OR ($2 IS NULL AND locktype='relation'
-                    AND relation='public.export_templates_history'::regclass AND mode='AccessExclusiveLock'))")
-                .bind::<Integer,_>(blocker).bind::<Nullable<Integer>,_>(waiter)
-                .load::<BackendPid>(connection).await.unwrap();
-            if let [wait] = waits.as_slice() {
-                return wait.pid;
-            }
-            assert!(waits.is_empty(), "unexpected competing restore sessions");
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }).await.expect("expected PostgreSQL lock dependency")
-}
-
-async fn restore_with_queued_replay<T>(
-    kind: StorageBackendKind,
-    pool: &PostgresPool,
-    restore: impl Future<Output = Result<T, ApiError>>,
-    request: HistoryExpiryReapplication,
-) {
-    if kind == StorageBackendKind::Memory {
-        restore.await.unwrap();
-        return;
-    }
-    let recovery_pool =
-        postgres_test_pool_with_timeout(&database_url(), 1, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
-    let mut connection = recovery_pool.get().await.unwrap();
-    let recovery_pid = sql_query("SELECT pg_backend_pid() AS pid")
-        .get_result::<BackendPid>(&mut connection)
-        .await
-        .unwrap()
-        .pid;
-    drop(connection);
-    let recovery = PostgresStorage::unobserved(recovery_pool);
-    let target = request.target();
-    let replay = recovery.reapply_history_expiry(request);
-    tokio::pin!(restore, replay);
-    let mut observer = pool.get().await.unwrap();
-    let (locked, gate_pid) = oneshot::channel();
-    let (release, released) = oneshot::channel();
-    let gate = with_transaction(pool, async move |gate| {
-        // Backup reads can proceed. The full restore must rotate the application
-        // before it requests exclusive locks to replace the backed-up tables.
-        gate.batch_execute("LOCK TABLE public.export_templates_history IN ACCESS SHARE MODE")
-            .await?;
-        locked
-            .send(
-                sql_query("SELECT pg_backend_pid() AS pid")
-                    .get_result::<BackendPid>(gate)
-                    .await?
-                    .pid,
-            )
-            .unwrap();
-        released.await.unwrap();
-        Ok::<_, PostgresStorageError>(())
-    });
-    let race = async {
-        let gate_pid = gate_pid.await.unwrap();
-        let restore_pid = tokio::select! {
-            result = &mut restore => panic!("restore finished before replacing history: {:?}", result.err()),
-            pid = wait_for_waiter(&mut observer, gate_pid, None) => pid,
-        };
-        tokio::select! {
-            _ = &mut restore => panic!("restore escaped its table lock"),
-            result = &mut replay => panic!("expiry replay escaped the restore: {result:?}"),
-            _ = wait_for_waiter(&mut observer, restore_pid, Some(recovery_pid)) => {},
-        }
-        release.send(()).unwrap();
-        tokio::join!(restore, replay)
-    };
-    let (gate, (restored, stale)) = tokio::join!(gate, race);
-    gate.unwrap();
-    restored.unwrap();
-    let stale = stale.unwrap_err();
-    assert_eq!(stale.kind(), StorageErrorKind::ValidationFailed, "{stale}");
-    assert!(
-        stale
-            .message()
-            .contains("Protected recovery authority or application image changed"),
-        "{stale}"
-    );
-    #[derive(QueryableByName)]
-    struct Copy {
-        #[diesel(sql_type = Bool)]
-        present: bool,
-    }
-    let copy = sql_query(
-        "SELECT EXISTS(SELECT 1 FROM public.collections_history
-        WHERE logical_identity #>> '{subject,identity,identity}'=$1
-          AND logical_identity #>> '{subject,version}'=$2) AS present",
-    )
-    .bind::<Text, _>(target.resource().to_string())
-    .bind::<Text, _>(target.version().to_string())
-    .get_result::<Copy>(&mut observer)
-    .await
-    .unwrap();
-    assert!(
-        !copy.present,
-        "the released database retained the restored copy"
-    );
-}
+mod race;
+use race::{replay_with_queued_restore, restore_with_queued_replay};
 
 #[derive(Default)]
-struct ReplayTrace(Mutex<Vec<String>>);
+struct ReplayTrace {
+    operations: Mutex<Vec<String>>,
+    data_replaced: Notify,
+}
 
 impl StorageObserver for ReplayTrace {
     fn operation_finished(&self, observation: &StorageObservation) {
-        if observation.result() == "ok"
-            && matches!(
-                observation.operation(),
-                "reapply_history_expiry"
-                    | "capture_control_checkpoint"
-                    | "release_application_exposure"
-            )
-        {
-            self.0.lock().unwrap().push(observation.operation().into());
+        if observation.result() != "ok" {
+            return;
+        }
+        if observation.operation() == "apply_restore_replay" {
+            self.data_replaced.notify_waiters();
+        }
+        if matches!(
+            observation.operation(),
+            "reapply_history_expiry"
+                | "capture_control_checkpoint"
+                | "release_application_exposure"
+        ) {
+            self.operations
+                .lock()
+                .unwrap()
+                .push(observation.operation().into());
         }
     }
 }
 
 impl ReplayTrace {
-    fn assert_captures(&self, members: usize, new_receipts: bool) {
-        let operations = std::mem::take(&mut *self.0.lock().unwrap());
+    fn assert_captures(&self, members: usize, existing_receipts: usize) {
+        let operations = std::mem::take(&mut *self.operations.lock().unwrap());
         let copies: Vec<_> = operations
             .iter()
             .enumerate()
@@ -160,12 +49,12 @@ impl ReplayTrace {
             .collect();
         assert_eq!(copies.len(), members);
         assert!(members >= 3, "Exercise repeated replay, not a single copy");
-        for pair in copies.windows(2) {
+        for (index, pair) in copies.windows(2).enumerate() {
             assert_eq!(
                 operations[pair[0] + 1..pair[1]]
                     .iter()
                     .any(|operation| operation == "capture_control_checkpoint"),
-                new_receipts,
+                index >= existing_receipts,
                 "Only new first receipts require capture between copies: {operations:?}"
             );
         }
@@ -183,9 +72,13 @@ impl ReplayTrace {
 }
 
 #[rstest]
+#[case::postgres_restore_first(StorageBackendKind::Postgres, false)]
+#[case::postgres_expiry_first(StorageBackendKind::Postgres, true)]
+#[case::memory(StorageBackendKind::Memory, false)]
 #[tokio::test]
 async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
-    #[values(StorageBackendKind::Postgres, StorageBackendKind::Memory)] kind: StorageBackendKind,
+    #[case] kind: StorageBackendKind,
+    #[case] expiry_first: bool,
     #[values(false, true)] size: bool,
 ) {
     let _guard = RESTORE_TEST_LOCK.lock().await;
@@ -319,15 +212,32 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
                 .is_err(),
             "direct contract call cannot replay a released application"
         );
-        trace.0.lock().unwrap().clear();
-        restore_with_queued_replay(
-            kind,
-            &pool,
-            fixture.restore_with_recovery(backup.clone(), &repository, &key_file),
-            request,
-        )
-        .await;
-        trace.assert_captures(manifest.members().len(), true);
+        if expiry_first {
+            let protection = fixture
+                .prepare_restore_during_history_recovery(backup.clone(), &repository, &key_file)
+                .await
+                .unwrap();
+            let request =
+                HistoryExpiryReapplication::new(protection, manifest.identity(), target).unwrap();
+            trace.operations.lock().unwrap().clear();
+            replay_with_queued_restore(
+                &pool,
+                fixture.resume_restore_with_recovery(&repository, &key_file),
+                request,
+                &trace,
+            )
+            .await;
+        } else {
+            trace.operations.lock().unwrap().clear();
+            restore_with_queued_replay(
+                kind,
+                &pool,
+                fixture.restore_with_recovery(backup.clone(), &repository, &key_file),
+                request,
+            )
+            .await;
+        }
+        trace.assert_captures(manifest.members().len(), usize::from(expiry_first));
         let completed = storage.capture_history_lifecycle().await.unwrap();
         let receipts = completed
             .control()
@@ -351,7 +261,7 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
         )
         .unwrap();
         assert!(request.has_receipt());
-        trace.0.lock().unwrap().clear();
+        trace.operations.lock().unwrap().clear();
         restore_with_queued_replay(
             kind,
             &pool,
@@ -359,7 +269,7 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             request,
         )
         .await;
-        trace.assert_captures(manifest.members().len(), false);
+        trace.assert_captures(manifest.members().len(), manifest.members().len());
         let repeated = storage.capture_history_lifecycle().await.unwrap();
         assert_eq!(
             repeated

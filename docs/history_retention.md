@@ -456,13 +456,15 @@ identity branch in the runner's isolated restore database. A clean newer copy
 passes the gate; a descendant of admitted history keeps exposure quarantined
 without changing the source, restored copy or retained authority. These fixtures
 qualify native admission and exposure checks. The signed full-history restore
-test also queues an exact collection expiry replay behind PostgreSQL's logical
-restore transaction. Once the backup replaces the source rows, the queued
-request rejects its old application incarnation. The coordinator replays with
-fresh protection before releasing quarantine. Both age and size policies cover
-the first restore and a second restore with existing receipts. The reverse lock
-order and concurrent logical restore for the other history families still need
-qualification.
+test covers both PostgreSQL lock orders for exact collection expiry under age
+and logical-size policies. When restore holds the lock first, the queued expiry
+request rejects its old application incarnation. This includes a repeated
+restore with existing receipts. When expiry holds the lock first, the confirmed
+restore waits while expiry removes the copy and commits its first receipt. The
+backup then reintroduces that exact version under quarantine. Signed
+reapplication removes it again before release and preserves the original
+receipt, including its checkpoint and removal time. Concurrent logical restore
+for the other history families still needs qualification.
 Primary admission is not independent checkpoint protection:
 its authority must be captured and independently published before the gated
 executor can remove a copy. Complete

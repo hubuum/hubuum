@@ -502,8 +502,8 @@ impl RestoreContractFixture {
         .await
     }
 
-    /// Retry only the supported post-commit phase; never replay committed data
-    /// or mark a committed restore failed to make fixture cleanup succeed.
+    /// Run the confirmed restore with signed recovery. After the data commits,
+    /// a retry resumes reapplication without replacing the data again.
     pub async fn resume_restore_with_recovery(
         &self,
         directory: &std::path::Path,
@@ -516,6 +516,23 @@ impl RestoreContractFixture {
         crate::restores::execute_confirmed_restore_with_recovery(&self.storage, &options)
             .await
             .map(|_| ())
+    }
+
+    /// Leave a confirmed backup ready for its executor while a recovery worker
+    /// owns a signed request for the currently quarantined application.
+    pub async fn prepare_restore_during_history_recovery(
+        &self,
+        snapshot: StorageBackupSnapshot,
+        directory: &std::path::Path,
+        key: &std::path::Path,
+    ) -> Result<HistoryExposureProtection, ApiError> {
+        use crate::services::deletion_recovery::{
+            checkpoint, history_replay_fixture_protection, recover,
+        };
+        checkpoint(&self.storage, directory, key, false).await?;
+        stage_and_confirm_snapshot(&self.storage, snapshot, CURRENT_BACKUP_VERSION).await?;
+        recover(&self.storage, directory, key).await?;
+        history_replay_fixture_protection(&self.storage, directory, key).await
     }
 
     pub async fn restore_legacy(
