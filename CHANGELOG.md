@@ -9,6 +9,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Require `url` 2.5.9 or later in the 2.x series to fix a stack overflow in
+  URL origin resolution. This also updates the standalone fuzz workspace.
+  [RustSec advisory RUSTSEC-2026-0592](https://rustsec.org/advisories/RUSTSEC-2026-0592.html)
+
 - Bind OAuth subjects to the configured profile headers, clear obsolete provider
   grants on local-only activation, and reject incomplete membership observations.
   OIDC client and provider failures preserve the last successful verification.
