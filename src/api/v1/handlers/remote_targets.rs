@@ -21,7 +21,6 @@ use crate::models::{
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::{
     AppContext, CompleteCollectionCandidateLimit, MAX_COMPLETE_COLLECTION_CANDIDATES, PrincipalRef,
-    require_unscoped_runtime_admin,
 };
 use crate::services::history::{
     HistoryCollectionFilter, remote_target_as_of, remote_target_history_paginated_with_total_count,
@@ -67,7 +66,7 @@ pub async fn create_remote_target(
         target.collection_id
     );
     if target.auth_config.uses_server_credentials() {
-        require_unscoped_runtime_admin(&context, user, requestor.scopes().is_some()).await?;
+        requestor.require_runtime_admin(&context).await?;
     }
     validate_remote_target_class_scope(
         &context,
@@ -218,7 +217,7 @@ pub async fn patch_remote_target(
         CollectionID::new(existing.collection_id)?
     );
     if update.requires_credential_owner(&existing) {
-        require_unscoped_runtime_admin(&context, user, requestor.scopes().is_some()).await?;
+        requestor.require_runtime_admin(&context).await?;
     }
     if let Some(collection_id) = update.collection_id {
         can!(

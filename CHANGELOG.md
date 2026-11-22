@@ -9,14 +9,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
-- Require Actix HTTP 3.21.3 or later to fix malformed chunked request framing
-  and request-header timeout bypass on persistent HTTP/1 connections
-  (RUSTSEC-2026-0552, RUSTSEC-2026-0553 and RUSTSEC-2026-0554).
-
-- Require `lettre` 0.11.24 or later for the email event sink to fix SMTP reply
-  handling, message and address encoding, and unbounded response buffering
-  (RUSTSEC-2026-0560 through RUSTSEC-2026-0565).
-
 - Require Actix Web 4.18.2 or later and use the patched Actix HTTP dependency
   to reject malformed chunked request trailers and bound compressed request-body
   decoding, including large-window Brotli streams (RUSTSEC-2026-0446,
@@ -162,24 +154,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   expiry once and protects its original audit fact independently. Physical history-expiry execution remains under
   development; see [scoped history retention](docs/history_retention.md).
 
-- Administrators can change `pagination.max_page_limit` together with
-  `default_page_limit` through runtime settings, without restarting. Explicit
-  client limits are clamped to the runtime maximum, bounded by the deployment's
-  `HUBUUM_MAX_PAGE_LIMIT`. Discovery and client/admin configuration report the
-  effective limits. Partial edits preserve omitted fields, and in-flight
-  requests retain their original limits. Existing default-only settings and
-  requests remain supported. Upgrade all API and worker replicas before setting
-  a runtime maximum; older binaries cannot read the extended persisted policy.
-
-- Runtime policy groups now cover log filters; metrics enablement/path; proxy
-  trust and client allowlists; traversal depth; task lease/heartbeat, polling,
-  recovery and reindex batches; remote-call limits; token
-  issuance/retention; login limits; event batching/delivery/retention/archive;
-  export/template budgets; and backup/restore limits. Changes are validated,
-  revisioned, audited and exposed through discovery and effective configuration.
-  Requests/jobs retain their snapshots, batch changes wake idle workers, and
-  sensitive policy edits require a local administrator with recovery access.
-
 - **Breaking storage SDK 0.19:** all ten SDK crates advance together. Complete
   adapters must implement `HistoryArchiveStorage` with persisted catalogs,
   bounded captured hot inputs, generation-checked pins and original registered
@@ -315,22 +289,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   read-only deployment seeds; update live limits through
   `/api/v1/admin/task-capacity` with its current policy revision. Existing runtime
   assignments do not overwrite shared capacity or reset accounted usage.
-
-- **Breaking (REST clients with closed runtime-setting enums):** runtime-setting responses and discovery add operational policy groups and effect values.
-  Regenerate administrator clients from the updated OpenAPI document or accept
-  the new runtime-setting group and effect values before upgrading the server.
-- **Breaking deployment change:** the runtime-policy migration adds group rows
-  older binaries cannot read. Stop older API and worker replicas before applying
-  `2026-11-10-000001_runtime_policies`, then deploy upgraded binaries everywhere.
-  Rollback after editing a new group requires an upgraded binary or database
-  backup because append-only audit history is preserved.
-- **Breaking deployment change:** worker-only processes now bind their HTTP
-  listener even with metrics disabled, supporting later runtime enablement.
-  Assign distinct `HUBUUM_BIND_IP:HUBUUM_PORT` endpoints or separate network
-  namespaces to workers that previously shared a host and port.
-- Runtime configuration uses common validated policy definitions for persistence
-  and discovery. Existing network/path validation is shared with storage;
-  deployment-only lifecycle settings and secrets remain outside runtime editing.
 
 - **Breaking storage SDK and operational change:** upgrade all ten SDK crates to
   `0.14.0` together; adapters must implement atomic
@@ -626,19 +584,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   registry layout without enabling online expiry or replacing an installed
   versioned history protocol. Unknown future checkpoints still fail closed.
 
-- Rendering tests use Cargo's reported template-worker path, supporting the
-  relocated test executables introduced by Cargo 1.100.
-
-- Shared login reservations retain their original expiry when runtime rate-limit
-  windows change, so in-flight failures still count toward the captured policy.
-- Shared login lockouts keep their expiry when overlapping requests finish under
-  shorter runtime policies. Backup and restore requests retain their captured
-  limits when runtime ownership changes during authentication.
-- Metrics remain available after runtime-settings refresh failures, with network
-  access controls still enforced. Runtime metrics paths retain their maintenance
-  exemption during destructive restores.
-- Stale-policy rejections remain visible in HTTP request metrics and tracing.
-
 - Task cleanup reports retain their exact verified checkpoint instead of
   reacquiring a contended repository or mixing it with newer database state.
   Receipt expiry reuses existing protection only when it covers the selected
@@ -681,6 +626,84 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Retained history and task-event actor names no longer attach to a different
   principal when a restore timeline reuses an integer ID. Historical relation
   endpoint hydration also requires the captured endpoint identity.
+
+## [0.0.23] - 2026-11-21
+
+### Security
+
+- Require Actix HTTP 3.21.3 or later to fix malformed chunked request framing
+  and request-header timeout bypass on persistent HTTP/1 connections
+  (RUSTSEC-2026-0552, RUSTSEC-2026-0553 and RUSTSEC-2026-0554).
+
+- Require `lettre` 0.11.24 or later for the email event sink to fix SMTP reply
+  handling, message and address encoding, and unbounded response buffering
+  (RUSTSEC-2026-0560 through RUSTSEC-2026-0565).
+
+### Added
+
+- Administrators can change `pagination.max_page_limit` together with
+  `default_page_limit` through runtime settings, without restarting. Explicit
+  client limits are clamped to the runtime maximum, bounded by the deployment's
+  `HUBUUM_MAX_PAGE_LIMIT`. Discovery and client/admin configuration report the
+  effective limits. Partial edits preserve omitted fields, and in-flight
+  requests retain their original limits. Existing default-only settings and
+  requests remain supported. Upgrade all API and worker replicas before setting
+  a runtime maximum; older binaries cannot read the extended persisted policy.
+
+- Runtime policy groups now cover log filters; metrics enablement/path; proxy
+  trust and client allowlists; traversal depth; task lease/heartbeat, polling,
+  recovery, reindex batches and admission limits; remote-call limits; token
+  issuance/retention; login limits; event batching/delivery/retention/archive;
+  export/template budgets; and backup/restore limits. Changes are validated,
+  revisioned, audited and exposed through discovery and effective configuration.
+  Requests/jobs retain their snapshots, batch changes wake idle workers, and
+  sensitive policy edits require a local administrator with recovery access.
+
+### Changed
+
+- The server image uses Alpine 3.24.4 and the Rust 1.100 builder. The
+  single-host installer pins Caddy 2.11.9, PostgreSQL 18.7, Valkey 9.2.0,
+  Prometheus 3.16.0, and Grafana 13.3.1 by digest. Existing installations
+  can apply new pins with the corresponding image overrides.
+
+- Backup, query-usage analysis, and administrative schema endpoints now return
+  HTTP 403 for scoped tokens and non-administrators before looking up the
+  requested resource. Unscoped administrator service accounts retain access.
+
+- **Breaking (REST clients with closed runtime-setting enums):** runtime-setting responses and discovery add operational policy groups and effect values.
+  Regenerate administrator clients from the updated OpenAPI document or accept
+  the new runtime-setting group and effect values before upgrading the server.
+- **Breaking deployment change:** the runtime-policy migration adds group rows
+  older binaries cannot read. Stop older API and worker replicas before applying
+  `2026-11-10-000001_runtime_policies`, then deploy upgraded binaries everywhere.
+  Rollback after editing a new group requires an upgraded binary or database
+  backup because append-only audit history is preserved.
+- **Breaking deployment change:** worker-only processes now bind their HTTP
+  listener even with metrics disabled, supporting later runtime enablement.
+  Assign distinct `HUBUUM_BIND_IP:HUBUUM_PORT` endpoints or separate network
+  namespaces to workers that previously shared a host and port.
+- Runtime configuration uses common validated policy definitions for persistence
+  and discovery. Existing network/path validation is shared with storage;
+  deployment-only lifecycle settings and secrets remain outside runtime editing.
+
+### Fixed
+
+- The single-host installer now saves explicit `--caddy-image`,
+  `--postgres-image`, and `--valkey-image` overrides when refreshing an
+  existing installation.
+
+- Rendering tests use Cargo's reported template-worker path, supporting the
+  relocated test executables introduced by Cargo 1.100.
+
+- Shared login reservations retain their original expiry when runtime rate-limit
+  windows change, so in-flight failures still count toward the captured policy.
+- Shared login lockouts keep their expiry when overlapping requests finish under
+  shorter runtime policies. Backup and restore requests retain their captured
+  limits when runtime ownership changes during authentication.
+- Metrics remain available after runtime-settings refresh failures, with network
+  access controls still enforced. Runtime metrics paths retain their maintenance
+  exemption during destructive restores.
+- Stale-policy rejections remain visible in HTTP request metrics and tracing.
 
 ## [0.0.22] - 2026-11-09
 

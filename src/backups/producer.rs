@@ -6,7 +6,7 @@ use hubuum_storage_core::StorageErrorKind;
 
 use crate::errors::ApiError;
 use crate::models::{RestoreValidationSummary, TokenScope};
-use crate::permissions::AppContext;
+use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::restores::replay::{ReplayDocument, capture};
 use crate::storage::StorageBackupBudget;
 use crate::traits::AuthzSubject;
@@ -29,7 +29,7 @@ impl BackupArtifactProducer {
         include_history: bool,
         budget: StorageBackupBudget,
     ) -> Result<Self, ApiError> {
-        super::authorize_backup_request(context, subject, scopes).await?;
+        require_unscoped_runtime_admin(context, subject, scopes.is_some()).await?;
         let document = capture(context, include_history, budget).await?;
         let summary = document.summary()?;
         Ok(Self {
