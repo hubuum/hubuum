@@ -38,7 +38,7 @@ class FixtureFailureTests(unittest.TestCase):
                 runner.wait_until_ready(probe, "fixture")
 
     def test_cleanup_attempts_every_resource_after_a_timeout(self):
-        def fixtures(_root, containers, _servers, networks, _worker_path):
+        def fixtures(_root, containers, _servers, networks, _worker_executable):
             containers.extend(["first", "second"])
             networks.append("network")
             return 0
@@ -46,16 +46,17 @@ class FixtureFailureTests(unittest.TestCase):
         success = subprocess.CompletedProcess([], 0)
         worker = subprocess.CompletedProcess([], 0, stdout=json.dumps({
             "reason": "compiler-artifact", "target": {"name": "hubuum-template-worker"},
-            "executable": "/relocated/hubuum-template-worker",
+            "executable": "/separate build directory/template worker",
         }))
         expired = subprocess.TimeoutExpired(["docker", "fixture-secret"], 30)
         errors = io.StringIO()
         with patch.object(runner.sys, "platform", "linux"), \
-                patch.object(runner, "run", side_effect=fixtures), \
+                patch.object(runner, "run", side_effect=fixtures) as contract, \
                 patch.object(runner.subprocess, "run",
                              side_effect=[success, worker, expired, success, success]) as run, \
                 patch.object(sys, "stderr", errors):
             self.assertEqual(runner.main(), 1)
+        self.assertEqual(contract.call_args.args[-1], "/separate build directory/template worker")
         self.assertEqual([call.args[0][-1] for call in run.call_args_list[2:]],
                          ["second", "first", "network"])
         self.assertNotIn("fixture-secret", errors.getvalue())

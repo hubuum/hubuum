@@ -1,9 +1,11 @@
 # Cross-native authentication qualification
 
-Project 6 uses `project/auth-support` in the server, Rust/Python SDK, CLI and
-frontend repositories. All six strict native implementation prerequisites are
-completed with accepted project artifacts. The final #581 security and real
-GitHub matrix remains in progress; #582 and main/stable promotion remain gated.
+On 21 November 2026, Project 6 accepted the Keycloak and GitHub qualification
+on `project/auth-support`. The automated matrix exercised all four native
+products. A separate live run verified GitHub.com sign-in with the production
+CLI and frontend. The [acceptance review][accepted] records the six completed
+native prerequisites. The [ecosystem guide][guide] lists the tested versions and
+upgrade order. Stable delivery requires the [reviewed promotion][promotion].
 
 The [source manifest](ecosystem-source.json) pins accepted server #599 and each
 accepted native source/tree, owning driver, consumer executable/script and wire
@@ -72,11 +74,26 @@ inputs, callback query strings, browser profiles or secret-bearing traces.
 ## Acceptance boundaries
 
 Synthetic OAuth and real disposable Keycloak are automated fixtures. Their
-results do not qualify real GitHub. GitHub requires an authorized disposable
-OAuth App, protected local client-secret configuration, its exact callback and
-actual native sign-ins with explicit Hubuum approval. The former disposable app
-was deleted; a new setup/sign-in handoff is pending. No repository or email scope
-is required for the public-identity profile.
+results cover the automated profiles below. The live GitHub run used a disposable
+OAuth App with public-data-only consent. Candidate preview issued no session.
+A fresh local administrator approval activated that candidate. The CLI completed
+the remote-browser handoff and reused its saved session for a second `whoami`.
+The frontend returned to the authenticated workspace and retained its session
+after reload. The server recorded both sessions for the same external principal.
+The disposable app and test credentials were removed after the run.
+
+The [live evidence manifest](native-github-evidence.json) pins the CLI executable,
+the server and frontend images, the PostgreSQL and Valkey fixtures, the workflow
+runs and artifact digests. Its source and image pins apply to these two sign-ins.
+The automated matrix retains the inputs used for its own runs.
+
+The manifest abbreviates the Valkey repository as `valkey`. To reproduce the
+live run, pull the same digest from the `valkey/valkey` repository used by the
+frontend fixture.
+
+```sh
+docker pull docker.io/valkey/valkey:9.1.2-alpine3.24@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+```
 
 The [security candidate guide](../security_candidates.md) defines deployment
 locks, private credentials, exact revision/receipt fences and offline recovery.
@@ -86,11 +103,9 @@ recovery procedure or reconnect the policy service. The existing group read API
 does not enumerate independent per-membership source history. Upstream GitHub
 token invalidation must be independently probed before such a guarantee is made.
 
-Source/candidate acceptance is implementing-agent acceptance unless an independent
-review is explicitly recorded. Keep full milestone criteria open until all
-required native/security/provider evidence is accepted. Current qualification
-reports and unresolved limitations belong to #581; this manifest alone does not
-establish acceptance or authorize main/stable promotion.
+The [qualification review][accepted] records project-candidate acceptance and
+provider limits. Each participating repository requires a reviewed integration PR
+for promotion. Direct Google and Apple profiles remain follow-up work.
 
 ## Recorded automated matrix
 
@@ -112,10 +127,8 @@ The full required Rust suite on this coordinator source passed **7,030 tests,
 zero failures** (41 existing ignores), and the complete standard-library Python
 suite passed **344 tests**. Strict all-target Clippy, rustfmt, unchanged regenerated
 OpenAPI, CI classification, Markdown and strict documentation rendering pass.
-An initial disposable dotenv setup attempt stopped before tests; its wrapper was
-corrected and the complete run passed. Its database, credentials and environment
-link were removed. No failing tests are waived. Final source CI/candidate review
-is required before accepting this qualification-tool delivery.
+The [coordinator PR](https://github.com/hubuum/hubuum/pull/600) records the final
+CI and candidate acceptance for this matrix.
 
 ## Security evidence ownership
 
@@ -126,7 +139,7 @@ is required before accepting this qualification-tool delivery.
 | Replay/mix-up, CSRF/open redirects, polling and response loss | Rust interaction/session/approval tests, accepted BFF #196 security/loss qualification and release CLI cancellation/terminal checks |
 | Group removal, stale claims, deprovisioning and signing-key rotation | Accepted #599 real Keycloak production-image qualification: 19 checks per ID-token/UserInfo profile, plus Rust contracts and native membership checks |
 | Deployment, restore and monitoring | Accepted #599's exact-image deployment/backup/restore and alert/lifecycle reports; 28 correctness and 37 benchmark jobs, 25 targets without regressions or overrides |
-| Real native GitHub | Pending new authorized App and actual native sign-ins; the prior #595 11-check result covers its server fixture only |
+| Real native GitHub | [Accepted CLI and frontend sign-ins][accepted] on server #608, following the [11-check server fixture](https://github.com/hubuum/hubuum/pull/595) |
 
 Representative Rust sources are `tests/api_identity_suite/auth_interactions.rs`,
 `tests/api_identity_suite/sessions.rs`,
@@ -138,7 +151,10 @@ integration belongs to `tests/python/integration/keycloak.py` and `oauth.py`.
 These owners retain exhaustive domain/concurrency assertions; the coordinator
 selects qualified fixtures and runs the owning native products.
 
-The ledger explicitly keeps native GitHub and milestone acceptance false.
-Synthetic OAuth, public GitHub-labelled wire UI and an earlier server-only real
-login do not complete that requirement. Keep #581's global acceptance criteria
-open and #582/main/stable promotion gated until the remaining evidence is accepted.
+The ledger's acceptance fields describe the automated run at the time it was
+recorded. The subsequent [live sign-in review][accepted] completes #581.
+The [promotion record][promotion] tracks main integration and stable artifacts.
+
+[accepted]: https://github.com/hubuum/hubuum/issues/581#issuecomment-7063706082
+[guide]: https://github.com/hubuum/hubuum.github.io/blob/f8a2fc2133a74629eb10b66619d0d9aa78446a4f/docs/external-authentication.md
+[promotion]: https://github.com/hubuum/hubuum/issues/582

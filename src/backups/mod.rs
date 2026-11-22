@@ -1,5 +1,4 @@
 use crate::config::AppConfig;
-use crate::models::token_scope::TokenScope;
 use crate::services::authentication::ExecutionPrincipal;
 use chrono::Utc;
 use hubuum_storage_core::StorageRuntimeSettingsGroup;
@@ -8,12 +7,11 @@ use sha2::{Digest, Sha256};
 use crate::errors::ApiError;
 use crate::models::retention::FutureRetention;
 use crate::models::{BackupRequest, NewTaskEventRecord, TaskResultCounts, TaskStatus};
-use crate::permissions::{AppContext, PrincipalRef};
+use crate::permissions::{AppContext, require_unscoped_runtime_admin};
 use crate::services::tasks::{ClaimedTask, TaskStateChange, complete_task};
 use crate::storage::{
     StorageBackupBudget, StorageBackupTaskArtifact, StorageTaskCompletionPayload,
 };
-use crate::traits::AuthzSubject;
 
 #[derive(Clone, Debug)]
 pub struct BackupSettings {
@@ -79,15 +77,14 @@ pub(crate) async fn execute_backup_task(
     context: &AppContext,
     task: &ClaimedTask,
     user: &ExecutionPrincipal,
-    scopes: Option<&TokenScope>,
     settings: &BackupSettings,
 ) -> Result<TaskStatus, ApiError> {
+    require_unscoped_runtime_admin(context, user, task.submitted_token_scoped).await?;
     let payload = task
         .request_payload
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Backup task payload is missing".to_string()))?;
     let request: BackupRequest = serde_json::from_value(payload)?;
-    authorize_backup_request(context, user, scopes).await?;
     let document =
         crate::restores::replay::capture(context, request.include_history, settings.budget())
             .await?;
@@ -135,28 +132,15 @@ pub(crate) async fn execute_backup_task(
     TaskStatus::from_db(&finished.status)
 }
 
-pub(crate) async fn authorize_backup_request(
-    context: &AppContext,
-    user: &impl AuthzSubject,
-    scopes: Option<&TokenScope>,
-) -> Result<(), ApiError> {
-    let principal = PrincipalRef::load(context, user).await?;
-    if scopes.is_some() || !context.permission_backend().is_admin(&principal).await? {
-        return Err(ApiError::Forbidden(
-            "A full backup requires an unscoped administrator token".to_string(),
-        ));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use rstest::rstest;
 
-    use super::{BackupSettings, authorize_backup_request};
+    use super::BackupSettings;
     use crate::errors::ApiError;
+    use crate::permissions::require_unscoped_runtime_admin;
     use crate::permissions::test_support::MockTreetopBackend;
     use crate::storage::StorageBackupBudget;
     use crate::tests::{TestContext, create_test_group};
@@ -169,7 +153,7 @@ mod tests {
             Arc::new(MockTreetopBackend::new()),
         );
 
-        let result = authorize_backup_request(&context, &test.admin_user, None).await;
+        let result = require_unscoped_runtime_admin(&context, &test.admin_user, false).await;
 
         assert!(matches!(result, Err(ApiError::Forbidden(_))));
     }
@@ -189,7 +173,7 @@ mod tests {
             Arc::new(backend),
         );
 
-        authorize_backup_request(&context, &test.normal_user, None)
+        require_unscoped_runtime_admin(&context, &test.normal_user, false)
             .await
             .unwrap();
     }
