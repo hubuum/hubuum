@@ -248,8 +248,9 @@ clients must begin fresh interactions. No legacy derivation fallback is retained
 
 Logical backups exclude interactions. Logical restore and offline security
 recovery discard pending, ready and consumed interaction records. External Rust
-adapters must upgrade the complete SDK graph to `0.9.0`; see the
-[SDK migration guide](storage_adapter_sdk.md#upgrading-from-08-to-09).
+adapters must implement the [interaction storage contract introduced in SDK
+0.9](storage_adapter_sdk.md#upgrading-from-08-to-09) and pin the complete SDK
+graph to the [current coordinated version](storage_adapter_sdk.md).
 
 ## Reproducing browser qualification
 
