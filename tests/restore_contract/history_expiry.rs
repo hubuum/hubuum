@@ -9,7 +9,9 @@ use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
+mod image;
 mod race;
+use image::FamilyImage;
 use race::{replay_with_queued_restore, restore_with_queued_replay};
 
 #[derive(Default)]
@@ -156,7 +158,18 @@ async fn assert_closed_object_present(
 async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
     #[case] kind: StorageBackendKind,
     #[case] expiry_first: bool,
-    #[values(Family::Collection, Family::Class, Family::Object)] family: Family,
+    #[values(
+        Family::Collection,
+        Family::Class,
+        Family::Object,
+        Family::ClassRelation,
+        Family::ObjectRelation,
+        Family::ExportTemplate,
+        Family::RemoteTarget,
+        Family::ComputedDefinitions,
+        Family::ClassSchema
+    )]
+    family: Family,
     #[values(false, true)] size: bool,
 ) {
     let _guard = RESTORE_TEST_LOCK.lock().await;
@@ -190,26 +203,37 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             "expiry_live",
         ];
         let source = match family {
-            Family::Collection => HistorySource::Collection(class.collection_id()),
-            Family::Class => HistorySource::Class(class.id()),
-            Family::Object => HistorySource::Object(
+            Family::Collection => Some(HistorySource::Collection(class.collection_id())),
+            Family::Class => Some(HistorySource::Class(class.id())),
+            Family::Object => Some(HistorySource::Object(
                 fixture
                     .create_object(class.id(), versions[0])
                     .await
                     .unwrap()
                     .id(),
-            ),
-            _ => unreachable!("unsupported restore fixture family"),
+            )),
+            Family::ClassRelation
+            | Family::ObjectRelation
+            | Family::ExportTemplate
+            | Family::RemoteTarget
+            | Family::ComputedDefinitions
+            | Family::ClassSchema => None,
         };
-        let subject = source.target();
-        let scope = match source {
-            HistorySource::Collection(_) => HistoryPolicyScope::Collection {
-                identity: current_identity(&fixture, subject).await.resource(),
-            },
-            HistorySource::Class(_) | HistorySource::Object(_) => HistoryPolicyScope::Class {
-                identity: current_identity(&fixture, HistorySource::Class(class.id()).target())
-                    .await
-                    .resource(),
+        let scope = match family {
+            Family::Class | Family::Object | Family::ComputedDefinitions => {
+                HistoryPolicyScope::Class {
+                    identity: current_identity(&fixture, HistorySource::Class(class.id()).target())
+                        .await
+                        .resource(),
+                }
+            }
+            _ => HistoryPolicyScope::Collection {
+                identity: current_identity(
+                    &fixture,
+                    HistorySource::Collection(class.collection_id()).target(),
+                )
+                .await
+                .resource(),
             },
         };
         let key = HistoryPolicyKey::new(family, scope).unwrap();
@@ -252,7 +276,7 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             .await
             .unwrap();
         // Close a version in the same collection but outside the governing class.
-        let sibling = if let HistorySource::Object(_) = source {
+        let sibling = if family == Family::Object {
             let other = fixture.create_class("expiry_sibling_class").await.unwrap();
             let object = fixture
                 .create_object(other.id(), "sibling_original")
@@ -269,12 +293,36 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             None
         };
         let mut closed = Vec::new();
-        for next in &versions[1..] {
-            closed.push(current_identity(&fixture, subject).await);
-            source.update(&fixture, next).await;
+        let before_updates = FamilyImage::read(fixture.capture(true).await.unwrap(), family);
+        if let Some(resource) = source {
+            for next in &versions[1..] {
+                closed.push(current_identity(&fixture, resource.target()).await);
+                resource.update(&fixture, next).await;
+            }
+        } else {
+            match family {
+                Family::ClassRelation => fixture.close_class_relation_versions(&class).await,
+                Family::ObjectRelation => fixture.close_object_relation_versions(&class).await,
+                Family::ExportTemplate => fixture.close_export_template_versions().await,
+                Family::RemoteTarget => fixture.close_remote_target_versions().await,
+                Family::ComputedDefinitions => {
+                    fixture.close_computed_definition_versions(&class).await
+                }
+                Family::ClassSchema => fixture.create_expirable_schema_events().await,
+                _ => unreachable!("resource versions prepared above"),
+            }
+            .unwrap();
         }
-        let live = current_identity(&fixture, subject).await;
         let backup = fixture.capture(true).await.unwrap();
+        let mut survivors = FamilyImage::read(backup.clone(), family);
+        if source.is_none() {
+            closed = survivors.newly_closed_since(&before_updates);
+        }
+        assert!(
+            closed.len() >= 3,
+            "exercise multiple independent receipts for {family:?}"
+        );
+        survivors.remove_expected(&closed);
         let runtime = storage.register_history_runtime(None).await.unwrap();
         let application = storage
             .capture_application_execution(Some(runtime.owner()))
@@ -307,14 +355,38 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             .clone();
         batch = Some(manifest.identity());
         assert_eq!(manifest.members().len(), closed.len());
-        for (identity, name) in closed.into_iter().zip(versions) {
+        if family == Family::ObjectRelation {
+            let deletions = manifest
+                .members()
+                .iter()
+                .filter(|member| matches!(member.anchor(), HistoryRetentionAnchor::Deleted(_)))
+                .count();
+            assert_eq!(
+                (manifest.members().len(), deletions),
+                (6, 3),
+                "three immutable edges each leave a closed value and a tombstone"
+            );
+        }
+        for (index, identity) in closed.into_iter().enumerate() {
             let member = manifest
                 .members()
                 .iter()
                 .find(|member| member.target() == identity)
                 .expect("every closed version is in the manifest");
             assert_eq!(member.family(), family);
-            if let HistorySource::Object(id) = source {
+            assert!(
+                member
+                    .attributions()
+                    .iter()
+                    .all(|owner| owner.matches(scope))
+            );
+            if matches!(family, Family::ClassRelation | Family::ObjectRelation) {
+                let [left, right] = member.attributions() else {
+                    panic!("a relation must retain both endpoint classes");
+                };
+                assert_ne!(left.class().unwrap(), right.class().unwrap());
+            }
+            if let Some(HistorySource::Object(id)) = source {
                 let facts = member
                     .object_authorization()
                     .expect("object expiry retains the original authorization facts");
@@ -322,7 +394,7 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
                 assert_eq!(facts.object_id(), id);
                 assert_eq!(facts.class_id(), class.id());
                 assert_eq!(facts.collection_id(), class.collection_id());
-                assert_eq!(facts.name(), name);
+                assert_eq!(facts.name(), versions[index]);
             }
         }
         let target = manifest.members()[0].target();
@@ -367,7 +439,10 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             .await;
         }
         trace.assert_captures(manifest.members().len(), usize::from(expiry_first));
-        assert_eq!(current_identity(&fixture, subject).await, live);
+        assert_eq!(
+            FamilyImage::read(fixture.capture(true).await.unwrap(), family),
+            survivors
+        );
         if let Some((object, original)) = &sibling {
             assert_closed_object_present(&fixture, object, *original).await;
         }
@@ -403,7 +478,10 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
         )
         .await;
         trace.assert_captures(manifest.members().len(), manifest.members().len());
-        assert_eq!(current_identity(&fixture, subject).await, live);
+        assert_eq!(
+            FamilyImage::read(fixture.capture(true).await.unwrap(), family),
+            survivors
+        );
         if let Some((object, original)) = &sibling {
             assert_closed_object_present(&fixture, object, *original).await;
         }

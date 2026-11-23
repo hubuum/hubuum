@@ -101,7 +101,12 @@ async fn copy_present(
         StorageIdentityHistoryKind::Collection => "collections_history",
         StorageIdentityHistoryKind::Class => "hubuumclass_history",
         StorageIdentityHistoryKind::Object => "hubuumobject_history",
-        _ => panic!("unsupported restore fixture family: {family:?}"),
+        StorageIdentityHistoryKind::ClassRelation => "hubuumclass_relation_history",
+        StorageIdentityHistoryKind::ObjectRelation => "hubuumobject_relation_history",
+        StorageIdentityHistoryKind::ExportTemplate => "export_templates_history",
+        StorageIdentityHistoryKind::RemoteTarget => "remote_targets_history",
+        StorageIdentityHistoryKind::ComputedDefinitions => "computed_field_history",
+        StorageIdentityHistoryKind::ClassSchema => "class_schema_history",
     };
     sql_query(format!(
         "SELECT EXISTS(SELECT 1 FROM public.{table}

@@ -456,20 +456,23 @@ identity branch in the runner's isolated restore database. A clean newer copy
 passes the gate; a descendant of admitted history keeps exposure quarantined
 without changing the source, restored copy or retained authority. These fixtures
 qualify native admission and exposure checks. The signed full-history restore
-test covers both PostgreSQL lock orders for collection, class and object history
-under age and logical-size policies. Each fixture admits the three exact
-versions closed by ordinary updates. The object policy targets the owning
-class. A closed object version in a sibling class in the same collection
-survives both restores. The retained manifest preserves each admitted object's
-original name, version and ownership. When restore holds the lock
-first, the queued expiry request rejects its old application incarnation, even
-on a repeated restore with existing receipts. When expiry holds the lock first,
+test covers both PostgreSQL lock orders under age and logical-size policies
+for all nine history families. The fixtures update collection and class
+descriptions, rename objects, change class-relation labels, delete and recreate
+object relations, replace export templates, update remote targets and change
+computed definitions. The schema fixture stages and abandons a revision, then
+deletes its class so the revision no longer protects the class's history events.
+The tests compare the backed-up resource and version identities with the
+current and historical identities after each restore. A sibling class retains
+its closed object version. The retained manifest preserves each admitted
+object's original name, version and ownership.
+
+When restore holds the lock first, it fences the queued expiry request, even
+on a second restore with existing receipts. When expiry holds the lock first,
 the confirmed restore waits for removal and its first receipt to commit. The
-backup then reintroduces that exact version under quarantine. Signed
-reapplication removes it again before release and preserves the original
-receipt, including its checkpoint and removal time. The current resource version
-survives both restores. Concurrent logical restore for the six other history
-families still needs qualification.
+backup then reintroduces that exact version under quarantine. Signed replay
+removes it before release and preserves the original receipt, including its
+checkpoint and removal time.
 Primary admission is not independent checkpoint protection:
 its authority must be captured and independently published before the gated
 executor can remove a copy. Complete

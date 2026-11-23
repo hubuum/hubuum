@@ -1,3 +1,5 @@
+mod expiry_history;
+
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
     ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, ObjectId, PrincipalId,
@@ -48,6 +50,8 @@ pub struct RestoreContractFixture {
     collection_id: CollectionId,
     class: StorageResolvedClass,
     query_usage_id: ResourceId,
+    template: StorageExportTemplate,
+    remote: StorageRemoteTarget,
     retired_class_id: ClassId,
     retired_definition_at: DateTime<Utc>,
     scope: TestScope,
@@ -438,7 +442,7 @@ impl RestoreContractFixture {
             .create_object_relation(&object_relation, &context)
             .await
             .unwrap();
-        let _ = storage
+        let template = storage
             .create_export_template(StorageExportTemplateCreate::new(
                 collection.id(),
                 scope.scoped_name("template"),
@@ -452,7 +456,7 @@ impl RestoreContractFixture {
             ))
             .await
             .unwrap();
-        let _ = storage
+        let remote = storage
             .create_remote_target(StorageRemoteTargetCreate::new(
                 collection.id(),
                 scope.scoped_name("remote"),
@@ -486,6 +490,8 @@ impl RestoreContractFixture {
             collection_id: collection.id(),
             class: resolved,
             query_usage_id: query_usage.metadata().id(),
+            template: template.into_value(),
+            remote: remote.into_value(),
             retired_class_id,
             retired_definition_at,
             scope,
