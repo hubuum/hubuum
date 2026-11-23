@@ -9,6 +9,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Hosted browser interactions use `cookie` 0.18.3 or later in the 0.18 series.
+  This removes the older Actix cookie dependency flagged by RUSTSEC-2026-0594.
+  Hubuum uses opaque session cookies and does not enable private cookie jars.
+
 - Expiry of a retained OAuth access token retires that grant and lets another
   session verify the same identity. Other sessions and personal tokens retain
   their existing freshness requirements. Bulk logout attempts upstream

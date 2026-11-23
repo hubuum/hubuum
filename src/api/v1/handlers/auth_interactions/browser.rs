@@ -1,11 +1,10 @@
 //! Script-free, cookie-bound HTML transport. Client redemption stays server-to-server.
 use actix_web::{
-    HttpRequest, HttpResponse, Responder, ResponseError,
-    cookie::{Cookie, SameSite, time::Duration},
-    get,
+    HttpRequest, HttpResponse, Responder, ResponseError, get,
     http::{Method, StatusCode, header},
     post, web,
 };
+use cookie::{Cookie, SameSite, time::Duration};
 use hubuum_domain::InteractionId;
 use hubuum_storage_core::StorageInteractionView;
 use serde::Deserialize;
@@ -160,13 +159,13 @@ fn cookie(
     id: Option<InteractionId>,
     session: &BrowserSession,
 ) -> Cookie<'static> {
-    Cookie::build(cookie_name(settings, id), session.value())
+    Cookie::build((cookie_name(settings, id), session.value()))
         .path("/")
         .http_only(true)
         .secure(settings.secure())
         .same_site(SameSite::Lax)
         .max_age(Duration::seconds(600))
-        .finish()
+        .build()
 }
 fn session(
     req: &HttpRequest,
@@ -176,8 +175,18 @@ fn session(
     named_session(req, &cookie_name(settings, id))?.ok_or_else(|| InteractionError::Invalid.into())
 }
 
+fn request_cookies(req: &HttpRequest) -> Result<Vec<Cookie<'_>>, ApiError> {
+    let mut cookies = Vec::new();
+    for header in req.headers().get_all(header::COOKIE) {
+        let value =
+            std::str::from_utf8(header.as_bytes()).map_err(|_| InteractionError::Invalid)?;
+        cookies.extend(Cookie::split_parse_encoded(value).filter_map(Result::ok));
+    }
+    Ok(cookies)
+}
+
 fn named_session(req: &HttpRequest, name: &str) -> Result<Option<BrowserSession>, ApiError> {
-    let cookies = req.cookies().map_err(|_| InteractionError::Invalid)?;
+    let cookies = request_cookies(req)?;
     let mut matches = cookies.iter().filter(|cookie| cookie.name() == name);
     let Some(value) = matches.next() else {
         return Ok(None);
@@ -187,13 +196,18 @@ fn named_session(req: &HttpRequest, name: &str) -> Result<Option<BrowserSession>
     }
     BrowserSession::parse(value.value()).map(Some)
 }
+fn append_cookie(response: &mut HttpResponse, cookie: &Cookie<'_>) -> Result<(), ApiError> {
+    let value = header::HeaderValue::from_str(&cookie.encoded().to_string())
+        .map_err(|_| InteractionError::Invalid)?;
+    response.headers_mut().append(header::SET_COOKIE, value);
+    Ok(())
+}
+
 fn with_cookie(
     mut response: HttpResponse,
     cookie: Cookie<'static>,
 ) -> Result<HttpResponse, ApiError> {
-    response
-        .add_cookie(&cookie)
-        .map_err(|_| InteractionError::Invalid)?;
+    append_cookie(&mut response, &cookie)?;
     Ok(response)
 }
 fn redirect(location: String) -> HttpResponse {
@@ -239,7 +253,7 @@ pub async fn entry(context: AppContext, req: HttpRequest) -> Result<impl Respond
         )?;
         // Bound cookie-header growth when entry pages are opened but never submitted.
         let prefix = format!("{}-", cookie_name(&settings, None));
-        let cookies = req.cookies().map_err(|_| InteractionError::Invalid)?;
+        let cookies = request_cookies(&req)?;
         let entries: Vec<_> = cookies
             .iter()
             .filter(|c| c.name().starts_with(&prefix))
@@ -248,8 +262,7 @@ pub async fn entry(context: AppContext, req: HttpRequest) -> Result<impl Respond
             let mut expired = cookie(&settings, None, &session);
             expired.set_name(old.name().to_owned());
             expired.make_removal();
-            page.add_cookie(&expired)
-                .map_err(|_| InteractionError::Invalid)?;
+            append_cookie(&mut page, &expired)?;
         }
         Ok(page)
     })()
@@ -286,9 +299,7 @@ pub async fn attach(
         let mut old = cookie(&settings, None, &session);
         old.set_name(entry_name);
         old.make_removal();
-        response
-            .add_cookie(&old)
-            .map_err(|_| InteractionError::Invalid)?;
+        append_cookie(&mut response, &old)?;
         Ok::<_, ApiError>(response)
     }
     .await

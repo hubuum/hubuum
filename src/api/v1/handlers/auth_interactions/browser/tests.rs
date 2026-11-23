@@ -5,11 +5,11 @@ use std::{
 
 use actix_web::{
     App,
-    cookie::Cookie,
     dev::ServiceResponse,
     http::{StatusCode, header},
     test,
 };
+use cookie::{Cookie, SameSite};
 use hubuum_storage_postgres::{PostgresStorageError, diesel_async_prelude::*, with_connection};
 use rstest::rstest;
 use serde_json::{Value, json};
@@ -399,6 +399,27 @@ async fn bff_redirect_contains_only_bound_id_and_nonce() {
 }
 
 #[actix_web::test]
+async fn request_cookie_parsing_preserves_header_order_and_percent_decoding() {
+    let request = test::TestRequest::get()
+        .append_header((header::COOKIE, "invalid; language=en"))
+        .append_header((header::COOKIE, "team%2Dname=Example%20Team; language=no"))
+        .to_http_request();
+    let cookies = super::request_cookies(&request).unwrap();
+    let pairs: Vec<_> = cookies
+        .iter()
+        .map(|cookie| (cookie.name(), cookie.value()))
+        .collect();
+    assert_eq!(
+        pairs,
+        [
+            ("language", "en"),
+            ("team-name", "Example Team"),
+            ("language", "no")
+        ]
+    );
+}
+
+#[actix_web::test]
 async fn entry_uses_secure_host_only_cookie_and_script_free_html() {
     let f = Fixture::new(false).await;
     let response = f.call(test::TestRequest::get().uri(ENTRY)).await;
@@ -412,7 +433,7 @@ async fn entry_uses_secure_host_only_cookie_and_script_free_html() {
     assert!(cookie.name().starts_with("__Host-"));
     assert_eq!(cookie.http_only(), Some(true));
     assert_eq!(cookie.secure(), Some(true));
-    assert_eq!(cookie.same_site(), Some(actix_web::cookie::SameSite::Lax));
+    assert_eq!(cookie.same_site(), Some(SameSite::Lax));
     assert_eq!(cookie.path(), Some("/"));
     assert!(cookie.domain().is_none());
     assert_eq!(
