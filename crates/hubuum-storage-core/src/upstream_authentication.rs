@@ -280,7 +280,12 @@ impl StorageUpstreamSession {
         self.current_revision.unwrap_or(self.binding.revision())
     }
     pub fn retain_at_revision(&mut self, revision: ResourceRevision) {
-        self.current_revision = Some(revision);
+        if self.current_revision() != revision {
+            // A claim made under the old revision can no longer finish. Its
+            // potentially spent credential must stay consumed.
+            self.lease = None;
+            self.current_revision = Some(revision);
+        }
     }
     pub fn retry_deferred(&self, now: DateTime<Utc>) -> bool {
         self.retry_after.is_some_and(|after| now < after)

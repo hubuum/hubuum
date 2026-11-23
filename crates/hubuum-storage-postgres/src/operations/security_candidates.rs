@@ -166,7 +166,7 @@ pub async fn activate(
             let revision = request.update().expected_revision();
             let next = revision.checked_advance().map_err(|error| PostgresStorageError::internal(error.to_string()))?;
             sql_query("UPDATE auth_upstream_credentials
-                SET document=jsonb_set(document,'{current_revision}',to_jsonb($1::bigint))
+                SET document=jsonb_set(document - 'lease','{current_revision}',to_jsonb($1::bigint))
                 WHERE provider_id=ANY($2) AND COALESCE((document->>'current_revision')::bigint,revision)=$3")
                 .bind::<BigInt,_>(next.get())
                 .bind::<Array<SqlUuid>,_>(retained)
