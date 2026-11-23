@@ -6,7 +6,7 @@ use tracing::{error, info};
 use crate::config::get_config;
 use crate::errors::ApiError;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
-use crate::models::TokenRetentionSettings;
+use crate::models::{TokenLifetime, TokenRetentionSettings};
 use crate::restores::{MaintenanceActivityGuard, with_application_work};
 use crate::storage::{
     AuthenticationStorage, StorageContext, StorageHandle, TokenRetentionStorage, storage_handle,
@@ -69,7 +69,8 @@ async fn token_retention_worker_loop(
         let runtime = crate::config::runtime::for_storage(&pool);
         let config = match runtime {
             Ok(runtime) => {
-                TokenRetentionWorkerConfig::from_config(&runtime).unwrap_or_else(|_| config.clone())
+                TokenRetentionWorkerConfig::from_config(&runtime, config.settings.token_lifetime())
+                    .unwrap_or_else(|_| config.clone())
             }
             Err(_) => config.clone(),
         };
@@ -149,12 +150,15 @@ where
 }
 
 impl TokenRetentionWorkerConfig {
-    fn from_config(config: &crate::config::AppConfig) -> Result<Self, ApiError> {
-        let mut legacy = config.clone();
-        legacy.token_lifetime_hours = crate::config::get_config()?.token_lifetime_hours;
+    fn from_config(
+        config: &crate::config::AppConfig,
+        legacy_lifetime: TokenLifetime,
+    ) -> Result<Self, ApiError> {
         Ok(Self {
             enabled: config.token_retention_purge_enabled,
-            settings: legacy.token_retention_settings()?,
+            settings: config
+                .token_retention_settings()?
+                .with_legacy_lifetime(legacy_lifetime),
             interval: Duration::from_secs(config.token_retention_purge_interval_seconds),
         })
     }
@@ -163,6 +167,25 @@ impl TokenRetentionWorkerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_retention_preserves_the_deployment_lifetime_for_legacy_tokens() {
+        use clap::Parser;
+        let mut runtime = crate::config::AppConfig::parse_from(["hubuum"]);
+        runtime.token_lifetime_hours = 24;
+        runtime.token_retention_days = 7;
+        let legacy = TokenLifetime::from_hours(48).unwrap();
+        let settings = TokenRetentionWorkerConfig::from_config(&runtime, legacy)
+            .unwrap()
+            .settings;
+        assert_eq!(
+            (
+                settings.token_lifetime(),
+                settings.retention_period().days()
+            ),
+            (legacy, 7)
+        );
+    }
 
     #[test]
     fn retention_worker_retries_immediately_after_deleting_rows() {

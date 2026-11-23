@@ -7,11 +7,7 @@ use crate::models::{
     HubuumClassRelationID, NewHubuumClassRelation, PreparedClassRelation,
     ResolvedClassRelationTarget,
 };
-use crate::services::storage_boundary::{
-    class_relation_create_to_storage, prepared_class_relation_from_storage,
-    prepared_class_relation_to_storage, resolved_class_relation_from_storage,
-    resolved_class_relation_to_storage,
-};
+
 use crate::storage::{
     ClassRelationStorage, StorageClassRelation, StorageClassRelationCreate,
     StorageClassRelationLabelsUpdate, StorageError, StorageMutationOutcome,
@@ -57,10 +53,10 @@ impl ClassRelationService {
         command: NewHubuumClassRelation,
     ) -> Result<PreparedClassRelation, ApiError> {
         self.storage
-            .prepare_class_relation(class_relation_create_to_storage(command)?)
+            .prepare_class_relation(command.into())
             .await
             .map_err(ApiError::from)
-            .and_then(prepared_class_relation_from_storage)
+            .map(PreparedClassRelation::from)
     }
 
     pub async fn resolve(
@@ -71,7 +67,7 @@ impl ClassRelationService {
             .resolve_class_relation(id)
             .await
             .map_err(ApiError::from)
-            .and_then(resolved_class_relation_from_storage)
+            .map(ResolvedClassRelationTarget::from)
     }
 
     pub async fn create(
@@ -79,13 +75,13 @@ impl ClassRelationService {
         prepared: &PreparedClassRelation,
         context: &EventContext,
     ) -> Result<ResolvedClassRelationTarget, ApiError> {
-        let prepared = prepared_class_relation_to_storage(prepared);
+        let prepared = prepared.as_storage();
         self.storage
             .create_class_relation(prepared, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(resolved_class_relation_from_storage)
+            .map(ResolvedClassRelationTarget::from)
     }
 
     pub async fn update_labels(
@@ -95,15 +91,11 @@ impl ClassRelationService {
         context: &EventContext,
     ) -> Result<ResolvedClassRelationTarget, ApiError> {
         self.storage
-            .update_class_relation_labels(
-                resolved_class_relation_to_storage(target),
-                labels,
-                context,
-            )
+            .update_class_relation_labels(target.as_storage(), labels, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(resolved_class_relation_from_storage)
+            .map(ResolvedClassRelationTarget::from)
     }
 
     pub async fn delete(
@@ -111,7 +103,7 @@ impl ClassRelationService {
         target: &ResolvedClassRelationTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        let target = resolved_class_relation_to_storage(target);
+        let target = target.as_storage();
         self.storage
             .delete_class_relation(target, context)
             .await
@@ -385,10 +377,7 @@ mod tests {
         let lifecycle = &harness.services.class_relations().storage;
         let created = prepare_and_create_class_relation(
             lifecycle.as_ref(),
-            crate::services::storage_boundary::class_relation_create_to_storage(
-                harness.command(&from_class, &to_class),
-            )
-            .expect("valid fixture command"),
+            harness.command(&from_class, &to_class).into(),
             &EventContext::system(),
         )
         .await

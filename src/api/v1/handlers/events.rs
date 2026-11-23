@@ -1,7 +1,6 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use actix_web::{HttpRequest, Responder, get, web};
 
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::events::{EntityType, EventResponse};
 use crate::extractors::Authenticated;

@@ -3,13 +3,14 @@ use std::fmt;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
-    AuthorizationGrantId, ClassId, CollectionId, GroupId, IdentityScopeId, ObjectId, PrincipalId,
-    ResourceId, ResourceRevision,
+    AuthorizationGrantId, CollectionId, GroupId, IdentityScopeId, PrincipalId, ResourceId,
+    ResourceRevision,
 };
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
 use crate::validation::validate_sync_timestamps;
+use crate::{StorageAuthorizationClassResource, StorageAuthorizationObjectResource};
 use crate::{
     StorageCandidatePage, StorageCandidatePageLimit, StorageError, StorageMutationOutcome,
     StoragePage, StorageValidationError,
@@ -1172,98 +1173,6 @@ impl fmt::Debug for StorageAuthorizationResourceIds {
     }
 }
 
-/// Class facts needed to construct an authorization resource.
-#[derive(Clone, PartialEq, Eq)]
-pub struct StorageAuthorizationClassResource {
-    id: ClassId,
-    collection_id: CollectionId,
-}
-
-impl StorageAuthorizationClassResource {
-    #[must_use]
-    pub const fn new(id: ClassId, collection_id: CollectionId) -> Self {
-        Self { id, collection_id }
-    }
-
-    #[must_use]
-    pub const fn id(&self) -> ClassId {
-        self.id
-    }
-
-    #[must_use]
-    pub const fn collection_id(&self) -> CollectionId {
-        self.collection_id
-    }
-}
-
-impl fmt::Debug for StorageAuthorizationClassResource {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("StorageAuthorizationClassResource")
-            .field("id", &"[redacted]")
-            .field("collection_id", &"[redacted]")
-            .finish()
-    }
-}
-
-/// Object facts needed to construct an authorization resource.
-#[derive(Clone, PartialEq, Eq)]
-pub struct StorageAuthorizationObjectResource {
-    id: ObjectId,
-    collection_id: CollectionId,
-    class_id: ClassId,
-    name: String,
-}
-
-impl StorageAuthorizationObjectResource {
-    #[must_use]
-    pub fn new(
-        id: ObjectId,
-        collection_id: CollectionId,
-        class_id: ClassId,
-        name: impl Into<String>,
-    ) -> Self {
-        Self {
-            id,
-            collection_id,
-            class_id,
-            name: name.into(),
-        }
-    }
-
-    #[must_use]
-    pub const fn id(&self) -> ObjectId {
-        self.id
-    }
-
-    #[must_use]
-    pub const fn collection_id(&self) -> CollectionId {
-        self.collection_id
-    }
-
-    #[must_use]
-    pub const fn class_id(&self) -> ClassId {
-        self.class_id
-    }
-
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-impl fmt::Debug for StorageAuthorizationObjectResource {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("StorageAuthorizationObjectResource")
-            .field("id", &"[redacted]")
-            .field("collection_id", &"[redacted]")
-            .field("class_id", &"[redacted]")
-            .field("name", &"[redacted]")
-            .finish()
-    }
-}
-
 /// Mandatory authorization-data contract for every selectable storage backend.
 ///
 /// Policy decisions remain the responsibility of the configured permission
@@ -1370,6 +1279,7 @@ pub trait AuthorizationDataStorage: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hubuum_domain::{ClassId, ObjectId};
 
     fn principal(id: i32) -> PrincipalId {
         PrincipalId::new(id).unwrap()

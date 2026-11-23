@@ -9,6 +9,7 @@ mod import;
 mod inventory;
 mod login;
 mod process;
+mod refresh;
 mod registry;
 mod remote_call;
 mod schema;

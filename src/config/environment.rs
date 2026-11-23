@@ -918,9 +918,10 @@ pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
     "src/config.rs",
     #[cfg(any(test, feature = "integration-test-support"))]
     "src/config/control_recovery.rs",
+    "src/config/test_environment.rs",
     "src/config/token_hash.rs",
     "src/administration.rs",
-    "src/logger.rs",
+    "src/lib.rs",
     "src/observability/metrics/checkpoint.rs",
     "src/secrets.rs",
     "src/test_support.rs",

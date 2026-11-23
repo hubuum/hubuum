@@ -126,7 +126,7 @@ impl DeletionControlStorage for MemoryStorage {
         };
         Ok(ApplicationWorkAdmission::new(
             permit,
-            state.maintenance_state,
+            state.restore_coordinator.maintenance_state(),
         ))
     }
 
@@ -274,9 +274,7 @@ impl DeletionControlStorage for MemoryStorage {
         }
         state.application_control = released;
         if state.pending_restore {
-            state.maintenance_state = MaintenanceState::Normal;
-            state.maintenance_restore_job_id = None;
-            state.restore_instances.clear();
+            state.restore_coordinator = state.restore_coordinator.after_replay(false);
             state.pending_restore = false;
         }
         *guard = state;
@@ -498,7 +496,7 @@ impl MemoryState {
                 .new_audit_events_since(&self.deletion_control)
                 .map_err(invalid_contract_value)?;
             let mut envelopes = Vec::with_capacity(pending.len());
-            let mut sequence = self.next_event_sequence;
+            let mut sequences = self.event_sequences;
             for event in pending {
                 let existing = self
                     .events
@@ -506,10 +504,13 @@ impl MemoryState {
                     .map(|record| record.as_parts().0)
                     .find(|record| record.event_id() == event.event_id().as_uuid());
                 let envelope = EventEnvelope::builder()
-                    .id(
-                        EventSequence::new(existing.map_or(sequence, |record| record.id().get()))
-                            .map_err(|error| StorageError::backend_failure(error.to_string()))?,
-                    )
+                    .id(EventSequence::new(match existing {
+                        Some(record) => record.id().get(),
+                        None => sequences
+                            .allocate()
+                            .map_err(|_| StorageError::unavailable("Audit sequence exhausted"))?,
+                    })
+                    .map_err(|error| StorageError::backend_failure(error.to_string()))?)
                     .event_id(event.event_id().as_uuid())
                     .occurred_at(event.occurred_at().expect("protected audit occurrence"))
                     .entity_type(event.entity_type())
@@ -536,9 +537,6 @@ impl MemoryState {
                     }
                     continue;
                 }
-                sequence = sequence
-                    .checked_add(1)
-                    .ok_or_else(|| StorageError::unavailable("Audit sequence exhausted"))?;
                 envelopes.push(envelope);
             }
             for envelope in envelopes {
@@ -547,7 +545,7 @@ impl MemoryState {
                     StorageRecordedEvent::new(envelope, None, None).with_logical_identity(identity),
                 );
             }
-            self.next_event_sequence = sequence;
+            self.event_sequences = sequences;
             self.application_control = ApplicationControlState::quarantined(fence);
             self.deletion_control = next;
         }

@@ -1,3 +1,4 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use actix_web::{HttpRequest, Responder, routes, web};
 // `routes` consumes these method attributes before rustc records the import.
 #[allow(unused_imports)]
@@ -5,8 +6,6 @@ use actix_web::get;
 use tracing::debug;
 
 use super::computed_personal_owner;
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::object_aggregate::parse_object_aggregate_query;

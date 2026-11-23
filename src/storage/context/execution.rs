@@ -105,7 +105,10 @@ impl StorageHandle {
     pub(crate) fn with_runtime_owner(self, owner: RuntimeOwner) -> Self {
         let mut bound = match &self.inner.implementation {
             BackendImplementation::Postgres(backend) => {
-                Self::from_postgres_backend(backend.clone().with_runtime_owner(owner.clone()))
+                Self::from_postgres_backend_with_storage_observer(
+                    backend.clone().with_runtime_owner(owner.clone()),
+                    self.inner.observer.clone(),
+                )
             }
             BackendImplementation::Memory(backend) => {
                 Self::from_registered_backend(backend.clone().with_runtime_owner(owner.clone()))

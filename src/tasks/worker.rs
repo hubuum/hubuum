@@ -5,7 +5,7 @@ use hubuum_storage_core::{
     TaskWorkerId,
 };
 use std::future::Future;
-use std::sync::{LazyLock, Mutex, Once, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 
 use actix_rt::time::{Instant as TokioInstant, sleep, sleep_until};
@@ -54,18 +54,6 @@ static TASK_WORKER_LISTENER: Once = Once::new();
 static TASK_WORKER_NOTIFY: OnceLock<Notify> = OnceLock::new();
 static TASK_RECOVERY_STATE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 static TASK_WORKER_SETTINGS: OnceLock<TaskWorkerSettings> = OnceLock::new();
-static TASK_LEASE_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .thread_name("task-lease-heartbeat")
-        .enable_all()
-        .build()
-        .expect("task lease heartbeat runtime must start")
-});
-
-pub(super) fn task_lease_runtime() -> &'static tokio::runtime::Runtime {
-    &TASK_LEASE_RUNTIME
-}
 
 pub fn initialize_task_worker_settings(settings: TaskWorkerSettings) -> Result<(), String> {
     TASK_WORKER_SETTINGS
@@ -608,7 +596,7 @@ where
     // Task execution runs on a current-thread Actix runtime and may spend long
     // stretches in synchronous validation or rendering. Drive lease renewal on
     // a dedicated runtime thread so that work cannot starve its own heartbeat.
-    let handle = TASK_LEASE_RUNTIME.spawn(async move {
+    let handle = super::control::spawn_lease_monitor(async move {
         let lost = monitor_task_lease(
             task_id,
             settings,

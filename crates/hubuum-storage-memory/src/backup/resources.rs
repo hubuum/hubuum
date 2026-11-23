@@ -98,35 +98,37 @@ pub(super) fn restore(
                     Ok((r.integer("id")?, value))
                 })
                 .collect::<Result<_, StorageError>>()?;
-            state.$sequence = next_id(&state.$field)?;
+            if let Some(last) = state.$field.keys().next_back() {
+                state.$sequence.observe(*last);
+            }
         };
     }
-    restore_map!(Collections, collections, collection, next_collection_id);
-    restore_map!(Classes, classes, class, next_class_id);
-    restore_map!(Objects, objects, object, next_object_id);
+    restore_map!(Collections, collections, collection, collection_ids);
+    restore_map!(Classes, classes, class, class_ids);
+    restore_map!(Objects, objects, object, object_ids);
     restore_map!(
         ClassRelations,
         class_relations,
         class_relation,
-        next_class_relation_id
+        class_relation_ids
     );
     restore_map!(
         ObjectRelations,
         object_relations,
         object_relation,
-        next_object_relation_id
+        object_relation_ids
     );
     restore_map!(
         ExportTemplates,
         export_templates,
         export_template,
-        next_export_template_id
+        export_template_ids
     );
     restore_map!(
         RemoteTargets,
         remote_targets,
         remote_target,
-        next_remote_target_id
+        remote_target_ids
     );
     Ok(())
 }

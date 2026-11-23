@@ -234,7 +234,7 @@ pub(crate) async fn update_with_origin(
     if request.group() == StorageRuntimeSettingsGroup::Network {
         let mut candidate = crate::config::get_config()?.clone();
         if let Some(value) = request.assignment().value() {
-            crate::config::runtime::apply(&mut candidate, value);
+            candidate.apply_runtime_policy(value);
         }
         origin
             .ok_or_else(|| {
@@ -265,8 +265,8 @@ pub(crate) async fn update_with_origin(
         let mut candidate = crate::config::runtime::for_storage(context.backend())?
             .as_ref()
             .clone();
-        crate::config::runtime::apply(&mut candidate, value);
-        crate::config::runtime::validate(&candidate)?;
+        candidate.apply_runtime_policy(value);
+        candidate.validate_runtime_policy()?;
         if let StorageRuntimeSettingsValue::Tokens(policy) = value
             && *policy.lifetime_hours() > candidate.max_token_lifetime_hours
         {

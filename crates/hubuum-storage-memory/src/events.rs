@@ -1,4 +1,5 @@
 use super::*;
+use crate::event_deliveries::{rebuild_event_delivery, with_deferred_reason};
 use hubuum_events_core::EventSubscriptionScope;
 use hubuum_storage_core::StorageEventDeliveryConfiguration;
 use hubuum_storage_core::StorageEventDeliveryDisposition;
@@ -7,7 +8,6 @@ use hubuum_storage_core::{
     StorageEventSinkGrantChange,
 };
 use hubuum_storage_core::{StorageEventNotificationInput, StorageEventNotificationSelection};
-use hubuum_storage_core::{StorageIdentitySubject, StorageIdentityTarget};
 use std::time::Instant;
 
 #[async_trait]
@@ -191,13 +191,8 @@ impl EventConfigurationStorage for MemoryStorage {
             return Err(StorageError::not_found("Collection was not found"));
         }
         let key = (request.sink_id().id(), request.collection_id().id());
-        let changed = match request.action() {
-            EventSinkGrantAction::Grant => {
-                state.store_sink_grant(request.sink_id(), request.collection_id())
-            }
-            EventSinkGrantAction::Revoke => state.event_sink_grants.remove(&key),
-        };
-        if !changed {
+        let grant = request.action() == EventSinkGrantAction::Grant;
+        if state.event_sink_grants.contains(&key) == grant {
             return Ok(StorageMutationOutcome::unchanged(()));
         }
         let document = AuditDocument::try_new(
@@ -223,6 +218,11 @@ impl EventConfigurationStorage for MemoryStorage {
             None,
             None,
         )?;
+        if grant {
+            state.store_sink_grant(request.sink_id(), request.collection_id());
+        } else {
+            state.event_sink_grants.remove(&key);
+        }
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 
@@ -293,9 +293,8 @@ impl EventConfigurationStorage for MemoryStorage {
                 request.name()
             )));
         }
-        let id = EventSinkId::new(state.next_event_sink_id)
+        let id = EventSinkId::new(state.event_sink_ids.next()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        state.next_event_sink_id += 1;
         let now = Utc::now();
         let sink = StorageEventSink::builder(
             id,
@@ -312,7 +311,6 @@ impl EventConfigurationStorage for MemoryStorage {
         .enabled(request.enabled())
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.store_event_sink(id.id(), sink.clone());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSink,
@@ -323,6 +321,8 @@ impl EventConfigurationStorage for MemoryStorage {
             request.event_context(),
             format!("Event sink '{}' created", sink.name()),
         )?;
+        state.event_sink_ids.observe(id.id());
+        state.store_event_sink(id.id(), sink.clone());
         Ok(StorageMutationOutcome::committed(sink, receipt))
     }
 
@@ -391,22 +391,25 @@ impl EventConfigurationStorage for MemoryStorage {
         .enabled(enabled)
         .try_build()
         .map_err(invalid_contract_value)?;
+        let mut schedule = None;
+        let mut deliveries = Vec::new();
         if sink.delivery_policy() != current.delivery_policy() {
             let now = Utc::now();
-            if let Some((next, blocked)) = state.event_sink_schedule.get_mut(&sink.id().id()) {
-                *next = match (
+            if let Some(&(next, blocked)) = state.event_sink_schedule.get(&sink.id().id()) {
+                let next = match (
                     current.delivery_policy().min_interval_ms(),
                     sink.delivery_policy().min_interval_ms(),
                 ) {
                     (Some(old), Some(new)) => {
-                        *next + chrono::Duration::milliseconds(new as i64 - old as i64)
+                        next + chrono::Duration::milliseconds(new as i64 - old as i64)
                     }
                     _ => now,
                 };
-                let eligible = (*next).max(*blocked).max(now);
-                let reason = if *blocked > now {
+                schedule = Some((next, blocked));
+                let eligible = next.max(blocked).max(now);
+                let reason = if blocked > now {
                     Some("provider_rate")
-                } else if *next > now {
+                } else if next > now {
                     Some("configured_rate")
                 } else {
                     None
@@ -417,27 +420,13 @@ impl EventConfigurationStorage for MemoryStorage {
                     .filter(|subscription| subscription.sink_id() == sink.id())
                     .map(|subscription| subscription.id())
                     .collect::<std::collections::HashSet<_>>();
-                for delivery in state.event_deliveries.values_mut().filter(|delivery| {
-                    subscriptions.contains(&delivery.subscription_id())
-                        && delivery.status() == EventDeliveryStatus::Pending
-                        && delivery.deferred_reason().is_some()
-                }) {
-                    *delivery = delivery_metadata(
-                        rebuild_event_delivery(
-                            delivery,
-                            delivery.status(),
-                            delivery.attempts(),
-                            eligible,
-                            delivery.last_error().map(str::to_owned),
-                            delivery.locked_until(),
-                        )?,
-                        delivery.purpose(),
-                        reason.map(str::to_owned),
-                    )?;
-                }
+                deliveries = state.event_deliveries.rescheduled_deferred(
+                    &subscriptions,
+                    eligible,
+                    reason,
+                )?;
             }
         }
-        state.store_event_sink(sink.id().id(), sink.clone());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSink,
@@ -448,6 +437,13 @@ impl EventConfigurationStorage for MemoryStorage {
             request.event_context(),
             format!("Event sink '{}' updated", sink.name()),
         )?;
+        if let Some(schedule) = schedule {
+            state.event_sink_schedule.insert(sink.id().id(), schedule);
+        }
+        for delivery in deliveries {
+            state.store_event_delivery(delivery);
+        }
+        state.store_event_sink(sink.id().id(), sink.clone());
         Ok(StorageMutationOutcome::committed(sink, receipt))
     }
 
@@ -465,13 +461,11 @@ impl EventConfigurationStorage for MemoryStorage {
         }
         let sink = state
             .event_sinks
-            .remove(&request.id().id())
+            .get(&request.id().id())
+            .cloned()
             .ok_or_else(|| {
                 StorageError::not_found(format!("Event sink {} was not found", request.id().id()))
             })?;
-        state
-            .event_sink_grants
-            .retain(|(sink, _)| *sink != request.id().id());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSink,
@@ -482,6 +476,11 @@ impl EventConfigurationStorage for MemoryStorage {
             request.event_context(),
             format!("Event sink '{}' deleted", sink.name()),
         )?;
+        state.event_sinks.remove(&request.id().id());
+        state.event_sink_schedule.remove(&request.id().id());
+        state
+            .event_sink_grants
+            .retain(|(sink, _)| *sink != request.id().id());
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 
@@ -547,9 +546,8 @@ impl EventConfigurationStorage for MemoryStorage {
                 request.name()
             )));
         }
-        let id = EventSubscriptionId::new(state.next_event_subscription_id)
+        let id = EventSubscriptionId::new(state.event_subscription_ids.next()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        state.next_event_subscription_id += 1;
         let now = Utc::now();
         let subscription = StorageEventSubscription::builder(
             id,
@@ -568,7 +566,6 @@ impl EventConfigurationStorage for MemoryStorage {
         .enabled(request.enabled())
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.store_event_subscription(id.id(), subscription.clone());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSubscription,
@@ -579,6 +576,8 @@ impl EventConfigurationStorage for MemoryStorage {
             request.event_context(),
             format!("Event subscription '{}' created", subscription.name()),
         )?;
+        state.event_subscription_ids.observe(id.id());
+        state.store_event_subscription(id.id(), subscription.clone());
         Ok(StorageMutationOutcome::committed(subscription, receipt))
     }
 
@@ -636,7 +635,6 @@ impl EventConfigurationStorage for MemoryStorage {
         .enabled(enabled)
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.store_event_subscription(subscription.id().id(), subscription.clone());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSubscription,
@@ -647,6 +645,7 @@ impl EventConfigurationStorage for MemoryStorage {
             request.event_context(),
             format!("Event subscription '{}' updated", subscription.name()),
         )?;
+        state.store_event_subscription(subscription.id().id(), subscription.clone());
         Ok(StorageMutationOutcome::committed(subscription, receipt))
     }
 
@@ -657,8 +656,9 @@ impl EventConfigurationStorage for MemoryStorage {
         let mut state = self.state.write().await?;
         let subscription = state
             .event_subscriptions
-            .remove(&request.id().id())
+            .get(&request.id().id())
             .filter(|subscription| subscription.scope() == request.scope())
+            .cloned()
             .ok_or_else(|| {
                 StorageError::not_found(format!(
                     "Event subscription {} was not found in scope {:?}",
@@ -666,16 +666,6 @@ impl EventConfigurationStorage for MemoryStorage {
                     request.scope()
                 ))
             })?;
-        let delivery_ids = state
-            .event_deliveries
-            .values()
-            .filter(|delivery| delivery.subscription_id() == subscription.id())
-            .map(|delivery| delivery.id().id())
-            .collect::<Vec<_>>();
-        for delivery_id in delivery_ids {
-            state.event_deliveries.remove(&delivery_id);
-            state.event_delivery_claims.remove(&delivery_id);
-        }
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSubscription,
@@ -686,6 +676,10 @@ impl EventConfigurationStorage for MemoryStorage {
             request.event_context(),
             format!("Event subscription '{}' deleted", subscription.name()),
         )?;
+        state.event_subscriptions.remove(&subscription.id().id());
+        state
+            .event_deliveries
+            .remove_where(|delivery| delivery.subscription_id() == subscription.id());
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 }
@@ -705,7 +699,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<StorageEventDelivery>, StorageError> {
         let mut state = self.state.write().await?;
         let input = memory_notification(&state, selection)?;
-        let id = EventDeliveryId::new(state.next_event_delivery_id)
+        let id = EventDeliveryId::new(state.delivery_ids.next()?)
             .map_err(|e| StorageError::internal(e.to_string()))?;
         let now = Utc::now();
         let delivery = StorageEventDelivery::builder(
@@ -744,8 +738,8 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
             None,
             None,
         )?;
-        state.next_event_delivery_id += 1;
-        state.store_event_delivery(id.id(), delivery.clone());
+        state.delivery_ids.observe(id.id());
+        state.store_event_delivery(delivery.clone());
         Ok(StorageMutationOutcome::committed(delivery, receipt))
     }
 
@@ -775,7 +769,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
             .read()
             .await?
             .event_deliveries
-            .get(&delivery_id.id())
+            .get(delivery_id)
             .cloned()
             .ok_or_else(|| {
                 StorageError::not_found(format!(
@@ -792,7 +786,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
         let mut state = self.state.write().await?;
         let current = state
             .event_deliveries
-            .get(&delivery_id.id())
+            .get(delivery_id)
             .cloned()
             .ok_or_else(|| {
                 StorageError::not_found(format!(
@@ -808,10 +802,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
             None,
             None,
         )?;
-        state.event_delivery_claims.remove(&delivery_id.id());
-        state
-            .event_deliveries
-            .insert(delivery_id.id(), delivery.clone());
+        state.store_event_delivery(delivery.clone());
         Ok(delivery)
     }
 
@@ -822,7 +813,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
         let mut state = self.state.write().await?;
         let current = state
             .event_deliveries
-            .get(&delivery_id.id())
+            .get(delivery_id)
             .cloned()
             .ok_or_else(|| {
                 StorageError::not_found(format!(
@@ -843,10 +834,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
             Some("Marked dead by an administrator".to_string()),
             None,
         )?;
-        state.event_delivery_claims.remove(&delivery_id.id());
-        state
-            .event_deliveries
-            .insert(delivery_id.id(), delivery.clone());
+        state.store_event_delivery(delivery.clone());
         Ok(delivery)
     }
 }
@@ -950,10 +938,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 sink.secret_ref().map(ToOwned::to_owned),
             )
             .map_err(invalid_contract_value)?;
-            state
-                .event_delivery_claims
-                .insert(delivery.id().id(), token);
-            state.store_event_delivery(delivery.id().id(), delivery);
+            state.event_deliveries.store_claimed(delivery, token);
             work.push(StorageEventDeliveryWorkItem::new(
                 claim,
                 envelope,
@@ -999,18 +984,9 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
     ) -> Result<Option<StorageEventDeliveryLease>, StorageError> {
         let check_started = Instant::now();
         let mut state = self.state.write().await?;
-        let Some(delivery) = state
-            .event_deliveries
-            .get(&claim.delivery_id().id())
-            .cloned()
-        else {
+        let Ok(delivery) = state.event_deliveries.claimed(claim).cloned() else {
             return Ok(None);
         };
-        if state.event_delivery_claims.get(&claim.delivery_id().id()) != Some(&claim.token())
-            || delivery.status() != EventDeliveryStatus::InFlight
-        {
-            return Ok(None);
-        }
         let now = Utc::now();
         let Some(remaining) = delivery
             .locked_until()
@@ -1056,8 +1032,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 (!allowed).then(|| "Sink use revoked or destination disabled".to_string()),
                 None,
             )?;
-            state.store_event_delivery(delivery.id().id(), rejected);
-            state.event_delivery_claims.remove(&delivery.id().id());
+            state.store_event_delivery(rejected);
             return Ok(None);
         }
         let interval = state
@@ -1082,9 +1057,8 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 None,
                 None,
             )?;
-            let deferred = delivery_metadata(
-                deferred,
-                delivery.purpose(),
+            let deferred = with_deferred_reason(
+                &deferred,
                 Some(
                     if blocked > now {
                         "provider_rate"
@@ -1094,8 +1068,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                     .to_string(),
                 ),
             )?;
-            state.store_event_delivery(delivery.id().id(), deferred);
-            state.event_delivery_claims.remove(&delivery.id().id());
+            state.store_event_delivery(deferred);
             return Ok(None);
         }
         state.event_sink_schedule.insert(
@@ -1105,8 +1078,10 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 blocked,
             ),
         );
-        let admitted = delivery_metadata(delivery.clone(), delivery.purpose(), None)?;
-        state.store_event_delivery(delivery.id().id(), admitted);
+        let admitted = with_deferred_reason(&delivery, None)?;
+        state
+            .event_deliveries
+            .store_claimed(admitted, claim.token());
         StorageEventDeliveryLease::try_new(claim.clone(), check_started, remaining)
             .map(Some)
             .map_err(invalid_contract_value)
@@ -1119,16 +1094,10 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
     ) -> Result<(), StorageError> {
         let mut state = self.state.write().await?;
         let now = Utc::now();
-        let current = state
-            .event_deliveries
-            .get(&claim.delivery_id().id())
-            .cloned()
-            .ok_or_else(|| StorageError::not_found("Delivery was removed"))?;
-        if state.event_delivery_claims.get(&current.id().id()) != Some(&claim.token())
-            || current.status() != EventDeliveryStatus::InFlight
-            || current
-                .locked_until()
-                .is_none_or(|deadline| deadline <= now)
+        let current = state.event_deliveries.claimed(claim)?.clone();
+        if current
+            .locked_until()
+            .is_none_or(|deadline| deadline <= now)
         {
             return Err(StorageError::conflict("Event delivery claim is stale"));
         }
@@ -1167,15 +1136,10 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                     None,
                     None,
                 )?;
-                delivery_metadata(
-                    updated,
-                    current.purpose(),
-                    Some("provider_rate".to_string()),
-                )?
+                with_deferred_reason(&updated, Some("provider_rate".to_string()))?
             }
         };
-        state.store_event_delivery(current.id().id(), updated);
-        state.event_delivery_claims.remove(&current.id().id());
+        state.store_event_delivery(updated);
         Ok(())
     }
 
@@ -1184,36 +1148,16 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         claim: &StorageEventDeliveryClaim,
     ) -> Result<(), StorageError> {
         let mut state = self.state.write().await?;
-        if state.event_delivery_claims.get(&claim.delivery_id().id()) != Some(&claim.token()) {
-            return Err(StorageError::conflict("Event delivery claim is stale"));
-        }
-        let current = state
-            .event_deliveries
-            .get(&claim.delivery_id().id())
-            .cloned()
-            .ok_or_else(|| StorageError::not_found("Event delivery was not found"))?;
-        if current.status() != EventDeliveryStatus::InFlight
-            || current.attempts() != claim.attempts()
-            || current
-                .locked_until()
-                .is_none_or(|deadline| deadline <= Utc::now())
-        {
-            return Err(StorageError::conflict("Event delivery claim is stale"));
-        }
+        let current = state.event_deliveries.claimed_attempt(claim)?;
         let delivery = rebuild_event_delivery(
-            &current,
+            current,
             EventDeliveryStatus::Succeeded,
             current.attempts(),
             current.next_attempt_at(),
             None,
             None,
         )?;
-        state
-            .event_delivery_claims
-            .remove(&claim.delivery_id().id());
-        state
-            .event_deliveries
-            .insert(claim.delivery_id().id(), delivery);
+        state.store_event_delivery(delivery);
         Ok(())
     }
 
@@ -1224,22 +1168,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         error: &str,
     ) -> Result<(), StorageError> {
         let mut state = self.state.write().await?;
-        if state.event_delivery_claims.get(&claim.delivery_id().id()) != Some(&claim.token()) {
-            return Err(StorageError::conflict("Event delivery claim is stale"));
-        }
-        let current = state
-            .event_deliveries
-            .get(&claim.delivery_id().id())
-            .cloned()
-            .ok_or_else(|| StorageError::not_found("Event delivery was not found"))?;
-        if current.status() != EventDeliveryStatus::InFlight
-            || current.attempts() != claim.attempts()
-            || current
-                .locked_until()
-                .is_none_or(|deadline| deadline <= Utc::now())
-        {
-            return Err(StorageError::conflict("Event delivery claim is stale"));
-        }
+        let current = state.event_deliveries.claimed_attempt(claim)?;
         let attempts = current.attempts() + 1;
         let exhausted = attempts >= settings.max_attempts();
         let status = if exhausted {
@@ -1252,19 +1181,14 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
             .map(|value| DateTime::from_naive_utc_and_offset(value, Utc))
             .ok_or_else(|| StorageError::internal("event retry deadline overflowed"))?;
         let delivery = rebuild_event_delivery(
-            &current,
+            current,
             status,
             attempts,
             next_attempt_at,
             Some(error.to_string()),
             None,
         )?;
-        state
-            .event_delivery_claims
-            .remove(&claim.delivery_id().id());
-        state
-            .event_deliveries
-            .insert(claim.delivery_id().id(), delivery);
+        state.store_event_delivery(delivery);
         Ok(())
     }
 }
@@ -1300,6 +1224,8 @@ impl EventFanoutStorage for MemoryStorage {
             .filter(|subscription| subscription.enabled())
             .cloned()
             .collect::<Vec<_>>();
+        let mut delivery_ids = state.delivery_ids;
+        let mut pending = Vec::new();
         for event in &events {
             for subscription in &subscriptions {
                 let sink_enabled = state
@@ -1318,9 +1244,8 @@ impl EventFanoutStorage for MemoryStorage {
                         && delivery.subscription_id() == subscription.id()
                 });
                 if matches && !exists {
-                    let id = EventDeliveryId::new(state.next_event_delivery_id)
+                    let id = EventDeliveryId::new(delivery_ids.allocate()?)
                         .map_err(|error| StorageError::internal(error.to_string()))?;
-                    state.next_event_delivery_id += 1;
                     let now = Utc::now();
                     let delivery = StorageEventDelivery::builder(
                         id,
@@ -1333,9 +1258,13 @@ impl EventFanoutStorage for MemoryStorage {
                     )
                     .try_build()
                     .map_err(invalid_contract_value)?;
-                    state.store_event_delivery(id.id(), delivery);
+                    pending.push(delivery);
                 }
             }
+        }
+        state.delivery_ids = delivery_ids;
+        for delivery in pending {
+            state.store_event_delivery(delivery);
         }
         state.fanout_event_cursor = events
             .last()
@@ -1496,641 +1425,17 @@ impl EventRetentionStorage for MemoryStorage {
             let (event, _, _) = recorded.clone().into_parts();
             !event_ids.contains(&event.id().get())
         });
-        let terminal_delivery_ids = state
-            .event_deliveries
-            .values()
-            .filter(|delivery| {
-                event_ids.contains(&delivery.event_id().get())
-                    && matches!(
-                        delivery.status(),
-                        EventDeliveryStatus::Succeeded | EventDeliveryStatus::Dead
-                    )
-            })
-            .map(|delivery| delivery.id().id())
-            .collect::<Vec<_>>();
-        for delivery_id in &terminal_delivery_ids {
-            state.event_deliveries.remove(delivery_id);
-            state.event_delivery_claims.remove(delivery_id);
-        }
+        let removed = state.event_deliveries.remove_where(|delivery| {
+            event_ids.contains(&delivery.event_id().get())
+                && matches!(
+                    delivery.status(),
+                    EventDeliveryStatus::Succeeded | EventDeliveryStatus::Dead
+                )
+        });
         Ok(StorageEventRetentionSummary::new(
             before_events - state.events.len(),
-            terminal_delivery_ids.len(),
+            removed,
         ))
-    }
-}
-
-#[async_trait]
-impl HistoryStorage for MemoryStorage {
-    async fn get_computed_field_history(
-        &self,
-        query: StorageComputedFieldHistoryQuery,
-    ) -> Result<Option<StorageHistoricalComputedFields>, StorageError> {
-        let state = self.state.read().await?;
-        state
-            .computed_history
-            .iter()
-            .rev()
-            .find(|record| {
-                record.class_id() == query.class_id() && record.is_effective_at(query.at())
-            })
-            .cloned()
-            .map(|record| record.select(query).map_err(invalid_contract_value))
-            .transpose()
-    }
-
-    async fn list_relation_history(
-        &self,
-        query: StorageRelationHistoryQuery,
-    ) -> Result<StoragePage<StorageRelationHistoryEntry>, StorageError> {
-        let state = self.state.read().await?;
-        crate::backup::list_relation_history(&state, &query)
-    }
-
-    async fn list_history_markers(
-        &self,
-        query: StorageHistoryNavigationQuery,
-    ) -> Result<StoragePage<StorageHistoryMarker>, StorageError> {
-        let state = self.state.read().await?;
-        let options = query.options();
-        let mut entries = state
-            .history
-            .iter()
-            .filter(|entry| {
-                history_matches_resource(entry, query.resource())
-                    && history_scope_allows(query.scope(), entry.value.collection_id())
-                    && query.time_window().contains(entry.valid_from)
-                    && query
-                        .selected()
-                        .contains(StorageHistoryPosition::new(entry.valid_from, entry.id))
-            })
-            .collect::<Vec<_>>();
-        entries.sort_by_key(|entry| (entry.valid_from, entry.id.id()));
-        if options.sort()[0].descending {
-            entries.reverse();
-        }
-        let total = options.include_total().then_some(entries.len() as i64);
-        if let Some(values) = options
-            .cursor_values(options.sort())
-            .map_err(|error| StorageError::invalid_input(error.to_string()))?
-        {
-            let [CursorValue::DateTime(at), CursorValue::Integer(id)] = values.as_ref() else {
-                return Err(StorageError::invalid_input("invalid history cursor values"));
-            };
-            entries.retain(|entry| {
-                let key = (entry.valid_from.naive_utc(), entry.id.id());
-                if options.sort()[0].descending {
-                    key < (*at, *id)
-                } else {
-                    key > (*at, *id)
-                }
-            });
-        }
-        entries.truncate(options.limit().expect("bounded navigation query"));
-        let rows = entries
-            .into_iter()
-            .map(|entry| {
-                let name = match &entry.value {
-                    MemoryHistoryValue::Class(record) => record.name(),
-                    MemoryHistoryValue::Object(record) => record.name(),
-                    _ => unreachable!("resource matched"),
-                };
-                Ok(StorageHistoryMarker::new(
-                    query.resource(),
-                    entry.value.collection_id(),
-                    name.to_owned(),
-                    entry.metadata()?,
-                ))
-            })
-            .collect::<Result<Vec<_>, StorageError>>()?;
-        StoragePage::try_new(rows, total).map_err(invalid_contract_value)
-    }
-
-    async fn get_history_entry(
-        &self,
-        query: StorageHistoryEntryQuery,
-    ) -> Result<Option<StorageHistoryEntry>, StorageError> {
-        let state = self.state.read().await?;
-        state
-            .history
-            .iter()
-            .find(|entry| {
-                entry.id == query.history_id() && history_matches_resource(entry, query.resource())
-            })
-            .map(|entry| match &entry.value {
-                MemoryHistoryValue::Class(record) => {
-                    StorageClassHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                        .map(StorageHistoryEntry::Class)
-                        .map_err(invalid_contract_value)
-                }
-                MemoryHistoryValue::Object(record) => {
-                    StorageObjectHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                        .map(StorageHistoryEntry::Object)
-                        .map_err(invalid_contract_value)
-                }
-                _ => unreachable!("resource matched"),
-            })
-            .transpose()
-    }
-
-    async fn resolve_history_principal_names(
-        &self,
-        principal_ids: Vec<PrincipalIdentity>,
-    ) -> Result<Vec<StorageHistoryPrincipalName>, StorageError> {
-        let state = self.state.read().await?;
-        let requested = principal_ids.into_iter().collect::<BTreeSet<_>>();
-        let mut names = Vec::new();
-        for principal in state.principals.values() {
-            let evidence = state
-                .logical_identities
-                .record(StorageIdentityTarget::Principal(principal.id()))?;
-            if let Some(StorageIdentitySubject::Principal {
-                identity: IdentityReference::Known { identity },
-            }) = evidence.subject()
-                && requested.contains(&identity)
-            {
-                names.push(StorageHistoryPrincipalName::new(identity, principal.name()));
-            }
-        }
-        names.sort_by_key(StorageHistoryPrincipalName::identity);
-        Ok(names)
-    }
-
-    async fn list_collection_history(
-        &self,
-        query: StorageHistoryListQuery,
-    ) -> Result<StoragePage<StorageCollectionHistoryRecord>, StorageError> {
-        let (entity_id, options, scope) = query.into_parts();
-        let state = self.state.read().await?;
-        let mut entries = state
-            .history
-            .iter()
-            .filter(|entry| {
-                entry.value.entity_id() == entity_id.id()
-                    && matches!(entry.value, MemoryHistoryValue::Collection(_))
-                    && history_scope_allows(&scope, entry.value.collection_id())
-            })
-            .collect::<Vec<_>>();
-        entries.reverse();
-        let rows = entries
-            .into_iter()
-            .map(|entry| match &entry.value {
-                MemoryHistoryValue::Collection(record) => {
-                    StorageCollectionHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                        .map_err(invalid_contract_value)
-                }
-                _ => unreachable!("collection history filter guarantees the variant"),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        page(rows, &options)
-    }
-
-    async fn get_collection_history_as_of(
-        &self,
-        query: StorageHistoryAsOfQuery,
-    ) -> Result<Option<StorageCollectionHistoryRecord>, StorageError> {
-        let (entity_id, at) = query.into_parts();
-        let state = self.state.read().await?;
-        let entry = state.history.iter().rev().find(|entry| {
-            entry.value.entity_id() == entity_id.id()
-                && matches!(entry.value, MemoryHistoryValue::Collection(_))
-                && entry.valid_from <= at
-        });
-        let Some(entry) = entry else {
-            return Ok(None);
-        };
-        if entry.operation == StorageHistoryOperation::Delete {
-            return Ok(None);
-        }
-        match &entry.value {
-            MemoryHistoryValue::Collection(record) => {
-                StorageCollectionHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                    .map(Some)
-                    .map_err(invalid_contract_value)
-            }
-            _ => unreachable!("collection history filter guarantees the variant"),
-        }
-    }
-
-    async fn list_class_history(
-        &self,
-        query: StorageHistoryListQuery,
-    ) -> Result<StoragePage<StorageClassHistoryRecord>, StorageError> {
-        let (entity_id, options, scope) = query.into_parts();
-        let state = self.state.read().await?;
-        let mut entries = state
-            .history
-            .iter()
-            .filter(|entry| {
-                entry.value.entity_id() == entity_id.id()
-                    && matches!(entry.value, MemoryHistoryValue::Class(_))
-                    && history_scope_allows(&scope, entry.value.collection_id())
-            })
-            .collect::<Vec<_>>();
-        entries.reverse();
-        let rows = entries
-            .into_iter()
-            .map(|entry| match &entry.value {
-                MemoryHistoryValue::Class(record) => {
-                    StorageClassHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                        .map_err(invalid_contract_value)
-                }
-                _ => unreachable!("class history filter guarantees the variant"),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        page(rows, &options)
-    }
-
-    async fn get_class_history_as_of(
-        &self,
-        query: StorageHistoryAsOfQuery,
-    ) -> Result<Option<StorageClassHistoryRecord>, StorageError> {
-        let (entity_id, at) = query.into_parts();
-        let state = self.state.read().await?;
-        let entry = state.history.iter().rev().find(|entry| {
-            entry.value.entity_id() == entity_id.id()
-                && matches!(entry.value, MemoryHistoryValue::Class(_))
-                && entry.valid_from <= at
-        });
-        let Some(entry) = entry else {
-            return Ok(None);
-        };
-        if entry.operation == StorageHistoryOperation::Delete {
-            return Ok(None);
-        }
-        match &entry.value {
-            MemoryHistoryValue::Class(record) => {
-                StorageClassHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                    .map(Some)
-                    .map_err(invalid_contract_value)
-            }
-            _ => unreachable!("class history filter guarantees the variant"),
-        }
-    }
-
-    async fn list_object_history(
-        &self,
-        query: StorageObjectHistoryListQuery,
-    ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError> {
-        let (object_id, class_id, options, scope) = query.into_parts();
-        let state = self.state.read().await?;
-        let mut entries = state
-            .history
-            .iter()
-            .filter(|entry| match &entry.value {
-                MemoryHistoryValue::Object(record) => {
-                    record.id() == object_id
-                        && record.class_id() == class_id
-                        && history_scope_allows(&scope, record.collection_id())
-                }
-                _ => false,
-            })
-            .collect::<Vec<_>>();
-        entries.reverse();
-        let rows = entries
-            .into_iter()
-            .map(|entry| match &entry.value {
-                MemoryHistoryValue::Object(record) => {
-                    StorageObjectHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                        .map_err(invalid_contract_value)
-                }
-                _ => unreachable!("object history filter guarantees the variant"),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        page(rows, &options)
-    }
-
-    async fn list_object_history_by_name(
-        &self,
-        query: StorageObjectHistoryNameQuery,
-    ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError> {
-        use crate::object_filters::ObjectFilters;
-        use std::collections::BinaryHeap;
-
-        let options = query.options();
-        let filters = ObjectFilters::new(options.filters())?;
-        let sorts = options.sort();
-        let boundary = options
-            .cursor_values(sorts)
-            .map_err(|error| StorageError::invalid_input(error.to_string()))?
-            .map(|values| {
-                values
-                    .iter()
-                    .zip(sorts.iter())
-                    .map(|(value, sort)| {
-                        let CursorValue::Integer(value) = value else {
-                            return Err(StorageError::invalid_input(
-                                "History cursor requires integer values",
-                            ));
-                        };
-                        Ok(if sort.descending {
-                            -i128::from(*value)
-                        } else {
-                            i128::from(*value)
-                        })
-                    })
-                    .collect::<Result<Vec<_>, StorageError>>()
-            })
-            .transpose()?;
-        let state = self.state.read().await?;
-        let limit = options.limit().unwrap_or(usize::MAX);
-        let mut selected = BinaryHeap::new();
-        let mut total = 0;
-        for (index, entry) in state.history.iter().enumerate() {
-            let MemoryHistoryValue::Object(record) = &entry.value else {
-                continue;
-            };
-            if record.name() != query.name()
-                || record.class_id() != query.class_id()
-                || !filters.matches(record)
-            {
-                continue;
-            }
-            let visible = match state.objects.get(&record.id().id()) {
-                Some(live) => {
-                    history_scope_allows(query.collection_scope(), live.collection_id())
-                        && history_scope_allows(query.collection_scope(), record.collection_id())
-                }
-                None => query.include_deleted(),
-            };
-            if !visible {
-                continue;
-            }
-            total += 1;
-            let key = sorts
-                .iter()
-                .map(|sort| {
-                    let value = if sort.field == FilterField::Revision {
-                        record.revision().get()
-                    } else {
-                        entry.id.id()
-                    };
-                    if sort.descending {
-                        -i128::from(value)
-                    } else {
-                        i128::from(value)
-                    }
-                })
-                .collect::<Vec<_>>();
-            if boundary.as_ref().is_some_and(|boundary| key <= *boundary) {
-                continue;
-            }
-            selected.push((key, index));
-            if selected.len() > limit {
-                selected.pop();
-            }
-        }
-        let rows = selected
-            .into_sorted_vec()
-            .into_iter()
-            .map(|(_, index)| {
-                let entry = &state.history[index];
-                let MemoryHistoryValue::Object(record) = &entry.value else {
-                    unreachable!()
-                };
-                StorageObjectHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                    .map_err(invalid_contract_value)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        StoragePage::try_new(rows, options.include_total().then_some(total))
-            .map_err(invalid_contract_value)
-    }
-
-    async fn list_class_objects_as_of(
-        &self,
-        query: StorageClassObjectsAsOfQuery,
-    ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError> {
-        use crate::object_filters::ObjectFilters;
-        use std::collections::BinaryHeap;
-
-        let options = query.options();
-        let filters = ObjectFilters::new(options.filters())?;
-        let sorts = options.sort();
-        let boundary = options
-            .cursor_values(sorts)
-            .map_err(|error| StorageError::invalid_input(error.to_string()))?
-            .map(|values| {
-                values
-                    .iter()
-                    .zip(sorts.iter())
-                    .map(|(value, sort)| {
-                        let CursorValue::Integer(value) = value else {
-                            return Err(StorageError::invalid_input(
-                                "History cursor requires integer values",
-                            ));
-                        };
-                        Ok(if sort.descending {
-                            -i128::from(*value)
-                        } else {
-                            i128::from(*value)
-                        })
-                    })
-                    .collect::<Result<Vec<_>, StorageError>>()
-            })
-            .transpose()?;
-        let state = self.state.read().await?;
-        let limit = options.limit().unwrap_or(usize::MAX);
-        let mut selected = BinaryHeap::new();
-        let mut total = 0;
-        for (index, entry) in state.history.iter().enumerate() {
-            let MemoryHistoryValue::Object(record) = &entry.value else {
-                continue;
-            };
-            if entry.operation == StorageHistoryOperation::Delete
-                || entry.valid_from > query.at()
-                || entry.valid_to.is_some_and(|end| end <= query.at())
-                || record.class_id() != query.class_id()
-                || !filters.matches(record)
-            {
-                continue;
-            }
-            let visible = match state.objects.get(&record.id().id()) {
-                Some(live) => {
-                    history_scope_allows(query.collection_scope(), live.collection_id())
-                        && history_scope_allows(query.collection_scope(), record.collection_id())
-                }
-                None => query.include_deleted(),
-            };
-            if !visible {
-                continue;
-            }
-            total += 1;
-            let key = sorts
-                .iter()
-                .map(|sort| {
-                    let value = if sort.field == FilterField::Revision {
-                        record.revision().get()
-                    } else {
-                        entry.id.id()
-                    };
-                    if sort.descending {
-                        -i128::from(value)
-                    } else {
-                        i128::from(value)
-                    }
-                })
-                .collect::<Vec<_>>();
-            if boundary.as_ref().is_some_and(|boundary| key <= *boundary) {
-                continue;
-            }
-            selected.push((key, index));
-            if selected.len() > limit {
-                selected.pop();
-            }
-        }
-        let rows = selected
-            .into_sorted_vec()
-            .into_iter()
-            .map(|(_, index)| {
-                let entry = &state.history[index];
-                let MemoryHistoryValue::Object(record) = &entry.value else {
-                    unreachable!()
-                };
-                StorageObjectHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                    .map_err(invalid_contract_value)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        StoragePage::try_new(rows, options.include_total().then_some(total))
-            .map_err(invalid_contract_value)
-    }
-
-    async fn get_object_history_as_of(
-        &self,
-        query: StorageObjectHistoryAsOfQuery,
-    ) -> Result<Option<StorageObjectHistoryRecord>, StorageError> {
-        let (object_id, class_id, at) = query.into_parts();
-        let state = self.state.read().await?;
-        let entry = state.history.iter().rev().find(|entry| match &entry.value {
-            MemoryHistoryValue::Object(record) => {
-                record.id() == object_id && record.class_id() == class_id && entry.valid_from <= at
-            }
-            _ => false,
-        });
-        let Some(entry) = entry else {
-            return Ok(None);
-        };
-        if entry.operation == StorageHistoryOperation::Delete {
-            return Ok(None);
-        }
-        match &entry.value {
-            MemoryHistoryValue::Object(record) => {
-                StorageObjectHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                    .map(Some)
-                    .map_err(invalid_contract_value)
-            }
-            _ => unreachable!("object history filter guarantees the variant"),
-        }
-    }
-
-    async fn list_export_template_history(
-        &self,
-        query: StorageHistoryListQuery,
-    ) -> Result<StoragePage<StorageExportTemplateHistoryRecord>, StorageError> {
-        let (entity_id, options, scope) = query.into_parts();
-        let state = self.state.read().await?;
-        let mut entries = state
-            .history
-            .iter()
-            .filter(|entry| {
-                entry.value.entity_id() == entity_id.id()
-                    && matches!(entry.value, MemoryHistoryValue::ExportTemplate(_))
-                    && history_scope_allows(&scope, entry.value.collection_id())
-            })
-            .collect::<Vec<_>>();
-        entries.reverse();
-        let rows = entries
-            .into_iter()
-            .map(|entry| match &entry.value {
-                MemoryHistoryValue::ExportTemplate(record) => {
-                    StorageExportTemplateHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                        .map_err(invalid_contract_value)
-                }
-                _ => unreachable!("export-template history filter guarantees the variant"),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        page(rows, &options)
-    }
-
-    async fn get_export_template_history_as_of(
-        &self,
-        query: StorageHistoryAsOfQuery,
-    ) -> Result<Option<StorageExportTemplateHistoryRecord>, StorageError> {
-        let (entity_id, at) = query.into_parts();
-        let state = self.state.read().await?;
-        let entry = state.history.iter().rev().find(|entry| {
-            entry.value.entity_id() == entity_id.id()
-                && matches!(entry.value, MemoryHistoryValue::ExportTemplate(_))
-                && entry.valid_from <= at
-        });
-        let Some(entry) = entry else {
-            return Ok(None);
-        };
-        if entry.operation == StorageHistoryOperation::Delete {
-            return Ok(None);
-        }
-        match &entry.value {
-            MemoryHistoryValue::ExportTemplate(record) => {
-                StorageExportTemplateHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                    .map(Some)
-                    .map_err(invalid_contract_value)
-            }
-            _ => unreachable!("export-template history filter guarantees the variant"),
-        }
-    }
-
-    async fn list_remote_target_history(
-        &self,
-        query: StorageHistoryListQuery,
-    ) -> Result<StoragePage<StorageRemoteTargetHistoryRecord>, StorageError> {
-        let (entity_id, options, scope) = query.into_parts();
-        let state = self.state.read().await?;
-        let mut entries = state
-            .history
-            .iter()
-            .filter(|entry| {
-                entry.value.entity_id() == entity_id.id()
-                    && matches!(entry.value, MemoryHistoryValue::RemoteTarget(_))
-                    && history_scope_allows(&scope, entry.value.collection_id())
-            })
-            .collect::<Vec<_>>();
-        entries.reverse();
-        let rows = entries
-            .into_iter()
-            .map(|entry| match &entry.value {
-                MemoryHistoryValue::RemoteTarget(record) => {
-                    StorageRemoteTargetHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                        .map_err(invalid_contract_value)
-                }
-                _ => unreachable!("remote-target history filter guarantees the variant"),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        page(rows, &options)
-    }
-
-    async fn get_remote_target_history_as_of(
-        &self,
-        query: StorageHistoryAsOfQuery,
-    ) -> Result<Option<StorageRemoteTargetHistoryRecord>, StorageError> {
-        let (entity_id, at) = query.into_parts();
-        let state = self.state.read().await?;
-        let entry = state.history.iter().rev().find(|entry| {
-            entry.value.entity_id() == entity_id.id()
-                && matches!(entry.value, MemoryHistoryValue::RemoteTarget(_))
-                && entry.valid_from <= at
-        });
-        let Some(entry) = entry else {
-            return Ok(None);
-        };
-        if entry.operation == StorageHistoryOperation::Delete {
-            return Ok(None);
-        }
-        match &entry.value {
-            MemoryHistoryValue::RemoteTarget(record) => {
-                StorageRemoteTargetHistoryRecord::try_new(record.clone(), entry.metadata()?)
-                    .map(Some)
-                    .map_err(invalid_contract_value)
-            }
-            _ => unreachable!("remote-target history filter guarantees the variant"),
-        }
     }
 }
 
@@ -2145,29 +1450,6 @@ fn sink_delivery_deadline(state: &MemoryState, sink: &StorageEventSink) -> Optio
                 *blocked
             }
         })
-}
-
-fn delivery_metadata(
-    current: StorageEventDelivery,
-    purpose: hubuum_domain::EventDeliveryPurpose,
-    deferred_reason: Option<String>,
-) -> Result<StorageEventDelivery, StorageError> {
-    StorageEventDelivery::builder(
-        current.id(),
-        current.event_id(),
-        current.subscription_id(),
-        current.status(),
-        current.next_attempt_at(),
-        current.created_at(),
-        current.updated_at(),
-    )
-    .attempts(current.attempts())
-    .last_error(current.last_error().map(str::to_owned))
-    .locked_until(current.locked_until())
-    .purpose(purpose)
-    .deferred_reason(deferred_reason)
-    .try_build()
-    .map_err(invalid_contract_value)
 }
 
 fn memory_notification(
@@ -2224,16 +1506,94 @@ fn ensure_memory_sink_allowed(
     }
 }
 
-fn history_matches_resource(entry: &MemoryHistoryEntry, resource: StorageHistoryResource) -> bool {
-    match (&entry.value, resource) {
-        (MemoryHistoryValue::Class(record), StorageHistoryResource::Class(id)) => record.id() == id,
-        (
-            MemoryHistoryValue::Object(record),
-            StorageHistoryResource::Object {
-                class_id,
-                object_id,
-            },
-        ) => record.id() == object_id && record.class_id() == class_id,
-        _ => false,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    fn run(future: impl Future<Output = ()>) {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(future);
+    }
+
+    fn sink_request() -> StorageEventSinkCreate {
+        StorageEventSinkCreate::builder("test-sink", "webhook", EventContext::system())
+            .try_build()
+            .unwrap()
+    }
+
+    #[test]
+    fn failed_sink_audit_preserves_the_last_available_sink_id() {
+        run(async {
+            let storage = MemoryStorage::new();
+            {
+                let mut state = storage.state.write().await.unwrap();
+                state.event_sink_ids.observe(i32::MAX - 1);
+                state.event_sequences.observe(i64::MAX);
+            }
+            assert!(storage.create_event_sink(sink_request()).await.is_err());
+            let state = storage.state.read().await.unwrap();
+            assert!(state.event_sinks.is_empty());
+            assert_eq!(state.event_sink_ids.next().unwrap(), i32::MAX);
+        });
+    }
+
+    #[rstest]
+    #[case::unavailable_audit(EventSubscriptionScope::System)]
+    #[case::different_scope(EventSubscriptionScope::Collection(CollectionId::new(1).unwrap()))]
+    fn failed_subscription_delete_preserves_the_subscription(
+        #[case] scope: EventSubscriptionScope,
+    ) {
+        run(async {
+            let storage = MemoryStorage::new();
+            let sink = storage
+                .create_event_sink(sink_request())
+                .await
+                .unwrap()
+                .into_value();
+            let subscription = storage
+                .create_event_subscription(
+                    StorageEventSubscriptionCreate::builder(
+                        EventSubscriptionScope::System,
+                        sink.id(),
+                        "test-subscription",
+                        EventContext::system(),
+                    )
+                    .actions(vec![Action::Created])
+                    .entity_types(vec![EntityType::EventSink])
+                    .try_build()
+                    .unwrap(),
+                )
+                .await
+                .unwrap()
+                .into_value();
+            if scope == EventSubscriptionScope::System {
+                storage
+                    .state
+                    .write()
+                    .await
+                    .unwrap()
+                    .event_sequences
+                    .observe(i64::MAX);
+            }
+            assert!(
+                storage
+                    .delete_event_subscription(StorageEventSubscriptionDelete::new(
+                        scope,
+                        subscription.id(),
+                        EventContext::system(),
+                    ))
+                    .await
+                    .is_err()
+            );
+            assert!(
+                storage
+                    .get_event_subscription(subscription.scope(), subscription.id())
+                    .await
+                    .is_ok()
+            );
+        });
     }
 }

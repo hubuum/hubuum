@@ -1,15 +1,48 @@
 use std::fmt;
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hubuum_domain::{IdentityScopeId, ResourceRevision, UserId};
-use hubuum_events_core::EventContext;
+use hubuum_domain::{IdentityScopeId, PrincipalKind, ResourceRevision, UserId};
+use hubuum_events_core::{EventContext, EventSubject};
 use hubuum_query::QueryOptions;
 
 use crate::validation::validate_sync_timestamps;
-use crate::{
-    StorageError, StorageMutationOutcome, StoragePage, StorageSyncedHuman, StorageValidationError,
-};
+use crate::{StorageSyncedHuman, StorageValidationError};
+
+/// Authentication evidence that must still match the human row when the token
+/// commits. Adapters check this while holding the password-reset principal lock.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageLogin {
+    subject: EventSubject,
+    user: StorageUser,
+}
+
+impl StorageLogin {
+    pub fn try_new(
+        subject: EventSubject,
+        user: StorageUser,
+    ) -> Result<Self, StorageValidationError> {
+        if subject.principal_id().id() != user.id.id()
+            || subject.kind() != PrincipalKind::Human
+            || user.anonymized_at.is_some()
+        {
+            return Err(StorageValidationError::invalid(
+                "invalid authenticated login subject",
+            ));
+        }
+        Ok(Self { subject, user })
+    }
+
+    pub fn subject(&self) -> &EventSubject {
+        &self.subject
+    }
+
+    pub fn matches_user(&self, current: &StorageUser) -> bool {
+        current.id == self.user.id
+            && current.password_hash == self.user.password_hash
+            && current.updated_at == self.user.updated_at
+            && current.anonymized_at.is_none()
+    }
+}
 
 /// Named fields returned when a storage user crosses an API boundary.
 pub struct StorageUserParts {
@@ -739,51 +772,6 @@ impl fmt::Debug for StorageUserAnonymize {
             .field("event_context", &"<redacted>")
             .finish()
     }
-}
-
-/// Complete human-user persistence required of every selectable backend.
-#[async_trait]
-pub trait UserStorage: Send + Sync {
-    async fn get_user(&self, id: UserId) -> Result<StorageUser, StorageError>;
-
-    async fn get_user_by_name(
-        &self,
-        identity_scope: String,
-        name: String,
-    ) -> Result<StorageUser, StorageError>;
-
-    async fn get_user_details(&self, id: UserId) -> Result<StorageUserDetails, StorageError>;
-
-    async fn list_users(
-        &self,
-        query: StorageUserListQuery,
-    ) -> Result<StoragePage<StorageUserListItem>, StorageError>;
-
-    async fn create_user(
-        &self,
-        request: StorageUserCreate,
-    ) -> Result<StorageMutationOutcome<StorageUser>, StorageError>;
-
-    async fn update_user(
-        &self,
-        request: StorageUserUpdate,
-    ) -> Result<StorageMutationOutcome<StorageUser>, StorageError>;
-
-    /// Replace a local password and revoke active credentials atomically.
-    async fn set_user_password(
-        &self,
-        request: StorageUserPasswordUpdate,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
-
-    async fn delete_user(
-        &self,
-        request: StorageUserDelete,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
-
-    async fn anonymize_user(
-        &self,
-        request: StorageUserAnonymize,
-    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 }
 
 #[cfg(test)]
