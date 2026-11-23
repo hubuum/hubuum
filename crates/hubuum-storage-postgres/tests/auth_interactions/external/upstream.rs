@@ -119,10 +119,10 @@ impl ExternalFixture {
         let (session, access, _) = self.retained_session().await;
         (session.principal_id(), access)
     }
-    async fn retained_session(
+    async fn prepare_retained_session(
         &self,
     ) -> (
-        StorageSessionIssued,
+        StorageInteractionComplete,
         StorageInteractionAccess,
         StorageAuthenticationCredential,
     ) {
@@ -161,6 +161,17 @@ impl ExternalFixture {
         };
         let access_credential =
             StorageAuthenticationCredential::from_digest(credentials.access().clone());
+        (completion, interaction.access, access_credential)
+    }
+
+    async fn retained_session(
+        &self,
+    ) -> (
+        StorageSessionIssued,
+        StorageInteractionAccess,
+        StorageAuthenticationCredential,
+    ) {
+        let (completion, access, access_credential) = self.prepare_retained_session().await;
         let StorageInteractionCompletion::Session(issued) = self
             .backend
             .complete_auth_interaction(completion)
@@ -169,7 +180,7 @@ impl ExternalFixture {
         else {
             panic!("session")
         };
-        (issued.into_value(), interaction.access, access_credential)
+        (issued.into_value(), access, access_credential)
     }
 
     async fn upstream_claim(&self, principal: PrincipalId) -> StorageUpstreamClaim {
@@ -730,10 +741,15 @@ async fn concurrent_login_is_either_live_or_captured_by_bulk_logout() {
     let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
     let principal = f.retained_login().await;
     let other = f.database.replica();
-    let ((issued, _, _), logout) = tokio::join!(
-        f.retained_session(),
+    let (completion, _, _) = f.prepare_retained_session().await;
+    let (issued, logout) = tokio::join!(
+        f.backend.complete_auth_interaction(completion),
         other.revoke_auth_sessions(SessionRevocation::All(principal), EventContext::system())
     );
+    let StorageInteractionCompletion::Session(issued) = issued.unwrap() else {
+        panic!("session issuance")
+    };
+    let issued = issued.into_value();
     let revoked = logout.unwrap().into_value().into_grants();
     let remaining = f
         .backend
