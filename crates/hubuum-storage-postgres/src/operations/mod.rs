@@ -61,8 +61,10 @@ pub(crate) mod task_retention;
 pub(crate) mod task_rows;
 pub mod token;
 pub mod token_retention;
+mod token_scope;
 pub mod unified_search;
 pub mod user;
+mod user_row;
 pub(crate) mod visibility;
 
 pub mod credential_approval;

@@ -51,7 +51,7 @@ async fn archive_supervised_read_preserves_candidate_and_query_observations() {
                         let storage=storage.clone();
                         async move {
                             let current=storage.collection_store().get_collection(collection).await?;
-                            let current=crate::services::storage_boundary::collection_from_storage(current)?;
+                            let current=crate::models::Collection::from(current);
                             paginate_in_memory(vec![current],&options)
                         }
                     },|collection|ResourceRef::collection(collection.id)).await.unwrap();

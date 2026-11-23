@@ -7,16 +7,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-### Security
-
-- Update the locked URL parser to 2.5.9 to fix a stack overflow during URL
-  origin calculation (RUSTSEC-2026-0592).
-
-- Require Actix Web 4.18.2 or later and use the patched Actix HTTP dependency
-  to reject malformed chunked request trailers and bound compressed request-body
-  decoding, including large-window Brotli streams (RUSTSEC-2026-0446,
-  RUSTSEC-2026-0447, RUSTSEC-2026-0448 and RUSTSEC-2026-0455).
-
 ### Added
 
 - Offline recovery can reconcile an interrupted filesystem archive publication
@@ -297,6 +287,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking HTTP compatibility:** unsupported methods on known macro-routed
   endpoints now return HTTP 405 with an `Allow` header instead of HTTP 404.
   Clients that treated these responses as missing resources must handle 405.
+
+- PostgreSQL computed-field rebuild and read-repair workers now read only the
+  task settings row when selecting the size of each batch.
 
 - **Breaking for project deployments using runtime admission overrides:** shared
   task capacity remains authoritative. Runtime task/backup per-user fields are
@@ -640,6 +633,34 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Retained history and task-event actor names no longer attach to a different
   principal when a restore timeline reuses an integer ID. Historical relation
   endpoint hydration also requires the captured endpoint identity.
+
+- Best-effort imports can resolve a parent collection by name after an
+  earlier item failed to find it and a later item planned its creation.
+
+- Imports on the experimental memory backend preserve concurrent writes.
+  Restoring an import that used the last available result ID preserves its
+  receipts and prevents a later import from reusing that ID.
+
+- The experimental memory backend preserves identifier high-water marks across
+  restores and rejects exhausted writes without publishing partial history or
+  audit records. Live processes must acknowledge a new restore drain before
+  it can complete.
+- On the memory backend, a failed event configuration change preserves the
+  previous settings. Deleting a subscription in the wrong scope leaves the
+  subscription and its pending deliveries intact.
+
+### Security
+
+- Require Actix Web 4.18.2 or later and use the patched Actix HTTP dependency
+  to reject malformed chunked request trailers and bound compressed request-body
+  decoding, including large-window Brotli streams (RUSTSEC-2026-0446,
+  RUSTSEC-2026-0447, RUSTSEC-2026-0448 and RUSTSEC-2026-0455).
+
+- Remove the unused Actix Web cookie feature and its dependency on
+  `cookie` 0.16.2 (RUSTSEC-2026-0594).
+
+- Require `url` 2.5.9 or later to fix a stack overflow during URL origin
+  calculation (RUSTSEC-2026-0592).
 
 ## [0.0.23] - 2026-11-21
 

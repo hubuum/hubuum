@@ -1,8 +1,42 @@
-use super::*;
-use crate::StorageBackupRow;
-use chrono::NaiveDateTime;
+use crate::{
+    StorageBackupRow, StorageTaskCancellation, StorageTaskControl, StorageTaskExecutionPhase,
+    StorageTaskKind, StorageValidationError,
+};
+use chrono::{DateTime, NaiveDateTime, Utc};
+use hubuum_domain::PrincipalId;
+use hubuum_task_core::{TaskCancellationReason, TaskStopReason};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
+
+pub(super) const SNAPSHOT_FIELDS: &[&str] = &[
+    "cancel_requested_at",
+    "cancel_requested_by",
+    "cancel_reason",
+    "execution_deadline_at",
+    "import_effects_committed_at",
+    "remote_dispatched_at",
+    "terminal_reason",
+];
+
+pub(super) fn validate_control_snapshot(
+    row: &StorageBackupRow,
+) -> Result<(), StorageValidationError> {
+    if SNAPSHOT_FIELDS
+        .iter()
+        .all(|field| row.get(field).is_none_or(Value::is_null))
+    {
+        return Ok(());
+    }
+    let kind = row
+        .get("kind")
+        .and_then(Value::as_str)
+        .and_then(StorageTaskKind::from_persisted)
+        .ok_or_else(|| {
+            StorageValidationError::invalid("Task control requires a recognized task kind")
+        })?;
+    StorageTaskControl::from_snapshot(kind, row)?;
+    Ok(())
+}
 
 impl StorageTaskControl {
     /// Validate optional control metadata in a logical backup. Older backups
@@ -61,19 +95,19 @@ impl StorageTaskControl {
 
     /// Backend-neutral logical fields used by backup capture and restore.
     pub fn snapshot_fields(&self) -> Map<String, Value> {
-        let (import, remote) = match self.phase {
+        let (import, remote) = match self.phase() {
             StorageTaskExecutionPhase::Uncommitted
             | StorageTaskExecutionPhase::HistoryAuthority => (None, None),
             StorageTaskExecutionPhase::ImportCommitted { at } => (Some(at), None),
             StorageTaskExecutionPhase::RemoteDispatched { at } => (None, Some(at)),
         };
         json!({
-            "cancel_requested_at": self.cancellation.as_ref().map(StorageTaskCancellation::requested_at),
-            "cancel_requested_by": self.cancellation.as_ref().and_then(StorageTaskCancellation::requested_by),
-            "cancel_reason": self.cancellation.as_ref().and_then(StorageTaskCancellation::reason).map(TaskCancellationReason::as_str),
-            "execution_deadline_at": self.deadline,
+            "cancel_requested_at": self.cancellation().map(StorageTaskCancellation::requested_at),
+            "cancel_requested_by": self.cancellation().and_then(StorageTaskCancellation::requested_by),
+            "cancel_reason": self.cancellation().and_then(StorageTaskCancellation::reason).map(TaskCancellationReason::as_str),
+            "execution_deadline_at": self.deadline(),
             "import_effects_committed_at": import, "remote_dispatched_at": remote,
-            "terminal_reason": self.terminal_reason.map(TaskStopReason::as_str),
+            "terminal_reason": self.terminal_reason().map(TaskStopReason::as_str),
         }).as_object().expect("literal object").clone()
     }
 }

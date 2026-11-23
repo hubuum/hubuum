@@ -240,21 +240,13 @@ impl MemoryState {
             if ticket.manifest().scope() == TaskPurgeScope::ExpiredOutputs {
                 continue;
             }
-            while let Some(result) = self
-                .import_task_results
-                .get(&id.id())
-                .and_then(|values| values.last())
-            {
+            while let Some(result) = self.import_task_results.for_task(id).last() {
                 let bytes = measured(
                     &serde_json::json!({"id":result.id().id(),"task_id":result.task_id().id(),"item_ref":result.item_ref(),"entity_kind":result.entity_kind(),"action":result.action(),"identifier":result.identifier(),"outcome":result.outcome(),"error":result.error(),"details":result.details(),"created_at":result.created_at()}),
                 )?;
                 charge!(bytes);
-                self.import_task_results
-                    .get_mut(&id.id())
-                    .expect("existing result")
-                    .pop();
+                self.import_task_results.remove_last(id);
             }
-            self.import_task_results.remove(&id.id());
             while let Some(event) = self
                 .task_events
                 .get(&id.id())

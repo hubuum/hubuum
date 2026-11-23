@@ -38,7 +38,7 @@ pub(super) fn recover_on(
             "History recovery requires the original application image",
         ));
     }
-    if state.maintenance_state != MaintenanceState::Normal {
+    if state.restore_coordinator.maintenance_state() != MaintenanceState::Normal {
         return Err(StorageError::unavailable(
             "History task recovery is paused during maintenance",
         ));
@@ -136,9 +136,8 @@ pub(super) fn create_on(
     total: i32,
     removed: i32,
 ) -> Result<StorageTask, StorageError> {
-    let id = TaskId::new(state.next_task_id)
+    let id = TaskId::new(state.task_ids.allocate()?)
         .map_err(|error| StorageError::internal(error.to_string()))?;
-    state.next_task_id += 1;
     let now = Utc::now();
     let record = MemoryTaskRecord {
         checkpoint: None,

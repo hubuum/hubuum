@@ -5,7 +5,7 @@ use opentelemetry::KeyValue;
 use crate::storage::{MetricsStorage, StorageInventoryGaugeSnapshot};
 
 use super::Metrics;
-use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
+use super::refresh::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 
 pub(super) async fn refresh_inventory_gauges(
     metrics: &Metrics,

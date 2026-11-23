@@ -4,8 +4,6 @@ use crate::models::search::QueryOptions;
 use crate::pagination::{SKIPPED_TOTAL_COUNT, prepare_db_pagination};
 use crate::storage::{GroupStorage, StorageContext, StorageGroupListQuery, storage_handle};
 
-use super::identity::identity_group_from_storage;
-
 /// List groups without exposing adapter-specific search helpers to handlers.
 ///
 /// Pagination policy belongs to the application layer. The storage request
@@ -21,10 +19,7 @@ pub(crate) async fn list(
         .list_groups(query)
         .await?
         .into_parts();
-    let groups = groups
-        .into_iter()
-        .map(identity_group_from_storage)
-        .collect::<Result<Vec<_>, _>>()?;
+    let groups = groups.into_iter().map(Group::from).collect();
 
     Ok((groups, total_count.unwrap_or(SKIPPED_TOTAL_COUNT)))
 }

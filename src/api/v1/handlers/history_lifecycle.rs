@@ -4,7 +4,7 @@ use hubuum_storage_core::{
     HistorySizeAccounting,
 };
 
-use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;

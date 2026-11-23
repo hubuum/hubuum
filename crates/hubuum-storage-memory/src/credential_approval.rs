@@ -3,6 +3,82 @@ use super::*;
 fn denied() -> StorageError {
     StorageError::reauthentication_required()
 }
+#[derive(Clone, Default)]
+pub(super) struct CredentialApprovals {
+    ids: IdSequence,
+    by_digest: BTreeMap<String, i32>,
+    records: BTreeMap<i32, (StorageCredentialClaim, StorageCredentialApprovalMetadata)>,
+}
+
+impl CredentialApprovals {
+    pub(super) fn metadata(&self, id: i32) -> Option<&StorageCredentialApprovalMetadata> {
+        self.records.get(&id).map(|(_, metadata)| metadata)
+    }
+
+    pub(super) fn consumed_for_restore(
+        &self,
+        id: RestoreJobId,
+    ) -> Option<&StorageCredentialApprovalMetadata> {
+        self.records
+            .values()
+            .map(|(_, metadata)| metadata)
+            .filter(|metadata| {
+                metadata.restore_job_id() == Some(id) && metadata.consumed_at().is_some()
+            })
+            .max_by_key(|metadata| metadata.consumed_at())
+    }
+
+    pub(super) fn invalidated_for_restore(&self, at: DateTime<Utc>) -> Self {
+        let mut restored = self.clone();
+        for (_, metadata) in restored.records.values_mut() {
+            metadata.invalidate(at);
+        }
+        restored
+    }
+
+    fn create(
+        &mut self,
+        claim: StorageCredentialClaim,
+        authenticated_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> Result<StorageCredentialApprovalMetadata, StorageError> {
+        if self.by_digest.contains_key(claim.secret_digest().as_str()) {
+            return Err(StorageError::conflict("Approval already exists"));
+        }
+        let id = self.ids.next()?;
+        let metadata =
+            StorageCredentialApprovalMetadata::new(id, &claim, authenticated_at, expires_at)
+                .map_err(invalid_contract_value)?;
+        self.by_digest
+            .insert(claim.secret_digest().as_str().to_string(), id);
+        self.records.insert(id, (claim, metadata.clone()));
+        self.ids.observe(id);
+        Ok(metadata)
+    }
+
+    fn consume(
+        &mut self,
+        claim: &StorageCredentialClaim,
+    ) -> Result<StorageCredentialApprovalMetadata, StorageError> {
+        let id = *self
+            .by_digest
+            .get(claim.secret_digest().as_str())
+            .ok_or_else(denied)?;
+        let (stored, metadata) = self.records.get_mut(&id).ok_or_else(denied)?;
+        if stored.actor_id() != claim.actor_id()
+            || stored.token_id() != claim.token_id()
+            || stored.operation() != claim.operation()
+            || stored.target_id() != claim.target_id()
+            || stored.restore_job_id() != claim.restore_job_id()
+            || stored.request_digest() != claim.request_digest()
+        {
+            return Err(denied());
+        }
+        metadata.consume(Utc::now()).map_err(|_| denied())?;
+        Ok(metadata.clone())
+    }
+}
+
 impl MemoryState {
     fn check_approval_actor(
         &self,
@@ -40,23 +116,9 @@ impl MemoryState {
         if authenticated_at > Utc::now() || expires_at <= Utc::now() {
             return Err(denied());
         }
-        let id = self.next_credential_approval_id;
-        self.next_credential_approval_id = id
-            .checked_add(1)
-            .ok_or_else(|| StorageError::internal("Approval IDs exhausted"))?;
-        let metadata =
-            StorageCredentialApprovalMetadata::new(id, &claim, authenticated_at, expires_at)
-                .map_err(invalid_contract_value)?;
-        if self
-            .credential_approval_digests
-            .contains_key(claim.secret_digest().as_str())
-        {
-            return Err(StorageError::conflict("Approval already exists"));
-        }
-        self.credential_approval_digests
-            .insert(claim.secret_digest().as_str().to_string(), id);
-        self.credential_approvals
-            .insert(id, (claim, metadata.clone()));
+        let metadata = self
+            .credential_approvals
+            .create(claim, authenticated_at, expires_at)?;
         let receipt = self.approval_audit(&metadata, Action::Created, &context)?;
         Ok(StorageMutationOutcome::committed(metadata, receipt))
     }
@@ -77,22 +139,7 @@ impl MemoryState {
             return Err(denied());
         }
         self.check_approval_actor(claim)?;
-        let id = *self
-            .credential_approval_digests
-            .get(claim.secret_digest().as_str())
-            .ok_or_else(denied)?;
-        let (stored, metadata) = self.credential_approvals.get_mut(&id).ok_or_else(denied)?;
-        if stored.actor_id() != claim.actor_id()
-            || stored.token_id() != claim.token_id()
-            || stored.operation() != expected
-            || stored.target_id() != target
-            || stored.restore_job_id() != claim.restore_job_id()
-            || stored.request_digest() != claim.request_digest()
-        {
-            return Err(denied());
-        }
-        metadata.consume(Utc::now()).map_err(|_| denied())?;
-        let metadata = metadata.clone();
+        let metadata = self.credential_approvals.consume(claim)?;
         Ok(Some(self.approval_audit(
             &metadata,
             Action::Succeeded,

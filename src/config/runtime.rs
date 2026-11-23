@@ -30,159 +30,156 @@ pub(crate) fn for_storage(storage: &StorageHandle) -> Result<Arc<AppConfig>, Api
 pub(crate) fn for_snapshot(
     snapshot: Option<&StorageRuntimeSettingsSnapshot>,
 ) -> Result<Arc<AppConfig>, ApiError> {
-    Ok(Arc::new(effective(super::get_config()?.clone(), snapshot)))
+    Ok(Arc::new(
+        super::get_config()?.clone().with_runtime_snapshot(snapshot),
+    ))
 }
 
 pub(crate) fn resolve(
     config: AppConfig,
     snapshot: Option<&StorageRuntimeSettingsSnapshot>,
 ) -> Result<AppConfig, ApiError> {
-    let config = effective(config, snapshot);
-    validate(&config)?;
+    let config = config.with_runtime_snapshot(snapshot);
+    config.validate_runtime_policy()?;
     Ok(config)
 }
 
-fn effective(
-    mut config: AppConfig,
-    snapshot: Option<&StorageRuntimeSettingsSnapshot>,
-) -> AppConfig {
-    config.runtime_managed_groups.clear();
-    if let Some(snapshot) = snapshot {
-        for record in snapshot.records() {
-            if let Some(value) = record.assignment().value() {
-                apply(&mut config, value);
+impl AppConfig {
+    fn with_runtime_snapshot(mut self, snapshot: Option<&StorageRuntimeSettingsSnapshot>) -> Self {
+        self.runtime_managed_groups.clear();
+        if let Some(snapshot) = snapshot {
+            for record in snapshot.records() {
+                if let Some(value) = record.assignment().value() {
+                    self.apply_runtime_policy(value);
+                }
             }
         }
+        self
     }
-    config
-}
 
-pub(crate) fn apply(config: &mut AppConfig, value: &StorageRuntimeSettingsValue) {
-    config.runtime_managed_groups.insert(value.group());
-    match value {
-        StorageRuntimeSettingsValue::Pagination(policy) => {
-            let pages = crate::pagination::PageLimits::new(
-                config.default_page_limit,
-                config.max_page_limit,
-            )
-            .expect("validated deployment pagination")
-            .with_runtime_policy(Some(*policy));
-            config.default_page_limit = pages.default_limit();
-            config.max_page_limit = pages.maximum_limit();
+    pub(crate) fn apply_runtime_policy(&mut self, value: &StorageRuntimeSettingsValue) {
+        self.runtime_managed_groups.insert(value.group());
+        match value {
+            StorageRuntimeSettingsValue::Pagination(policy) => {
+                let pages = crate::pagination::PageLimits::new(
+                    self.default_page_limit,
+                    self.max_page_limit,
+                )
+                .expect("validated deployment pagination")
+                .with_runtime_policy(Some(*policy));
+                self.default_page_limit = pages.default_limit();
+                self.max_page_limit = pages.maximum_limit();
+            }
+            StorageRuntimeSettingsValue::Observability(policy) => {
+                self.log_level = policy.log_level().clone();
+                self.metrics_enabled = *policy.metrics_enabled();
+                self.metrics_path = policy.metrics_path().clone();
+            }
+            StorageRuntimeSettingsValue::Network(policy) => {
+                self.trust_ip_headers = *policy.trust_ip_headers();
+                self.trusted_proxies = policy.trusted_proxies().clone();
+                self.trusted_proxy_hops = *policy.trusted_proxy_hops();
+                self.client_allowlist = policy.client_allowlist().clone();
+            }
+            StorageRuntimeSettingsValue::QueryLimits(policy) => {
+                self.max_transitive_depth = *policy.max_transitive_depth();
+            }
+            StorageRuntimeSettingsValue::Tasks(policy) => {
+                self.task_poll_interval_ms = *policy.poll_interval_ms();
+                self.task_lease_seconds = *policy.lease_seconds();
+                self.task_heartbeat_seconds = *policy.heartbeat_seconds();
+                self.task_recovery_interval_seconds = *policy.recovery_interval_seconds();
+                self.computed_reindex_batch_size = *policy.computed_reindex_batch_size();
+            }
+            StorageRuntimeSettingsValue::RemoteCalls(policy) => {
+                self.remote_call_timeout_ms = *policy.timeout_ms();
+                self.remote_call_max_response_bytes = *policy.max_response_bytes();
+                self.remote_call_allow_private_targets =
+                    self.remote_call_allow_private_targets && *policy.allow_private_targets();
+            }
+            StorageRuntimeSettingsValue::Tokens(policy) => {
+                self.token_lifetime_hours =
+                    (*policy.lifetime_hours()).min(self.max_token_lifetime_hours);
+                self.token_retention_days = *policy.retention_days();
+                self.token_retention_purge_enabled = *policy.purge_enabled();
+                self.token_retention_purge_interval_seconds = *policy.purge_interval_seconds();
+                self.token_retention_purge_batch_size = *policy.purge_batch_size();
+            }
+            StorageRuntimeSettingsValue::LoginRateLimit(policy) => {
+                self.login_rate_limit_enabled = *policy.enabled();
+                self.login_rate_limit_max_attempts = *policy.attempts_per_identity();
+                self.login_rate_limit_max_attempts_per_account = *policy.attempts_per_account();
+                self.login_rate_limit_max_attempts_per_ip = *policy.attempts_per_ip();
+                self.login_rate_limit_max_attempts_per_subnet = *policy.attempts_per_subnet();
+                self.login_rate_limit_window_seconds = *policy.window_seconds();
+                self.login_rate_limit_backoff_base_seconds = *policy.backoff_base_seconds();
+                self.login_rate_limit_backoff_max_seconds = *policy.backoff_max_seconds();
+            }
+            StorageRuntimeSettingsValue::Events(policy) => {
+                self.event_fanout_batch_size = *policy.fanout_batch_size();
+                self.event_fanout_poll_interval_ms = *policy.fanout_poll_interval_ms();
+                self.event_delivery_batch_size = *policy.delivery_batch_size();
+                self.event_delivery_poll_interval_ms = *policy.delivery_poll_interval_ms();
+                self.event_delivery_max_attempts = *policy.delivery_max_attempts();
+                self.event_delivery_transport_timeout_ms = *policy.delivery_transport_timeout_ms();
+                self.event_retention_days = *policy.retention_days();
+                self.event_delivery_retention_days = *policy.delivery_retention_days();
+                self.event_retention_purge_enabled = *policy.purge_enabled();
+                self.event_retention_purge_interval_seconds = *policy.purge_interval_seconds();
+                self.event_retention_purge_batch_size = *policy.purge_batch_size();
+                self.event_retention_file_archive_enabled = *policy.file_archive_enabled();
+            }
+            StorageRuntimeSettingsValue::Exports(policy) => {
+                self.export_output_retention_hours = *policy.output_retention_hours();
+                self.export_output_cleanup_interval_seconds = *policy.cleanup_interval_seconds();
+                self.export_max_output_bytes = *policy.max_output_bytes();
+                self.export_stage_timeout_ms = *policy.stage_timeout_ms();
+                self.export_db_statement_timeout_ms = *policy.storage_query_budget_ms();
+                self.export_template_recursion_limit = *policy.template_recursion_limit();
+                self.export_template_max_objects = *policy.template_max_objects();
+                self.export_template_fuel = *policy.template_fuel();
+            }
+            StorageRuntimeSettingsValue::Backups(policy) => {
+                self.backup_max_output_bytes = *policy.max_output_bytes();
+                self.backup_max_capture_rows = *policy.max_capture_rows();
+                self.backup_output_retention_hours = *policy.retention_hours();
+            }
+            StorageRuntimeSettingsValue::Restores(policy) => {
+                self.restore_max_upload_bytes = *policy.max_upload_bytes();
+                self.restore_stage_retention_minutes = *policy.staging_retention_minutes();
+            }
+            _ => {}
         }
-        StorageRuntimeSettingsValue::Observability(policy) => {
-            config.log_level = policy.log_level().clone();
-            config.metrics_enabled = *policy.metrics_enabled();
-            config.metrics_path = policy.metrics_path().clone();
-        }
-        StorageRuntimeSettingsValue::Network(policy) => {
-            config.trust_ip_headers = *policy.trust_ip_headers();
-            config.trusted_proxies = policy.trusted_proxies().clone();
-            config.trusted_proxy_hops = *policy.trusted_proxy_hops();
-            config.client_allowlist = policy.client_allowlist().clone();
-        }
-        StorageRuntimeSettingsValue::QueryLimits(policy) => {
-            config.max_transitive_depth = *policy.max_transitive_depth();
-        }
-        StorageRuntimeSettingsValue::Tasks(policy) => {
-            config.task_poll_interval_ms = *policy.poll_interval_ms();
-            config.task_lease_seconds = *policy.lease_seconds();
-            config.task_heartbeat_seconds = *policy.heartbeat_seconds();
-            config.task_recovery_interval_seconds = *policy.recovery_interval_seconds();
-            config.computed_reindex_batch_size = *policy.computed_reindex_batch_size();
-        }
-        StorageRuntimeSettingsValue::RemoteCalls(policy) => {
-            config.remote_call_timeout_ms = *policy.timeout_ms();
-            config.remote_call_max_response_bytes = *policy.max_response_bytes();
-            config.remote_call_allow_private_targets =
-                config.remote_call_allow_private_targets && *policy.allow_private_targets();
-        }
-        StorageRuntimeSettingsValue::Tokens(policy) => {
-            config.token_lifetime_hours =
-                (*policy.lifetime_hours()).min(config.max_token_lifetime_hours);
-            config.token_retention_days = *policy.retention_days();
-            config.token_retention_purge_enabled = *policy.purge_enabled();
-            config.token_retention_purge_interval_seconds = *policy.purge_interval_seconds();
-            config.token_retention_purge_batch_size = *policy.purge_batch_size();
-        }
-        StorageRuntimeSettingsValue::LoginRateLimit(policy) => {
-            config.login_rate_limit_enabled = *policy.enabled();
-            config.login_rate_limit_max_attempts = *policy.attempts_per_identity();
-            config.login_rate_limit_max_attempts_per_account = *policy.attempts_per_account();
-            config.login_rate_limit_max_attempts_per_ip = *policy.attempts_per_ip();
-            config.login_rate_limit_max_attempts_per_subnet = *policy.attempts_per_subnet();
-            config.login_rate_limit_window_seconds = *policy.window_seconds();
-            config.login_rate_limit_backoff_base_seconds = *policy.backoff_base_seconds();
-            config.login_rate_limit_backoff_max_seconds = *policy.backoff_max_seconds();
-        }
-        StorageRuntimeSettingsValue::Events(policy) => {
-            config.event_fanout_batch_size = *policy.fanout_batch_size();
-            config.event_fanout_poll_interval_ms = *policy.fanout_poll_interval_ms();
-            config.event_delivery_batch_size = *policy.delivery_batch_size();
-            config.event_delivery_poll_interval_ms = *policy.delivery_poll_interval_ms();
-            config.event_delivery_max_attempts = *policy.delivery_max_attempts();
-            config.event_delivery_transport_timeout_ms = *policy.delivery_transport_timeout_ms();
-            config.event_retention_days = *policy.retention_days();
-            config.event_delivery_retention_days = *policy.delivery_retention_days();
-            config.event_retention_purge_enabled = *policy.purge_enabled();
-            config.event_retention_purge_interval_seconds = *policy.purge_interval_seconds();
-            config.event_retention_purge_batch_size = *policy.purge_batch_size();
-            config.event_retention_file_archive_enabled = *policy.file_archive_enabled();
-        }
-        StorageRuntimeSettingsValue::Exports(policy) => {
-            config.export_output_retention_hours = *policy.output_retention_hours();
-            config.export_output_cleanup_interval_seconds = *policy.cleanup_interval_seconds();
-            config.export_max_output_bytes = *policy.max_output_bytes();
-            config.export_stage_timeout_ms = *policy.stage_timeout_ms();
-            config.export_db_statement_timeout_ms = *policy.storage_query_budget_ms();
-            config.export_template_recursion_limit = *policy.template_recursion_limit();
-            config.export_template_max_objects = *policy.template_max_objects();
-            config.export_template_fuel = *policy.template_fuel();
-        }
-        StorageRuntimeSettingsValue::Backups(policy) => {
-            config.backup_max_output_bytes = *policy.max_output_bytes();
-            config.backup_max_capture_rows = *policy.max_capture_rows();
-            config.backup_output_retention_hours = *policy.retention_hours();
-        }
-        StorageRuntimeSettingsValue::Restores(policy) => {
-            config.restore_max_upload_bytes = *policy.max_upload_bytes();
-            config.restore_stage_retention_minutes = *policy.staging_retention_minutes();
-        }
-        _ => {}
     }
-}
 
-impl AppConfig {
     pub(crate) fn runtime_manages(&self, group: StorageRuntimeSettingsGroup) -> bool {
         self.runtime_managed_groups.contains(&group)
     }
-}
 
-pub(crate) fn validate(config: &AppConfig) -> Result<(), ApiError> {
-    config.task_worker_settings()?;
-    config.event_fanout_settings()?;
-    config.event_delivery_settings()?;
-    config.event_retention_settings()?;
-    config.token_issuance_policy()?;
-    config.token_retention_settings()?;
-    config.backup_budget()?;
-    config.artifacts.validate(
-        config.export_max_output_bytes,
-        config.backup_max_output_bytes,
-    )?;
-    if config.event_retention_file_archive_enabled
-        && config
-            .event_retention_archive_path
-            .as_ref()
-            .is_none_or(|path| path.trim().is_empty())
-    {
-        return Err(ApiError::BadRequest(
-            "File archiving requires a deployment archive path".into(),
-        ));
+    pub(crate) fn validate_runtime_policy(&self) -> Result<(), ApiError> {
+        self.task_worker_settings()?;
+        self.event_fanout_settings()?;
+        self.event_delivery_settings()?;
+        self.event_retention_settings()?;
+        self.token_issuance_policy()?;
+        self.token_retention_settings()?;
+        self.backup_budget()?;
+        self.artifacts
+            .validate(self.export_max_output_bytes, self.backup_max_output_bytes)?;
+        if self.event_retention_file_archive_enabled
+            && self
+                .event_retention_archive_path
+                .as_ref()
+                .is_none_or(|path| path.trim().is_empty())
+        {
+            return Err(ApiError::BadRequest(
+                "File archiving requires a deployment archive path".into(),
+            ));
+        }
+        tracing_subscriber::EnvFilter::try_new(&self.log_level)
+            .map_err(|error| ApiError::BadRequest(format!("Invalid log filter: {error}")))?;
+        Ok(())
     }
-    tracing_subscriber::EnvFilter::try_new(&config.log_level)
-        .map_err(|error| ApiError::BadRequest(format!("Invalid log filter: {error}")))?;
-    Ok(())
 }
 
 /// Legacy seed values remain readable for persisted-policy compatibility.

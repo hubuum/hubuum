@@ -120,7 +120,12 @@ async fn unavailable_required_audit_rolls_back_intent_and_canonical_events() {
     let (storage, request, entry) = fixture(true).await;
     let before = storage.read_deletion_control().await.unwrap();
     let before_events = storage.state.read_control().await.events.len();
-    storage.state.write_control().await.next_event_sequence = i64::MAX;
+    storage
+        .state
+        .write_control()
+        .await
+        .event_sequences
+        .observe(i64::MAX);
     let result = storage
         .prepare_hot_object_history_deletion(before.clone(), request)
         .await;
@@ -376,7 +381,8 @@ async fn cleanup_does_not_confuse_reused_integer_ids() {
         .await
         .unwrap()
         .into_value();
-    storage.state.write().await.unwrap().next_object_id = original.id().id();
+    storage.state.write().await.unwrap().object_ids =
+        IdSequence::with_existing(original.id().id() - 1);
     let class = storage
         .resolve_class(StorageClassSelector::Id(original.class_id()))
         .await

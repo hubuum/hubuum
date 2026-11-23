@@ -1699,10 +1699,7 @@ impl MemoryState {
             Association::ImportResult(result.id()),
             references([("/task_id", Some(Target::Task(result.task_id())))]),
         );
-        self.import_task_results
-            .entry(result.task_id().id())
-            .or_default()
-            .push(result);
+        self.import_task_results.insert(result);
     }
 
     pub(super) fn capture_task_output(&mut self, task_id: TaskId) {
@@ -1712,12 +1709,8 @@ impl MemoryState {
         );
     }
 
-    pub(super) fn store_event_delivery(
-        &mut self,
-        id: i64,
-        delivery: StorageEventDelivery,
-    ) -> Option<StorageEventDelivery> {
-        if !self.event_deliveries.contains_key(&id) {
+    pub(super) fn store_event_delivery(&mut self, delivery: StorageEventDelivery) {
+        if self.event_deliveries.get(delivery.id()).is_none() {
             let event = self
                 .events
                 .iter()
@@ -1754,7 +1747,7 @@ impl MemoryState {
             self.logical_identities
                 .restore_association(Association::Delivery(delivery.id()), evidence);
         }
-        self.event_deliveries.insert(id, delivery)
+        self.event_deliveries.store_unclaimed(delivery);
     }
 }
 
@@ -1836,7 +1829,8 @@ mod tests {
                 .unwrap()
                 .into_value();
             assert!(storage.resolve_logical_identity(target).await.is_err());
-            storage.state.write().await.unwrap().next_class_id = first.id().id();
+            storage.state.write().await.unwrap().class_ids =
+                IdSequence::with_existing(first.id().id() - 1);
             storage
                 .create_class(create(), &EventContext::system())
                 .await

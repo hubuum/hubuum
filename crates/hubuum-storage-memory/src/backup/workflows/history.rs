@@ -38,17 +38,12 @@ impl MemoryHistoryEntry {
 }
 
 fn advance_retained_sequence(
-    next: &mut i32,
+    ids: &mut IdSequence,
     rows: &[StorageBackupRow],
     column: &str,
 ) -> Result<(), StorageError> {
     for row in rows {
-        *next = (*next).max(
-            Row(row)
-                .integer(column)?
-                .checked_add(1)
-                .ok_or_else(|| invalid("retained resource sequence"))?,
-        );
+        ids.observe(Row(row).integer(column)?);
     }
     Ok(())
 }
@@ -235,31 +230,31 @@ pub(in crate::backup) fn restore_history(
     for (section, next) in [
         (
             StorageBackupHistorySection::CollectionHistory,
-            &mut state.next_collection_id,
+            &mut state.collection_ids,
         ),
         (
             StorageBackupHistorySection::ClassHistory,
-            &mut state.next_class_id,
+            &mut state.class_ids,
         ),
         (
             StorageBackupHistorySection::ObjectHistory,
-            &mut state.next_object_id,
+            &mut state.object_ids,
         ),
         (
             StorageBackupHistorySection::ClassRelationHistory,
-            &mut state.next_class_relation_id,
+            &mut state.class_relation_ids,
         ),
         (
             StorageBackupHistorySection::ObjectRelationHistory,
-            &mut state.next_object_relation_id,
+            &mut state.object_relation_ids,
         ),
         (
             StorageBackupHistorySection::ExportTemplateHistory,
-            &mut state.next_export_template_id,
+            &mut state.export_template_ids,
         ),
         (
             StorageBackupHistorySection::RemoteTargetHistory,
-            &mut state.next_remote_target_id,
+            &mut state.remote_target_ids,
         ),
     ] {
         advance_retained_sequence(next, &sections[&section], "id")?;
@@ -268,7 +263,7 @@ pub(in crate::backup) fn restore_history(
         StorageBackupHistorySection::ClassSchemaHistory,
         StorageBackupHistorySection::ComputedFieldHistory,
     ] {
-        advance_retained_sequence(&mut state.next_class_id, &sections[&section], "class_id")?;
+        advance_retained_sequence(&mut state.class_ids, &sections[&section], "class_id")?;
     }
     state.schema_history = sections[&StorageBackupHistorySection::ClassSchemaHistory].clone();
     state
@@ -292,11 +287,7 @@ pub(in crate::backup) fn restore_history(
         .map(|field| field.id().id())
         .max()
     {
-        state.next_computed_field_id = state.next_computed_field_id.max(
-            retained_id
-                .checked_add(1)
-                .ok_or_else(|| invalid("computed definition sequence"))?,
-        );
+        state.computed_field_ids.observe(retained_id);
     }
     state.history.clear();
     for section in [
@@ -370,7 +361,7 @@ pub(in crate::backup) fn restore_history(
             .relation_history
             .insert(section, sections[&section].clone());
     }
-    state.next_history_id = sections
+    let last_id = sections
         .iter()
         .filter(|(s, _)| {
             matches!(
@@ -390,9 +381,8 @@ pub(in crate::backup) fn restore_history(
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .max()
-        .unwrap_or(0)
-        .checked_add(1)
-        .ok_or_else(|| invalid("history sequence"))?;
+        .unwrap_or(0);
+    state.history_ids.observe(last_id);
     state.events.clear();
     state.task_events.clear();
     for row in &sections[&StorageBackupHistorySection::AuditEvents] {
@@ -502,15 +492,14 @@ pub(in crate::backup) fn restore_history(
     for events in state.task_events.values_mut() {
         events.sort_by_key(|event| event.id().get());
     }
-    state.next_event_sequence = state
+    let last_event_sequence = state
         .events
         .iter()
         .map(|e| e.clone().into_parts().0.id().get())
         .max()
-        .unwrap_or(0)
-        .checked_add(1)
-        .ok_or_else(|| invalid("event sequence"))?;
-    state.fanout_event_cursor = state.next_event_sequence - 1;
+        .unwrap_or(0);
+    state.event_sequences.observe(last_event_sequence);
+    state.fanout_event_cursor = last_event_sequence;
     for row in &sections[&StorageBackupHistorySection::TerminalEventDeliveries] {
         let r = Row(row);
         let value = StorageEventDelivery::builder(
@@ -534,16 +523,15 @@ pub(in crate::backup) fn restore_history(
         state
             .logical_identities
             .restore_association(Association::Delivery(value.id()), r.identity()?);
-        state.event_deliveries.insert(value.id().id(), value);
+        state.event_deliveries.store_unclaimed(value);
     }
-    state.next_event_delivery_id = state
+    let last_id = state
         .event_deliveries
-        .keys()
+        .values()
         .next_back()
-        .copied()
-        .unwrap_or(0)
-        .checked_add(1)
-        .ok_or_else(|| invalid("delivery sequence"))?;
+        .map(|delivery| delivery.id().id())
+        .unwrap_or(0);
+    state.delivery_ids.observe(last_id);
     tasks::restore(&sections, state)?;
     Ok(())
 }

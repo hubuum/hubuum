@@ -1,7 +1,6 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, web};
 
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::config::running::{ClientConfig, RunningConfig};
 use crate::errors::ApiError;
 use crate::pagination::PageLimits;

@@ -1,5 +1,4 @@
-use crate::api::openapi::{ApiErrorResponse, CountsResponse};
-use crate::api::response::ApiResponse;
+use crate::api::response::{ApiErrorResponse, ApiResponse, CountsResponse};
 use crate::config::{get_config, login_rate_limit_config};
 use crate::errors::ApiError;
 use crate::extractors::AdminAccess;

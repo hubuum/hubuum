@@ -1,8 +1,7 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse, ResponseLocation};
 use actix_web::{HttpRequest, Responder, delete, get, patch, routes, web};
 
 use crate::api::etag::{RevisionedResource, revision_precondition, revision_precondition_for_tag};
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::{ApiResponse, ResponseLocation};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess};
 use crate::models::search::parse_query_parameter;

@@ -6,9 +6,7 @@ use crate::models::{
     TokenScope,
 };
 use crate::pagination::{effective_page_limit, prepare_db_pagination};
-use crate::services::storage_boundary::{
-    object_from_storage, object_to_storage, visibility as storage_visibility,
-};
+use crate::services::storage_boundary::{object_to_storage, visibility as storage_visibility};
 use crate::storage::{
     ComputedObjectStorage, StorageComputedFieldError, StorageComputedObject,
     StorageComputedObjectEnrichmentQuery, StorageComputedObjectListQuery,
@@ -97,10 +95,7 @@ async fn execute_computed_object_query(
         .await?
         .into_parts();
     Ok(ComputedObjectListResult {
-        objects: objects
-            .into_iter()
-            .map(object_from_storage)
-            .collect::<Result<Vec<_>, _>>()?,
+        objects: objects.into_iter().map(HubuumObject::from).collect(),
         total,
         computed: computed
             .into_iter()
@@ -249,7 +244,7 @@ pub(crate) fn computed_from_storage(
     let (revision, materialization_stale, shared) = shared.into_parts();
     let (values, errors) = scope_from_storage(shared);
     Ok(HubuumObjectComputedResponse {
-        object: object_from_storage(object)?,
+        object: HubuumObject::from(object),
         computed: ComputedObjectScopesResponse {
             shared: SharedComputedScopeResponse {
                 revision: revision.get(),

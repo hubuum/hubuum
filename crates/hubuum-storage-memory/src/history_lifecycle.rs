@@ -2804,7 +2804,12 @@ mod audit_tests {
             .control()
             .create_hold(hold, snapshot.fence())
             .unwrap();
-        storage.state.write_control().await.next_event_sequence = i64::MAX;
+        storage
+            .state
+            .write_control()
+            .await
+            .event_sequences
+            .observe(i64::MAX);
         assert!(storage.commit_history_lifecycle(change).await.is_err());
         assert_eq!(
             storage.capture_history_lifecycle().await.unwrap().control(),

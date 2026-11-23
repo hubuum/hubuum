@@ -40,8 +40,8 @@ impl CollectionStorage for MemoryStorage {
                 parent_id.id()
             )));
         }
-        let id = state.next_collection_id;
-        state.next_collection_id += 1;
+        state.ensure_audited_history_capacity(1)?;
+        let id = state.collection_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id)
@@ -133,7 +133,7 @@ impl CollectionStorage for MemoryStorage {
             .after(updated.audit_snapshot())
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
-        state.store_collection(id.id(), updated.clone());
+        state.ensure_audited_history_capacity(1)?;
         let receipt = append_memory_event!(
             state,
             EntityType::Collection,
@@ -146,6 +146,7 @@ impl CollectionStorage for MemoryStorage {
             Some(current.revision()),
             Some(updated.revision()),
         )?;
+        state.store_collection(id.id(), updated.clone());
         state.append_history(
             MemoryHistoryValue::Collection(updated.clone()),
             StorageHistoryOperation::Update,
@@ -164,7 +165,8 @@ impl CollectionStorage for MemoryStorage {
                 "The root collection cannot be deleted",
             ));
         }
-        let mut state = self.state.write().await?;
+        let mut committed = self.state.write().await?;
+        let mut state = committed.clone();
         let current = state.collections.get(&id.id()).cloned().ok_or_else(|| {
             StorageError::not_found(format!("Collection {} was not found", id.id()))
         })?;
@@ -224,12 +226,6 @@ impl CollectionStorage for MemoryStorage {
             })
             .map(|subscription| subscription.id().id())
             .collect::<std::collections::BTreeSet<_>>();
-        let deliveries = state
-            .event_deliveries
-            .values()
-            .filter(|delivery| subscriptions.contains(&delivery.subscription_id().id()))
-            .map(|delivery| delivery.id().id())
-            .collect::<std::collections::BTreeSet<_>>();
         state
             .event_sinks
             .retain(|sink, _| !owned_sinks.contains(sink));
@@ -244,11 +240,9 @@ impl CollectionStorage for MemoryStorage {
             .retain(|subscription, _| !subscriptions.contains(subscription));
         state
             .event_deliveries
-            .retain(|delivery, _| !deliveries.contains(delivery));
-        state
-            .event_delivery_claims
-            .retain(|delivery, _| !deliveries.contains(delivery));
+            .remove_where(|delivery| subscriptions.contains(&delivery.subscription_id().id()));
         state.collections.remove(&id.id());
+        *committed = state;
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 
@@ -371,7 +365,7 @@ impl CollectionStorage for MemoryStorage {
             .after(moved.audit_snapshot())
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
-        state.store_collection(id.id(), moved.clone());
+        state.ensure_audited_history_capacity(1)?;
         let receipt = append_memory_event!(
             state,
             EntityType::Collection,
@@ -384,6 +378,7 @@ impl CollectionStorage for MemoryStorage {
             Some(current.revision()),
             Some(moved.revision()),
         )?;
+        state.store_collection(id.id(), moved.clone());
         state.append_history(
             MemoryHistoryValue::Collection(moved.clone()),
             StorageHistoryOperation::Update,
@@ -442,8 +437,8 @@ impl ClassStorage for MemoryStorage {
                 command.name()
             )));
         }
-        let id = state.next_class_id;
-        state.next_class_id += 1;
+        state.ensure_audited_history_capacity(2)?;
+        let id = state.class_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id)
@@ -566,7 +561,7 @@ impl ClassStorage for MemoryStorage {
             .after(updated.audit_snapshot())
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
-        state.store_class(id.id(), updated.clone());
+        state.ensure_audited_history_capacity(1)?;
         let receipt = append_memory_event!(
             state,
             EntityType::Class,
@@ -579,6 +574,7 @@ impl ClassStorage for MemoryStorage {
             Some(current.revision()),
             Some(updated.revision()),
         )?;
+        state.store_class(id.id(), updated.clone());
         state.schema_record_class(&updated, StorageHistoryOperation::Update, context, policy)?;
         state.append_history(
             MemoryHistoryValue::Class(updated.clone()),
@@ -593,8 +589,11 @@ impl ClassStorage for MemoryStorage {
         target: &StorageResolvedClass,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut state = self.state.write().await?;
-        delete_class_in_state(&mut state, target, context)
+        let mut committed = self.state.write().await?;
+        let mut state = committed.clone();
+        let outcome = delete_class_in_state(&mut state, target, context)?;
+        *committed = state;
+        Ok(outcome)
     }
 
     async fn resolve_class_names(
@@ -726,8 +725,8 @@ impl ObjectStorage for MemoryStorage {
                 command.class_id().id()
             )));
         }
-        let id = state.next_object_id;
-        state.next_object_id += 1;
+        state.ensure_audited_history_capacity(1)?;
+        let id = state.object_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id)
@@ -849,7 +848,7 @@ impl ObjectStorage for MemoryStorage {
             .metadata(serde_json::json!({"class_id": updated.class_id().id()}))
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
-        state.store_object(id.id(), updated.clone());
+        state.ensure_audited_history_capacity(1)?;
         let receipt = append_memory_event!(
             state,
             EntityType::Object,
@@ -862,6 +861,7 @@ impl ObjectStorage for MemoryStorage {
             Some(current.revision()),
             Some(updated.revision()),
         )?;
+        state.store_object(id.id(), updated.clone());
         state.append_history(
             MemoryHistoryValue::Object(updated.clone()),
             StorageHistoryOperation::Update,
@@ -890,7 +890,8 @@ impl ObjectStorage for MemoryStorage {
         target: &StorageResolvedObject,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut state = self.state.write().await?;
+        let mut committed = self.state.write().await?;
+        let mut state = committed.clone();
         let id = target.object().id();
         let current = state
             .objects
@@ -930,6 +931,7 @@ impl ObjectStorage for MemoryStorage {
             |relation| relation.from_object_id() == id || relation.to_object_id() == id,
             context,
         )?;
+        *committed = state;
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 
@@ -1081,8 +1083,8 @@ impl ClassRelationStorage for MemoryStorage {
                 "A class relation already exists between these classes",
             ));
         }
-        let id = state.next_class_relation_id;
-        state.next_class_relation_id += 1;
+        state.ensure_audited_history_capacity(1)?;
+        let id = state.class_relation_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id)
@@ -1211,7 +1213,7 @@ impl ClassRelationStorage for MemoryStorage {
             .metadata(serde_json::json!({"from_class_id": relation.from_class_id().id(), "to_class_id": relation.to_class_id().id(),
                 "related_collection_ids": [target.from_class().collection_id().id(), target.to_class().collection_id().id()]}))
             .try_build().map_err(|error| StorageError::backend_failure(error.to_string()))?;
-        state.store_class_relation(id.id(), relation.clone());
+        state.ensure_audited_history_capacity(1)?;
         let receipt = append_memory_event!(
             state,
             EntityType::ClassRelation,
@@ -1224,6 +1226,7 @@ impl ClassRelationStorage for MemoryStorage {
             Some(current.metadata().revision()),
             Some(relation.metadata().revision())
         )?;
+        state.store_class_relation(id.id(), relation.clone());
         crate::backup::record_class_relation_history(
             &mut state,
             &relation,
@@ -1239,7 +1242,8 @@ impl ClassRelationStorage for MemoryStorage {
         target: &StorageResolvedClassRelation,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut state = self.state.write().await?;
+        let mut committed = self.state.write().await?;
+        let mut state = committed.clone();
         let relation_id = ClassRelationId::from(target.relation().metadata().id());
         let current = state
             .class_relations
@@ -1292,6 +1296,7 @@ impl ClassRelationStorage for MemoryStorage {
             |relation| relation.class_relation_id() == relation_id,
             context,
         )?;
+        *committed = state;
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 }
@@ -1435,8 +1440,8 @@ impl ObjectRelationStorage for MemoryStorage {
                 "An object relation already exists between these objects",
             ));
         }
-        let id = state.next_object_relation_id;
-        state.next_object_relation_id += 1;
+        state.ensure_audited_history_capacity(1)?;
+        let id = state.object_relation_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id)
@@ -1556,6 +1561,7 @@ impl ObjectRelationStorage for MemoryStorage {
         }))
         .try_build()
         .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.ensure_audited_history_capacity(1)?;
         let receipt = append_memory_event!(
             state,
             EntityType::ObjectRelation,

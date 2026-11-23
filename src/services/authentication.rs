@@ -184,26 +184,6 @@ pub(crate) async fn authenticate_local(
 }
 
 #[cfg(test)]
-pub(crate) async fn issue_login_token(
-    context: &AppContext,
-    authenticated: &AuthenticatedLogin,
-    event_context: &hubuum_events_core::EventContext,
-) -> Result<crate::models::IssuedToken, ApiError> {
-    let response = super::auth_sessions::issue(
-        context,
-        authenticated,
-        hubuum_storage_core::SessionClientId::try_new("test").unwrap(),
-        event_context.clone(),
-        hubuum_storage_core::ObservedSource::Unavailable,
-    )
-    .await?;
-    Ok(crate::models::IssuedToken::new(
-        Token::try_from(response.access_token)?,
-        response.access_expires_at.naive_utc(),
-    ))
-}
-
-#[cfg(test)]
 mod tests {
     use super::ExecutionPrincipal;
     use crate::errors::ApiError;

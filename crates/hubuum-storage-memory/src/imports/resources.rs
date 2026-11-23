@@ -321,15 +321,11 @@ impl MemoryStorage {
         } else {
             assert_import_create_condition(parts.condition)?;
         }
-        let id = existing.as_ref().map_or_else(
-            || {
-                let id = ComputedFieldDefinitionId::new(state.next_computed_field_id)
-                    .expect("memory import computed-field id is positive");
-                state.next_computed_field_id += 1;
-                id
-            },
-            |value| ComputedFieldDefinitionId::from(value.metadata().id()),
-        );
+        let id = match &existing {
+            Some(value) => ComputedFieldDefinitionId::from(value.metadata().id()),
+            None => ComputedFieldDefinitionId::new(state.computed_field_ids.allocate()?)
+                .expect("allocated id is positive"),
+        };
         let now = Utc::now();
         let (created_at, updated_at) = parts.timestamps.map_or_else(
             || {

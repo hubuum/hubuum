@@ -20,15 +20,11 @@ impl MemoryStorage {
         } else {
             assert_import_create_condition(parts.condition)?;
         }
-        let id = existing.as_ref().map_or_else(
-            || {
-                let id = IdentityScopeId::new(state.next_identity_scope_id)
-                    .expect("memory import identity scope id is positive");
-                state.next_identity_scope_id += 1;
-                id
-            },
-            StorageIdentityScope::id,
-        );
+        let id = match &existing {
+            Some(value) => value.id(),
+            None => IdentityScopeId::new(state.identity_scope_ids.allocate()?)
+                .expect("allocated id is positive"),
+        };
         let now = Utc::now();
         let (created_at, updated_at) = parts.timestamps.map_or_else(
             || {
@@ -88,15 +84,10 @@ impl MemoryStorage {
         } else {
             assert_import_create_condition(parts.condition)?;
         }
-        let id = existing.as_ref().map_or_else(
-            || {
-                let id =
-                    GroupId::new(state.next_group_id).expect("memory import group id is positive");
-                state.next_group_id += 1;
-                id
-            },
-            StorageIdentityGroup::id,
-        );
+        let id = match &existing {
+            Some(value) => value.id(),
+            None => GroupId::new(state.group_ids.allocate()?).expect("allocated id is positive"),
+        };
         let now = Utc::now();
         let (created_at, updated_at) = parts.timestamps.map_or_else(
             || {

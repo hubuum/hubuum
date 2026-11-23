@@ -132,7 +132,7 @@ impl OperationalStateStorage for MemoryStorage {
                 .application_control
                 .is_released_for(&state.deletion_control)
             {
-                state.maintenance_state
+                state.restore_coordinator.maintenance_state()
             } else {
                 MaintenanceState::RecoveryQuarantine
             },
@@ -187,7 +187,7 @@ impl OperationalStateStorage for MemoryStorage {
             )
             .map_err(invalid_contract_value)?,
             task_count(state.task_events.values().flatten().count())?,
-            task_count(state.import_task_results.values().flatten().count())?,
+            task_count(state.import_task_results.rows().count())?,
             state
                 .tasks
                 .values()

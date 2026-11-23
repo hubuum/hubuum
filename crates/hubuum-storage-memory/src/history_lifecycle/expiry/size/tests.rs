@@ -165,7 +165,7 @@ async fn size_required_audit_keeps_both_pressure_and_intent_atomic() {
     let before = state.history_lifecycle.clone();
     let events = state.events.len();
     // Permit the first event's sequence, then fail before the second can commit.
-    state.next_event_sequence = i64::MAX - 1;
+    state.event_sequences.observe(i64::MAX - 1);
     let admission = request(&state, key);
     assert!(super::super::admit_on(&mut state, admission).is_err());
     assert_eq!(state.history_lifecycle, before);

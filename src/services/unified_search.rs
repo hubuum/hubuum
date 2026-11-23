@@ -3,9 +3,7 @@ use crate::models::{
     Collection, HubuumClassExpanded, HubuumObject, TokenScope, UnifiedSearchCursorToken,
     UnifiedSearchSpec,
 };
-use crate::services::storage_boundary::{
-    class_from_storage, collection_from_storage, object_from_storage, visibility,
-};
+use crate::services::storage_boundary::{class_from_storage, visibility};
 use crate::storage::{
     StorageCandidatePageLimit, StorageContext, StorageUnifiedSearchCursor,
     StorageUnifiedSearchQuery, UnifiedSearchStorage, storage_handle,
@@ -87,7 +85,7 @@ pub async fn search_collections(
             .map(|candidate| {
                 let (item, cursor) = candidate.into_parts();
                 Ok(UnifiedSearchCandidate {
-                    item: collection_from_storage(item)?,
+                    item: Collection::from(item),
                     cursor: candidate_cursor(cursor),
                 })
             })
@@ -153,7 +151,7 @@ pub async fn search_objects(
             .map(|candidate| {
                 let (item, cursor) = candidate.into_parts();
                 Ok(UnifiedSearchCandidate {
-                    item: object_from_storage(item)?,
+                    item: HubuumObject::from(item),
                     cursor: candidate_cursor(cursor),
                 })
             })

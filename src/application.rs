@@ -22,7 +22,6 @@ use tracing::{error, info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
 use crate::backups::BackupSettings;
-use crate::config::environment::constraints;
 #[cfg(test)]
 use crate::config::get_config;
 #[cfg(not(test))]
@@ -289,36 +288,52 @@ struct RuntimeServices {
     restore_settings: RestoreSettings,
 }
 
-async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
-    if config.storage_backend == StorageBackendKind::Postgres {
-        config.database_url = crate::secrets::resolve_database_url(
-            DatabaseCredential::Runtime,
-            Some(&config.database_url),
-            config.database_url_override.as_ref(),
-        )
-            .await
-            .unwrap_or_else(|error| {
-                fatal_error(
-                    &format!("Failed to resolve the database connection secret: {error}"),
-                    EXIT_CODE_CONFIG_ERROR,
+impl AppConfig {
+    async fn runtime_storage_settings(&mut self) -> Result<StorageSettings, String> {
+        let settings = match self.storage_backend {
+            StorageBackendKind::Memory => StorageSettings::memory(),
+            StorageBackendKind::Postgres => {
+                self.database_url = crate::secrets::resolve_database_url(
+                    DatabaseCredential::Runtime,
+                    Some(&self.database_url),
+                    self.database_url_override.as_ref(),
                 )
-            })
-            .unwrap_or_else(|| fatal_error(
-                "Database URL is missing from the selected secret source; configure HUBUUM_DATABASE_URL or database/url, or pass --database-url",
-                EXIT_CODE_CONFIG_ERROR,
-            ));
+                .await
+                .map_err(|error| format!("Failed to resolve the database connection secret: {error}"))?
+                .ok_or_else(|| "Database URL is missing from the selected secret source; configure HUBUUM_DATABASE_URL or database/url, or pass --database-url".to_string())?;
+                StorageSettings::postgres(self.database_url.clone())
+                    .max_connections(self.db_pool_size)
+                    .statement_timeout_ms(self.db_statement_timeout_ms)
+                    .acquire_timeout_ms(self.db_pool_acquire_timeout_ms)
+                    .build()
+                    .map_err(|error| error.to_string())?
+            }
+        };
+        Ok(settings.with_schema_limits(self.schema_limits()))
     }
+
+    fn runtime_database_roles(&self) -> Result<Option<StorageDatabaseRoleNames>, String> {
+        if self.storage_backend != StorageBackendKind::Postgres
+            || !self.database_role_mode.uses_split_roles()
+        {
+            return Ok(None);
+        }
+        StorageDatabaseRoleNames::new(
+            self.database_owner_role.clone(),
+            self.database_migrator_role.clone(),
+            self.database_runtime_role.clone(),
+        )
+        .map(Some)
+        .map_err(|error| error.to_string())
+    }
+}
+
+async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
+    let storage_settings = config
+        .runtime_storage_settings()
+        .await
+        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
     utilities::auth::initialize_dummy_password_hash();
-    let storage_settings = match config.storage_backend {
-        StorageBackendKind::Postgres => StorageSettings::postgres(config.database_url.clone())
-            .max_connections(config.db_pool_size)
-            .statement_timeout_ms(config.db_statement_timeout_ms)
-            .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
-            .build()
-            .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR)),
-        StorageBackendKind::Memory => StorageSettings::memory(),
-    }
-    .with_schema_limits(config.schema_limits());
     let storage = initialize_storage(&storage_settings)
         .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR))
         .with_query_observations(config.query_observation_settings());
@@ -378,15 +393,10 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
             task_policy_revision = task_policy.revision().get(),
             "Shared task admission policy loaded"
         );
-        if config.storage_backend == StorageBackendKind::Postgres
-            && config.database_role_mode.uses_split_roles()
+        if let Some(database_roles) = config
+            .runtime_database_roles()
+            .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR))
         {
-            let database_roles = StorageDatabaseRoleNames::new(
-                config.database_owner_role.clone(),
-                config.database_migrator_role.clone(),
-                config.database_runtime_role.clone(),
-            )
-            .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
             let privilege_report = inspect_storage_database_privileges(
                 &storage_settings,
                 StorageDatabaseRole::Runtime,
@@ -563,7 +573,7 @@ async fn run_worker_role(
     info!(
         message = "worker startup",
         version = env!("CARGO_PKG_VERSION"),
-        git_sha = logger::build_git_sha(),
+        git_sha = crate::build_git_sha(),
         runtime_role = config.runtime_role.as_str(),
         task_workers = config.task_workers,
         event_fanout_workers = config.event_fanout_workers,
@@ -677,16 +687,11 @@ pub(crate) async fn start_http_role(
 
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
 
-    let tls_paths = constraints::TLS_KEY_PAIR.resolve(
-        config.tls_cert_path.as_ref(),
-        config.tls_key_path.as_ref(),
-    ).unwrap_or_else(|_| {
-        let message = if config.tls_cert_path.is_some() {
-            "TLS certificate specified but key is missing. Please provide both --tls-cert-path and --tls-key-path"
-        } else {
-            "TLS key specified but certificate is missing. Please provide both --tls-cert-path and --tls-key-path"
-        };
-        fatal_error(message, EXIT_CODE_TLS_ERROR)
+    let tls_paths = config.tls_key_pair().unwrap_or_else(|message| {
+        fatal_error(
+            &format!("{message}. Please provide both --tls-cert-path and --tls-key-path"),
+            EXIT_CODE_TLS_ERROR,
+        )
     });
 
     let server = match tls_paths {
@@ -714,10 +719,10 @@ pub(crate) async fn start_http_role(
     info!(
         message = "server startup",
         version = env!("CARGO_PKG_VERSION"),
-        git_sha = logger::build_git_sha(),
+        git_sha = crate::build_git_sha(),
         runtime_role = config.runtime_role.as_str(),
         bind_address = bind_address.as_str(),
-        tls = config.tls_cert_path.is_some() && config.tls_key_path.is_some(),
+        tls = tls_paths.is_some(),
         log_format = "json",
         log_level = config.log_level.as_str(),
         actix_workers = config.actix_workers,
@@ -845,16 +850,9 @@ fn start_worker_metrics_server(config: &AppConfig, context: AppContext) -> std::
         ))
     });
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
-    let tls_paths = constraints::TLS_KEY_PAIR
-        .resolve(config.tls_cert_path.as_ref(), config.tls_key_path.as_ref())
-        .map_err(|_| {
-            let message = if config.tls_cert_path.is_some() {
-                "TLS certificate specified but key is missing"
-            } else {
-                "TLS key specified but certificate is missing"
-            };
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, message)
-        })?;
+    let tls_paths = config
+        .tls_key_pair()
+        .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
     let server = match tls_paths {
         Some((cert, key)) => tls::configure_server(
             server,
@@ -926,13 +924,31 @@ mod tests {
     use actix_web::{http::StatusCode, test as actix_test};
     use rstest::rstest;
 
+    use crate::config::DatabaseRoleMode;
     use crate::permissions::LocalPermissionBackend;
     use crate::storage::StorageHandle;
+    use clap::Parser;
     use hubuum_storage_postgres::{PostgresPool, PostgresPoolSettings, build_postgres_pool};
 
     use super::*;
 
     static METRICS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[rstest]
+    #[case(StorageBackendKind::Postgres, DatabaseRoleMode::Split, true)]
+    #[case(StorageBackendKind::Postgres, DatabaseRoleMode::Single, false)]
+    #[case(StorageBackendKind::Memory, DatabaseRoleMode::Split, false)]
+    #[case(StorageBackendKind::Memory, DatabaseRoleMode::Single, false)]
+    fn runtime_database_roles_follow_the_selected_backend(
+        #[case] backend: StorageBackendKind,
+        #[case] roles: DatabaseRoleMode,
+        #[case] expected: bool,
+    ) {
+        let mut config = AppConfig::parse_from(["hubuum"]);
+        config.storage_backend = backend;
+        config.database_role_mode = roles;
+        assert_eq!(config.runtime_database_roles().unwrap().is_some(), expected);
+    }
 
     fn unreachable_pool() -> PostgresPool {
         let settings = PostgresPoolSettings::builder(

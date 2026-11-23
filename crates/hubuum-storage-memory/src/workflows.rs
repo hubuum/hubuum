@@ -1,6 +1,5 @@
 use super::*;
 use hubuum_storage_core::StorageBackupTaskContent;
-use hubuum_storage_core::{FencedImportItem, FencedImportPlan, FencedImportResults};
 
 #[async_trait]
 impl RemoteTargetStorage for MemoryStorage {
@@ -57,8 +56,8 @@ impl RemoteTargetStorage for MemoryStorage {
                 collection_id.id()
             )));
         }
-        let id = state.next_remote_target_id;
-        state.next_remote_target_id += 1;
+        state.ensure_audited_history_capacity(1)?;
+        let id = state.remote_target_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id).expect("memory remote target id is positive"),
@@ -166,6 +165,7 @@ impl RemoteTargetStorage for MemoryStorage {
             &name,
             StorageRemoteTargetDefinition::new(description, updated_transport, updated_policy),
         );
+        state.ensure_audited_history_capacity(1)?;
         state.store_remote_target(target_id.id(), target.clone());
         let receipt = state.append_simple_event(
             EntityType::RemoteTarget,
@@ -189,9 +189,10 @@ impl RemoteTargetStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let (target_id, context) = request.into_parts();
         let mut state = self.state.write().await?;
-        let Some(target) = state.remote_targets.remove(&target_id.id()) else {
+        let Some(target) = state.remote_targets.get(&target_id.id()).cloned() else {
             return Ok(StorageMutationOutcome::unchanged(()));
         };
+        state.ensure_audited_history_capacity(1)?;
         let (_, _, name, _) = target.clone().into_parts();
         let receipt = state.append_simple_event(
             EntityType::RemoteTarget,
@@ -206,6 +207,7 @@ impl RemoteTargetStorage for MemoryStorage {
             StorageHistoryOperation::Delete,
             &context,
         )?;
+        state.remote_targets.remove(&target_id.id());
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 
@@ -328,9 +330,8 @@ impl TaskQueueStorage for MemoryStorage {
                 "Idempotency-Key is already in use for a different task submission",
             ));
         }
-        let id = TaskId::new(state.next_task_id)
+        let id = TaskId::new(state.task_ids.allocate()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        state.next_task_id += 1;
         let now = Utc::now();
         let record = MemoryTaskRecord {
             checkpoint: None,
@@ -519,11 +520,7 @@ impl TaskQueueStorage for MemoryStorage {
             )));
         }
         page(
-            state
-                .import_task_results
-                .get(&task_id.id())
-                .cloned()
-                .unwrap_or_default(),
+            state.import_task_results.for_task(task_id).to_vec(),
             &options,
         )
     }
@@ -722,7 +719,7 @@ impl TaskExecutionStorage for MemoryStorage {
         if !state
             .application_control
             .is_released_for(&state.deletion_control)
-            || state.maintenance_state != MaintenanceState::Normal
+            || state.restore_coordinator.maintenance_state() != MaintenanceState::Normal
         {
             return Ok(None);
         }
@@ -831,6 +828,7 @@ impl TaskExecutionStorage for MemoryStorage {
             .take(batch_size)
             .map(|task| task.id)
             .collect::<Vec<_>>();
+        state.event_sequences.after(task_ids.len())?;
         let mut recovered = Vec::with_capacity(task_ids.len());
         for task_id in task_ids {
             if state
@@ -842,19 +840,15 @@ impl TaskExecutionStorage for MemoryStorage {
                 continue;
             }
             let has_schema_work = state.schema_work.contains_key(&task_id.id());
-            let results = state.import_task_results.get(&task_id.id());
-            let processed = results.map_or(0, |results| {
-                results
-                    .iter()
-                    .filter(|result| result.outcome() != "unattempted")
-                    .count()
-            }) as i32;
-            let failed = results.map_or(0, |results| {
-                results
-                    .iter()
-                    .filter(|result| matches!(result.outcome(), "failed" | "stale_revision"))
-                    .count()
-            }) as i32;
+            let results = state.import_task_results.for_task(task_id);
+            let processed = results
+                .iter()
+                .filter(|result| result.outcome() != "unattempted")
+                .count() as i32;
+            let failed = results
+                .iter()
+                .filter(|result| matches!(result.outcome(), "failed" | "stale_revision"))
+                .count() as i32;
             let task = state
                 .tasks
                 .get_mut(&task_id.id())
@@ -1030,15 +1024,11 @@ impl TaskExecutionStorage for MemoryStorage {
         if !stored.status.is_active() || !stored.lease_matches(&lease) {
             return Err(invalid_task_lease());
         }
+        let phase = stored.control.phase();
         let now = Utc::now();
         if stored.control.stop_reason(now).is_some() {
             if let StorageTaskCompletionPayload::RemoteCall(artifact) = payload {
-                crate::backup::store_remote_call_result(
-                    &mut state,
-                    lease.task_id(),
-                    artifact,
-                    now,
-                )?;
+                state.store_remote_call_result(lease.task_id(), artifact, now, phase)?;
                 state.account_task_output(lease.task_id())?;
             }
             let stopped = state.finish_stopped_task(lease.task_id(), now, None)?;
@@ -1075,12 +1065,7 @@ impl TaskExecutionStorage for MemoryStorage {
             | StorageTaskCompletionPayload::Reindex
             | StorageTaskCompletionPayload::SchemaValidation => {}
             StorageTaskCompletionPayload::RemoteCall(artifact) => {
-                crate::backup::store_remote_call_result(
-                    &mut state,
-                    lease.task_id(),
-                    artifact,
-                    now,
-                )?;
+                state.store_remote_call_result(lease.task_id(), artifact, now, phase)?;
             }
             StorageTaskCompletionPayload::SchemaProfiling(artifact) => {
                 let task = state
@@ -1307,9 +1292,8 @@ impl RestoreStorage for MemoryStorage {
         let logical_identity = state
             .logical_identities
             .restore_requester(initiator.clone().into_parts().principal_id());
-        let id = RestoreJobId::new(state.next_restore_job_id)
+        let id = RestoreJobId::new(state.restore_job_ids.next()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        state.next_restore_job_id += 1;
         let now = Utc::now();
         let timestamps = StorageRestoreTimestamps::try_new(expires_at, None, None, now, now)
             .map_err(invalid_contract_value)?;
@@ -1328,6 +1312,7 @@ impl RestoreStorage for MemoryStorage {
             capability_hash.clone(),
         )
         .map_err(invalid_contract_value)?;
+        state.restore_job_ids.observe(id.id());
         state.restore_jobs.insert(
             id.id(),
             MemoryRestoreRecord {
@@ -1415,11 +1400,7 @@ impl RestoreStorage for MemoryStorage {
                 approval.context(),
             )?;
         }
-        if !state.maintenance_state.is_normal() {
-            return Err(StorageError::conflict(
-                "Another maintenance operation is already active",
-            ));
-        }
+        state.restore_coordinator.start(job_id)?;
         let current = state
             .restore_jobs
             .get(&job_id.id())
@@ -1445,10 +1426,6 @@ impl RestoreStorage for MemoryStorage {
             false,
         )?;
         state.restore_jobs.insert(job_id.id(), confirmed);
-        state.maintenance_state = MaintenanceState::Draining;
-        state.maintenance_restore_job_id = Some(job_id);
-        state.maintenance_generation = state.maintenance_generation.saturating_add(1);
-        state.restore_instances.clear();
         *guard = state;
         Ok(confirmed_at)
     }
@@ -1459,9 +1436,7 @@ impl RestoreStorage for MemoryStorage {
     ) -> Result<StorageRestoreCompletion, StorageError> {
         let (job_id, metadata, snapshot, source_includes_history) = request.into_parts();
         let mut state = self.state.write_control().await;
-        if state.maintenance_state != MaintenanceState::Draining
-            || state.maintenance_restore_job_id != Some(job_id)
-        {
+        if !state.restore_coordinator.owns(job_id) {
             return Err(StorageError::conflict(
                 "The restore job does not own draining maintenance",
             ));
@@ -1485,7 +1460,9 @@ impl RestoreStorage for MemoryStorage {
             state.task_accounting_snapshot()?,
             state.artifacts.clone(),
         )?;
-        replacement.credential_approvals = state.credential_approvals.clone();
+        replacement.credential_approvals = state
+            .credential_approvals
+            .invalidated_for_restore(started_at);
         replacement.api_requests = state.api_requests.clone();
         replacement.history_publications = state.history_publications.clone();
 
@@ -1505,19 +1482,12 @@ impl RestoreStorage for MemoryStorage {
         if replacement.pending_restore {
             replacement.application_control =
                 ApplicationControlState::quarantined(replacement.application_control.fence());
-            replacement.maintenance_state = MaintenanceState::Draining;
-            replacement.maintenance_restore_job_id = Some(job_id);
         } else {
             crate::backup::enqueue_restored_repairs(&mut replacement)?;
         }
         replacement.runtime_registrations = state.runtime_registrations.clone();
         // Runtime settings are deployment configuration and survive restores.
         replacement.runtime_settings = state.runtime_settings.clone();
-        for (_, approval) in replacement.credential_approvals.values_mut() {
-            approval.invalidate(Utc::now());
-        }
-        replacement.credential_approval_digests = state.credential_approval_digests.clone();
-        replacement.next_credential_approval_id = state.next_credential_approval_id;
         crate::backup::append_restore_event(
             &mut replacement,
             &current,
@@ -1539,8 +1509,10 @@ impl RestoreStorage for MemoryStorage {
             true,
         )?;
         replacement.restore_receipts.insert(job_id.id(), succeeded);
-        replacement.maintenance_generation = state.maintenance_generation;
-        replacement.next_restore_job_id = state.next_restore_job_id;
+        replacement.restore_coordinator = state
+            .restore_coordinator
+            .after_replay(replacement.pending_restore);
+        replacement.restore_job_ids = state.restore_job_ids;
         let completion = StorageRestoreCompletion::try_new(started_at, finished_at)
             .map_err(invalid_contract_value)?;
         *state = replacement;
@@ -1580,11 +1552,7 @@ impl RestoreStorage for MemoryStorage {
             true,
         )?;
         state.restore_jobs.insert(job_id.id(), failed);
-        if state.maintenance_restore_job_id == Some(job_id) {
-            state.maintenance_state = MaintenanceState::Normal;
-            state.maintenance_restore_job_id = None;
-            state.restore_instances.clear();
-        }
+        state.restore_coordinator.resume(Some(job_id));
         Ok(())
     }
 
@@ -1592,18 +1560,13 @@ impl RestoreStorage for MemoryStorage {
         &self,
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
         let state = self.state.read_control().await;
-        Ok(StorageRestoreCoordinatorSnapshot::new(
-            state.maintenance_state,
-            state.maintenance_restore_job_id,
-            Utc::now(),
-        ))
+        Ok(state.restore_coordinator.snapshot(Utc::now()))
     }
 
     async fn resume_maintenance_without_restore(&self) -> Result<(), StorageError> {
         let mut state = self.state.write_control().await;
-        if state.maintenance_restore_job_id.is_none() && !state.pending_restore {
-            state.maintenance_state = MaintenanceState::Normal;
-            state.restore_instances.clear();
+        if !state.pending_restore {
+            state.restore_coordinator.resume(None);
         }
         Ok(())
     }
@@ -1623,12 +1586,9 @@ impl RestoreStorage for MemoryStorage {
             StorageRestoreJobStatus::Succeeded
                 | StorageRestoreJobStatus::Failed
                 | StorageRestoreJobStatus::Expired
-        ) && state.maintenance_restore_job_id == Some(job_id)
-            && !state.pending_restore
+        ) && !state.pending_restore
         {
-            state.maintenance_state = MaintenanceState::Normal;
-            state.maintenance_restore_job_id = None;
-            state.restore_instances.clear();
+            state.restore_coordinator.resume(Some(job_id));
         }
         Ok(())
     }
@@ -1673,25 +1633,10 @@ impl RestoreStorage for MemoryStorage {
                 );
             }
         }
-        let drained = if state.maintenance_state.is_normal() {
-            false
-        } else {
-            local_work_is_idle()
-        };
-        let generation = state.maintenance_generation;
-        state.restore_instances.insert(
-            instance_id,
-            MemoryRestoreInstance {
-                generation,
-                drained,
-                heartbeat_at: now,
-            },
-        );
-        Ok(StorageRestoreCoordinatorSnapshot::new(
-            state.maintenance_state,
-            state.maintenance_restore_job_id,
-            now,
-        ))
+        state
+            .restore_coordinator
+            .heartbeat(instance_id, now, local_work_is_idle);
+        Ok(state.restore_coordinator.snapshot(now))
     }
 
     async fn get_restore_drain_state(
@@ -1699,390 +1644,15 @@ impl RestoreStorage for MemoryStorage {
         heartbeat_cutoff: DateTime<Utc>,
     ) -> Result<StorageRestoreDrainState, StorageError> {
         let state = self.state.read_control().await;
-        let instances = state
-            .restore_instances
-            .iter()
-            .filter(|(_, instance)| {
-                instance.heartbeat_at >= heartbeat_cutoff
-                    && instance.generation == state.maintenance_generation
-            })
-            .map(|(id, instance)| {
-                StorageRestoreInstance::try_new(*id, instance.generation, instance.drained)
-                    .map_err(invalid_contract_value)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        StorageRestoreDrainState::try_new(state.maintenance_generation, instances)
-            .map_err(invalid_contract_value)
+        state.restore_coordinator.drain_state(heartbeat_cutoff)
     }
 
     async fn remove_restore_instance(&self, instance_id: Uuid) -> Result<(), StorageError> {
         self.state
             .write_control()
             .await
-            .restore_instances
-            .remove(&instance_id);
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl ImportStorage for MemoryStorage {
-    async fn get_import_root_collection(&self) -> Result<StorageCollection, StorageError> {
-        self.get_collection(CollectionId::new(ROOT_COLLECTION_ID).expect("root id is valid"))
-            .await
-    }
-
-    async fn get_import_collection_by_id(
-        &self,
-        collection_id: CollectionId,
-    ) -> Result<Option<StorageCollection>, StorageError> {
-        Ok(self
-            .state
-            .read()
-            .await?
-            .collections
-            .get(&collection_id.id())
-            .cloned())
-    }
-
-    async fn get_import_collection_by_key(
-        &self,
-        key: &StorageImportCollectionKey,
-    ) -> Result<Option<StorageCollection>, StorageError> {
-        let parts = key.clone().into_parts();
-        let state = self.state.read().await?;
-        let mut candidates = state
-            .collections
-            .values()
-            .filter(|collection| collection.name() == parts.name)
-            .cloned()
-            .collect::<Vec<_>>();
-        if let Some(path) = parts.path {
-            candidates.retain(|collection| {
-                if collection.id().id() == ROOT_COLLECTION_ID {
-                    return path.is_empty();
-                }
-                // Import paths include the selected collection and omit root.
-                let mut names = vec![collection.name().to_string()];
-                let mut parent = collection.parent_collection_id();
-                while let Some(parent_id) = parent {
-                    if parent_id.id() == ROOT_COLLECTION_ID {
-                        break;
-                    }
-                    let Some(ancestor) = state.collections.get(&parent_id.id()) else {
-                        return false;
-                    };
-                    names.push(ancestor.name().to_string());
-                    parent = ancestor.parent_collection_id();
-                }
-                names.reverse();
-                names == path
-            });
-        }
-        match candidates.as_slice() {
-            [] => Ok(None),
-            [collection] => Ok(Some(collection.clone())),
-            _ => Err(StorageError::conflict(format!(
-                "Import collection key '{}' is ambiguous",
-                parts.name
-            ))),
-        }
-    }
-
-    async fn list_import_collections_by_name(
-        &self,
-        name: &str,
-    ) -> Result<Vec<StorageCollection>, StorageError> {
-        Ok(self
-            .state
-            .read()
-            .await?
-            .collections
-            .values()
-            .filter(|collection| collection.name() == name)
-            .cloned()
-            .collect())
-    }
-
-    async fn get_import_collection_child_by_name(
-        &self,
-        parent_collection_id: CollectionId,
-        name: &str,
-    ) -> Result<Option<StorageCollection>, StorageError> {
-        Ok(self
-            .state
-            .read()
-            .await?
-            .collections
-            .values()
-            .find(|collection| {
-                collection.parent_collection_id() == Some(parent_collection_id)
-                    && collection.name() == name
-            })
-            .cloned())
-    }
-
-    async fn get_import_class_by_name(
-        &self,
-        collection_id: CollectionId,
-        name: &str,
-    ) -> Result<Option<StorageClass>, StorageError> {
-        Ok(self
-            .state
-            .read()
-            .await?
-            .classes
-            .values()
-            .find(|class| class.collection_id() == collection_id && class.name() == name)
-            .cloned())
-    }
-
-    async fn list_import_classes_by_names(
-        &self,
-        collection_id: CollectionId,
-        names: &[String],
-    ) -> Result<Vec<StorageClass>, StorageError> {
-        Ok(self
-            .state
-            .read()
-            .await?
-            .classes
-            .values()
-            .filter(|class| {
-                class.collection_id() == collection_id
-                    && names.iter().any(|name| name == class.name())
-            })
-            .cloned()
-            .collect())
-    }
-
-    async fn get_import_object_by_name(
-        &self,
-        class_id: ClassId,
-        name: &str,
-    ) -> Result<Option<StorageObject>, StorageError> {
-        Ok(self
-            .state
-            .read()
-            .await?
-            .objects
-            .values()
-            .find(|object| object.class_id() == class_id && object.name() == name)
-            .cloned())
-    }
-
-    async fn list_import_objects_by_names(
-        &self,
-        class_id: ClassId,
-        names: &[String],
-    ) -> Result<Vec<StorageObject>, StorageError> {
-        Ok(self
-            .state
-            .read()
-            .await?
-            .objects
-            .values()
-            .filter(|object| {
-                object.class_id() == class_id && names.iter().any(|name| name == object.name())
-            })
-            .cloned()
-            .collect())
-    }
-
-    async fn has_import_class_relation(
-        &self,
-        left_class_id: ClassId,
-        right_class_id: ClassId,
-    ) -> Result<bool, StorageError> {
-        Ok(self
-            .state
-            .read()
-            .await?
-            .class_relations
-            .values()
-            .any(|relation| {
-                relation.from_class_id() == left_class_id
-                    && relation.to_class_id() == right_class_id
-            }))
-    }
-
-    async fn has_import_object_relation(
-        &self,
-        left_object_id: ObjectId,
-        right_object_id: ObjectId,
-    ) -> Result<bool, StorageError> {
-        Ok(self
-            .state
-            .read()
-            .await?
-            .object_relations
-            .values()
-            .any(|relation| {
-                relation.from_object_id() == left_object_id
-                    && relation.to_object_id() == right_object_id
-            }))
-    }
-
-    async fn has_import_group(
-        &self,
-        identity_scope: &str,
-        group_name: &str,
-    ) -> Result<bool, StorageError> {
-        let state = self.state.read().await?;
-        let scope_ids = state
-            .identity_scopes
-            .values()
-            .filter(|scope| scope.name() == identity_scope)
-            .map(|scope| scope.id())
-            .collect::<BTreeSet<_>>();
-        Ok(state.groups.values().any(|group| {
-            group.name() == group_name && scope_ids.contains(&group.identity_scope_id())
-        }))
-    }
-
-    async fn preflight_import(
-        &self,
-        plan: StorageImportPlan,
-        mode: StorageImportMode,
-    ) -> Result<StorageImportPreflight, StorageError> {
-        let scratch = Self {
-            schema_limits: self.schema_limits,
-            state: Arc::new(self.state.fork(self.state.read().await?.clone())),
-        };
-        let mut references = BTreeMap::new();
-        let mut items = Vec::new();
-        let mut aborted = false;
-        for item in plan.into_items() {
-            crate::execution::task_execution_checkpoint()?;
-            let (index, operation) = item.into_parts();
-            match scratch
-                .commit_import_operation(operation, &mut references)
-                .await
-            {
-                Ok(revision) => items.push(StorageImportPreflightItem::success(index, revision)),
-                Err(error) => {
-                    items.push(StorageImportPreflightItem::failure(index, None, error));
-                    if mode.atomicity() == StorageImportAtomicity::Strict {
-                        aborted = true;
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(StorageImportPreflight::new(items, aborted))
-    }
-
-    async fn apply_claimed_import_strict(
-        &self,
-        plan: FencedImportPlan,
-    ) -> Result<(), StorageError> {
-        self.apply_claimed_import(plan, None).await.map(|_| ())
-    }
-    async fn apply_claimed_import_best_effort(
-        &self,
-        plan: FencedImportPlan,
-        mode: StorageImportMode,
-    ) -> Result<StorageImportApply, StorageError> {
-        self.apply_claimed_import(plan, Some(mode)).await
-    }
-
-    async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
-        // Keep registration and authority changes ordered with publication of
-        // the whole staged import, just as for a single imported item.
-        let mut state = self.state.write().await?;
-        let scratch = Self {
-            schema_limits: self.schema_limits,
-            state: Arc::new(self.state.fork(state.clone())),
-        };
-        let mut references = BTreeMap::new();
-        for item in plan.into_items() {
-            scratch
-                .apply_import_operation(item.into_parts().1, &mut references)
-                .await?;
-        }
-        *state = scratch.state.read().await?.clone();
-        Ok(())
-    }
-
-    async fn apply_import_best_effort(
-        &self,
-        plan: StorageImportPlan,
-        _mode: StorageImportMode,
-    ) -> Result<StorageImportApply, StorageError> {
-        let mut references = BTreeMap::new();
-        let mut items = Vec::new();
-        for item in plan.into_items() {
-            crate::execution::task_execution_checkpoint()?;
-            let (index, operation) = item.into_parts();
-            match self
-                .commit_import_operation(operation, &mut references)
-                .await
-            {
-                Ok(_) => items.push(StorageImportApplyItem::success(index)),
-                Err(error) => items.push(StorageImportApplyItem::failure(index, error)),
-            }
-        }
-        Ok(StorageImportApply::new(items, false))
-    }
-
-    async fn record_claimed_import_results(
-        &self,
-        results: FencedImportResults,
-    ) -> Result<(), StorageError> {
-        let (lease, results) = results.into_parts();
-        self.check_import_claim(&lease).await?;
-        let snapshot = self.state.read().await?.clone();
-        let generation = snapshot.generation.clone();
-        let scratch = Self {
-            schema_limits: self.schema_limits,
-            state: Arc::new(self.state.fork(snapshot)),
-        };
-        scratch.record_import_results(results).await?;
-        let committed_state = scratch.state.read().await?.clone();
-        self.state
-            .commit_import(&generation, committed_state, &lease)
-            .await
-    }
-
-    async fn record_import_results(
-        &self,
-        results: Vec<StorageImportResult>,
-    ) -> Result<(), StorageError> {
-        let mut state = self.state.write().await?;
-        for result in &results {
-            let task_id = result.clone().into_parts().0;
-            let task = state.tasks.get(&task_id.id()).ok_or_else(|| {
-                StorageError::not_found(format!("Task {} was not found", task_id.id()))
-            })?;
-            if task.kind != StorageTaskKind::Import {
-                return Err(StorageError::invalid_input(format!(
-                    "Task {} is not an import task",
-                    task_id.id()
-                )));
-            }
-        }
-        for result in results {
-            crate::execution::task_execution_checkpoint()?;
-            let (task_id, item_ref, entity_kind, action, identifier, outcome, error, details) =
-                result.into_parts();
-            let id = ImportTaskResultId::new(state.next_import_result_id)
-                .map_err(|value| StorageError::internal(value.to_string()))?;
-            state.next_import_result_id += 1;
-            let stored = StorageImportTaskResult::builder(
-                id,
-                task_id,
-                entity_kind,
-                action,
-                outcome,
-                Utc::now(),
-            )
-            .item_ref(item_ref)
-            .identifier(identifier)
-            .error(error)
-            .details(details)
-            .build();
-            state.store_import_result(stored);
-        }
+            .restore_coordinator
+            .remove_instance(instance_id);
         Ok(())
     }
 }
@@ -2171,8 +1741,8 @@ impl ExportTemplateStorage for MemoryStorage {
                 collection_id.id()
             )));
         }
-        let id = state.next_export_template_id;
-        state.next_export_template_id += 1;
+        state.ensure_audited_history_capacity(1)?;
+        let id = state.export_template_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id).expect("memory export template id is positive"),
@@ -2233,6 +1803,7 @@ impl ExportTemplateStorage for MemoryStorage {
         )
         .map_err(invalid_contract_value)?;
         let template = StorageExportTemplate::new(metadata, collection_id, &name, definition);
+        state.ensure_audited_history_capacity(1)?;
         state.store_export_template(template_id.id(), template.clone());
         let receipt = state.append_simple_event(
             EntityType::ExportTemplate,
@@ -2256,9 +1827,10 @@ impl ExportTemplateStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let (template_id, context) = request.into_parts();
         let mut state = self.state.write().await?;
-        let Some(template) = state.export_templates.remove(&template_id.id()) else {
+        let Some(template) = state.export_templates.get(&template_id.id()).cloned() else {
             return Ok(StorageMutationOutcome::unchanged(()));
         };
+        state.ensure_audited_history_capacity(1)?;
         let (_, _, name, _) = template.clone().into_parts();
         let receipt = state.append_simple_event(
             EntityType::ExportTemplate,
@@ -2273,147 +1845,8 @@ impl ExportTemplateStorage for MemoryStorage {
             StorageHistoryOperation::Delete,
             &context,
         )?;
+        state.export_templates.remove(&template_id.id());
         Ok(StorageMutationOutcome::committed((), receipt))
-    }
-}
-
-impl MemoryStorage {
-    async fn apply_claimed_import(
-        &self,
-        plan: FencedImportPlan,
-        mode: Option<StorageImportMode>,
-    ) -> Result<StorageImportApply, StorageError> {
-        let (lease, items) = plan.into_parts();
-        let mut references = BTreeMap::new();
-        let Some(mode) = mode else {
-            let indices = items
-                .iter()
-                .cloned()
-                .map(|item| item.into_parts().0)
-                .collect::<Vec<_>>();
-            self.commit_import_receipts(&lease, items, &mut references, true)
-                .await?;
-            return Ok(StorageImportApply::new(
-                indices
-                    .into_iter()
-                    .map(StorageImportApplyItem::success)
-                    .collect(),
-                false,
-            ));
-        };
-        let mut outcomes = Vec::new();
-        let mut aborted = false;
-        for item in items {
-            let (index, _, result) = item.clone().into_parts();
-            match self
-                .commit_import_receipts(&lease, vec![item], &mut references, false)
-                .await
-            {
-                Ok(()) => outcomes.push(StorageImportApplyItem::success(index)),
-                Err(error) => {
-                    if matches!(
-                        error.kind(),
-                        StorageErrorKind::TaskCancelled | StorageErrorKind::TaskDeadlineExceeded
-                    ) {
-                        return Err(error);
-                    }
-                    aborted = match error.kind() {
-                        StorageErrorKind::PermissionDenied
-                        | StorageErrorKind::AuthenticationRequired => {
-                            mode.permission_policy() == StorageImportPermissionPolicy::Abort
-                        }
-                        StorageErrorKind::Conflict => {
-                            mode.collision_policy() == StorageImportCollisionPolicy::Abort
-                        }
-                        _ => false,
-                    };
-                    self.commit_import_receipts(
-                        &lease,
-                        vec![FencedImportItem::new(index, None, result.failed(&error))],
-                        &mut references,
-                        false,
-                    )
-                    .await?;
-                    outcomes.push(StorageImportApplyItem::failure(index, error));
-                    if aborted {
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(StorageImportApply::new(outcomes, aborted))
-    }
-
-    async fn commit_import_receipts(
-        &self,
-        lease: &StorageTaskLease,
-        items: Vec<FencedImportItem>,
-        references: &mut BTreeMap<String, MemoryImportReference>,
-        complete_import: bool,
-    ) -> Result<(), StorageError> {
-        let snapshot = self.state.read().await?.clone();
-        let generation = snapshot.generation.clone();
-        let scratch = Self {
-            schema_limits: self.schema_limits,
-            state: Arc::new(self.state.fork(snapshot)),
-        };
-        let mut next_references = references.clone();
-        for item in items {
-            crate::execution::task_execution_checkpoint()?;
-            self.check_import_claim(lease).await?;
-            let (index, operation, result) = item.into_parts();
-            if !scratch
-                .state
-                .write()
-                .await?
-                .import_execution_receipts
-                .insert((lease.task_id().id(), index))
-            {
-                return Err(StorageError::conflict(
-                    "import item already has an execution receipt",
-                ));
-            }
-            if let Some(operation) = operation {
-                scratch
-                    .apply_import_operation(operation, &mut next_references)
-                    .await?;
-            }
-            scratch.record_import_results(vec![result]).await?;
-            tokio::task::yield_now().await;
-        }
-        let mut committed_state = scratch.state.read().await?.clone();
-        if complete_import {
-            committed_state
-                .tasks
-                .get_mut(&lease.task_id().id())
-                .ok_or_else(invalid_task_lease)?
-                .control
-                .record_import_commit(Utc::now())
-                .map_err(invalid_contract_value)?;
-        }
-        self.state
-            .commit_import(&generation, committed_state, lease)
-            .await?;
-        *references = next_references;
-        Ok(())
-    }
-
-    async fn check_import_claim(&self, lease: &StorageTaskLease) -> Result<(), StorageError> {
-        let state = self.state.read().await?;
-        state.ensure_task_lease_current(lease)?;
-        let task = state
-            .tasks
-            .get(&lease.task_id().id())
-            .filter(|task| {
-                task.kind == StorageTaskKind::Import
-                    && task.status.is_active()
-                    && task.lease_matches(lease)
-            })
-            .ok_or_else(invalid_task_lease)?;
-        if let Some(reason) = task.control.stop_reason(Utc::now()) {
-            return Err(StorageError::task_stopped(reason));
-        }
-        Ok(())
     }
 }
 

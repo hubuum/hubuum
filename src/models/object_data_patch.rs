@@ -1,3 +1,4 @@
+use hubuum_storage_core::StorageObjectDataPatch;
 use serde::{Deserialize, Serialize};
 use utoipa::openapi::{RefOr, schema::Schema};
 use utoipa::{PartialSchema, ToSchema};
@@ -55,9 +56,11 @@ impl ObjectDataPatchDocument {
     pub fn apply(&self, data: &serde_json::Value) -> Result<serde_json::Value, ApiError> {
         apply_bounded_json_patch(&self.0, data)
     }
+}
 
-    pub(crate) fn into_bounded_patch(self) -> BoundedJsonPatch {
-        self.0
+impl From<ObjectDataPatchDocument> for StorageObjectDataPatch {
+    fn from(patch: ObjectDataPatchDocument) -> Self {
+        Self::new(patch.0)
     }
 }
 

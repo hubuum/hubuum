@@ -1,3 +1,4 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use crate::storage::storage_handle;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, web};
 use hubuum_storage_core::{
@@ -5,8 +6,6 @@ use hubuum_storage_core::{
     StorageTaskCapacitySnapshot, StorageTaskPolicy, StorageTaskPolicyUpdate, TaskCapacityStorage,
 };
 
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::config::running::RunningConfig;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess};

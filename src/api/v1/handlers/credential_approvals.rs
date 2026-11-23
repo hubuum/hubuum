@@ -1,5 +1,4 @@
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::middlewares::rate_limit::{

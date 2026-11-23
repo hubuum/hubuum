@@ -115,7 +115,7 @@ impl MemoryState {
             self.task_capacity = self.task_accounting_snapshot()?;
             return Ok(StorageTaskResumeOutcome::Stopped(task));
         }
-        if self.maintenance_state != MaintenanceState::Normal {
+        if self.restore_coordinator.maintenance_state() != MaintenanceState::Normal {
             return Err(StorageError::unavailable(
                 "Task resumption is paused during maintenance",
             ));
@@ -685,7 +685,13 @@ mod tests {
         run(async {
             let storage = MemoryStorage::new();
             let (task, lease) = claimed(&storage, StorageTaskKind::Export).await;
-            storage.state.write_control().await.maintenance_state = MaintenanceState::Draining;
+            storage
+                .state
+                .write_control()
+                .await
+                .restore_coordinator
+                .start(RestoreJobId::new(1).unwrap())
+                .unwrap();
             let wait = storage
                 .wait_task(StorageTaskWaitRequest::new(lease, checkpoint()))
                 .await

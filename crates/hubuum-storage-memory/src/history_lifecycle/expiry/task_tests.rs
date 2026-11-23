@@ -285,7 +285,12 @@ async fn failed_task_step_keeps_checkpoint_and_authority_atomic(#[case] mode: &s
     storage
         .run_in_scope(scope, async {
             if mode == "audit" {
-                storage.state.write_control().await.next_event_sequence = i64::MAX;
+                storage
+                    .state
+                    .write_control()
+                    .await
+                    .event_sequences
+                    .observe(i64::MAX);
             }
             if mode == "unknown" {
                 storage
@@ -759,7 +764,7 @@ async fn removal_failure_preserves_copy_receipt_and_checkpoint(#[case] mode: &st
             {
                 let mut state = storage.state.write_control().await;
                 if mode == "audit" {
-                    state.next_event_sequence = i64::MAX;
+                    state.event_sequences.observe(i64::MAX);
                 }
                 let task = state.tasks.get_mut(&lease.task_id().id()).unwrap();
                 if mode == "cancel" {
@@ -955,8 +960,8 @@ async fn recovery_adopts_partial_batch_without_reviving_original_task(#[case] mo
             if mode == "audit" {
                 let (sequence, task_count) = {
                     let mut state = storage.state.write_control().await;
-                    let before = (state.next_event_sequence, state.tasks.len());
-                    state.next_event_sequence = i64::MAX;
+                    let before = (state.event_sequences, state.tasks.len());
+                    state.event_sequences.observe(i64::MAX);
                     before
                 };
                 assert!(
@@ -971,7 +976,7 @@ async fn recovery_adopts_partial_batch_without_reviving_original_task(#[case] mo
                     task_count,
                     "failed audit must roll back adoption"
                 );
-                state.next_event_sequence = sequence;
+                state.event_sequences = sequence;
             }
             if mode == "admission" {
                 let evidence = fixture_write(

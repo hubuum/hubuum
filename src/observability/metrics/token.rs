@@ -1,7 +1,7 @@
 use opentelemetry::KeyValue;
 
 use super::current;
-use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
+use super::refresh::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 use crate::storage::TokenStorage;
 
 pub(crate) fn token_hash_key_ring(

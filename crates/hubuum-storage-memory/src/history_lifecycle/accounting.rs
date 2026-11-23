@@ -170,7 +170,12 @@ mod tests {
             .await
             .unwrap();
         if mode == "audit" {
-            storage.state.write_control().await.next_event_sequence = i64::MAX;
+            storage
+                .state
+                .write_control()
+                .await
+                .event_sequences
+                .observe(i64::MAX);
         }
         if mode == "unresolved" {
             let mut state = storage.state.write_control().await;

@@ -1,3 +1,5 @@
+use hubuum_storage_core::StorageServiceAccount;
+use hubuum_storage_core::StorageServiceAccountDetails;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -21,6 +23,21 @@ pub struct ServiceAccount {
     pub disabled_at: Option<chrono::NaiveDateTime>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+}
+
+impl From<StorageServiceAccount> for ServiceAccount {
+    fn from(account: StorageServiceAccount) -> Self {
+        Self {
+            id: account.id().id(),
+            kind: PrincipalKind::ServiceAccount,
+            description: account.description().to_string(),
+            owner_group_id: account.owner_group_id().id(),
+            created_by: account.created_by().map(|id| id.id()),
+            disabled_at: account.disabled_at().map(|timestamp| timestamp.naive_utc()),
+            created_at: account.created_at().naive_utc(),
+            updated_at: account.updated_at().naive_utc(),
+        }
+    }
 }
 
 impl ServiceAccount {
@@ -87,6 +104,13 @@ pub struct ServiceAccountPointResponse {
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
     pub revision: ResourceRevision,
+}
+
+impl From<StorageServiceAccountDetails> for ServiceAccountPointResponse {
+    fn from(point: StorageServiceAccountDetails) -> Self {
+        let (account, identity_scope_id, name, point_revision) = point.into_parts();
+        Self::from_parts(account.into(), identity_scope_id.id(), name, point_revision)
+    }
 }
 
 impl ServiceAccountPointResponse {

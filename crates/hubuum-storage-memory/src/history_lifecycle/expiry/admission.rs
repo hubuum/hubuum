@@ -12,7 +12,7 @@ pub(crate) async fn submit(
     request
         .validate(&snapshot)
         .map_err(invalid_contract_value)?;
-    if state.maintenance_state != MaintenanceState::Normal {
+    if state.restore_coordinator.maintenance_state() != MaintenanceState::Normal {
         return Err(StorageError::unavailable(
             "History task admission is paused during maintenance",
         ));
