@@ -1,6 +1,7 @@
 mod expiry_history;
 
 use chrono::{DateTime, Utc};
+use futures_util::FutureExt;
 use hubuum_domain::{
     ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId, ObjectId, PrincipalId,
     ResourceId, TaskId,
@@ -12,6 +13,7 @@ use hubuum_storage_postgres::{
     PostgresFaultController, PostgresFaultPoint, PostgresPool, PostgresStorage,
 };
 use serde_json::{Value, json};
+use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -26,7 +28,7 @@ use crate::models::{
 use crate::restores::{
     RestoreSettings, confirm_restore, execute_confirmed_restore, restore_status, stage_restore,
 };
-use crate::storage::{StorageBackendKind, StorageHandle};
+use crate::storage::{StorageBackendKind, StorageContext, StorageHandle, storage_handle};
 use crate::tests::TestScope;
 
 /// Build an editable envelope for fixtures from the production replay capture.
@@ -41,6 +43,33 @@ pub async fn capture_backup_document(
     document.state = BackupState { sections: state };
     document.history = history.map(|sections| BackupHistory { sections });
     Ok(document)
+}
+
+async fn full_restore_image(storage: &StorageHandle) -> Result<StorageBackupSnapshot, ApiError> {
+    Ok(storage
+        .capture_backup_replay(
+            true,
+            StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
+        )
+        .await?
+        .materialize()?)
+}
+
+/// Preserve the runner's full application image around destructive restore tests.
+/// The caller holds RESTORE_TEST_LOCK through the final restore, including on panic.
+pub async fn with_preserved_restore_image<T>(
+    context: &impl StorageContext,
+    test: impl Future<Output = T>,
+) -> T {
+    let storage = storage_handle(context);
+    let original = full_restore_image(&storage)
+        .await
+        .expect("capture original restore database");
+    let result = AssertUnwindSafe(test).catch_unwind().await;
+    restore_snapshot(&storage, original)
+        .await
+        .expect("restore original state and history");
+    result.unwrap_or_else(|panic| resume_unwind(panic))
 }
 
 pub struct RestoreContractFixture {
@@ -236,13 +265,7 @@ impl RestoreContractFixture {
         kind: StorageBackendKind,
         storage: StorageHandle,
     ) -> Result<Self, ApiError> {
-        let original = storage
-            .capture_backup_replay(
-                true,
-                StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap(),
-            )
-            .await?
-            .materialize()?;
+        let original = full_restore_image(&storage).await?;
         let scope = TestScope::new();
         let context = EventContext::system();
         let actor = storage
