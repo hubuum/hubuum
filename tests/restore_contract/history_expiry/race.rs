@@ -87,7 +87,7 @@ async fn with_table_lock<T, F: Future<Output = T>>(
     result
 }
 
-async fn copy_present(
+pub(super) async fn copy_present(
     connection: &mut PostgresConnection,
     family: StorageIdentityHistoryKind,
     target: StorageRecordIdentity,

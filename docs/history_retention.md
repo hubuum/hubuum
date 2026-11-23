@@ -538,8 +538,14 @@ excluded ancestry, incomplete traversal or timeout keeps quarantine intact.
 Completing one page cannot release exposure, and these checks never remove a
 current or protected-open copy. Admission dependency checks retain their existing
 bounded contract.
-Recovery across a changed application incarnation remains a separate qualification
-gate. Production workers do not yet enable this maintenance path.
+A native PostgreSQL test interrupts a leased periodic worker after its first
+collection-history removal. A signed logical restore brings all three closed
+versions back into quarantine. The old worker cannot continue deletion there.
+The coordinator replays the original batch, preserves the worker's first receipt
+and releases the application after all three copies are gone. Recovery in the
+new application incarnation leaves the completed batch without a cleanup task.
+This case uses a drained worker. Crash retirement and external-claim
+reconciliation remain separate qualification gates.
 
 The history lifecycle migration appends the new per-kind capacity and weight in one
 policy revision while preserving all existing limits, lanes and reservations.

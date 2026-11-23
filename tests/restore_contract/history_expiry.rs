@@ -6,11 +6,13 @@ use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalIdentity};
 use hubuum_storage_core::StorageIdentityHistoryKind as Family;
 use std::os::unix::fs::PermissionsExt;
 use std::panic::{AssertUnwindSafe, resume_unwind};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
 mod image;
 mod race;
+mod worker;
 use image::FamilyImage;
 use race::{replay_with_queued_restore, restore_with_queued_replay};
 
@@ -18,6 +20,7 @@ use race::{replay_with_queued_restore, restore_with_queued_replay};
 struct ReplayTrace {
     operations: Mutex<Vec<String>>,
     data_replaced: Notify,
+    copy_reapplied: Notify,
 }
 
 impl StorageObserver for ReplayTrace {
@@ -27,6 +30,9 @@ impl StorageObserver for ReplayTrace {
         }
         if observation.operation() == "apply_restore_replay" {
             self.data_replaced.notify_waiters();
+        }
+        if observation.operation() == "reapply_history_expiry" {
+            self.copy_reapplied.notify_waiters();
         }
         if matches!(
             observation.operation(),
@@ -172,29 +178,16 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
     family: Family,
     #[values(false, true)] size: bool,
 ) {
-    let _guard = RESTORE_TEST_LOCK.lock().await;
-    let pool = postgres_test_pool_with_timeout(&database_url(), 8, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
-    let trace = Arc::new(ReplayTrace::default());
-    let fixture = RestoreContractFixture::new_with_observer(kind, pool.clone(), trace.clone())
-        .await
-        .unwrap();
-    let storage = fixture.storage();
-    let before = storage.capture_history_lifecycle().await.unwrap();
-    let before_deletion = storage.read_deletion_control().await.unwrap();
-    let root = std::env::temp_dir().join(format!("hubuum-567-expiry-restore-{}", Uuid::new_v4()));
-    let repository = root.join("repository");
-    std::fs::create_dir_all(&repository).unwrap();
-    std::fs::set_permissions(&repository, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let key_file = root.join("key");
-    std::fs::write(&key_file, [79; 32]).unwrap();
-    std::fs::set_permissions(&key_file, std::fs::Permissions::from_mode(0o600)).unwrap();
-    fixture
-        .initialize_recovery(&repository, &key_file)
-        .await
-        .unwrap();
-    let mut batch = None;
-    let actor = PrincipalIdentity::generate();
-    let result = AssertUnwindSafe(async {
+    with_signed_restore(kind, async |signed, cleanup| {
+        let SignedRestore {
+            fixture,
+            pool,
+            trace,
+            repository,
+            key_file,
+        } = signed;
+        let storage = fixture.storage();
+        let actor = PrincipalIdentity::generate();
         let class = fixture.create_class("expiry_restore_scope").await.unwrap();
         let versions = [
             "expiry_original",
@@ -222,14 +215,14 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
         let scope = match family {
             Family::Class | Family::Object | Family::ComputedDefinitions => {
                 HistoryPolicyScope::Class {
-                    identity: current_identity(&fixture, HistorySource::Class(class.id()).target())
+                    identity: current_identity(fixture, HistorySource::Class(class.id()).target())
                         .await
                         .resource(),
                 }
             }
             _ => HistoryPolicyScope::Collection {
                 identity: current_identity(
-                    &fixture,
+                    fixture,
                     HistorySource::Collection(class.collection_id()).target(),
                 )
                 .await
@@ -237,44 +230,18 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             },
         };
         let key = HistoryPolicyKey::new(family, scope).unwrap();
-        let proposal = HistoryPolicyChange::new(
-            key,
-            before
-                .control()
-                .authority()
-                .policies()
-                .current_revision(key),
-            HistoryPolicyBinding::Expire {
-                trigger: if size {
-                    HistoryExpiryTrigger::LogicalSize {
-                        upper_logical_bytes: HistoryLogicalBytes::new(1).unwrap(),
-                        lower_logical_bytes: HistoryLogicalBytes::new(0).unwrap(),
-                    }
-                } else {
-                    HistoryExpiryTrigger::Age {
-                        age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
-                        deleted_age_seconds: None,
-                    }
-                },
-                minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
-            },
-            HistoryPolicyApplication::Prospective,
-        )
-        .unwrap();
-        storage
-            .commit_history_lifecycle(
-                before
-                    .control()
-                    .apply(
-                        HistoryPolicyApplyRequest::new(proposal, None),
-                        actor,
-                        before.fence(),
-                        before.observed_at(),
-                    )
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let trigger = if size {
+            HistoryExpiryTrigger::LogicalSize {
+                upper_logical_bytes: HistoryLogicalBytes::new(1).unwrap(),
+                lower_logical_bytes: HistoryLogicalBytes::new(0).unwrap(),
+            }
+        } else {
+            HistoryExpiryTrigger::Age {
+                age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                deleted_age_seconds: None,
+            }
+        };
+        apply_expiry_policy(fixture, key, trigger, actor).await;
         // Close a version in the same collection but outside the governing class.
         let sibling = if family == Family::Object {
             let other = fixture.create_class("expiry_sibling_class").await.unwrap();
@@ -283,7 +250,7 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
                 .await
                 .unwrap();
             let original =
-                current_identity(&fixture, HistorySource::Object(object.id()).target()).await;
+                current_identity(fixture, HistorySource::Object(object.id()).target()).await;
             fixture
                 .rename_object(object.id(), "sibling_live")
                 .await
@@ -296,8 +263,8 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
         let before_updates = FamilyImage::read(fixture.capture(true).await.unwrap(), family);
         if let Some(resource) = source {
             for next in &versions[1..] {
-                closed.push(current_identity(&fixture, resource.target()).await);
-                resource.update(&fixture, next).await;
+                closed.push(current_identity(fixture, resource.target()).await);
+                resource.update(fixture, next).await;
             }
         } else {
             match family {
@@ -353,7 +320,10 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             .manifest()
             .expect("closed fixture versions are eligible")
             .clone();
-        batch = Some(manifest.identity());
+        *cleanup = Some(AdmittedBackup {
+            batch: manifest.identity(),
+            backup: backup.clone(),
+        });
         assert_eq!(manifest.members().len(), closed.len());
         if family == Family::ObjectRelation {
             let deletions = manifest
@@ -399,7 +369,7 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
         }
         let target = manifest.members()[0].target();
         let request = HistoryExpiryReapplication::new(
-            history_replay_fixture_protection(storage, &repository, &key_file)
+            history_replay_fixture_protection(storage, repository, key_file)
                 .await
                 .unwrap(),
             manifest.identity(),
@@ -415,25 +385,25 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
         );
         if expiry_first {
             let protection = fixture
-                .prepare_restore_during_history_recovery(backup.clone(), &repository, &key_file)
+                .prepare_restore_during_history_recovery(backup.clone(), repository, key_file)
                 .await
                 .unwrap();
             let request =
                 HistoryExpiryReapplication::new(protection, manifest.identity(), target).unwrap();
             trace.operations.lock().unwrap().clear();
             replay_with_queued_restore(
-                &pool,
-                fixture.resume_restore_with_recovery(&repository, &key_file),
+                pool,
+                fixture.resume_restore_with_recovery(repository, key_file),
                 request,
-                &trace,
+                trace,
             )
             .await;
         } else {
             trace.operations.lock().unwrap().clear();
             restore_with_queued_replay(
                 kind,
-                &pool,
-                fixture.restore_with_recovery(backup.clone(), &repository, &key_file),
+                pool,
+                fixture.restore_with_recovery(backup.clone(), repository, key_file),
                 request,
             )
             .await;
@@ -444,7 +414,7 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             survivors
         );
         if let Some((object, original)) = &sibling {
-            assert_closed_object_present(&fixture, object, *original).await;
+            assert_closed_object_present(fixture, object, *original).await;
         }
         let completed = storage.capture_history_lifecycle().await.unwrap();
         let completed_intent = completed
@@ -461,7 +431,7 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             manifest.fence().incarnation()
         );
         let request = HistoryExpiryReapplication::new(
-            history_replay_fixture_protection(storage, &repository, &key_file)
+            history_replay_fixture_protection(storage, repository, key_file)
                 .await
                 .unwrap(),
             manifest.identity(),
@@ -472,8 +442,8 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
         trace.operations.lock().unwrap().clear();
         restore_with_queued_replay(
             kind,
-            &pool,
-            fixture.restore_with_recovery(backup, &repository, &key_file),
+            pool,
+            fixture.restore_with_recovery(backup, repository, key_file),
             request,
         )
         .await;
@@ -483,7 +453,7 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             survivors
         );
         if let Some((object, original)) = &sibling {
-            assert_closed_object_present(&fixture, object, *original).await;
+            assert_closed_object_present(fixture, object, *original).await;
         }
         let repeated = storage.capture_history_lifecycle().await.unwrap();
         let repeated_intent = repeated
@@ -497,12 +467,71 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
         let application = storage.read_application_control().await.unwrap();
         assert!(application.is_released_for(&storage.read_deletion_control().await.unwrap()));
     })
-    .catch_unwind()
     .await;
+}
+
+struct SignedRestore<'a> {
+    fixture: &'a RestoreContractFixture,
+    pool: &'a PostgresPool,
+    trace: &'a ReplayTrace,
+    repository: &'a Path,
+    key_file: &'a Path,
+}
+
+struct AdmittedBackup {
+    batch: Uuid,
+    backup: StorageBackupSnapshot,
+}
+
+async fn with_signed_restore(
+    kind: StorageBackendKind,
+    test: impl AsyncFnOnce(SignedRestore<'_>, &mut Option<AdmittedBackup>),
+) {
+    let _guard = RESTORE_TEST_LOCK.lock().await;
+    let pool = postgres_test_pool_with_timeout(&database_url(), 8, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
+    let trace = Arc::new(ReplayTrace::default());
+    let fixture = RestoreContractFixture::new_with_observer(kind, pool.clone(), trace.clone())
+        .await
+        .unwrap();
+    let storage = fixture.storage();
+    let before = storage.capture_history_lifecycle().await.unwrap();
+    let before_deletion = storage.read_deletion_control().await.unwrap();
+    let root = std::env::temp_dir().join(format!("hubuum-567-expiry-restore-{}", Uuid::new_v4()));
+    let repository = root.join("repository");
+    std::fs::create_dir_all(&repository).unwrap();
+    std::fs::set_permissions(&repository, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let key_file = root.join("key");
+    std::fs::write(&key_file, [79; 32]).unwrap();
+    std::fs::set_permissions(&key_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    fixture
+        .initialize_recovery(&repository, &key_file)
+        .await
+        .unwrap();
+    let mut admitted = None;
+    let signed = SignedRestore {
+        fixture: &fixture,
+        pool: &pool,
+        trace: &trace,
+        repository: &repository,
+        key_file: &key_file,
+    };
+    let result = AssertUnwindSafe(test(signed, &mut admitted))
+        .catch_unwind()
+        .await;
     fixture
         .resume_restore_with_recovery(&repository, &key_file)
         .await
         .expect("settle any committed fixture restore before replacing its source image");
+    let batch = admitted.as_ref().map(|source| source.batch);
+    if result.is_err()
+        && let Some(source) = admitted
+    {
+        // The original database may not contain the copies needed for first receipts.
+        fixture
+            .restore_with_recovery(source.backup, &repository, &key_file)
+            .await
+            .expect("settle fixture membership before restoring the original database");
+    }
     let restored = fixture
         .restore_original_with_recovery(&repository, &key_file)
         .await;
@@ -529,4 +558,42 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
         resume_unwind(panic);
     }
     restored.unwrap();
+}
+
+async fn apply_expiry_policy(
+    fixture: &RestoreContractFixture,
+    key: HistoryPolicyKey,
+    trigger: HistoryExpiryTrigger,
+    actor: PrincipalIdentity,
+) {
+    let storage = fixture.storage();
+    let before = storage.capture_history_lifecycle().await.unwrap();
+    let proposal = HistoryPolicyChange::new(
+        key,
+        before
+            .control()
+            .authority()
+            .policies()
+            .current_revision(key),
+        HistoryPolicyBinding::Expire {
+            trigger,
+            minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+        },
+        HistoryPolicyApplication::Prospective,
+    )
+    .unwrap();
+    storage
+        .commit_history_lifecycle(
+            before
+                .control()
+                .apply(
+                    HistoryPolicyApplyRequest::new(proposal, None),
+                    actor,
+                    before.fence(),
+                    before.observed_at(),
+                )
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 }
