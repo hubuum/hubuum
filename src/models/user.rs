@@ -1,4 +1,5 @@
 use hubuum_domain::PlaintextPassword;
+use hubuum_storage_core::StorageTokenRevocations;
 use std::fmt;
 
 use crate::events::EventContext;
@@ -260,7 +261,10 @@ impl User {
             .await
     }
 
-    pub async fn delete_all_tokens<C>(&self, backend: &C) -> Result<usize, ApiError>
+    pub async fn delete_all_tokens<C>(
+        &self,
+        backend: &C,
+    ) -> Result<StorageTokenRevocations, ApiError>
     where
         C: StorageContext,
     {

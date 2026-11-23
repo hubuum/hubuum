@@ -22,6 +22,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   outcome. Retire `CredentialExpired` grants without recording a principal
   sync failure. Report deferred retries separately from missing credentials.
   Apply hosted verification results to the locked candidate.
+  Return `StorageTokenRevocations` from session, named-token and principal
+  revocation, and `StorageSecurityCandidateActivationOutcome` from activation.
+  Capture the grants and their previous provider definitions in the transaction
+  that revokes local authority.
 
 - Require `url` 2.5.9 or later in the 2.x series to fix a stack overflow in
   URL origin resolution. This also updates the standalone fuzz workspace.
@@ -123,6 +127,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   [upgrade and recovery](docs/security_candidates.md#upgrade-and-recovery).
 
 ### Fixed
+
+- External authentication renewal preserves other sessions and personal access
+  tokens when a replica cannot read a retained credential and uses an available
+  session grant when another is in retry backoff.
+- Bulk logout and provider disable capture retained upstream grants atomically
+  with local revocation. Hosted verification can persist large browser-provider
+  group previews without duplicating each group key.
 
 - Live browser sign-in invalidates cached authority when a verified subject fails
   required membership checks. Local logout and orphan-session cleanup revoke the

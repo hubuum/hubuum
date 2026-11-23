@@ -447,9 +447,11 @@ async fn bulk_logout_captures_every_retained_grant() {
     }
     let grants = f
         .backend
-        .upstream_logout_credentials(SessionRevocation::All(principal).into())
+        .revoke_auth_sessions(SessionRevocation::All(principal), EventContext::system())
         .await
-        .unwrap();
+        .unwrap()
+        .into_value()
+        .into_grants();
     let sessions: std::collections::HashSet<_> =
         grants.iter().map(|grant| grant.session().value()).collect();
     assert_eq!(sessions.len(), 35);
@@ -654,6 +656,101 @@ async fn logout_snapshot_is_scoped_to_the_requested_provider(
 }
 
 #[tokio::test]
+async fn a_pre_submission_failure_preserves_the_snapshot_sessions_and_personal_token() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let (first, _, _) = f.retained_session().await;
+    let (second, _, _) = f.retained_session().await;
+    let principal = first.principal_id();
+    let personal = f
+        .backend
+        .create_token(StorageTokenCreate::new(
+            principal,
+            StorageTokenDigest::legacy_unidentified("pre-submission-personal-token"),
+            StorageTokenIssuancePolicy::try_new(24, 24).unwrap(),
+            EventContext::system(),
+        ))
+        .await
+        .unwrap()
+        .into_value();
+    let state = || f.backend.get_external_principal_state(principal);
+    let verified = state()
+        .await
+        .unwrap()
+        .unwrap()
+        .last_sync_success_at()
+        .unwrap();
+    let claim = f.upstream_claim(principal).await;
+    f.backend
+        .fail_upstream_renewal(claim, StorageUpstreamFailure::UnavailableBeforeSubmission)
+        .await
+        .unwrap();
+    assert_eq!(
+        state().await.unwrap().unwrap().last_sync_success_at(),
+        Some(verified)
+    );
+    let observation =
+        StorageTokenObservation::try_new(Utc::now(), chrono::DateTime::UNIX_EPOCH).unwrap();
+    let tokens = f
+        .backend
+        .load_token_metadata_by_ids(
+            vec![first.access_id(), second.access_id(), personal.id()],
+            observation,
+        )
+        .await
+        .unwrap();
+    assert!(tokens.iter().all(|token| token.revoked_at().is_none()));
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
+async fn a_deferred_grant_does_not_hide_another_sessions_ready_grant() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let principal = f.retained_login().await;
+    f.retained_login().await;
+    let claim = f.upstream_claim(principal).await;
+    let deferred = claim.session().session();
+    f.backend
+        .fail_upstream_renewal(claim, StorageUpstreamFailure::UnavailableBeforeSubmission)
+        .await
+        .unwrap();
+    let next = f.upstream_claim(principal).await;
+    assert_ne!(next.session().session(), deferred);
+    assert!(matches!(
+        f.backend
+            .claim_upstream_credential(ResourceRevision::INITIAL, principal)
+            .await
+            .unwrap(),
+        StorageUpstreamClaimOutcome::Busy
+    ));
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
+async fn concurrent_login_is_either_live_or_captured_by_bulk_logout() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let principal = f.retained_login().await;
+    let other = f.database.replica();
+    let ((issued, _, _), logout) = tokio::join!(
+        f.retained_session(),
+        other.revoke_auth_sessions(SessionRevocation::All(principal), EventContext::system())
+    );
+    let revoked = logout.unwrap().into_value().into_grants();
+    let remaining = f
+        .backend
+        .upstream_logout_credentials(SessionRevocation::All(principal).into())
+        .await
+        .unwrap();
+    let contains = |grants: &[StorageUpstreamSession]| {
+        grants
+            .iter()
+            .any(|grant| grant.session() == issued.session_id())
+    };
+    assert_ne!(contains(&revoked), contains(&remaining));
+    assert_eq!(revoked.len() + remaining.len(), 2);
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
 async fn expired_lease_does_not_hide_another_sessions_credential() {
     let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
     let principal = f.retained_login().await;
@@ -748,67 +845,97 @@ async fn signed_membership_rejection_invalidates_only_the_observed_subject() {
     f.database.cleanup().await;
 }
 
+fn browser_assignment(
+    providers: Vec<StorageAuthenticationProvider>,
+) -> StorageRuntimeSettingsAssignment {
+    StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authentication(
+        StorageAuthenticationProviders::try_new(providers).unwrap(),
+    ))
+}
+
+impl ExternalFixture {
+    async fn install_browser_definition(&self) -> StorageAuthenticationProvider {
+        let browser = StorageAuthenticationProvider::try_new(
+            "company",
+            StorageAuthenticationProviderKind::Oidc,
+            serde_json::to_value(&self.definition).unwrap(),
+        )
+        .unwrap()
+        .with_id(self.provider.id())
+        .unwrap();
+        let previous = browser_assignment(vec![browser.clone()]);
+        self.database.owner(&format!("UPDATE runtime_settings SET value='{}'::jsonb WHERE setting_group='authentication'", previous.to_document().unwrap())).await.unwrap();
+        browser
+    }
+
+    async fn activate_with_directory(
+        &self,
+        browser: Option<StorageAuthenticationProvider>,
+    ) -> StorageSecurityCandidateActivationOutcome {
+        let directory = StorageAuthenticationProvider::deployment(
+            "directory",
+            StorageAuthenticationProviderKind::Ldap,
+            true,
+        )
+        .unwrap()
+        .with_id(Uuid::new_v4())
+        .unwrap();
+        let providers = browser.into_iter().chain([directory]).collect();
+        let update = StorageRuntimeSettingsUpdate::new(
+            browser_assignment(providers),
+            ResourceRevision::INITIAL,
+            context(),
+        );
+        let candidate = candidate_for(&update);
+        self.backend
+            .create_security_candidate(candidate.clone())
+            .await
+            .unwrap();
+        let (claim, _) = approval(&self.backend, candidate.id()).await;
+        let activation = StorageSecurityCandidateActivation::try_new(
+            &candidate,
+            digest('d'),
+            update,
+            claim,
+            "admin".into(),
+        )
+        .unwrap();
+        self.backend
+            .activate_security_candidate(activation)
+            .await
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn removing_a_browser_provider_returns_its_prior_definition_and_committed_grants() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let browser = f.install_browser_definition().await;
+    let (session, _, _) = f.retained_session().await;
+    let revocations = f.activate_with_directory(None).await.into_revocations();
+    assert_eq!(revocations.len(), 1);
+    let (provider, grants) = &revocations[0];
+    assert_eq!(provider, &browser);
+    assert_eq!(
+        grants
+            .iter()
+            .map(StorageUpstreamSession::session)
+            .collect::<Vec<_>>(),
+        [session.session_id()]
+    );
+    f.database.cleanup().await;
+}
+
 #[tokio::test]
 async fn activating_an_unrelated_provider_retains_the_grant_and_fences_old_claims() {
     let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
-    let browser = StorageAuthenticationProvider::try_new(
-        "company",
-        StorageAuthenticationProviderKind::Oidc,
-        serde_json::to_value(&f.definition).unwrap(),
-    )
-    .unwrap()
-    .with_id(f.provider.id())
-    .unwrap();
-    let assignment = |providers| {
-        StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authentication(
-            StorageAuthenticationProviders::try_new(providers).unwrap(),
-        ))
-    };
-    let previous = assignment(vec![browser.clone()]);
-    f.database
-        .owner(&format!(
-            "UPDATE runtime_settings SET value='{}'::jsonb WHERE setting_group='authentication'",
-            previous.to_document().unwrap()
-        ))
-        .await
-        .unwrap();
+    let browser = f.install_browser_definition().await;
     let principal = f.retained_login().await;
     let old = f.upstream_claim(principal).await;
     f.retained_login().await;
-    let ldap = StorageAuthenticationProvider::deployment(
-        "directory",
-        StorageAuthenticationProviderKind::Ldap,
-        true,
-    )
-    .unwrap()
-    .with_id(Uuid::new_v4())
-    .unwrap();
-    let update = StorageRuntimeSettingsUpdate::new(
-        assignment(vec![browser, ldap]),
-        ResourceRevision::INITIAL,
-        context(),
-    );
-    let candidate = candidate_for(&update);
-    f.backend
-        .create_security_candidate(candidate.clone())
-        .await
-        .unwrap();
-    let (claim, _) = approval(&f.backend, candidate.id()).await;
-    let activation = StorageSecurityCandidateActivation::try_new(
-        &candidate,
-        digest('d'),
-        update,
-        claim,
-        "admin".into(),
-    )
-    .unwrap();
-    let current = f
-        .backend
-        .activate_security_candidate(activation)
-        .await
-        .unwrap()
-        .record()
-        .revision();
+    let activation = f.activate_with_directory(Some(browser)).await;
+    let current = activation.record().revision();
+    assert!(activation.into_revocations().is_empty());
     let proof = f.renewal_proof(&old, "alice");
     assert!(
         f.backend

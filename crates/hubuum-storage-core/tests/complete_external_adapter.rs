@@ -7,6 +7,8 @@
 #![allow(unused_variables)]
 
 use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
+use hubuum_storage_core::StorageSecurityCandidateActivationOutcome;
+use hubuum_storage_core::StorageTokenRevocations;
 use hubuum_storage_core::StorageUpstreamRevocation;
 use hubuum_storage_core::{
     StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
@@ -375,7 +377,10 @@ impl AuthenticationStorage for CompleteExternalAdapter {
         &self,
         target: hubuum_storage_core::SessionRevocation,
         context: hubuum_events_core::EventContext,
-    ) -> Result<hubuum_storage_core::StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<
+        hubuum_storage_core::StorageMutationOutcome<hubuum_storage_core::StorageTokenRevocations>,
+        StorageError,
+    > {
         fixture_result()
     }
     async fn purge_auth_sessions(&self, limit: usize) -> Result<usize, StorageError> {
@@ -757,7 +762,7 @@ impl TokenStorage for CompleteExternalAdapter {
     async fn revoke_token(
         &self,
         request: StorageTokenRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         fixture_result()
     }
 
@@ -774,7 +779,7 @@ impl TokenStorage for CompleteExternalAdapter {
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         fixture_result()
     }
 }
@@ -2394,7 +2399,7 @@ impl RuntimeSettingsStorage for CompleteExternalAdapter {
     async fn activate_security_candidate(
         &self,
         request: StorageSecurityCandidateActivation,
-    ) -> Result<StorageRuntimeSettingsUpdateOutcome, StorageError> {
+    ) -> Result<StorageSecurityCandidateActivationOutcome, StorageError> {
         fixture_result()
     }
 

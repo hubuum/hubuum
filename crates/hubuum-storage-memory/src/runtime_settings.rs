@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::StorageSecurityCandidateActivationOutcome;
 
 /// Process-local runtime settings. Like the rest of this adapter, values are
 /// shared only by handles over one in-memory store and are lost on restart.
@@ -284,7 +285,7 @@ impl RuntimeSettingsStorage for MemoryStorage {
     async fn activate_security_candidate(
         &self,
         request: StorageSecurityCandidateActivation,
-    ) -> Result<StorageRuntimeSettingsUpdateOutcome, StorageError> {
+    ) -> Result<StorageSecurityCandidateActivationOutcome, StorageError> {
         let mut live = self.state.write().await;
         let mut staged = live.clone();
         staged.consume_credential_claim(
@@ -347,10 +348,19 @@ impl RuntimeSettingsStorage for MemoryStorage {
             }
         }
         let result = staged.runtime_settings.update(request.update())?;
+        let mut revocations = Vec::new();
         if result.is_committed()
             && request.update().group() == StorageRuntimeSettingsGroup::Authentication
         {
             let candidate = &staged.runtime_settings.candidates[&request.candidate_id()];
+            for provider in candidate.revoked_browser_providers(&previous) {
+                let binding = StorageProviderIdentityBinding::from_provider(provider)
+                    .map_err(invalid_contract_value)?;
+                let records = staged.logout_grants(
+                    hubuum_storage_core::StorageUpstreamRevocation::Provider(binding),
+                );
+                revocations.push((provider.clone(), records));
+            }
             let revoked_scopes: Vec<_> = staged
                 .identity_scopes
                 .values()
@@ -382,7 +392,10 @@ impl RuntimeSettingsStorage for MemoryStorage {
             }
         }
         *live = staged;
-        Ok(result)
+        Ok(StorageSecurityCandidateActivationOutcome::new(
+            result,
+            revocations,
+        ))
     }
 
     async fn load_runtime_settings(&self) -> Result<StorageRuntimeSettingsSnapshot, StorageError> {

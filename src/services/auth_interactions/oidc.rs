@@ -12,13 +12,13 @@ use hubuum_secrets::SecretValue;
 use hubuum_storage_core::ExternalIdentityStorage;
 use hubuum_storage_core::StorageEncryptedUpstreamCredential;
 use hubuum_storage_core::StorageRuntimeSettingsValue;
-use hubuum_storage_core::StorageUpstreamSession;
 use hubuum_storage_core::{
     StorageAuthenticationProvider, StorageBrowserProviderDefinition,
     StorageExternalInteractionAuthentication, StorageInteractionAction,
     StorageInteractionAuthorization, StorageInteractionOutcome,
     StorageProtectedAuthenticationState,
 };
+use hubuum_storage_core::{StorageUpstreamFailure, StorageUpstreamSession};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -464,12 +464,70 @@ enum RenewalAttempt {
     ExpiredCredential,
 }
 
+// Only a validation failure from the dispatched provider operation can invalidate
+// the principal. Local envelope, configuration and persistence errors cannot.
+enum RenewalFailure {
+    Local(ApiError),
+    Provider(OidcError),
+}
+impl From<ApiError> for RenewalFailure {
+    fn from(error: ApiError) -> Self {
+        Self::Local(error)
+    }
+}
+impl From<InteractionError> for RenewalFailure {
+    fn from(error: InteractionError) -> Self {
+        Self::Local(error.into())
+    }
+}
+impl RenewalFailure {
+    fn disposition(
+        self,
+        submitted: bool,
+    ) -> (StorageUpstreamFailure, Result<RenewalAttempt, ApiError>) {
+        let rejected = matches!(
+            &self,
+            Self::Provider(
+                OidcError::Denied | OidcError::MembershipRejected(_) | OidcError::InvalidResponse
+            )
+        );
+        let failure = match self {
+            Self::Local(failure) => failure,
+            Self::Provider(failure) => error(failure),
+        };
+        let storage = if !submitted {
+            StorageUpstreamFailure::UnavailableBeforeSubmission
+        } else if rejected {
+            StorageUpstreamFailure::Rejected
+        } else {
+            StorageUpstreamFailure::Unavailable
+        };
+        let result = if storage == StorageUpstreamFailure::Rejected {
+            Err(ApiError::Unauthorized(
+                "External identity is no longer valid; sign in again".into(),
+            ))
+        } else if matches!(
+            failure,
+            ApiError::AuthenticationInteraction(
+                InteractionError::ProviderUnavailable | InteractionError::Unsupported
+            ) | ApiError::ServiceUnavailable(_)
+        ) {
+            Ok(RenewalAttempt::Unavailable)
+        } else {
+            Err(ApiError::ServiceUnavailable(
+                "Retained authentication could not be used".into(),
+            ))
+        };
+        (storage, result)
+    }
+}
+
 async fn attempt_renewal(
     storage: &crate::storage::StorageHandle,
     claim: hubuum_storage_core::StorageUpstreamClaim,
     provider: &StorageAuthenticationProvider,
 ) -> Result<RenewalAttempt, ApiError> {
-    use hubuum_storage_core::{StorageUpstreamFailure, StorageUpstreamRenewal};
+    use hubuum_storage_core::StorageUpstreamRenewal;
     // Bound the complete attempt, including secret resolution, to the claim lease.
     let submitted = std::sync::atomic::AtomicBool::new(false);
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(25), async {
@@ -505,7 +563,7 @@ async fn attempt_renewal(
         {
             Ok(authentication) => authentication,
             Err(OidcError::CredentialExpired) => return Ok(None),
-            Err(failure) => return Err(error(failure)),
+            Err(failure) => return Err(RenewalFailure::Provider(failure)),
         };
         let (proof, credentials) = authentication.into_parts();
         let credentials = match credentials {
@@ -514,17 +572,19 @@ async fn attempt_renewal(
                     protect(
                         original.binding(),
                         &purpose,
-                        credentials.protectable().map_err(error)?,
+                        credentials
+                            .protectable()
+                            .map_err(|_| InteractionError::ProviderUnavailable)?,
                     )
                     .await?,
                 )
-                .map_err(|_| InteractionError::Invalid)?,
+                .map_err(|_| InteractionError::ProviderUnavailable)?,
             ),
             None => None,
         };
         StorageUpstreamRenewal::new(claim.clone(), proof, credentials)
             .map(Some)
-            .map_err(|_| ApiError::from(InteractionError::Invalid))
+            .map_err(|_| RenewalFailure::from(InteractionError::Invalid))
     })
     .await
     .unwrap_or_else(|_| Err(InteractionError::ProviderUnavailable.into()));
@@ -540,62 +600,10 @@ async fn attempt_renewal(
             Ok(RenewalAttempt::Refreshed)
         }
         Err(failure) => {
-            let temporary = matches!(
-                failure,
-                ApiError::AuthenticationInteraction(
-                    InteractionError::ProviderUnavailable | InteractionError::Unsupported
-                ) | ApiError::ServiceUnavailable(_)
-            );
-            storage
-                .fail_upstream_renewal(
-                    claim,
-                    if temporary && !submitted.load(std::sync::atomic::Ordering::Relaxed) {
-                        StorageUpstreamFailure::UnavailableBeforeSubmission
-                    } else if temporary {
-                        StorageUpstreamFailure::Unavailable
-                    } else {
-                        StorageUpstreamFailure::Rejected
-                    },
-                )
-                .await?;
-            if temporary {
-                Ok(RenewalAttempt::Unavailable)
-            } else {
-                Err(ApiError::Unauthorized(
-                    "External identity is no longer valid; sign in again".into(),
-                ))
-            }
-        }
-    }
-}
-
-/// Snapshot only after authorizing the local operation, before it commits.
-pub(crate) async fn principal_revocations(
-    context: &AppContext,
-    principal: PrincipalId,
-) -> Vec<StorageUpstreamSession> {
-    session_revocations(
-        context,
-        hubuum_storage_core::SessionRevocation::All(principal),
-    )
-    .await
-}
-
-pub(crate) async fn session_revocations(
-    context: &AppContext,
-    target: hubuum_storage_core::SessionRevocation,
-) -> Vec<StorageUpstreamSession> {
-    use hubuum_storage_core::ExternalIdentityStorage;
-    match storage_handle(context)
-        .upstream_logout_credentials(target.into())
-        .await
-    {
-        Ok(records) => records,
-        Err(_) => {
-            tracing::warn!(
-                message = "Upstream revocation snapshot unavailable; continuing local revocation"
-            );
-            Vec::new()
+            let (disposition, result) =
+                failure.disposition(submitted.load(std::sync::atomic::Ordering::Relaxed));
+            storage.fail_upstream_renewal(claim, disposition).await?;
+            result
         }
     }
 }
@@ -700,8 +708,40 @@ fn retain_credentials(provider: &StorageAuthenticationProvider) -> bool {
 
 #[cfg(test)]
 mod revocation_tests {
-    use super::dispatch_revocations;
+    use super::{
+        ApiError, InteractionError, OidcError, RenewalFailure, StorageUpstreamFailure,
+        dispatch_revocations,
+    };
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[rstest::rstest]
+    #[case::unreadable_retained_grant(RenewalFailure::Local(InteractionError::Invalid.into()), false, StorageUpstreamFailure::UnavailableBeforeSubmission)]
+    #[case::local_error_after_dispatch(RenewalFailure::Local(InteractionError::Invalid.into()), true, StorageUpstreamFailure::Unavailable)]
+    #[case::mismatched_stored_protocol(
+        RenewalFailure::Provider(OidcError::Denied),
+        false,
+        StorageUpstreamFailure::UnavailableBeforeSubmission
+    )]
+    #[case::upstream_rejection(
+        RenewalFailure::Provider(OidcError::Denied),
+        true,
+        StorageUpstreamFailure::Rejected
+    )]
+    fn failed_renewal_preserves_authority_until_provider_rejection(
+        #[case] failure: RenewalFailure,
+        #[case] submitted: bool,
+        #[case] expected: StorageUpstreamFailure,
+    ) {
+        let (disposition, result) = failure.disposition(submitted);
+        assert_eq!(disposition, expected);
+        assert!(matches!(
+            (disposition, result),
+            (
+                StorageUpstreamFailure::Rejected,
+                Err(ApiError::Unauthorized(_))
+            ) | (_, Err(ApiError::ServiceUnavailable(_)))
+        ));
+    }
 
     #[tokio::test]
     async fn overlapping_bulk_logouts_dispatch_every_grant_with_bounded_concurrency() {

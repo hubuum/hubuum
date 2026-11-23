@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::StorageSecurityCandidateActivationOutcome;
 
 #[async_trait]
 impl RuntimeSettingsStorage for PostgresStorage {
@@ -57,7 +58,7 @@ impl RuntimeSettingsStorage for PostgresStorage {
     async fn activate_security_candidate(
         &self,
         request: StorageSecurityCandidateActivation,
-    ) -> Result<StorageRuntimeSettingsUpdateOutcome, StorageError> {
+    ) -> Result<StorageSecurityCandidateActivationOutcome, StorageError> {
         crate::operations::security_candidates::activate(self.runtime(), request)
             .await
             .map_err(StorageError::from)

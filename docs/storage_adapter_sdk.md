@@ -574,6 +574,12 @@ providers, fence older claims and keep the original login binding for decryption
 On `UnavailableBeforeSubmission`, restore the claimed grant with bounded backoff.
 Return the issued family's retained grant from `revoke_auth_interaction_session`
 in the local revocation transaction so the server can revoke it after commit.
+For `revoke_auth_sessions`, `revoke_token` and `revoke_all_principal_tokens`,
+return the local count and the grants in `StorageTokenRevocations`. Serialize
+grant selection with issuance and renewal. On candidate activation, return
+each removed provider's grants paired with its previous trusted definition in
+`StorageSecurityCandidateActivationOutcome`. Dispatch after commit. For renewal,
+honor a live claim first, then prefer a ready grant over a deferred retry.
 Logout, affected provider changes, deletion, security recovery and logical
 restore destroy retained credentials. Portable backups
 exclude both interaction protocol state and upstream credentials.

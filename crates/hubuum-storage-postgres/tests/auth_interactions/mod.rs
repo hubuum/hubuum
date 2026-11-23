@@ -657,8 +657,17 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
         verified = verified.verify(digest('d')).unwrap();
     }
     let expected_state = verified.state(Utc::now());
-    let proof =
-        VerifiedInteractionSubject::new(interaction.binding.clone(), "external-subject").unwrap();
+    let groups: Vec<_> = (0..1024)
+        .map(|id| {
+            let key = format!("/teams/{id:0117}");
+            (key.clone(), key)
+        })
+        .collect();
+    let details = hubuum_domain::InteractionVerificationDetails::new(true, groups.clone()).unwrap();
+    let proof = VerifiedInteractionSubject::new(interaction.binding.clone(), "external-subject")
+        .unwrap()
+        .with_verification(Some(details))
+        .unwrap();
     let authentication = StorageInteractionAuthentication::verification(proof, verified).unwrap();
     assert!(matches!(
         backend
@@ -680,6 +689,25 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
             .unwrap(),
         StorageInteractionCompletion::Rejected(InteractionTransitionError::Invalid)
     ));
+    let StorageInteractionOutcome::View(view) = f
+        .replica()
+        .advance_auth_interaction(StorageInteractionCommand::new(
+            StorageInteractionAuthorization::Redemption(interaction.access.clone()),
+            StorageInteractionAction::Inspect,
+        ))
+        .await
+        .unwrap()
+    else {
+        panic!("verified interaction")
+    };
+    assert_eq!(
+        view.verification()
+            .unwrap()
+            .verification()
+            .unwrap()
+            .groups(),
+        groups
+    );
     let completion = StorageInteractionComplete::new(
         interaction.access,
         StorageInteractionIssuance::ProviderVerification,

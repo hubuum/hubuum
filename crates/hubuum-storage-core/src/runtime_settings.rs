@@ -1376,7 +1376,7 @@ pub trait RuntimeSettingsStorage: Send + Sync {
     async fn activate_security_candidate(
         &self,
         request: StorageSecurityCandidateActivation,
-    ) -> Result<StorageRuntimeSettingsUpdateOutcome, StorageError>;
+    ) -> Result<StorageSecurityCandidateActivationOutcome, StorageError>;
 
     /// Load every group's current record. Never returns a partial snapshot.
     async fn load_runtime_settings(&self) -> Result<StorageRuntimeSettingsSnapshot, StorageError>;

@@ -503,10 +503,9 @@ impl MemoryState {
                 "Interaction has not issued a session",
             ));
         };
-        let credential = self.upstream_sessions.get(&id).cloned();
         Ok(self
             .revoke_sessions(SessionRevocation::Session(AuthSessionId::new(id)), context)?
-            .map(|count| credential.filter(|_| count > 0)))
+            .map(|result| result.into_grants().pop()))
     }
 
     pub(super) fn purge_interactions(&mut self, limit: usize) -> Result<usize, StorageError> {

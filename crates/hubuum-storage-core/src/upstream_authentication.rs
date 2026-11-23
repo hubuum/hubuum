@@ -30,7 +30,25 @@ impl StorageUpstreamFailure {
     }
 }
 
-/// Select encrypted credentials before an authorized local revocation commits.
+/// Local revocation count and the upstream grants captured by the same transaction.
+#[derive(Clone, Debug, Default)]
+pub struct StorageTokenRevocations {
+    count: usize,
+    grants: Vec<StorageUpstreamSession>,
+}
+impl StorageTokenRevocations {
+    pub fn new(count: usize, grants: Vec<StorageUpstreamSession>) -> Self {
+        Self { count, grants }
+    }
+    pub fn count(&self) -> usize {
+        self.count
+    }
+    pub fn into_grants(self) -> Vec<StorageUpstreamSession> {
+        self.grants
+    }
+}
+
+/// Select encrypted credentials inside the authorized local revocation.
 #[derive(Clone, Debug)]
 pub enum StorageUpstreamRevocation {
     Sessions(crate::SessionRevocation),
@@ -264,16 +282,22 @@ impl StorageUpstreamSession {
     pub fn retain_at_revision(&mut self, revision: ResourceRevision) {
         self.current_revision = Some(revision);
     }
+    pub fn retry_deferred(&self, now: DateTime<Utc>) -> bool {
+        self.retry_after.is_some_and(|after| now < after)
+    }
+    pub fn has_live_lease(&self, now: DateTime<Utc>) -> bool {
+        self.lease.is_some_and(|(_, deadline)| now < deadline)
+    }
     pub fn has_credential_or_live_lease(&self, now: DateTime<Utc>) -> bool {
-        self.credential.is_some() || self.lease.is_some_and(|(_, deadline)| now < deadline)
+        self.credential.is_some() || self.has_live_lease(now)
     }
 
     pub fn claim(&mut self, now: DateTime<Utc>) -> StorageUpstreamClaimOutcome {
-        if self.retry_after.is_some_and(|after| now < after) {
+        if self.retry_deferred(now) {
             return StorageUpstreamClaimOutcome::RetryLater;
         }
         self.retry_after = None;
-        if self.lease.is_some_and(|(_, deadline)| now < deadline) {
+        if self.has_live_lease(now) {
             return StorageUpstreamClaimOutcome::Busy;
         }
         let Some(credential) = self.credential.take() else {

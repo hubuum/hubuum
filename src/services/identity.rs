@@ -2,6 +2,7 @@ use hubuum_domain::PlaintextPassword;
 use hubuum_domain::ResourceRevision;
 use hubuum_domain::{GroupId, PrincipalId};
 use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_storage_core::StorageTokenRevocations;
 use std::collections::HashMap;
 
 use chrono::SubsecRound;
@@ -499,7 +500,7 @@ pub async fn revoke_token(
     token_id: i32,
     principal_id: i32,
     event_context: &EventContext,
-) -> Result<usize, ApiError> {
+) -> Result<StorageTokenRevocations, ApiError> {
     Ok(storage_handle(context)
         .revoke_token(StorageTokenRevoke::new(
             hubuum_domain::TokenId::new(token_id).expect("validated token id must be positive"),
@@ -532,7 +533,7 @@ pub async fn revoke_all_principal_tokens(
     context: &impl StorageContext,
     principal_id: i32,
     event_context: &EventContext,
-) -> Result<usize, ApiError> {
+) -> Result<StorageTokenRevocations, ApiError> {
     Ok(storage_handle(context)
         .revoke_all_principal_tokens(StoragePrincipalTokensRevoke::new(
             PrincipalId::new(principal_id)?,

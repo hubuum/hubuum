@@ -105,7 +105,10 @@ async fn eligible(
            AND s.revoked_at IS NULL AND s.absolute_expires_at > clock_timestamp() AT TIME ZONE 'UTC'
            AND s.idle_expires_at > clock_timestamp() AT TIME ZONE 'UTC' AND u.anonymized_at IS NULL
            AND p.provider_managed AND p.last_sync_success_at IS NOT NULL
-         ORDER BY s.absolute_expires_at DESC,c.session_id LIMIT 1 FOR UPDATE OF s,c",
+         ORDER BY CASE WHEN $4 IS NULL THEN 0
+                       WHEN (c.document->'lease'->>1)::timestamptz > $4 THEN 0
+                       WHEN (c.document->>'retry_after')::timestamptz > $4 THEN 2
+                       ELSE 1 END, s.absolute_expires_at DESC,c.session_id LIMIT 1 FOR UPDATE OF s,c",
     )
     .bind::<Integer, _>(principal.id())
     .bind::<BigInt, _>(revision)
@@ -271,6 +274,17 @@ pub async fn logout_credentials(
     runtime: &PostgresRuntime,
     target: hubuum_storage_core::StorageUpstreamRevocation,
 ) -> Result<Vec<StorageUpstreamSession>, PostgresStorageError> {
+    runtime
+        .with_read_connection(async move |connection| {
+            logout_on_connection(connection, target).await
+        })
+        .await
+}
+
+pub(super) async fn logout_on_connection(
+    connection: &mut PostgresConnection,
+    target: hubuum_storage_core::StorageUpstreamRevocation,
+) -> Result<Vec<StorageUpstreamSession>, PostgresStorageError> {
     use futures_util::TryStreamExt;
     use hubuum_storage_core::StorageUpstreamRevocation;
     let (principal, token, session, provider) = match target {
@@ -285,22 +299,20 @@ pub async fn logout_credentials(
         }
         StorageUpstreamRevocation::Provider(binding) => (None, None, None, Some(binding)),
     };
-    runtime.with_read_connection(async move |connection| {
-        let mut rows = sql_query("SELECT c.document FROM auth_upstream_credentials c JOIN auth_sessions s ON s.id=c.session_id WHERE s.revoked_at IS NULL AND (($1 IS NOT NULL AND c.principal_id=$1) OR ($2 IS NOT NULL AND c.session_id=(SELECT auth_session_id FROM tokens WHERE id=$2)) OR ($3 IS NOT NULL AND c.session_id=$3) OR ($4 IS NOT NULL AND c.provider_id=$4 AND c.document->>'namespace'=$5)) ORDER BY c.session_id")
+    let mut rows = sql_query("SELECT c.document FROM auth_upstream_credentials c JOIN auth_sessions s ON s.id=c.session_id WHERE s.revoked_at IS NULL AND (($1 IS NOT NULL AND c.principal_id=$1) OR ($2 IS NOT NULL AND c.session_id=(SELECT auth_session_id FROM tokens WHERE id=$2)) OR ($3 IS NOT NULL AND c.session_id=$3) OR ($4 IS NOT NULL AND c.provider_id=$4 AND c.document->>'namespace'=$5)) ORDER BY c.session_id")
             .bind::<Nullable<Integer>,_>(principal).bind::<Nullable<Integer>,_>(token).bind::<Nullable<SqlUuid>,_>(session)
             .bind::<Nullable<SqlUuid>,_>(provider.as_ref().map(|binding| binding.id()))
             .bind::<Nullable<Text>,_>(provider.as_ref().map(|binding| binding.namespace()))
             .load_stream::<Row>(connection).await?;
-        let mut grants = Vec::new();
-        while let Some(row) = rows.try_next().await? {
-            match decode(row) {
-                Ok(grant) if grant.credential().is_some() => grants.push(grant),
-                Ok(_) => {},
-                Err(_) => tracing::warn!("Unreadable upstream grant during local logout"),
-            }
+    let mut grants = Vec::new();
+    while let Some(row) = rows.try_next().await? {
+        match decode(row) {
+            Ok(grant) if grant.credential().is_some() => grants.push(grant),
+            Ok(_) => {}
+            Err(_) => tracing::warn!("Unreadable upstream grant during local logout"),
         }
-        Ok::<_, PostgresStorageError>(grants)
-    }).await
+    }
+    Ok(grants)
 }
 
 pub async fn fail(

@@ -214,8 +214,6 @@ pub async fn logout_all(
         user_access.user.id
     );
 
-    let upstream =
-        oidc::principal_revocations(&context, PrincipalId::new(user_access.user.id)?).await;
     let delete_result = storage_handle(&context)
         .revoke_auth_sessions(
             SessionRevocation::All(crate::models::PrincipalID::new(user_access.user.id)?),
@@ -224,8 +222,8 @@ pub async fn logout_all(
         .await;
 
     match delete_result {
-        Ok(_) => {
-            crate::services::auth_interactions::oidc::revoke_best_effort(upstream, context);
+        Ok(outcome) => {
+            oidc::revoke_best_effort(outcome.into_value().into_grants(), context);
             Ok(ApiResponse::message("Logout of all sessions successful."))
         }
         Err(e) => {
@@ -310,12 +308,6 @@ pub async fn logout_other(
         user_id = user_id.id()
     );
 
-    let upstream = crate::services::auth_interactions::oidc::principal_revocations(
-        &context,
-        PrincipalId::new(user_id.id())?,
-    )
-    .await;
-
     let delete_result = user_id
         .instance(&context)
         .await?
@@ -323,8 +315,8 @@ pub async fn logout_other(
         .await;
 
     match delete_result {
-        Ok(_) => {
-            crate::services::auth_interactions::oidc::revoke_best_effort(upstream, context);
+        Ok(result) => {
+            oidc::revoke_best_effort(result.into_grants(), context);
             Ok(ApiResponse::message(format!(
                 "Logout of tokens for {} successful.",
                 user_id.id()

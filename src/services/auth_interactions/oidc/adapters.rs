@@ -87,7 +87,7 @@ impl BrowserAdapter {
                 .await
                 .map(Authentication::Oidc),
             (Self::OAuth(adapter), RetainedCredentials::OAuth(credentials)) => adapter
-                .refresh(credentials, context)
+                .refresh_with_dispatch(credentials, context, submitting)
                 .await
                 .map(Authentication::OAuth),
             _ => Err(ProtocolError::Denied),

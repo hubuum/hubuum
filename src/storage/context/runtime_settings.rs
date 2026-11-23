@@ -1,3 +1,4 @@
+use hubuum_storage_core::StorageSecurityCandidateActivationOutcome;
 use std::{sync::Arc, time::Duration};
 
 use futures_util::future::BoxFuture;
@@ -117,7 +118,7 @@ impl RuntimeSettingsStorage for StorageHandle {
     async fn activate_security_candidate(
         &self,
         request: StorageSecurityCandidateActivation,
-    ) -> Result<StorageRuntimeSettingsUpdateOutcome, StorageError> {
+    ) -> Result<StorageSecurityCandidateActivationOutcome, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::RuntimeSettings,

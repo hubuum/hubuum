@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::StorageTokenRevocations;
 use hubuum_storage_core::StorageUpstreamSession;
 
 #[derive(Clone)]
@@ -276,7 +277,7 @@ impl MemoryState {
         &mut self,
         target: SessionRevocation,
         context: EventContext,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         let ids: Vec<_> = self
             .sessions
             .iter()
@@ -291,8 +292,15 @@ impl MemoryState {
             .map(|(id, _)| *id)
             .collect();
         let mut audits = Vec::new();
+        let mut grants = Vec::new();
         for id in &ids {
-            self.upstream_sessions.remove(id);
+            if let Some(grant) = self
+                .upstream_sessions
+                .remove(id)
+                .filter(|record| record.credential().is_some())
+            {
+                grants.push(grant);
+            }
             let mut session = self.sessions.get(id).cloned().ok_or_else(denied)?;
             self.revoke_family(&mut session)?;
             audits.push(self.append_simple_event(
@@ -306,10 +314,12 @@ impl MemoryState {
             self.sessions.insert(*id, session);
         }
         if audits.is_empty() {
-            return Ok(StorageMutationOutcome::unchanged(0));
+            return Ok(StorageMutationOutcome::unchanged(
+                StorageTokenRevocations::default(),
+            ));
         }
         Ok(StorageMutationOutcome::committed_with_audits(
-            ids.len(),
+            StorageTokenRevocations::new(ids.len(), grants),
             StorageAuditReceipts::try_from_vec(audits).map_err(invalid_contract_value)?,
         ))
     }
