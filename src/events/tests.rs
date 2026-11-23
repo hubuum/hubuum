@@ -871,7 +871,7 @@ async fn token_writes_emit_created_revoked_events_without_token_material() {
     )
     .await
     .unwrap();
-    assert_eq!(revoked, 1);
+    assert_eq!(revoked.count(), 1);
 
     let rows = events_for(&scope, "token", token.id).await;
     assert_eq!(rows.len(), 2);

@@ -2,6 +2,7 @@ use super::super::*;
 use hubuum_domain::ResourceRevision;
 use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
 use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_storage_core::StorageTokenRevocations;
 use hubuum_storage_core::{
     CredentialActivityPolicy, ObservedSource, StorageActivityQuery, StorageCredentialActivity,
     StorageCredentialCreation,
@@ -135,7 +136,7 @@ impl AuthenticationStorage for PostgresStorage {
         &self,
         target: SessionRevocation,
         context: EventContext,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         crate::operations::auth_sessions::revoke(self.runtime(), target, context)
             .await
             .map_err(StorageError::from)
@@ -687,7 +688,7 @@ impl TokenStorage for PostgresStorage {
     async fn revoke_token(
         &self,
         request: StorageTokenRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         crate::operations::token::revoke_token(self.runtime(), request)
             .await
             .map_err(StorageError::from)
@@ -705,7 +706,7 @@ impl TokenStorage for PostgresStorage {
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         crate::operations::token::revoke_all_principal_tokens(self.runtime(), request)
             .await
             .map_err(StorageError::from)

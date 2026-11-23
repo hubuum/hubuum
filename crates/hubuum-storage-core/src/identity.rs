@@ -749,7 +749,7 @@ pub trait AuthenticationStorage: Send + Sync {
         &self,
         target: crate::SessionRevocation,
         context: hubuum_events_core::EventContext,
-    ) -> Result<crate::StorageMutationOutcome<usize>, StorageError>;
+    ) -> Result<crate::StorageMutationOutcome<crate::StorageTokenRevocations>, StorageError>;
     async fn purge_auth_sessions(&self, limit: usize) -> Result<usize, StorageError>;
 
     /// Validate one presented bearer credential and return its minimal

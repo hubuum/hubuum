@@ -2,6 +2,7 @@ use super::*;
 use hubuum_domain::ExternalIdentity;
 use hubuum_storage_core::StorageExternalInteractionAuthentication;
 use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_storage_core::StorageTokenRevocations;
 use hubuum_storage_core::StorageUpstreamClaim;
 use hubuum_storage_core::StorageUpstreamClaimOutcome;
 use hubuum_storage_core::StorageUpstreamRenewal;
@@ -137,7 +138,7 @@ impl AuthenticationStorage for MemoryStorage {
         &self,
         target: SessionRevocation,
         context: EventContext,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         let mut live = self.state.write().await;
         let mut staged = live.clone();
         let result = staged.revoke_sessions(target, context)?;
@@ -1075,7 +1076,14 @@ impl ExternalIdentityStorage for MemoryStorage {
                     && record.has_credential_or_live_lease(now)
                     && state.upstream_eligible(record, now)
             })
-            .max_by_key(|(id, _)| (state.sessions.get(id).map(|session| session.absolute), **id))
+            .max_by_key(|(id, record)| {
+                (
+                    record.has_live_lease(now),
+                    !record.retry_deferred(now),
+                    state.sessions.get(id).map(|session| session.absolute),
+                    std::cmp::Reverse(**id),
+                )
+            })
             .map(|(id, _)| *id);
         let Some(id) = selected else {
             return Ok(StorageUpstreamClaimOutcome::Unavailable);
@@ -1153,33 +1161,7 @@ impl ExternalIdentityStorage for MemoryStorage {
         target: StorageUpstreamRevocation,
     ) -> Result<Vec<StorageUpstreamSession>, StorageError> {
         let state = self.state.read().await;
-        Ok(state
-            .upstream_sessions
-            .values()
-            .filter(|record| {
-                record.credential().is_some()
-                    && state
-                        .sessions
-                        .get(&record.session().value())
-                        .is_some_and(|session| !session.revoked)
-                    && match &target {
-                        StorageUpstreamRevocation::Sessions(SessionRevocation::All(id)) => {
-                            record.principal() == *id
-                        }
-                        StorageUpstreamRevocation::Sessions(SessionRevocation::Session(id)) => {
-                            record.session() == *id
-                        }
-                        StorageUpstreamRevocation::Sessions(SessionRevocation::Current(id)) => {
-                            state.session_for_token(*id) == Some(record.session().value())
-                        }
-                        StorageUpstreamRevocation::Provider(provider) => {
-                            record.binding().provider().external_id() == Some(provider.id())
-                                && record.namespace() == provider.namespace()
-                        }
-                    }
-            })
-            .cloned()
-            .collect())
+        Ok(state.logout_grants(target))
     }
 
     async fn find_external_identity(
@@ -1254,6 +1236,38 @@ fn source_membership(source: &StorageBackupRow) -> Option<(i32, i32)> {
 }
 
 impl MemoryState {
+    pub(super) fn logout_grants(
+        &self,
+        target: StorageUpstreamRevocation,
+    ) -> Vec<StorageUpstreamSession> {
+        self.upstream_sessions
+            .values()
+            .filter(|record| {
+                record.credential().is_some()
+                    && self
+                        .sessions
+                        .get(&record.session().value())
+                        .is_some_and(|session| !session.revoked)
+                    && match &target {
+                        StorageUpstreamRevocation::Sessions(SessionRevocation::All(id)) => {
+                            record.principal() == *id
+                        }
+                        StorageUpstreamRevocation::Sessions(SessionRevocation::Session(id)) => {
+                            record.session() == *id
+                        }
+                        StorageUpstreamRevocation::Sessions(SessionRevocation::Current(id)) => {
+                            self.session_for_token(*id) == Some(record.session().value())
+                        }
+                        StorageUpstreamRevocation::Provider(provider) => {
+                            record.binding().provider().external_id() == Some(provider.id())
+                                && record.namespace() == provider.namespace()
+                        }
+                    }
+            })
+            .cloned()
+            .collect()
+    }
+
     pub(super) fn identity_principal(
         &self,
         identity: &ExternalIdentity,
@@ -1887,6 +1901,15 @@ impl UserStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         let (id, context) = request.into_parts();
         let mut state = self.state.write().await;
+        if state
+            .users
+            .get(&id.id())
+            .is_some_and(|user| user.provider_managed)
+        {
+            return Err(StorageError::permission_denied(
+                "Provider-managed users are read-only in Hubuum",
+            ));
+        }
         let Some(record) = state.users.remove(&id.id()) else {
             return Ok(StorageMutationOutcome::unchanged(0));
         };
@@ -1927,6 +1950,11 @@ impl UserStorage for MemoryStorage {
             state.users.get(&id.id()).cloned().ok_or_else(|| {
                 StorageError::not_found(format!("User {} was not found", id.id()))
             })?;
+        if current.provider_managed {
+            return Err(StorageError::permission_denied(
+                "Provider-managed users are read-only in Hubuum",
+            ));
+        }
         let parts = current.user.into_parts();
         if parts.anonymized_at().is_some() {
             return Ok(StorageMutationOutcome::unchanged(()));
@@ -2194,7 +2222,7 @@ impl TokenStorage for MemoryStorage {
     async fn revoke_token(
         &self,
         request: StorageTokenRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         self.state.write().await.revoke_owned_token(request)
     }
 
@@ -2214,22 +2242,20 @@ impl TokenStorage for MemoryStorage {
             return Ok(StorageMutationOutcome::unchanged(None));
         };
         let request = StorageTokenRevoke::new(token.id, token.principal_id, context);
-        let upstream = state
-            .session_for_token(token.id)
-            .and_then(|id| state.upstream_sessions.get(&id))
-            .cloned();
-        let revoked = state.revoke_owned_token(request)?;
-        Ok(revoked.map(|count| if count > 0 { upstream } else { None }))
+        Ok(state
+            .revoke_owned_token(request)?
+            .map(|result| result.into_grants().pop()))
     }
 
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         let (principal_id, context) = request.into_parts();
         let mut state = self.state.write().await;
         let now = Utc::now();
         let mut revoked = Vec::new();
+        let grants = state.logout_grants(SessionRevocation::All(principal_id).into());
         state.invalidate_principal_sessions(principal_id.id());
         for token in state.tokens.values_mut() {
             if token.principal_id == principal_id && token.revoked_at.is_none() {
@@ -2242,7 +2268,9 @@ impl TokenStorage for MemoryStorage {
             }
         }
         if revoked.is_empty() {
-            return Ok(StorageMutationOutcome::unchanged(0));
+            return Ok(StorageMutationOutcome::unchanged(
+                StorageTokenRevocations::new(0, grants),
+            ));
         }
         let receipts = revoked
             .into_iter()
@@ -2260,7 +2288,10 @@ impl TokenStorage for MemoryStorage {
         let count = receipts.len();
         let audits = StorageAuditReceipts::try_from_vec(receipts)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        Ok(StorageMutationOutcome::committed_with_audits(count, audits))
+        Ok(StorageMutationOutcome::committed_with_audits(
+            StorageTokenRevocations::new(count, grants),
+            audits,
+        ))
     }
 }
 
@@ -3532,7 +3563,7 @@ impl MemoryState {
     fn revoke_owned_token(
         &mut self,
         request: StorageTokenRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         let (token_id, principal_id, context) = request.into_parts();
         let token = self.tokens.get_mut(&token_id.id()).ok_or_else(|| {
             StorageError::not_found(format!("Token {} was not found", token_id.id()))
@@ -3545,7 +3576,9 @@ impl MemoryState {
             )));
         }
         if token.revoked_at.is_some() {
-            return Ok(StorageMutationOutcome::unchanged(0));
+            return Ok(StorageMutationOutcome::unchanged(
+                StorageTokenRevocations::default(),
+            ));
         }
         if self.session_for_token(token_id).is_some() {
             return self.revoke_sessions(SessionRevocation::Current(token_id), context);
@@ -3567,6 +3600,9 @@ impl MemoryState {
             &context,
             format!("Token {} revoked", token_id.id()),
         )?;
-        Ok(StorageMutationOutcome::committed(1, receipt))
+        Ok(StorageMutationOutcome::committed(
+            StorageTokenRevocations::new(1, Vec::new()),
+            receipt,
+        ))
     }
 }

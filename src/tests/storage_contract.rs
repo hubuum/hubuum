@@ -3136,7 +3136,8 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 ))
                 .await
                 .expect("certified backend should revoke principal-scoped tokens")
-                .into_value(),
+                .into_value()
+                .count(),
             1
         );
         assert!(
@@ -3169,7 +3170,8 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 ))
                 .await
                 .expect("certified backend should revoke all principal tokens")
-                .into_value(),
+                .into_value()
+                .count(),
             1
         );
         backend

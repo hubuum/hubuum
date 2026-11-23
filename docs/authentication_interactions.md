@@ -1,13 +1,8 @@
 # Durable authentication interactions
 
-Implementation: PR #591 for #575 on the `project/auth-support` integration branch.
-The domain model, complete storage adapters, atomic session issuance and v1
-password-login transport are implemented. Local and enabled LDAP providers use
-public discovery, begin, credentials, protected status, complete, cancel and
-issued-session revocation. Existing password-login endpoints keep their wire
-behavior. Hosted local/LDAP sign-in, explicit approval, registered BFF handoff,
-credential-approval completion and LDAP candidate verification use the same
-durable lifecycle. Real OIDC/OAuth execution remains in #577/#578.
+Local and LDAP sign-in, browser-based OIDC and OAuth sign-in, explicit approval,
+registered BFF handoff and provider verification use the same durable lifecycle.
+Password-based clients can also use the existing login endpoints.
 
 Deployment LDAP providers enter interaction discovery after the supported
 security-candidate verify/activate workflow persists their immutable provider UUID.
@@ -44,9 +39,11 @@ use the dedicated secret-protected revocation operation after response loss.
 
 ## Hosted browser flow
 
-Runtime-activated LDAP providers use Hubuum's hosted password form for sign-in and
-fresh approval. Selecting that form validates the current provider revision and
-immutable identity namespace; it does not require an OIDC/OAuth redirect adapter.
+LDAP uses Hubuum's hosted password form for sign-in and fresh approval.
+OIDC and OAuth redirect the browser to the configured provider and return through
+Hubuum's registered callback. For setup and provider-specific verification, see
+the [Keycloak OIDC guide](authentication/keycloak.md) and the
+[OAuth guide](authentication/oauth.md).
 
 Browser transport is opt-in. Configure the public origin and optional exact BFF
 return registrations in deployment settings:
@@ -115,24 +112,17 @@ For larger credential imports, use the existing direct credential-approval API
 and its separately bounded import flow. Raising only the JSON extractor limit
 would not make those operations fit the durable interaction contract.
 
-Beginning `provider_verification` requires a local recovery administrator's
-unscoped bearer, a `candidate_id`, and the candidate's enabled LDAP provider UUID.
-The candidate must be current and have passed every check except this provider's
-identity check. Authentication uses the existing LDAP adapter against the exact
-candidate configuration; it does not provision identities, synchronize groups,
-activate settings or create a session. After explicit browser approval, completion
-atomically verifies the candidate and returns the existing LDAP verification
-response: a `candidate` report with verification receipt and a `verification`
-preview of subject, admission and complete group membership. These reach only
-the initiating client. The existing activation endpoint still requires
-its separate operation-bound administrator approval. A failed, changed, expired,
-revoked or unsupported candidate fails closed. OIDC/OAuth execution and complete
-project configure/test/activate qualification remain separate #577/#578/#581 work.
-For candidates containing multiple enabled LDAP providers, first verify all but
-the final provider through the existing candidate LDAP verification endpoint.
-Hosted verification then verifies the remaining provider and returns the receipt
-for the fully verified candidate. This interaction purpose completes a candidate;
-it does not persist partial verification progress for several hosted requests.
+To begin `provider_verification`, supply a local recovery administrator's
+unscoped bearer, the current `candidate_id` and the UUID of an enabled provider
+with a pending identity check. All non-identity checks must have passed.
+Complete the hosted LDAP form or the provider's OIDC or OAuth sign-in and approve
+the result. Hubuum verifies the candidate configuration without creating a
+session, provisioning a user or applying membership changes.
+
+Completion saves the result for that provider and returns the candidate report
+and membership preview to the initiating client. Repeat for each remaining
+provider. The final successful check issues the verification receipt. Use it
+with a separate operation-bound administrator approval to activate the candidate.
 
 ## Authority and completion
 
@@ -155,7 +145,7 @@ Completion locks the interaction and commits consumption with exactly one result
 | --- | --- | --- |
 | Login | Existing Hubuum session family and audit receipts | Current eligible identity and unchanged credential fingerprint |
 | Credential approval | Existing approval record and audit receipt | Original actor/token and canonical operation-request digest |
-| Provider verification | Verified candidate, without session or identity changes | Candidate ID/content, selected provider namespace, configuration revision, initiating local administrator and passed identity check |
+| Provider verification | Updated provider check and final receipt when all checks pass | Candidate ID/content, selected provider namespace, configuration revision, initiating local administrator and passed identity check |
 
 The session service generates access/refresh credentials, invokes atomic storage
 completion and returns the existing session response only after commit. A failed

@@ -234,19 +234,48 @@ impl InteractionVerificationDetails {
 #[serde(deny_unknown_fields)]
 struct VerificationDocument {
     admitted: bool,
-    groups: Option<Vec<(String, String)>>,
+    groups: Option<Vec<VerificationGroup>>,
+}
+
+// Browser providers use their group key as the display name. Persist it once.
+// The pair form also decodes records written before this compact representation.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum VerificationGroup {
+    Key(String),
+    Named(String, String),
 }
 impl TryFrom<VerificationDocument> for InteractionVerificationDetails {
     type Error = InteractionValidationError;
     fn try_from(v: VerificationDocument) -> Result<Self, Self::Error> {
-        Self::from_provider_groups(v.admitted, v.groups)
+        let groups = v.groups.map(|groups| {
+            groups
+                .into_iter()
+                .map(|group| match group {
+                    VerificationGroup::Key(key) => (key.clone(), key),
+                    VerificationGroup::Named(key, name) => (key, name),
+                })
+                .collect()
+        });
+        Self::from_provider_groups(v.admitted, groups)
     }
 }
 impl From<InteractionVerificationDetails> for VerificationDocument {
     fn from(v: InteractionVerificationDetails) -> Self {
         Self {
             admitted: v.admitted,
-            groups: v.groups,
+            groups: v.groups.map(|groups| {
+                groups
+                    .into_iter()
+                    .map(|(key, name)| {
+                        if key == name {
+                            VerificationGroup::Key(key)
+                        } else {
+                            VerificationGroup::Named(key, name)
+                        }
+                    })
+                    .collect()
+            }),
         }
     }
 }

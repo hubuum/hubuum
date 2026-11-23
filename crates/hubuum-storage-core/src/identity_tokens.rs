@@ -1,3 +1,4 @@
+use crate::StorageTokenRevocations;
 use std::fmt;
 
 use async_trait::async_trait;
@@ -721,7 +722,7 @@ pub trait TokenStorage: Send + Sync {
     async fn revoke_token(
         &self,
         request: StorageTokenRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError>;
 
     async fn revoke_token_by_hash(
         &self,
@@ -731,7 +732,7 @@ pub trait TokenStorage: Send + Sync {
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError>;
 }
 
 #[cfg(test)]

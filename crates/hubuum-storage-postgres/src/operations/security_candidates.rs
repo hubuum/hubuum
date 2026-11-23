@@ -4,6 +4,7 @@ use diesel::sql_types::{Array, BigInt, Integer, Jsonb, Text, Timestamptz, Uuid a
 use diesel::{OptionalExtension, QueryableByName, sql_query};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::IdentityScopeName;
+use hubuum_storage_core::StorageSecurityCandidateActivationOutcome;
 use hubuum_storage_core::{
     MAX_SECURITY_CANDIDATES, MAX_SECURITY_CANDIDATES_PER_ACTOR, StorageAuthenticationProviderKind,
     StorageCredentialOperation, StorageProviderIdentityBinding, StorageRuntimeSettingsAssignment,
@@ -138,7 +139,7 @@ async fn verify_on_connection(
 pub async fn activate(
     runtime: &PostgresRuntime,
     request: StorageSecurityCandidateActivation,
-) -> Result<StorageRuntimeSettingsUpdateOutcome, PostgresStorageError> {
+) -> Result<StorageSecurityCandidateActivationOutcome, PostgresStorageError> {
     runtime.with_transaction(async |connection| -> Result<_, PostgresStorageError> {
         // Issuance takes the settings fence before principal locks. Activation
         // must use the same order or a concurrent login can deadlock against it.
@@ -150,8 +151,14 @@ pub async fn activate(
         let mut candidate = lock(connection, request.candidate_id()).await?;
         candidate.activate(&request, database_now(connection).await?).map_err(|error| PostgresStorageError::conflict(error.to_string()))?;
         let previous = locked_assignment(connection, request.update().group()).await?;
+        let mut revocations = Vec::new();
         if request.update().assignment() != &previous
             && let Some(StorageRuntimeSettingsValue::Authentication(providers)) = previous.value() {
+            for provider in candidate.revoked_browser_providers(&previous) {
+                let binding = StorageProviderIdentityBinding::from_provider(provider).map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
+                let records = super::upstream_authentication::logout_on_connection(connection, hubuum_storage_core::StorageUpstreamRevocation::Provider(binding)).await?;
+                revocations.push((provider.clone(), records));
+            }
             let retained: Vec<_> = providers.providers().iter()
                 .filter(|provider| candidate.retains_authenticated_provider(&previous, provider.name()))
                 .filter_map(|provider| provider.id())
@@ -159,7 +166,7 @@ pub async fn activate(
             let revision = request.update().expected_revision();
             let next = revision.checked_advance().map_err(|error| PostgresStorageError::internal(error.to_string()))?;
             sql_query("UPDATE auth_upstream_credentials
-                SET document=jsonb_set(document,'{current_revision}',to_jsonb($1::bigint))
+                SET document=jsonb_set(document - 'lease','{current_revision}',to_jsonb($1::bigint))
                 WHERE provider_id=ANY($2) AND COALESCE((document->>'current_revision')::bigint,revision)=$3")
                 .bind::<BigInt,_>(next.get())
                 .bind::<Array<SqlUuid>,_>(retained)
@@ -188,7 +195,7 @@ pub async fn activate(
             }
         }
         save(connection, &candidate).await?;
-        Ok(outcome)
+        Ok(StorageSecurityCandidateActivationOutcome::new(outcome, revocations))
     }).await
 }
 

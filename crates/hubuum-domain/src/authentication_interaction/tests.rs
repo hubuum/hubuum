@@ -227,6 +227,19 @@ fn persisted_verification_preserves_group_authority(#[case] groups: Option<Vec<(
     assert_eq!(restored.provider_groups(), groups.as_deref());
 }
 
+#[test]
+fn legacy_group_pairs_preserve_distinct_display_names() {
+    let details: InteractionVerificationDetails = serde_json::from_value(json!({
+        "admitted": true, "groups": [["team","team"],["dn","Directory Team"]]
+    }))
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&details).unwrap()["groups"],
+        json!(["team", ["dn", "Directory Team"]])
+    );
+    assert_eq!(details.groups()[1].1, "Directory Team");
+}
+
 #[rstest]
 #[case::above_one_thousand(1001, true)]
 #[case::maximum(1024, true)]

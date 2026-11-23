@@ -57,7 +57,6 @@ actix-web = { version = "4.20", default-features = false, features = [
     "compress-brotli",
     "compress-gzip",
     "compress-zstd",
-    "cookies",
     "unicode",
     "compat",
     "ws",
@@ -68,6 +67,7 @@ async-trait = "0.1"
 bytes = "1"
 base64 = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
+cookie = { version = "0.18.3", features = ["percent-encode"] }
 clap = { version = "4", features = ["env", "derive"] }
 diesel = { version = "2", features = [
     "postgres",

@@ -1,6 +1,7 @@
 use std::{fmt, str::FromStr};
 
 use chrono::NaiveDateTime;
+use hubuum_storage_core::StorageTokenRevocations;
 
 use hubuum_auth_core::{BearerCredential, keyed_digest};
 use serde::{Deserialize, Serialize};
@@ -588,7 +589,7 @@ pub async fn revoke_token_by_id_for_principal<C>(
     token_id: TokenID,
     principal_id: PrincipalID,
     context: &EventContext,
-) -> Result<usize, ApiError>
+) -> Result<StorageTokenRevocations, ApiError>
 where
     C: StorageContext,
 {

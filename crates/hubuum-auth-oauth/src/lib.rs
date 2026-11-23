@@ -219,25 +219,27 @@ impl OAuthAdapter {
         credentials: RetainedCredentials,
         context: &ExternalAuthenticationContext,
     ) -> Result<Authentication, OAuthError> {
-        self.authenticate(credentials, context).await
+        self.refresh_with_dispatch(credentials, context, || {})
+            .await
     }
 
-    async fn authenticate(
+    pub async fn refresh_with_dispatch(
         &self,
         credentials: RetainedCredentials,
         context: &ExternalAuthenticationContext,
+        submitting: impl Fn() + Sync,
     ) -> Result<Authentication, OAuthError> {
         self.authenticate_using(credentials, context, &|request| {
-            self.transport.send(request)
+            self.transport.send_with_dispatch(request, &submitting)
         })
         .await
     }
 
-    async fn authenticate_using<C: for<'c> AsyncHttpClient<'c, Error = OAuthError>>(
+    async fn authenticate_using<'c, C: AsyncHttpClient<'c, Error = OAuthError>>(
         &self,
         mut credentials: RetainedCredentials,
         context: &ExternalAuthenticationContext,
-        client: &C,
+        client: &'c C,
     ) -> Result<Authentication, OAuthError> {
         self.check_credentials(&credentials)?;
         let request = self.profile_request(&credentials.access)?;

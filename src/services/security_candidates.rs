@@ -918,59 +918,22 @@ pub(crate) async fn activate(
         crate::config::get_config()?.admin_groupname.clone(),
     )
     .map_err(invalid)?;
-    // Capture the previous trusted definitions before the commit destroys their
-    // credentials. Revocation may use only those definitions after activation.
-    let mut upstream = Vec::new();
-    if candidate.assignment().group() == StorageRuntimeSettingsGroup::Authentication {
-        let previous = context.backend().load_runtime_settings().await?;
-        if let Some(providers) = previous.authentication() {
-            for provider in providers.providers().iter().filter(|provider| {
-                provider.enabled()
-                    && !candidate.retains_authenticated_provider(
-                        previous
-                            .record(StorageRuntimeSettingsGroup::Authentication)
-                            .assignment(),
-                        provider.name(),
-                    )
-                    && matches!(
-                        provider.kind(),
-                        StorageAuthenticationProviderKind::Oidc
-                            | StorageAuthenticationProviderKind::Oauth
-                    )
-            }) {
-                let binding =
-                    hubuum_storage_core::StorageProviderIdentityBinding::from_provider(provider)
-                        .map_err(invalid)?;
-                let records = context
-                    .backend()
-                    .upstream_logout_credentials(
-                        hubuum_storage_core::StorageUpstreamRevocation::Provider(binding),
-                    )
-                    .await
-                    .unwrap_or_default();
-                upstream.push((provider.clone(), records));
-            }
-        }
-    }
     let outcome = context
         .backend()
         .activate_security_candidate(activation)
         .await?;
-    if outcome.is_committed() {
-        for (provider, records) in upstream {
-            crate::services::auth_interactions::oidc::revoke_provider_best_effort(
-                records, provider,
-            );
-        }
+    let activated = SecurityCandidateActivated {
+        group: outcome.record().group().into(),
+        revision: outcome.record().revision(),
+        changed: outcome.is_committed(),
+    };
+    for (provider, records) in outcome.into_revocations() {
+        crate::services::auth_interactions::oidc::revoke_provider_best_effort(records, provider);
     }
     if let Err(error) = context.refresh_runtime_settings().await {
         tracing::warn!(%error, "Security settings committed; replica reconciliation remains pending");
     }
-    Ok(SecurityCandidateActivated {
-        group: outcome.record().group().into(),
-        revision: outcome.record().revision(),
-        changed: outcome.is_committed(),
-    })
+    Ok(activated)
 }
 
 #[cfg(test)]

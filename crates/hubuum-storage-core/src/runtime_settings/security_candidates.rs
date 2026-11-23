@@ -6,10 +6,41 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
-    StorageCredentialClaim, StorageCredentialFingerprint, StorageCredentialOperation,
-    StorageRuntimeSettingsAssignment, StorageRuntimeSettingsGroup, StorageRuntimeSettingsUpdate,
-    StorageValidationError,
+    StorageAuthenticationProvider, StorageCredentialClaim, StorageCredentialFingerprint,
+    StorageCredentialOperation, StorageRuntimeSettingsAssignment, StorageRuntimeSettingsGroup,
+    StorageRuntimeSettingsRecord, StorageRuntimeSettingsUpdate,
+    StorageRuntimeSettingsUpdateOutcome, StorageUpstreamSession, StorageValidationError,
 };
+
+/// Previous trusted definition paired with grants from its revoked sessions.
+pub type StorageProviderRevocations = (StorageAuthenticationProvider, Vec<StorageUpstreamSession>);
+
+/// Activation and revocations captured under the same settings fence.
+#[derive(Debug)]
+pub struct StorageSecurityCandidateActivationOutcome {
+    settings: StorageRuntimeSettingsUpdateOutcome,
+    revocations: Vec<StorageProviderRevocations>,
+}
+impl StorageSecurityCandidateActivationOutcome {
+    pub fn new(
+        settings: StorageRuntimeSettingsUpdateOutcome,
+        revocations: Vec<StorageProviderRevocations>,
+    ) -> Self {
+        Self {
+            settings,
+            revocations,
+        }
+    }
+    pub fn record(&self) -> &StorageRuntimeSettingsRecord {
+        self.settings.record()
+    }
+    pub fn is_committed(&self) -> bool {
+        self.settings.is_committed()
+    }
+    pub fn into_revocations(self) -> Vec<StorageProviderRevocations> {
+        self.revocations
+    }
+}
 
 pub const SECURITY_CANDIDATE_LIFETIME_SECONDS: i64 = 300;
 pub const MAX_SECURITY_CANDIDATES_PER_ACTOR: usize = 8;
@@ -247,6 +278,23 @@ impl StorageSecurityCandidate {
         self.verification_assignment
             .as_ref()
             .unwrap_or(&self.assignment)
+    }
+
+    pub fn revoked_browser_providers<'a>(
+        &self,
+        previous: &'a StorageRuntimeSettingsAssignment,
+    ) -> impl Iterator<Item = &'a StorageAuthenticationProvider> {
+        let providers = match previous.value() {
+            Some(crate::StorageRuntimeSettingsValue::Authentication(providers)) => {
+                providers.providers()
+            }
+            _ => &[],
+        };
+        providers.iter().filter(move |provider| {
+            provider.enabled()
+                && provider.browser_definition().is_some()
+                && !self.retains_authenticated_provider(previous, provider.name())
+        })
     }
 
     /// A previously accepted, unchanged enabled definition retains sessions.

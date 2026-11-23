@@ -516,15 +516,13 @@ pub async fn revoke(
                     "Interaction has not issued a session",
                 ));
             };
-            let credential =
-                super::upstream_authentication::issued_session_credential(connection, id).await?;
             Ok(auth_sessions::revoke_on_connection(
                 connection,
                 SessionRevocation::Session(AuthSessionId::new(id)),
                 context,
             )
             .await?
-            .map(|count| credential.filter(|_| count > 0)))
+            .map(|result| result.into_grants().pop()))
         })
         .await
 }

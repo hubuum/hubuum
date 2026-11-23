@@ -11,6 +11,7 @@ use hubuum_domain::{PrincipalId, TokenId};
 use hubuum_events_core::{
     Action, AuditDocument, EntityType, EventContext, EventEntityId, NewEvent,
 };
+use hubuum_storage_core::StorageTokenRevocations;
 use hubuum_storage_core::{
     AuthSessionId, RefreshCredential, SessionCredentials, SessionLifetimes, SessionRevocation,
     StorageAuditReceipt, StorageAuditReceipts, StorageMutationOutcome, StorageSessionCreate,
@@ -422,7 +423,7 @@ pub async fn revoke(
     runtime: &PostgresRuntime,
     target: SessionRevocation,
     context: EventContext,
-) -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageTokenRevocations>, PostgresStorageError> {
     runtime
         .with_transaction(async move |connection| {
             revoke_on_connection(connection, target, context).await
@@ -434,7 +435,7 @@ pub(super) async fn revoke_on_connection(
     connection: &mut PostgresConnection,
     target: SessionRevocation,
     context: EventContext,
-) -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageTokenRevocations>, PostgresStorageError> {
     let (owner, token_id, session_id) = match target {
         SessionRevocation::All(id) => (id.id(), None, None),
         SessionRevocation::Session(id) => {
@@ -444,7 +445,9 @@ pub(super) async fn revoke_on_connection(
                 .await
                 .optional()?;
             let Some(owner) = owner else {
-                return Ok(StorageMutationOutcome::unchanged(0));
+                return Ok(StorageMutationOutcome::unchanged(
+                    StorageTokenRevocations::default(),
+                ));
             };
             (owner.principal_id, None, Some(id.value()))
         }
@@ -467,16 +470,20 @@ pub(super) async fn revoke_on_connection(
                 .bind::<Nullable<SqlUuid>, _>(session_id)
                 .load::<Family>(connection)
                 .await?;
+    let grants =
+        super::upstream_authentication::logout_on_connection(connection, target.into()).await?;
     let mut audits = Vec::new();
     for family in &families {
         revoke_family(connection, family.id, "logout").await?;
         audits.push(event(connection, family, Action::Revoked, "logout", &context).await?);
     }
     if audits.is_empty() {
-        return Ok(StorageMutationOutcome::unchanged(0));
+        return Ok(StorageMutationOutcome::unchanged(
+            StorageTokenRevocations::default(),
+        ));
     }
     Ok(StorageMutationOutcome::committed_with_audits(
-        families.len(),
+        StorageTokenRevocations::new(families.len(), grants),
         StorageAuditReceipts::try_from_vec(audits)
             .map_err(|e| PostgresStorageError::invalid_input(e.to_string()))?,
     ))
@@ -500,7 +507,13 @@ pub(super) async fn revoke_access(
     token_id: i32,
     principal_id: i32,
     context: &EventContext,
-) -> Result<Option<StorageAuditReceipt>, PostgresStorageError> {
+) -> Result<
+    Option<(
+        StorageAuditReceipt,
+        Option<hubuum_storage_core::StorageUpstreamSession>,
+    )>,
+    PostgresStorageError,
+> {
     let session = crate::schema::tokens::table
         .find(token_id)
         .filter(crate::schema::tokens::principal_id.eq(principal_id))
@@ -537,8 +550,10 @@ pub(super) async fn revoke_access(
     if already_revoked {
         return Ok(None);
     }
+    let grant =
+        super::upstream_authentication::issued_session_credential(connection, family.id).await?;
     revoke_family(connection, family.id, "credential_revoked").await?;
-    Ok(Some(
+    Ok(Some((
         event(
             connection,
             &family,
@@ -547,5 +562,6 @@ pub(super) async fn revoke_access(
             context,
         )
         .await?,
-    ))
+        grant,
+    )))
 }

@@ -3,6 +3,7 @@ use hubuum_domain::ExternalIdentity;
 use hubuum_domain::ResourceRevision;
 use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
 use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_storage_core::StorageTokenRevocations;
 use hubuum_storage_core::StorageUpstreamClaim;
 use hubuum_storage_core::StorageUpstreamClaimOutcome;
 use hubuum_storage_core::StorageUpstreamRenewal;
@@ -227,7 +228,7 @@ impl AuthenticationStorage for StorageHandle {
         &self,
         target: SessionRevocation,
         context: EventContext,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Authentication,
@@ -1094,7 +1095,7 @@ impl TokenStorage for StorageHandle {
     async fn revoke_token(
         &self,
         request: StorageTokenRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Token,
@@ -1124,7 +1125,7 @@ impl TokenStorage for StorageHandle {
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Token,
