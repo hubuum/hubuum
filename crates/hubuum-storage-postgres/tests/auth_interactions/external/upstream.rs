@@ -136,6 +136,20 @@ impl ExternalFixture {
         let StorageExternalInteractionAuthentication::Login(proof) = authentication.as_ref() else {
             panic!("login")
         };
+        self.retained_completion(interaction, claim, proof.clone())
+            .await
+    }
+
+    async fn retained_completion(
+        &self,
+        interaction: Interaction,
+        claim: hubuum_domain::InteractionAuthenticationClaim,
+        proof: VerifiedExternalAuthentication,
+    ) -> (
+        StorageInteractionComplete,
+        StorageInteractionAccess,
+        StorageAuthenticationCredential,
+    ) {
         let StorageInteractionOutcome::View(view) = self
             .backend
             .advance_auth_interaction(StorageInteractionCommand::new(
@@ -143,7 +157,7 @@ impl ExternalFixture {
                 StorageInteractionAction::AuthenticateExternal {
                     authentication: Box::new(
                         StorageExternalInteractionAuthentication::LoginWithCredential {
-                            authentication: proof.clone(),
+                            authentication: proof,
                             credential: encrypted("first-encrypted-token"),
                         },
                     ),
@@ -367,13 +381,15 @@ async fn local_revocation_fences_an_inflight_renewal(#[case] change: &str) {
     let claim = f.upstream_claim(principal).await;
     let proof = f.renewal_proof(&claim, "alice");
     f.database.owner(change).await.unwrap();
-    assert!(
+    assert_eq!(
         f.backend
             .finish_upstream_renewal(
                 StorageUpstreamRenewal::new(claim, proof, Some(encrypted("rotated"))).unwrap()
             )
             .await
-            .is_err()
+            .unwrap_err()
+            .kind(),
+        StorageErrorKind::AuthenticationRequired
     );
     f.database.cleanup().await;
 }
@@ -974,6 +990,88 @@ async fn activating_an_unrelated_provider_retains_the_grant_and_fences_old_claim
         )
         .await
         .unwrap();
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
+async fn unrelated_activation_preserves_the_only_oauth_grant_during_a_profile_read() {
+    use hubuum_domain::OAuthProviderDefinition;
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let definition: OAuthProviderDefinition = serde_json::from_value(json!({
+        "profile":"json_user","authorization_endpoint":"https://id.example/auth",
+        "token_endpoint":"https://id.example/token","profile_endpoint":"https://id.example/user",
+        "client_id":"client","client_authentication":"client_secret_post","scopes":[],
+        "subject_pointer":"/id","subject_type":"string","name_pointer":"/name",
+        "admission":{"mode":"provision_without_grants"},
+        "membership":{"mode":"local_only","refresh_interval_seconds":300,"max_stale_seconds":900}
+    }))
+    .unwrap();
+    let browser = StorageAuthenticationProvider::try_new(
+        "oauth",
+        StorageAuthenticationProviderKind::Oauth,
+        serde_json::to_value(&definition).unwrap(),
+    )
+    .unwrap()
+    .with_id(Uuid::new_v4())
+    .unwrap();
+    let binding = StorageProviderIdentityBinding::from_provider(&browser).unwrap();
+    let previous = browser_assignment(vec![browser.clone()])
+        .to_document()
+        .unwrap();
+    f.database.owner(&format!("INSERT INTO authentication_provider_bindings(name,provider_id,kind,namespace) VALUES('oauth','{}','oauth','{}');
+        UPDATE runtime_settings SET value='{previous}' WHERE setting_group='authentication'", binding.id(), binding.namespace())).await.unwrap();
+    let (interaction, claim) =
+        ExternalFixture::start_for_provider(&f.backend, &binding, Duration::minutes(5)).await;
+    let context = ExternalAuthenticationContext::oauth(
+        interaction.binding.clone(),
+        IdentityScopeName::new("oauth").unwrap(),
+        &definition,
+    )
+    .unwrap();
+    let proof = || {
+        context
+            .verified_oauth(
+                &json!({"id":"alice","name":"Alice"}),
+                MembershipClaims::Absent,
+                Utc::now(),
+            )
+            .unwrap()
+    };
+    let (completion, _, _) = f.retained_completion(interaction, claim, proof()).await;
+    let StorageInteractionCompletion::Session(session) = f
+        .backend
+        .complete_auth_interaction(completion)
+        .await
+        .unwrap()
+    else {
+        panic!("session")
+    };
+    let principal = session.into_value().principal_id();
+    let old = f.upstream_claim(principal).await;
+    let current = f
+        .activate_with_directory(Some(browser))
+        .await
+        .record()
+        .revision();
+    let stale = StorageUpstreamRenewal::new(old, proof(), None).unwrap();
+    assert_eq!(
+        f.backend
+            .finish_upstream_renewal(stale)
+            .await
+            .unwrap_err()
+            .kind(),
+        StorageErrorKind::AuthenticationRequired
+    );
+    let StorageUpstreamClaimOutcome::Claim(next) = f
+        .database
+        .replica()
+        .claim_upstream_credential(current, principal)
+        .await
+        .unwrap()
+    else {
+        panic!("single OAuth session lost its bearer")
+    };
+    assert_eq!(next.credential().ciphertext(), "first-encrypted-token");
     f.database.cleanup().await;
 }
 

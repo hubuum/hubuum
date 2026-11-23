@@ -58,9 +58,11 @@ pub mod task_queue;
 pub(crate) mod task_rows;
 pub mod token;
 pub mod token_retention;
+mod token_scope;
 pub mod unified_search;
 pub mod upstream_authentication;
 pub mod user;
+mod user_row;
 pub(crate) mod visibility;
 
 pub mod credential_approval;

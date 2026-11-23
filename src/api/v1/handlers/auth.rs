@@ -1,7 +1,6 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse, MessageResponse};
 use std::fmt;
 
-use crate::api::openapi::{ApiErrorResponse, MessageResponse};
-use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::events::{EventContext, RequestProvenance};
 use crate::extractors::AccessEventContext;

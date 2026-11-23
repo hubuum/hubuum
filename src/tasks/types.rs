@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::models::{Permissions, TaskResultCounts, TaskStatus};
+use super::import_authorization::ImportAuthorization;
+use crate::models::{GroupKey, TaskResultCounts, TaskStatus};
 use crate::storage::StorageImportResult;
 
 pub(super) use crate::storage::ApplicationImportOperation as PlannedExecution;
@@ -33,64 +34,205 @@ pub(super) struct ObjectResolution {
     pub(super) exists_in_db: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub(super) enum ImportAdminStatus {
-    #[default]
+/// A prior database miss and an unqueried name require different planning decisions.
+#[derive(Debug)]
+pub(super) enum CacheLookup<T> {
+    Found(T),
+    Missing,
     Unknown,
-    Known(bool),
 }
 
-impl ImportAdminStatus {
-    pub(super) fn known(self) -> Option<bool> {
-        match self {
-            Self::Unknown => None,
-            Self::Known(is_admin) => Some(is_admin),
+pub(super) struct ResolutionCache<T> {
+    by_key: HashMap<(i32, String), T>,
+    by_ref: HashMap<String, T>,
+    missing: HashSet<(i32, String)>,
+    planned: HashSet<(i32, String)>,
+}
+
+impl<T> Default for ResolutionCache<T> {
+    fn default() -> Self {
+        Self {
+            by_key: HashMap::new(),
+            by_ref: HashMap::new(),
+            missing: HashSet::new(),
+            planned: HashSet::new(),
         }
+    }
+}
+
+impl<T: Clone> ResolutionCache<T> {
+    pub(super) fn reserve(&mut self, key: (i32, String)) -> bool {
+        self.planned.insert(key)
+    }
+
+    pub(super) fn lookup(&self, key: &(i32, String)) -> CacheLookup<&T> {
+        self.lookup_where(key, |_| true)
+    }
+
+    // A planned value can satisfy a reference even when storage has already reported a miss.
+    pub(super) fn lookup_where(
+        &self,
+        key: &(i32, String),
+        accepts: impl FnOnce(&T) -> bool,
+    ) -> CacheLookup<&T> {
+        if let Some(value) = self.by_key.get(key).filter(|value| accepts(value)) {
+            CacheLookup::Found(value)
+        } else if self.missing.contains(key) {
+            CacheLookup::Missing
+        } else {
+            CacheLookup::Unknown
+        }
+    }
+
+    pub(super) fn by_ref(&self, reference: &str) -> Option<&T> {
+        self.by_ref.get(reference)
+    }
+
+    pub(super) fn record_missing(&mut self, key: (i32, String)) {
+        self.missing.insert(key);
+    }
+
+    fn remember(&mut self, key: (i32, String), reference: Option<String>, value: T) {
+        if let Some(reference) = reference {
+            self.by_ref.insert(reference, value.clone());
+        }
+        self.by_key.insert(key, value);
+    }
+}
+
+/// Planned creations supersede earlier database misses for the same normalized endpoints.
+#[derive(Default)]
+pub(super) struct RelationExistence(HashMap<(i32, i32), bool>);
+
+impl RelationExistence {
+    pub(super) async fn exists(
+        &mut self,
+        pair: (i32, i32),
+        lookup: impl Future<Output = Result<bool, String>>,
+    ) -> Result<bool, String> {
+        if let Some(&exists) = self.0.get(&pair) {
+            return Ok(exists);
+        }
+        if pair.0 <= 0 || pair.1 <= 0 {
+            // Planner-local IDs have no corresponding storage row.
+            return Ok(false);
+        }
+        let exists = lookup.await?;
+        self.0.insert(pair, exists);
+        Ok(exists)
+    }
+
+    pub(super) fn record_creation(&mut self, pair: (i32, i32)) {
+        self.0.insert(pair, true);
     }
 }
 
 #[derive(Default)]
 pub(super) struct PlanningState {
-    pub(super) next_temp_id: i32,
-    pub(super) admin_status: ImportAdminStatus,
-    /// Submitting token's scope boundary (`None` = unscoped). Threaded into the
-    /// per-collection permission checks so a scoped import cannot exceed it.
-    pub(super) scopes: Option<crate::models::TokenScope>,
-    pub(super) planned_collection_keys: HashSet<(Option<i32>, String)>,
-    pub(super) planned_class_keys: HashSet<(i32, String)>,
-    pub(super) planned_object_keys: HashSet<(i32, String)>,
-    pub(super) planned_group_keys: HashSet<(String, String)>,
-    pub(super) planned_identity_scope_names_by_ref: HashMap<String, String>,
-    pub(super) missing_collection_names: HashSet<String>,
-    pub(super) missing_class_keys: HashSet<(i32, String)>,
-    pub(super) missing_object_keys: HashSet<(i32, String)>,
-    pub(super) collections_by_ref: HashMap<String, CollectionResolution>,
-    pub(super) collections_by_name: HashMap<String, Vec<CollectionResolution>>,
-    pub(super) collections_by_parent_name: HashMap<(Option<i32>, String), CollectionResolution>,
-    pub(super) collections_by_id: HashMap<i32, CollectionResolution>,
-    pub(super) classes_by_ref: HashMap<String, ClassResolution>,
-    pub(super) classes_by_key: HashMap<(i32, String), ClassResolution>,
-    pub(super) objects_by_ref: HashMap<String, ObjectResolution>,
-    pub(super) objects_by_key: HashMap<(i32, String), ObjectResolution>,
-    pub(super) class_relations: HashSet<(i32, i32)>,
-    pub(super) object_relations: HashSet<(i32, i32)>,
-    pub(super) class_relation_exists_cache: HashMap<(i32, i32), bool>,
-    pub(super) object_relation_exists_cache: HashMap<(i32, i32), bool>,
-    pub(super) collection_permission_cache: HashMap<(i32, Permissions), Result<(), String>>,
+    last_virtual_id: i32,
+    pub(super) authorization: ImportAuthorization,
+    planned_collection_keys: HashSet<(i32, String)>,
+    planned_groups: HashMap<String, HashSet<String>>,
+    collections_by_ref: HashMap<String, CollectionResolution>,
+    collections_by_name: HashMap<String, Vec<CollectionResolution>>,
+    collections_by_parent_name: HashMap<(Option<i32>, String), CollectionResolution>,
+    collections_by_id: HashMap<i32, CollectionResolution>,
+    pub(super) classes: ResolutionCache<ClassResolution>,
+    pub(super) objects: ResolutionCache<ObjectResolution>,
+    pub(super) class_relations: RelationExistence,
+    pub(super) object_relations: RelationExistence,
 }
 
 impl PlanningState {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(authorization: ImportAuthorization) -> Self {
         Self {
-            next_temp_id: -1,
+            authorization,
             ..Self::default()
         }
     }
 
+    pub(super) fn record_planned_group(&mut self, scope: &str, name: &str) {
+        self.planned_groups
+            .entry(scope.to_owned())
+            .or_default()
+            .insert(name.to_owned());
+    }
+
+    pub(super) fn has_planned_group(&self, key: &GroupKey) -> bool {
+        self.planned_groups
+            .get(key.resolve_identity_scope_name())
+            .is_some_and(|groups| groups.contains(&key.groupname))
+    }
+
+    pub(super) fn reserve_collection_name(&mut self, parent_id: i32, name: &str) -> bool {
+        self.planned_collection_keys
+            .insert((parent_id, name.to_owned()))
+    }
+
+    pub(super) fn collection_by_ref(&self, reference: &str) -> Option<&CollectionResolution> {
+        self.collections_by_ref.get(reference)
+    }
+
+    pub(super) fn collection_by_id(&self, id: i32) -> Option<&CollectionResolution> {
+        self.collections_by_id.get(&id)
+    }
+
+    pub(super) fn collection_under_parent(
+        &self,
+        parent: Option<i32>,
+        name: &str,
+    ) -> Option<&CollectionResolution> {
+        self.collections_by_parent_name
+            .get(&(parent, name.to_owned()))
+    }
+
+    pub(super) fn collections_named(&self, name: &str) -> CacheLookup<&[CollectionResolution]> {
+        match self.collections_by_name.get(name).map(Vec::as_slice) {
+            Some([]) => CacheLookup::Missing,
+            Some(collections) => CacheLookup::Found(collections),
+            None => CacheLookup::Unknown,
+        }
+    }
+
+    pub(super) fn record_missing_collection_name(&mut self, name: String) {
+        self.collections_by_name.entry(name).or_default();
+    }
+
+    pub(super) fn remember_collection(
+        &mut self,
+        reference: Option<String>,
+        collection: CollectionResolution,
+    ) {
+        self.collections_by_id
+            .insert(collection.id, collection.clone());
+        let same_name = self
+            .collections_by_name
+            .entry(collection.name.clone())
+            .or_default();
+        same_name.retain(|known| known.id != collection.id);
+        same_name.push(collection.clone());
+        self.collections_by_parent_name.insert(
+            (collection.parent_collection_id, collection.name.clone()),
+            collection.clone(),
+        );
+        if let Some(reference) = reference {
+            self.collections_by_ref.insert(reference, collection);
+        }
+    }
+
+    pub(super) fn remember_class(&mut self, reference: Option<String>, class: ClassResolution) {
+        self.classes
+            .remember((class.collection_id, class.name.clone()), reference, class);
+    }
+
+    pub(super) fn remember_object(&mut self, reference: Option<String>, object: ObjectResolution) {
+        self.objects
+            .remember((object.class_id, object.name.clone()), reference, object);
+    }
+
     pub(super) fn next_virtual_id(&mut self) -> i32 {
-        let id = self.next_temp_id;
-        self.next_temp_id -= 1;
-        id
+        self.last_virtual_id -= 1;
+        self.last_virtual_id
     }
 }
 

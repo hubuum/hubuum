@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::{StorageError, StorageQueryObservationSettings, StorageValidationError};
+use crate::{StorageError, StorageQueryObservationPolicy, StorageValidationError};
 
 /// Largest page accepted by [`StorageRuntimeSettingsHistoryQuery`].
 pub const MAX_RUNTIME_SETTINGS_HISTORY_PAGE: u16 = 100;
@@ -107,83 +107,6 @@ impl StorageRuntimeSettingsGroup {
             .ok_or_else(|| {
                 StorageValidationError::invalid(format!("Unknown runtime settings group '{value}'"))
             })
-    }
-}
-
-/// Shared enablement and optional sampling/capacity overrides for
-/// process-local query observation collection.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StorageQueryObservationPolicy {
-    enabled: bool,
-    sample_every: Option<u32>,
-    max_patterns: Option<usize>,
-    max_patterns_per_class: Option<usize>,
-    retention_seconds: Option<u32>,
-    max_predicates_per_query: Option<usize>,
-}
-
-impl StorageQueryObservationPolicy {
-    #[must_use]
-    pub const fn new(enabled: bool) -> Self {
-        Self {
-            enabled,
-            sample_every: None,
-            max_patterns: None,
-            max_patterns_per_class: None,
-            retention_seconds: None,
-            max_predicates_per_query: None,
-        }
-    }
-
-    pub fn try_with_resource_limits(
-        enabled: bool,
-        sample_every: u32,
-        max_patterns: usize,
-        max_patterns_per_class: usize,
-        retention_seconds: u32,
-        max_predicates_per_query: usize,
-    ) -> Result<Self, StorageValidationError> {
-        StorageQueryObservationSettings::try_new(
-            enabled,
-            sample_every,
-            max_patterns,
-            max_patterns_per_class,
-            retention_seconds,
-            max_predicates_per_query,
-        )?;
-        Ok(Self {
-            enabled,
-            sample_every: Some(sample_every),
-            max_patterns: Some(max_patterns),
-            max_patterns_per_class: Some(max_patterns_per_class),
-            retention_seconds: Some(retention_seconds),
-            max_predicates_per_query: Some(max_predicates_per_query),
-        })
-    }
-
-    #[must_use]
-    pub const fn enabled(self) -> bool {
-        self.enabled
-    }
-
-    pub const fn sample_every(self) -> Option<u32> {
-        self.sample_every
-    }
-
-    pub const fn max_patterns(self) -> Option<usize> {
-        self.max_patterns
-    }
-
-    pub const fn max_patterns_per_class(self) -> Option<usize> {
-        self.max_patterns_per_class
-    }
-
-    pub const fn retention_seconds(self) -> Option<u32> {
-        self.retention_seconds
-    }
-
-    pub const fn max_predicates_per_query(self) -> Option<usize> {
-        self.max_predicates_per_query
     }
 }
 
@@ -799,18 +722,6 @@ impl StorageRuntimeSettingsValue {
             }
             StorageRuntimeSettingsGroup::QueryObservations => {
                 let document = QueryObservationDocument::deserialize(document).map_err(invalid)?;
-                let values = [
-                    document.sample_every.is_some(),
-                    document.max_patterns.is_some(),
-                    document.max_patterns_per_class.is_some(),
-                    document.retention_seconds.is_some(),
-                    document.max_predicates_per_query.is_some(),
-                ];
-                if values.iter().any(|present| *present) && values.iter().any(|present| !present) {
-                    return Err(StorageValidationError::invalid(
-                        "Query observation resource settings must be specified together",
-                    ));
-                }
                 let policy = match (
                     document.sample_every,
                     document.max_patterns,
@@ -835,7 +746,11 @@ impl StorageRuntimeSettingsValue {
                     (None, None, None, None, None) => {
                         StorageQueryObservationPolicy::new(document.enabled)
                     }
-                    _ => unreachable!("query observation fields were checked as a group"),
+                    _ => {
+                        return Err(StorageValidationError::invalid(
+                            "Query observation resource settings must be specified together",
+                        ));
+                    }
                 };
                 Ok(Self::QueryObservations(policy))
             }
@@ -1607,12 +1522,23 @@ mod tests {
         );
     }
 
-    #[test]
-    fn query_observation_documents_reject_partial_resource_limits() {
+    #[rstest]
+    #[case("sample_every")]
+    #[case("max_patterns")]
+    #[case("max_patterns_per_class")]
+    #[case("retention_seconds")]
+    #[case("max_predicates_per_query")]
+    fn query_observation_documents_reject_partial_resource_limits(#[case] missing: &str) {
+        let mut document = serde_json::json!({
+            "enabled": true, "sample_every": 4, "max_patterns": 128,
+            "max_patterns_per_class": 32, "retention_seconds": 3600,
+            "max_predicates_per_query": 8
+        });
+        document.as_object_mut().unwrap().remove(missing);
         assert!(
             StorageRuntimeSettingsValue::from_document(
                 StorageRuntimeSettingsGroup::QueryObservations,
-                &json!({"enabled": true, "sample_every": 4}),
+                &document,
             )
             .is_err()
         );

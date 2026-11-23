@@ -9,7 +9,7 @@ use crate::services::storage_boundary::visibility;
 use crate::storage::{
     RelationQueryStorage, StorageBidirectionalRelatedObjectsQuery, StorageClassGraphRow,
     StorageContext, StorageGraphClass, StorageGraphObject, StorageObjectGraphRow,
-    StorageObjectRelation, StorageObjectRelationsTouchingIdsQuery, StorageRelatedDirection,
+    StorageObjectRelationsTouchingIdsQuery, StorageRelatedDirection,
     StorageRelatedObjectForRootRow, StorageRelatedObjectIncludeRow,
     StorageRelatedObjectsForRootsQuery, StorageRelatedSort, StorageRelationGraphQuery,
     StorageRelationIdsQuery, StorageRelationListQuery, StorageRelationTouchingQuery,
@@ -17,31 +17,6 @@ use crate::storage::{
 };
 use hubuum_domain::{ClassId, ClassRelationId, ObjectId, ObjectRelationId, ResourceId};
 use hubuum_query::{MAX_TRAVERSAL_WORK_ROWS, TraversalBudget};
-
-pub(crate) use crate::services::storage_boundary::class_relation_from_storage;
-
-pub(crate) fn object_relation_from_storage(
-    row: StorageObjectRelation,
-) -> Result<HubuumObjectRelation, ApiError> {
-    let (
-        id,
-        from_hubuum_object_id,
-        to_hubuum_object_id,
-        class_relation_id,
-        created_at,
-        updated_at,
-        revision,
-    ) = row.into_parts();
-    Ok(HubuumObjectRelation {
-        id: id.id(),
-        from_hubuum_object_id: from_hubuum_object_id.id(),
-        to_hubuum_object_id: to_hubuum_object_id.id(),
-        class_relation_id: class_relation_id.id(),
-        created_at: created_at.naive_utc(),
-        updated_at: updated_at.naive_utc(),
-        revision,
-    })
-}
 
 #[allow(clippy::type_complexity)]
 fn class_parts(
@@ -302,9 +277,7 @@ pub(crate) async fn list_class_relations(
         .await?
         .into_parts();
     Ok((
-        rows.into_iter()
-            .map(class_relation_from_storage)
-            .collect::<Result<_, _>>()?,
+        rows.into_iter().map(HubuumClassRelation::from).collect(),
         total,
     ))
 }
@@ -320,9 +293,7 @@ pub(crate) async fn list_object_relations(
         .await?
         .into_parts();
     Ok((
-        rows.into_iter()
-            .map(object_relation_from_storage)
-            .collect::<Result<_, _>>()?,
+        rows.into_iter().map(HubuumObjectRelation::from).collect(),
         total,
     ))
 }
@@ -343,9 +314,7 @@ pub(crate) async fn list_class_relations_touching(
         .await?
         .into_parts();
     Ok((
-        rows.into_iter()
-            .map(class_relation_from_storage)
-            .collect::<Result<_, _>>()?,
+        rows.into_iter().map(HubuumClassRelation::from).collect(),
         total,
     ))
 }
@@ -366,9 +335,7 @@ pub(crate) async fn list_object_relations_touching(
         .await?
         .into_parts();
     Ok((
-        rows.into_iter()
-            .map(object_relation_from_storage)
-            .collect::<Result<_, _>>()?,
+        rows.into_iter().map(HubuumObjectRelation::from).collect(),
         total,
     ))
 }
@@ -386,12 +353,12 @@ pub(crate) async fn list_class_relations_touching_ids(
             .collect::<Result<Vec<_>, _>>()?,
         access.visibility()?,
     );
-    storage_handle(backend)
+    Ok(storage_handle(backend)
         .list_class_relations_touching_ids(query)
         .await?
         .into_iter()
-        .map(class_relation_from_storage)
-        .collect()
+        .map(HubuumClassRelation::from)
+        .collect())
 }
 
 pub(crate) async fn list_class_relations_between_ids(
@@ -412,12 +379,12 @@ pub(crate) async fn list_class_relations_between_ids(
         Some(limit) => query.with_max_results(limit),
         None => query,
     };
-    storage_handle(backend)
+    Ok(storage_handle(backend)
         .list_class_relations_between_ids(query)
         .await?
         .into_iter()
-        .map(class_relation_from_storage)
-        .collect()
+        .map(HubuumClassRelation::from)
+        .collect())
 }
 
 pub(crate) async fn list_object_relations_between_ids(
@@ -438,12 +405,12 @@ pub(crate) async fn list_object_relations_between_ids(
         Some(limit) => query.with_max_results(limit),
         None => query,
     };
-    storage_handle(backend)
+    Ok(storage_handle(backend)
         .list_object_relations_between_ids(query)
         .await?
         .into_iter()
-        .map(object_relation_from_storage)
-        .collect()
+        .map(HubuumObjectRelation::from)
+        .collect())
 }
 
 pub(crate) async fn list_object_relations_touching_ids(
@@ -469,12 +436,12 @@ pub(crate) async fn list_object_relations_touching_ids(
             .map(ObjectRelationId::new)
             .collect::<Result<Vec<_>, _>>()?,
     );
-    storage_handle(backend)
+    Ok(storage_handle(backend)
         .list_object_relations_touching_ids(query)
         .await?
         .into_iter()
-        .map(object_relation_from_storage)
-        .collect()
+        .map(HubuumObjectRelation::from)
+        .collect())
 }
 
 pub(crate) async fn list_related_classes(

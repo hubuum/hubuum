@@ -7,49 +7,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-### Security
-
-- Hosted browser interactions use `cookie` 0.18.3 or later in the 0.18 series.
-  This removes the older Actix cookie dependency flagged by RUSTSEC-2026-0594.
-  Hubuum uses opaque session cookies and does not enable private cookie jars.
-
-- Expiry of a retained OAuth access token retires that grant and lets another
-  session verify the same identity. Other sessions and personal tokens retain
-  their existing freshness requirements. Bulk logout attempts upstream
-  revocation for every retained grant. Admin logout by expired access token
-  captures the grant when it revokes the still-live refresh family.
-- Hosted sign-in supports concurrent entry forms. Large provider allowlists
-  can complete hosted verification, and expired-record cleanup runs
-  independently from security settings reconciliation.
-- **Breaking for storage adapters on the unreleased 0.11 SDK**. Return the
-  captured upstream grant from `revoke_token_by_hash` in the committed audit
-  outcome. Retire `CredentialExpired` grants without recording a principal
-  sync failure. Report deferred retries separately from missing credentials.
-  Apply hosted verification results to the locked candidate.
-  Return `StorageTokenRevocations` from session, named-token and principal
-  revocation, and `StorageSecurityCandidateActivationOutcome` from activation.
-  Capture the grants and their previous provider definitions in the transaction
-  that revokes local authority.
-
-- Require `url` 2.5.9 or later in the 2.x series to fix a stack overflow in
-  URL origin resolution. This also updates the standalone fuzz workspace.
-  [RustSec advisory RUSTSEC-2026-0592](https://rustsec.org/advisories/RUSTSEC-2026-0592.html)
-
-- Bind OAuth subjects to the configured profile headers, clear obsolete provider
-  grants on local-only activation, and reject incomplete membership observations.
-  OIDC client and provider failures preserve the last successful verification.
-  Browser verification receipts now bind the callback origin. Logical restore
-  reapplies the destination’s local-only membership policy. Offline recovery
-  requires the deployment’s effective administrator group to be local.
-- **Upgrade** — Stop API and worker replicas, take a backup, apply migration
-  `2026-11-19-000001_auth_interaction_admission`, and restart matching binaries.
-  The migration upgrades OAuth scopes with one recorded header configuration.
-  Create a new scope for bindings with missing or conflicting header history.
-  Affected providers refuse cached credentials and are omitted from login methods.
-  Other configured methods remain available.
-  Older OAuth backups carry no header identity and require a matching legacy
-  binding to restore. Restore the pre-upgrade snapshot to downgrade.
-
 ### Added
 
 - Server-owned OAuth authorization-code login with S256 PKCE, a pinned GitHub.com
@@ -83,6 +40,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   activation.
 
 ### Changed
+
+- PostgreSQL computed-field rebuild and read-repair workers now read only the
+  task settings row when selecting the size of each batch.
 
 - **Breaking (storage SDK and deployment):** when upgrading from Hubuum
   v0.0.23 (storage SDK `0.7.0`), pin all ten SDK crates to exactly `0.11.0`.
@@ -209,6 +169,77 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Security activation and offline recovery acquire settings before principal locks,
   avoiding a deadlock with concurrent authentication completion.
+
+- Best-effort imports can resolve a parent collection by name after an
+  earlier item failed to find it and a later item planned its creation.
+
+- Imports on the experimental memory backend preserve concurrent writes.
+  Restoring an import that used the last available result ID preserves its
+  receipts and prevents a later import from reusing that ID.
+
+- The experimental memory backend preserves identifier high-water marks across
+  restores and rejects exhausted writes without publishing partial history or
+  audit records. Live processes must acknowledge a new restore drain before
+  it can complete.
+- On the memory backend, a failed event configuration change preserves the
+  previous settings. Deleting a subscription in the wrong scope leaves the
+  subscription and its pending deliveries intact.
+
+### Security
+
+- HTTP 408 responses during external identity verification preserve the last
+  successful verification within its configured freshness window. OAuth profile
+  reads retain their grant across unrelated provider edits. Logout uses the
+  original provider configuration for queued revocations, and a fenced OIDC
+  renewal attempts to revoke its returned refresh grant.
+- Hosted LDAP verification preserves complete group previews at the supported
+  key and display name limits.
+- **Breaking for mixed-version preview deployments and external storage
+  adapters.** Stop API and worker replicas, back up the database, apply
+  migration `2026-11-23-000001_verification_group_budget`, and restart matching
+  binaries. Keep OAuth bearers recoverable during profile reads and return
+  `AuthenticationRequired` when a session or claim fence rejects renewal.
+
+- Hosted browser interactions use `cookie` 0.18.3 or later in the 0.18 series.
+  This removes the older Actix cookie dependency flagged by RUSTSEC-2026-0594.
+  Hubuum uses opaque session cookies and does not enable private cookie jars.
+
+- Expiry of a retained OAuth access token retires that grant and lets another
+  session verify the same identity. Other sessions and personal tokens retain
+  their existing freshness requirements. Bulk logout attempts upstream
+  revocation for every retained grant. Admin logout by expired access token
+  captures the grant when it revokes the still-live refresh family.
+- Hosted sign-in supports concurrent entry forms. Large provider allowlists
+  can complete hosted verification, and expired-record cleanup runs
+  independently from security settings reconciliation.
+- **Breaking for storage adapters on the unreleased 0.11 SDK**. Return the
+  captured upstream grant from `revoke_token_by_hash` in the committed audit
+  outcome. Retire `CredentialExpired` grants without recording a principal
+  sync failure. Report deferred retries separately from missing credentials.
+  Apply hosted verification results to the locked candidate.
+  Return `StorageTokenRevocations` from session, named-token and principal
+  revocation, and `StorageSecurityCandidateActivationOutcome` from activation.
+  Capture the grants and their previous provider definitions in the transaction
+  that revokes local authority.
+
+- Require `url` 2.5.9 or later in the 2.x series to fix a stack overflow in
+  URL origin resolution. This also updates the standalone fuzz workspace.
+  [RustSec advisory RUSTSEC-2026-0592](https://rustsec.org/advisories/RUSTSEC-2026-0592.html)
+
+- Bind OAuth subjects to the configured profile headers, clear obsolete provider
+  grants on local-only activation, and reject incomplete membership observations.
+  OIDC client and provider failures preserve the last successful verification.
+  Browser verification receipts now bind the callback origin. Logical restore
+  reapplies the destination’s local-only membership policy. Offline recovery
+  requires the deployment’s effective administrator group to be local.
+- **Upgrade** — Stop API and worker replicas, take a backup, apply migration
+  `2026-11-19-000001_auth_interaction_admission`, and restart matching binaries.
+  The migration upgrades OAuth scopes with one recorded header configuration.
+  Create a new scope for bindings with missing or conflicting header history.
+  Affected providers refuse cached credentials and are omitted from login methods.
+  Other configured methods remain available.
+  Older OAuth backups carry no header identity and require a matching legacy
+  binding to restore. Restore the pre-upgrade snapshot to downgrade.
 
 ## [0.0.23] - 2026-11-21
 

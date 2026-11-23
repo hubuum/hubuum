@@ -1,8 +1,7 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, web};
 use hubuum_domain::ClassId;
 
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::{HistoryResponse, resolve_history_principal_names};
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;

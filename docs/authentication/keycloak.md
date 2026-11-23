@@ -156,7 +156,7 @@ assurance from unspecified `acr` or `amr` values.
 
 This increment is an offline upgrade. Stop all API and worker replicas, back up
 the database, apply migrations through
-`2026-11-19-000001_auth_interaction_admission` and role grants,
+`2026-11-23-000001_verification_group_budget` and role grants,
 then start matching binaries everywhere and begin new interactions. Upgrade
 external storage adapters and all ten SDK dependencies to `0.11.0`. Regenerate
 OpenAPI clients for the new browser routes and OIDC option. Older binaries and

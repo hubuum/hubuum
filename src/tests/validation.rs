@@ -1,12 +1,15 @@
 #![cfg(test)]
+
 use hubuum_domain::ObjectId;
+use hubuum_storage_core::StorageObjectCreate;
+use hubuum_storage_core::StorageObjectUpdate;
 
 use rstest::rstest;
 use serde_json::Value;
 
 use crate::errors::ApiError;
 use crate::models::{NewHubuumClass, NewHubuumObject, UpdateHubuumObject};
-use crate::services::storage_boundary::{object_create_to_storage, object_update_to_storage};
+
 use crate::storage::ObjectStorage;
 use crate::tests::constants::{SchemaType, get_schema};
 use crate::tests::{CollectionFixture, TestScope};
@@ -94,7 +97,7 @@ async fn test_validate_object(#[case] json_data: &str, #[case] expected: bool) {
 
     // Then, test the full object validation that fetches the class from the DB.
     let object_validate = PostgresStorage::unobserved(pool.get_ref().clone())
-        .validate_object_create(object_create_to_storage(object).expect("valid fixture"))
+        .validate_object_create(StorageObjectCreate::try_from(object).expect("valid fixture"))
         .await
         .map_err(ApiError::from);
     assert_validation_result(object_validate, expected, "Object validation");
@@ -152,7 +155,7 @@ async fn test_validate_update_object(#[case] json_data: &str, #[case] expected: 
     let validate = PostgresStorage::unobserved(pool.get_ref().clone())
         .validate_object_update(
             ObjectId::new(object.id).expect("valid fixture"),
-            object_update_to_storage(update_object).expect("valid fixture update"),
+            StorageObjectUpdate::try_from(update_object).expect("valid fixture update"),
         )
         .await;
     assert_validation_result(

@@ -657,12 +657,24 @@ async fn provider_verification_consumes_only_the_exact_candidate_without_issuing
         verified = verified.verify(digest('d')).unwrap();
     }
     let expected_state = verified.state(Utc::now());
-    let groups: Vec<_> = (0..1024)
-        .map(|id| {
-            let key = format!("/teams/{id:0117}");
-            (key.clone(), key)
-        })
-        .collect();
+    let groups: Vec<_> = if large {
+        (0..1024)
+            .map(|id| {
+                let key = format!("/teams/{id:0117}");
+                (key.clone(), key)
+            })
+            .collect()
+    } else {
+        (0..1000)
+            .map(|id| {
+                // Distinct maximum-length LDAP values with worst-case JSON escaping.
+                (
+                    format!("{id:04}{}", "\\".repeat(251)),
+                    format!("{id:04}{}", "\"".repeat(251)),
+                )
+            })
+            .collect()
+    };
     let details = hubuum_domain::InteractionVerificationDetails::new(true, groups.clone()).unwrap();
     let proof = VerifiedInteractionSubject::new(interaction.binding.clone(), "external-subject")
         .unwrap()

@@ -28,7 +28,7 @@ use hubuum_storage_core::{
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::{auth_sessions, credential_approval, security_candidates, user::UserRow};
+use super::{auth_sessions, credential_approval, security_candidates, user_row::UserRow};
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 
 #[derive(QueryableByName)]

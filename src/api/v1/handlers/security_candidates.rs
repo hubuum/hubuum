@@ -1,7 +1,7 @@
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, web};
 use uuid::Uuid;
 
-use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};

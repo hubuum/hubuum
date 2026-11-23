@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{
     ClassId, CollectionId, IdentityScopeId, ObjectId, PrincipalId, PrincipalKind, ResourceRevision,
@@ -7,7 +6,7 @@ use hubuum_domain::{
 
 use crate::{
     MAX_TOKEN_HASH_KEYS, StorageAuthenticationCredential, StorageAuthorizationPermission,
-    StorageError, StorageTokenDigest, StorageTokenFormat, StorageValidationError,
+    StorageTokenDigest, StorageTokenFormat, StorageValidationError,
 };
 
 /// Deterministic inputs for one bearer-credential validation.
@@ -680,98 +679,6 @@ impl StorageAuthenticationTokenScope {
     ) {
         (self.permissions, self.resources)
     }
-}
-
-/// Authentication data every selectable storage backend must provide.
-///
-/// Implementations own persistence joins and row decoding. Consumers receive
-/// only the projections required to build application authentication state.
-#[async_trait]
-pub trait AuthenticationStorage: Send + Sync {
-    async fn create_auth_interaction(
-        &self,
-        request: crate::StorageInteractionCreate,
-    ) -> Result<crate::StorageInteractionView, StorageError>;
-    async fn bind_auth_interaction_browser(
-        &self,
-        code: hubuum_domain::InteractionDigest,
-        browser: hubuum_domain::InteractionBrowserBinding,
-    ) -> Result<crate::StorageInteractionOutcome, StorageError>;
-    async fn advance_auth_interaction(
-        &self,
-        command: crate::StorageInteractionCommand,
-    ) -> Result<crate::StorageInteractionOutcome, StorageError>;
-    async fn complete_auth_interaction(
-        &self,
-        request: crate::StorageInteractionComplete,
-    ) -> Result<crate::StorageInteractionCompletion, StorageError>;
-    async fn revoke_auth_interaction_session(
-        &self,
-        access: crate::StorageInteractionAccess,
-        context: hubuum_events_core::EventContext,
-    ) -> Result<crate::StorageMutationOutcome<Option<crate::StorageUpstreamSession>>, StorageError>;
-    async fn purge_auth_interactions(&self, limit: usize) -> Result<usize, StorageError>;
-
-    async fn record_credential_creation(
-        &self,
-        token: TokenId,
-        creation: crate::StorageCredentialCreation,
-    ) -> Result<(), StorageError>;
-    async fn observe_credential_source(
-        &self,
-        token: TokenId,
-        source: crate::ObservedSource,
-        policy: crate::CredentialActivityPolicy,
-    ) -> Result<(), StorageError>;
-    async fn credential_activity(
-        &self,
-        query: crate::StorageActivityQuery,
-    ) -> Result<crate::StorageCredentialActivity, StorageError>;
-    async fn purge_credential_sources(
-        &self,
-        policy: crate::CredentialActivityPolicy,
-        limit: usize,
-    ) -> Result<usize, StorageError>;
-
-    async fn create_auth_session(
-        &self,
-        request: crate::StorageSessionCreate,
-    ) -> Result<crate::StorageMutationOutcome<crate::StorageSessionIssued>, StorageError>;
-    async fn refresh_principal(
-        &self,
-        credential: crate::RefreshCredential,
-    ) -> Result<PrincipalId, StorageError>;
-    async fn rotate_auth_session(
-        &self,
-        request: crate::StorageSessionRotate,
-    ) -> Result<crate::StorageMutationOutcome<crate::StorageSessionRotation>, StorageError>;
-    async fn revoke_auth_sessions(
-        &self,
-        target: crate::SessionRevocation,
-        context: hubuum_events_core::EventContext,
-    ) -> Result<crate::StorageMutationOutcome<crate::StorageTokenRevocations>, StorageError>;
-    async fn purge_auth_sessions(&self, limit: usize) -> Result<usize, StorageError>;
-
-    /// Validate one presented bearer credential and return its minimal
-    /// authentication projection.
-    ///
-    /// Implementations must reject revoked and expired credentials, reject
-    /// credentials owned by disabled principals, and may update non-security
-    /// usage telemetry without failing an otherwise successful validation.
-    async fn authenticate_bearer_token(
-        &self,
-        attempt: StorageAuthenticationAttempt,
-    ) -> Result<StorageAuthenticatedToken, StorageError>;
-
-    async fn get_authentication_identity(
-        &self,
-        principal_id: PrincipalId,
-    ) -> Result<StorageAuthenticationIdentity, StorageError>;
-
-    async fn get_authentication_token_scope(
-        &self,
-        query: StorageAuthenticationTokenScopeQuery,
-    ) -> Result<Option<StorageAuthenticationTokenScope>, StorageError>;
 }
 
 #[cfg(test)]

@@ -1,9 +1,11 @@
 use crate::permissions::ClassResourceEndpoint;
-use crate::services::storage_boundary::{
-    class_record_from_storage, object_from_storage, object_selector_from_storage,
-};
-use crate::storage::StorageResolvedObject;
+use hubuum_storage_core::StorageObject;
+
+use crate::storage::{StorageObjectSelector, StorageResolvedObject};
 use async_trait::async_trait;
+use hubuum_domain::{ClassId, CollectionId};
+use hubuum_storage_core::StorageObjectCreate;
+use hubuum_storage_core::StorageObjectUpdate;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use utoipa::ToSchema;
@@ -29,6 +31,33 @@ pub struct HubuumObject {
     pub revision: ResourceRevision,
 }
 
+impl From<StorageObject> for HubuumObject {
+    fn from(row: StorageObject) -> Self {
+        let (
+            id,
+            name,
+            collection_id,
+            hubuum_class_id,
+            data,
+            description,
+            created_at,
+            updated_at,
+            revision,
+        ) = row.into_parts();
+        Self {
+            id: id.id(),
+            name,
+            collection_id: collection_id.id(),
+            hubuum_class_id: hubuum_class_id.id(),
+            data,
+            description,
+            created_at: created_at.naive_utc(),
+            updated_at: updated_at.naive_utc(),
+            revision,
+        }
+    }
+}
+
 impl HubuumObject {
     pub(crate) fn authorization_resource(&self) -> ResourceRef {
         ResourceRef::object(
@@ -47,6 +76,20 @@ pub struct NewHubuumObject {
     pub hubuum_class_id: i32,
     pub data: serde_json::Value,
     pub description: String,
+}
+
+impl TryFrom<NewHubuumObject> for StorageObjectCreate {
+    type Error = ApiError;
+
+    fn try_from(command: NewHubuumObject) -> Result<Self, Self::Error> {
+        Ok(StorageObjectCreate::new(
+            command.name,
+            CollectionId::new(command.collection_id)?,
+            ClassId::new(command.hubuum_class_id)?,
+            command.data,
+            command.description,
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -81,6 +124,20 @@ pub struct UpdateHubuumObject {
     pub hubuum_class_id: Option<i32>,
     pub data: Option<serde_json::Value>,
     pub description: Option<String>,
+}
+
+impl TryFrom<UpdateHubuumObject> for StorageObjectUpdate {
+    type Error = ApiError;
+
+    fn try_from(update: UpdateHubuumObject) -> Result<Self, Self::Error> {
+        Ok(StorageObjectUpdate::builder()
+            .name(update.name)
+            .collection_id(update.collection_id.map(CollectionId::new).transpose()?)
+            .class_id(update.hubuum_class_id.map(ClassId::new).transpose()?)
+            .data(update.data)
+            .description(update.description)
+            .build())
+    }
 }
 
 #[cfg(test)]
@@ -232,37 +289,27 @@ pub use hubuum_domain::ObjectId as HubuumObjectID;
 /// Callers choose the constructor from the route shape. In particular, [`Self::by_name`] never
 /// attempts to parse numeric-looking names as IDs.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ObjectSelector(ObjectSelectorKind);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ObjectSelectorKind {
-    ById {
-        class_id: HubuumClassID,
-        object_id: HubuumObjectID,
-    },
-    ByName {
-        class_name: String,
-        object_name: String,
-    },
-}
+pub struct ObjectSelector(StorageObjectSelector);
 
 impl ObjectSelector {
     pub fn by_id(class_id: HubuumClassID, object_id: HubuumObjectID) -> Self {
-        Self(ObjectSelectorKind::ById {
+        Self(StorageObjectSelector::Ids {
             class_id,
             object_id,
         })
     }
 
     pub fn by_name(class_name: impl Into<String>, object_name: impl Into<String>) -> Self {
-        Self(ObjectSelectorKind::ByName {
+        Self(StorageObjectSelector::Names {
             class_name: class_name.into(),
             object_name: object_name.into(),
         })
     }
+}
 
-    pub(crate) fn kind(&self) -> &ObjectSelectorKind {
-        &self.0
+impl From<ObjectSelector> for StorageObjectSelector {
+    fn from(selector: ObjectSelector) -> Self {
+        selector.0
     }
 }
 
@@ -271,22 +318,22 @@ impl ObjectSelector {
 #[derive(Clone)]
 pub struct ResolvedObjectTarget {
     storage: StorageResolvedObject,
-    selector: ObjectSelector,
     class: HubuumClass,
     object: HubuumObject,
 }
 
-impl ResolvedObjectTarget {
+impl From<StorageResolvedObject> for ResolvedObjectTarget {
     /// Preserve the validated aggregate; private views serve domain and HTTP callers.
-    pub(crate) fn from_storage(storage: StorageResolvedObject) -> Result<Self, ApiError> {
-        Ok(Self {
-            selector: object_selector_from_storage(storage.selector().clone())?,
-            class: class_record_from_storage(storage.class().clone())?,
-            object: object_from_storage(storage.object().clone())?,
+    fn from(storage: StorageResolvedObject) -> Self {
+        Self {
+            class: HubuumClass::from(storage.class().clone()),
+            object: HubuumObject::from(storage.object().clone()),
             storage,
-        })
+        }
     }
+}
 
+impl ResolvedObjectTarget {
     pub(crate) fn as_storage(&self) -> &StorageResolvedObject {
         &self.storage
     }
@@ -297,11 +344,6 @@ impl ResolvedObjectTarget {
 
     pub fn class(&self) -> &HubuumClass {
         &self.class
-    }
-
-    #[cfg(test)]
-    pub(crate) fn selector(&self) -> &ObjectSelector {
-        &self.selector
     }
 }
 
@@ -450,7 +492,7 @@ impl AuthzTarget for HubuumObjectID {
 impl fmt::Debug for ResolvedObjectTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ResolvedObjectTarget")
-            .field("selector", &self.selector)
+            .field("selector", self.storage.selector())
             .field("class", &self.class)
             .field("object", &self.object)
             .finish()

@@ -10,11 +10,11 @@ use hubuum_storage_postgres::diesel_async_prelude::*;
 use hubuum_storage_postgres::with_transaction;
 use rstest::rstest;
 
+use super::tests::issue_login_token;
 use super::*;
 use crate::events::{EntityType, EventContext};
 use crate::models::LoginUser;
 use crate::permissions::test_support::mock_treetop::MockTreetopBackend;
-use crate::services::authentication::issue_login_token;
 use crate::storage::{AuthorizationDataStorage, storage_handle};
 use crate::tests::{TestContext, app_context_with_permission_backend};
 
@@ -220,7 +220,7 @@ async fn configured_external_login_snapshots_synced_identity_and_policy(#[case] 
         policy.add_admin_rule(groups[0].id());
     }
     let app = app_context_with_permission_backend(context.pool.get_ref().clone(), Arc::new(policy));
-    let token = issue_login_token(&app, &authenticated, &EventContext::system())
+    let token = issue_login_token(&app, &authenticated, EventContext::system())
         .await
         .unwrap();
 

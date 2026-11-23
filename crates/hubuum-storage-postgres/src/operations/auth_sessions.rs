@@ -1,5 +1,5 @@
 //! Session mutations lock principal, then family, then credentials on every replica.
-use super::{event_record::append_event, user::UserRow};
+use super::{event_record::append_event, user_row::UserRow};
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
 use chrono::{Duration, NaiveDateTime};
 use diesel::{

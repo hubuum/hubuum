@@ -31,6 +31,8 @@ const RETENTION: &str =
 
 const ADMISSION: &str =
     include_str!("../migrations/2026-11-19-000001_auth_interaction_admission/up.sql");
+const VERIFICATION_GROUPS: &str =
+    include_str!("../migrations/2026-11-23-000001_verification_group_budget/up.sql");
 
 /// Independent security authority per test, using current production table shapes
 /// and the actual settings/candidate migrations. Connections use the runtime role.
@@ -63,7 +65,7 @@ impl Fixture {
         ]
         .map(|table| format!("CREATE TABLE {table} (LIKE public.{table} INCLUDING ALL);"))
         .join("\n");
-        f.owner(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {tables} {APPROVALS} {LEGACY} {SETTINGS} {POLICIES} {CANDIDATES} {INTERACTIONS} {UPSTREAM} {RETENTION} {ADMISSION}
+        f.owner(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}; {tables} {APPROVALS} {LEGACY} {SETTINGS} {POLICIES} {CANDIDATES} {INTERACTIONS} {UPSTREAM} {RETENTION} {ADMISSION} {VERIFICATION_GROUPS}
             -- LIKE INCLUDING ALL does not copy triggers. Reuse the production
             -- revision guard so credential revocation cannot bypass its contract.
             -- Runtime connections search only this fixture schema and pg_catalog.

@@ -1,5 +1,4 @@
 use super::*;
-use hubuum_domain::TemplateAlias;
 
 pub(super) fn resolve_relation_hydration_plan(
     runtime: &ExportRuntime,
@@ -561,23 +560,8 @@ pub(super) fn relation_alias_for_viewer(
     adjacent_class_id: i32,
     resolve_class_names: &BTreeMap<i32, String>,
 ) -> Result<String, ApiError> {
-    if viewer_class_id == relation.from_hubuum_class_id.id()
-        && adjacent_class_id == relation.to_hubuum_class_id.id()
-        && let Some(alias) = relation
-            .forward_template_alias
-            .as_ref()
-            .map(TemplateAlias::as_str)
-    {
-        return Ok(alias.to_string());
-    }
-    if viewer_class_id == relation.to_hubuum_class_id.id()
-        && adjacent_class_id == relation.from_hubuum_class_id.id()
-        && let Some(alias) = relation
-            .reverse_template_alias
-            .as_ref()
-            .map(TemplateAlias::as_str)
-    {
-        return Ok(alias.to_string());
+    if let Some(alias) = relation.template_alias_between(viewer_class_id, adjacent_class_id) {
+        return Ok(alias.as_str().to_owned());
     }
 
     Ok(inferred_relation_alias(

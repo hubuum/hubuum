@@ -3,7 +3,6 @@ use std::sync::Mutex;
 use prometheus::{Counter, IntGauge, Registry, core::Collector};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, get_current_pid};
 
-use crate::errors::ApiError;
 use crate::operational_contracts::{MetricKind, metric_definition};
 
 const PROCESS_CPU_SECONDS: &str = "process_cpu_seconds_total";
@@ -39,7 +38,7 @@ pub(super) struct ProcessMetrics {
 }
 
 impl ProcessMetrics {
-    pub(super) fn new(registry: &Registry) -> Result<Self, ApiError> {
+    pub(super) fn new(registry: &Registry) -> Result<Self, String> {
         let cpu_seconds = create_and_register_counter(registry, PROCESS_CPU_SECONDS)?;
         let open_fds = create_and_register_gauge(registry, PROCESS_OPEN_FDS)?;
         let max_fds = create_and_register_gauge(registry, PROCESS_MAX_FDS)?;
@@ -48,9 +47,7 @@ impl ProcessMetrics {
         let start_time_seconds = create_and_register_gauge(registry, PROCESS_START_TIME)?;
 
         let pid = get_current_pid().map_err(|error| {
-            ApiError::InternalServerError(format!(
-                "Failed to identify the current process for metrics: {error}"
-            ))
+            format!("Failed to identify the current process for metrics: {error}")
         })?;
         let metrics = Self {
             state: Mutex::new(ProcessState {
@@ -76,16 +73,15 @@ impl ProcessMetrics {
             .is_ok_and(|mut state| self.refresh_state(&mut state))
     }
 
-    fn refresh_required(&self) -> Result<(), ApiError> {
-        let mut state = self.state.lock().map_err(|_| {
-            ApiError::InternalServerError("Failed to initialize process metrics state".to_string())
-        })?;
+    fn refresh_required(&self) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "Failed to initialize process metrics state".to_string())?;
         if self.refresh_state(&mut state) {
             Ok(())
         } else {
-            Err(ApiError::InternalServerError(
-                "Failed to read current process metrics".to_string(),
-            ))
+            Err("Failed to read current process metrics".to_string())
         }
     }
 
@@ -164,7 +160,7 @@ fn process_open_files_limit(process: &sysinfo::Process) -> Option<usize> {
     process.open_files_limit()
 }
 
-fn create_and_register_counter(registry: &Registry, name: &str) -> Result<Counter, ApiError> {
+fn create_and_register_counter(registry: &Registry, name: &str) -> Result<Counter, String> {
     let definition = metric_definition(name);
     assert!(matches!(definition.kind, MetricKind::Counter));
     let metric = Counter::new(definition.runtime_name(), definition.description)
@@ -173,7 +169,7 @@ fn create_and_register_counter(registry: &Registry, name: &str) -> Result<Counte
     Ok(metric)
 }
 
-fn create_and_register_gauge(registry: &Registry, name: &str) -> Result<IntGauge, ApiError> {
+fn create_and_register_gauge(registry: &Registry, name: &str) -> Result<IntGauge, String> {
     let definition = metric_definition(name);
     assert!(matches!(definition.kind, MetricKind::Gauge));
     let metric = IntGauge::new(definition.runtime_name(), definition.description)
@@ -182,17 +178,17 @@ fn create_and_register_gauge(registry: &Registry, name: &str) -> Result<IntGauge
     Ok(metric)
 }
 
-fn register_metric<C>(registry: &Registry, metric: C, name: &str) -> Result<(), ApiError>
+fn register_metric<C>(registry: &Registry, metric: C, name: &str) -> Result<(), String>
 where
     C: Collector + 'static,
 {
-    registry.register(Box::new(metric)).map_err(|error| {
-        ApiError::InternalServerError(format!("Failed to register {name} metric: {error}"))
-    })
+    registry
+        .register(Box::new(metric))
+        .map_err(|error| format!("Failed to register {name} metric: {error}"))
 }
 
-fn metric_creation_error(name: &str, error: prometheus::Error) -> ApiError {
-    ApiError::InternalServerError(format!("Failed to create {name} metric: {error}"))
+fn metric_creation_error(name: &str, error: prometheus::Error) -> String {
+    format!("Failed to create {name} metric: {error}")
 }
 
 fn saturating_i64<T>(value: T) -> i64

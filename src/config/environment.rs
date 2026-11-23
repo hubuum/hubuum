@@ -885,9 +885,10 @@ pub(crate) fn configuration_constraints() -> Vec<String> {
 /// dynamic namespace mapping and injects resolved values into consumers.
 pub const ENVIRONMENT_ADAPTER_PATHS: &[&str] = &[
     "src/config.rs",
+    "src/config/test_environment.rs",
     "src/config/token_hash.rs",
     "src/administration.rs",
-    "src/logger.rs",
+    "src/lib.rs",
     "src/secrets.rs",
     "src/test_support.rs",
     "src/tests/temporal/mod.rs",
