@@ -549,8 +549,9 @@ Handle `LoginWithCredential`, `PrepareProtocol`, `ClaimProtocol`, `Fail` and the
 new protocol-claim outcome. Browser protocol state must be single-use and subject
 to the existing cookie, revision, expiry and authentication-lease fences.
 
-Claiming an upstream credential removes it before network I/O and grants one
-30-second lease. Commit a `StorageUpstreamRenewal` only against that lease, the
+Claiming an upstream credential grants one 30-second lease. Remove an OIDC
+refresh token before network I/O. Keep the OAuth bearer recoverable during
+read-only profile checks. Commit a `StorageUpstreamRenewal` only against that lease, the
 same live session/principal/provider revision and immutable external identity.
 Membership reconciliation and replacement credentials must commit atomically.
 Resolve fresh OIDC proofs with `upstream_approval_session` into a private-fielded
@@ -571,7 +572,10 @@ claim and immutable identity under the current revision before invalidating the
 subject. Candidate previews never invalidate authority. When authentication
 settings change, advance the effective revision only for unchanged enabled
 providers, clear superseded leases and keep the original login binding for
-decryption. An in-flight grant from the previous revision stays consumed.
+decryption. An in-flight OIDC grant from the previous revision stays consumed.
+An unchanged OAuth provider can immediately claim the retained bearer at the
+new revision. Return `AuthenticationRequired` when a session or claim fence
+rejects a renewal so Hubuum can revoke an uninstalled OIDC grant.
 On `UnavailableBeforeSubmission`, restore the claimed grant with bounded backoff.
 Return the issued family's retained grant from `revoke_auth_interaction_session`
 in the local revocation transaction so the server can revoke it after commit.

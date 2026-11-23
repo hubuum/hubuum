@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_domain::InteractionVerificationDetails;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +40,29 @@ enum EvidenceDocument {
     },
 }
 
+// The group preview has independent domain bounds. JSON can double the byte
+// length of a valid group key or display name by escaping quotes and backslashes.
+fn check_document_size(value: &Value) -> Result<(), StorageValidationError> {
+    let bytes = value.to_string().len();
+    if bytes <= MAX_AUTH_INTERACTION_DOCUMENT_BYTES {
+        return Ok(());
+    }
+    if bytes
+        <= MAX_AUTH_INTERACTION_DOCUMENT_BYTES
+            + InteractionVerificationDetails::MAX_SERIALIZED_GROUP_BYTES
+        && value
+            .pointer("/lifecycle/binding/authority/purpose")
+            .and_then(Value::as_str)
+            == Some("provider_verification")
+        && let Some(groups @ Value::Array(_)) =
+            value.pointer("/lifecycle/phase/verification/groups")
+        && bytes - groups.to_string().len() <= MAX_AUTH_INTERACTION_DOCUMENT_BYTES
+    {
+        return Ok(());
+    }
+    Err(invalid())
+}
+
 impl StorageInteractionRecord {
     /// Adapter-only persistence document; never project this to an API response.
     pub fn to_document(&self) -> Result<Value, StorageValidationError> {
@@ -68,16 +92,12 @@ impl StorageInteractionRecord {
             retained: self.retained.clone(),
         })
         .map_err(|_| invalid())?;
-        if value.to_string().len() > MAX_AUTH_INTERACTION_DOCUMENT_BYTES {
-            return Err(invalid());
-        }
+        check_document_size(&value)?;
         Ok(value)
     }
 
     pub fn from_document(value: Value) -> Result<Self, StorageValidationError> {
-        if value.to_string().len() > MAX_AUTH_INTERACTION_DOCUMENT_BYTES {
-            return Err(invalid());
-        }
+        check_document_size(&value)?;
         let document: Document = serde_json::from_value(value).map_err(|_| invalid())?;
         let lifecycle =
             InteractionLifecycle::from_document(document.lifecycle).map_err(|_| invalid())?;

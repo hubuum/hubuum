@@ -191,7 +191,8 @@ impl TryFrom<SessionInput> for StorageUpstreamSession {
             .current_revision
             .is_some_and(|revision| revision < value.binding.revision())
             || value.session.is_nil()
-            || value.credential.is_some() && value.lease.is_some()
+            || value.credential.is_some() && value.lease.is_some() && !value.namespace.is_oauth()
+            || value.retry_after.is_some() && value.lease.is_some()
             || value.retry_after.is_some() && value.credential.is_none()
             || value.lease.is_some_and(|(id, _)| id.is_nil())
         {
@@ -282,7 +283,8 @@ impl StorageUpstreamSession {
     pub fn retain_at_revision(&mut self, revision: ResourceRevision) {
         if self.current_revision() != revision {
             // A claim made under the old revision can no longer finish. Its
-            // potentially spent credential must stay consumed.
+            // potentially spent OIDC grant stays consumed. OAuth reads keep
+            // their bearer in the session while the lease is outstanding.
             self.lease = None;
             self.current_revision = Some(revision);
         }
@@ -305,7 +307,12 @@ impl StorageUpstreamSession {
         if self.has_live_lease(now) {
             return StorageUpstreamClaimOutcome::Busy;
         }
-        let Some(credential) = self.credential.take() else {
+        let credential = if self.namespace.is_oauth() {
+            self.credential.clone()
+        } else {
+            self.credential.take()
+        };
+        let Some(credential) = credential else {
             return StorageUpstreamClaimOutcome::Unavailable;
         };
         let attempt = Uuid::new_v4();
@@ -513,8 +520,7 @@ mod tests {
     };
     use serde_json::json;
 
-    #[test]
-    fn profile_outage_retries_same_access_token_after_backoff() {
+    fn oauth_session() -> (StorageUpstreamSession, StorageProviderIdentityBinding) {
         let definition: OAuthProviderDefinition = serde_json::from_value(json!({
             "profile":"json_user", "authorization_endpoint":"https://id.example/auth", "token_endpoint":"https://id.example/token",
             "profile_endpoint":"https://id.example/user", "client_id":"client", "client_authentication":"client_secret_post", "scopes":[],
@@ -550,12 +556,48 @@ mod tests {
             StorageEncryptedUpstreamCredential::new("encrypted-access-token".into()).unwrap(),
         )
         .unwrap();
-        let mut record = StorageUpstreamSession::try_new(
+        let record = StorageUpstreamSession::try_new(
             AuthSessionId::new(Uuid::new_v4()),
             PrincipalId::new(1).unwrap(),
             retained,
         )
         .unwrap();
+        (record, provider)
+    }
+
+    #[test]
+    fn single_oauth_session_retains_its_bearer_when_activation_fences_a_profile_read() {
+        let (mut record, _) = oauth_session();
+        let now = Utc::now();
+        let StorageUpstreamClaimOutcome::Claim(old) = record.claim(now) else {
+            panic!("initial claim")
+        };
+        // Exercise the durable form read by another replica or by logout.
+        let mut record: StorageUpstreamSession =
+            serde_json::from_value(serde_json::to_value(record).unwrap()).unwrap();
+        assert_eq!(
+            record.credential().unwrap().ciphertext(),
+            old.credential().ciphertext()
+        );
+        assert!(matches!(
+            record.claim(now),
+            StorageUpstreamClaimOutcome::Busy
+        ));
+        record.retain_at_revision(ResourceRevision::INITIAL.checked_advance().unwrap());
+        assert!(!record.accepts(&old, now));
+        let StorageUpstreamClaimOutcome::Claim(next) = record.claim(now) else {
+            panic!("single retained session grant")
+        };
+        assert_eq!(
+            next.credential().ciphertext(),
+            old.credential().ciphertext()
+        );
+    }
+
+    #[test]
+    fn profile_outage_retries_same_access_token_after_backoff() {
+        let (mut record, provider) = oauth_session();
+        let now = Utc::now();
         let StorageUpstreamClaimOutcome::Claim(claim) = record.claim(now) else {
             panic!("initial claim")
         };

@@ -14,6 +14,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- HTTP 408 responses during external identity verification preserve the last
+  successful verification within its configured freshness window. OAuth profile
+  reads retain their grant across unrelated provider edits. Logout uses the
+  original provider configuration for queued revocations, and a fenced OIDC
+  renewal attempts to revoke its returned refresh grant.
+- Hosted LDAP verification preserves complete group previews at the supported
+  key and display name limits.
+- **Breaking for mixed-version preview deployments and external storage
+  adapters.** Stop API and worker replicas, back up the database, apply
+  migration `2026-11-23-000001_verification_group_budget`, and restart matching
+  binaries. Keep OAuth bearers recoverable during profile reads and return
+  `AuthenticationRequired` when a session or claim fence rejects renewal.
+
 - Hosted browser interactions use `cookie` 0.18.3 or later in the 0.18 series.
   This removes the older Actix cookie dependency flagged by RUSTSEC-2026-0594.
   Hubuum uses opaque session cookies and does not enable private cookie jars.

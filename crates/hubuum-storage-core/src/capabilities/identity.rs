@@ -392,13 +392,15 @@ pub trait ExternalIdentityStorage: Send + Sync {
         &self,
         proof: hubuum_domain::FreshExternalAuthentication,
     ) -> Result<Option<crate::StorageUpstreamApproval>, StorageError>;
-    /// Atomically remove the recoverable token and lease its single renewal attempt.
+    /// Atomically lease one renewal attempt. Take a rotating OIDC grant before
+    /// submission. Keep a read-only OAuth bearer recoverable for logout or a later claim.
     async fn claim_upstream_credential(
         &self,
         revision: ResourceRevision,
         principal: PrincipalId,
     ) -> Result<crate::StorageUpstreamClaimOutcome, StorageError>;
     /// Reconcile current identity/memberships and replace the rotated encrypted token atomically.
+    /// Return AuthenticationRequired when the session or claim fence refused the write.
     async fn finish_upstream_renewal(
         &self,
         request: crate::StorageUpstreamRenewal,

@@ -730,7 +730,7 @@ impl ExternalIdentityStorage for MemoryStorage {
                 request.credential().cloned(),
                 Utc::now(),
             )
-            .map_err(invalid_contract_value)?;
+            .map_err(|_| StorageError::authentication_required("Upstream session changed"))?;
         let current = state
             .users
             .get(&original.principal().id())
