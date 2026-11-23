@@ -1,7 +1,6 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, web};
 
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::config::running::RunningConfig;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess};

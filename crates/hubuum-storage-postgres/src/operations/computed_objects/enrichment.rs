@@ -140,23 +140,8 @@ fn enrich_from_rows(
     materialized: Vec<MaterializedObjectRow>,
     collect_stale: bool,
 ) -> Result<(Vec<StorageComputedObject>, Vec<ComputedRepairIdentity>), PostgresStorageError> {
-    let mut shared_by_class = HashMap::<i32, PreparedScope<'_>>::new();
-    let mut personal_by_class = HashMap::<i32, PreparedScope<'_>>::new();
-    for definition in definitions.iter().filter(|definition| definition.enabled()) {
-        if definition.is_shared() {
-            shared_by_class
-                .entry(definition.class_id())
-                .or_default()
-                .enabled
-                .push(definition);
-        } else if personal_owner_id.is_some_and(|owner| definition.is_personal_for(owner)) {
-            personal_by_class
-                .entry(definition.class_id())
-                .or_default()
-                .enabled
-                .push(definition);
-        }
-    }
+    let (mut shared_by_class, mut personal_by_class) =
+        PreparedScope::by_class(definitions, personal_owner_id);
     let states = states
         .into_iter()
         .map(|state| (state.class_id, state.evaluation_revision))
@@ -179,7 +164,7 @@ fn enrich_from_rows(
     for object in objects {
         let evaluation_revision = states.get(&object.class_id().id()).copied().unwrap_or(0);
         let shared_definitions = shared_by_class.entry(object.class_id().id()).or_default();
-        let has_enabled_definitions = !shared_definitions.enabled.is_empty();
+        let has_enabled_definitions = !shared_definitions.is_empty();
         let stored_maps = if has_enabled_definitions {
             let stored = match materialized.entry(object.id().id()) {
                 Entry::Occupied(mut entry) if entry.get().1 > 1 => {
@@ -260,6 +245,33 @@ struct PreparedScope<'a> {
 }
 
 impl<'a> PreparedScope<'a> {
+    fn by_class(
+        definitions: &'a [ComputedDefinitionRow],
+        personal_owner_id: Option<i32>,
+    ) -> (HashMap<i32, Self>, HashMap<i32, Self>) {
+        let mut shared = HashMap::new();
+        let mut personal = HashMap::new();
+        for definition in definitions.iter().filter(|definition| definition.enabled()) {
+            let scopes = if definition.is_shared() {
+                &mut shared
+            } else if personal_owner_id.is_some_and(|owner| definition.is_personal_for(owner)) {
+                &mut personal
+            } else {
+                continue;
+            };
+            scopes
+                .entry(definition.class_id())
+                .or_insert_with(Self::default)
+                .enabled
+                .push(definition);
+        }
+        (shared, personal)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.enabled.is_empty()
+    }
+
     fn validation(
         &mut self,
     ) -> Result<&BTreeMap<&'a str, ComputedQueryValueType>, PostgresStorageError> {

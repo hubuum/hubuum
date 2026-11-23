@@ -4,10 +4,10 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use super::history_population::HistoricalPopulationCoverage;
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use crate::api::v1::handlers::history::{
     HistoryResponse, parse_as_of, resolve_history_principal_names,
 };
-use crate::api::{openapi::ApiErrorResponse, response::ApiResponse};
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::history::HistoryNameCursor;

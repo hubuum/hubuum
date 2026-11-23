@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- PostgreSQL computed-field rebuild and read-repair workers now read only the
+  task settings row when selecting the size of each batch.
+
 ### Security
 
 - Hosted browser interactions use `cookie` 0.18.3 or later in the 0.18 series.
@@ -209,6 +214,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Security activation and offline recovery acquire settings before principal locks,
   avoiding a deadlock with concurrent authentication completion.
+
+### Fixed
+
+- Best-effort imports can resolve a parent collection by name after an
+  earlier item failed to find it and a later item planned its creation.
+
+- Imports on the experimental memory backend preserve concurrent writes.
+  Restoring an import that used the last available result ID preserves its
+  receipts and prevents a later import from reusing that ID.
+
+- The experimental memory backend preserves identifier high-water marks across
+  restores and rejects exhausted writes without publishing partial history or
+  audit records. Live processes must acknowledge a new restore drain before
+  it can complete.
+- On the memory backend, a failed event configuration change preserves the
+  previous settings. Deleting a subscription in the wrong scope leaves the
+  subscription and its pending deliveries intact.
 
 ## [0.0.23] - 2026-11-21
 

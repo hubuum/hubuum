@@ -442,7 +442,7 @@ A new backend must pass four distinct kinds of checks.
 
 ### Shared behavior
 
-Run every test in `src/tests/storage_contract.rs` through the backend returned
+Run the shared scenarios in `src/tests/storage_contract/` through the backend returned
 by `available_backend_environments()`. Do not copy and edit the tests for the
 new adapter. The point of the registry is identical observable behavior while
 adapter-native fixture resources remain contained in one exhaustive enum.

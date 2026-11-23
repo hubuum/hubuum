@@ -353,6 +353,7 @@ impl RunningConfig {
                 network_count: networks.len(),
             },
         };
+        let schema_limits = config.schema_limits();
         let secret_cache_policy = hubuum_secrets::CachePolicy::default();
         let token_hash_keys = token_hash_key_ring()
             .expect("token hash key-ring configuration must be validated before serving config");
@@ -360,10 +361,10 @@ impl RunningConfig {
         Self {
             query_observations: config.query_observation_settings().into(),
             schema_validation: SchemaValidationConfig {
-                max_schema_bytes: config.schema_limits().schema_bytes(),
-                max_expanded_work: config.schema_limits().expanded_work(),
-                max_instance_bytes: config.schema_limits().instance_bytes(),
-                max_instance_work: config.schema_limits().instance_work(),
+                max_schema_bytes: schema_limits.schema_bytes(),
+                max_expanded_work: schema_limits.expanded_work(),
+                max_instance_bytes: schema_limits.instance_bytes(),
+                max_instance_work: schema_limits.instance_work(),
             },
             server: ServerConfig {
                 runtime_role: config.runtime_role.as_str().to_string(),

@@ -68,6 +68,7 @@ for path in "$@"; do
   done <<< "$declared_policy_documents"
 
   case "$path" in
+    src/api/openapi.rs | src/api/openapi/* | src/api/response.rs | \
     src/models/security_candidate.rs | src/api/v1/handlers/security_candidates.rs | \
       crates/hubuum-domain/src/authentication_configuration.rs | \
       src/models/class_fields.rs | src/models/class_fields/* | src/api/v1/handlers/classes/field_discovery.rs | \
@@ -108,7 +109,7 @@ for path in "$@"; do
       tests/api_identity_suite/administrative_authorization.rs | \
       src/services/class_fields.rs | src/api/v1/handlers/classes/field_discovery.rs | \
       tests/api_core_data_suite/computed_fields/tests/field_discovery.rs | \
-      src/services/authorized_traversal.rs | src/services/authorization_resources.rs | \
+      src/tasks/import_authorization.rs | src/services/authorized_traversal.rs | src/services/authorization_resources.rs | \
       src/services/history/* | src/models/history/* | \
       src/tests/storage_contract/history_access.rs | src/services/remote_targets/invocation.rs | \
       src/api/v1/handlers/classes/history_navigation.rs | \

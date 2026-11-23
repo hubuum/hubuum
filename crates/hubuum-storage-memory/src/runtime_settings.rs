@@ -171,9 +171,9 @@ impl RuntimeSettingsStorage for MemoryStorage {
         staged.runtime_settings.discard_candidates();
         staged.auth_interactions.clear();
         staged.upstream_sessions.clear();
-        for (_, metadata) in staged.credential_approvals.values_mut() {
-            metadata.invalidate(Utc::now());
-        }
+        staged
+            .credential_approvals
+            .invalidate_matching(Utc::now(), |_| true);
         staged.append_simple_event(
             EntityType::Authentication,
             request.administrator().id(),
@@ -439,11 +439,8 @@ impl MemoryState {
                 .checked_advance()
                 .expect("credential revision");
         }
-        for (claim, metadata) in self.credential_approvals.values_mut() {
-            if principals.contains(&claim.actor_id()) {
-                metadata.invalidate(Utc::now());
-            }
-        }
+        self.credential_approvals
+            .invalidate_matching(Utc::now(), |id| principals.contains(&id));
     }
 
     pub(super) fn require_local_recovery_administrator(

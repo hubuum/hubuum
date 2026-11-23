@@ -71,7 +71,7 @@ concurrent state.
 | Application use cases and DTO conversion | `src/services/*` |
 | Authorization-policy selection | `src/permissions/*` |
 | HTTP presentation and `ApiError` | `src/api/*`, `src/errors/*` |
-| Shared selectable-backend behavior | `src/tests/storage_contract.rs` |
+| Shared selectable-backend behavior | `src/tests/storage_contract.rs` and its capability-specific modules |
 | Reusable six-part behavioral verifier | `crates/hubuum-storage-conformance/src/lib.rs` |
 | Sealed selectable-backend certification | `src/storage/contract.rs` |
 | Method, variant, and scenario inventory | `docs/storage_boundary/semantic-coverage.toml` |

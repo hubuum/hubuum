@@ -1,7 +1,9 @@
 use hubuum_budget::{ByteLimit, LimitedWriter};
+use hubuum_domain::PrincipalId;
+use hubuum_events_core::EventContext;
+use hubuum_task_core::{TaskCancellationReason, TaskExecutionLimit};
 use std::{fmt, io};
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{RemoteTargetId, ResourceId, TaskId};
 use serde_json::Value;
@@ -9,9 +11,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     StorageError, StorageRemoteTargetHttpMethod, StorageRemoteTargetSubjectType, StorageTask,
-    StorageTaskCancellationOutcome, StorageTaskCancellationRequest, StorageTaskDurations,
-    StorageTaskExecutionAdmission, StorageTaskExecutionObservation, StorageTaskKind,
-    StorageTaskOutputLookup, StorageTaskRemoteDispatch, StorageTaskStatus, StorageValidationError,
+    StorageTaskDurations, StorageTaskKind, StorageTaskStatus, StorageValidationError,
 };
 
 /// Validated lease duration shared with a storage adapter.
@@ -984,83 +984,6 @@ impl StorageTaskFailure {
     }
 }
 
-/// Mandatory worker state-machine behavior for every selectable backend.
-#[async_trait]
-pub trait TaskExecutionStorage: Send + Sync {
-    /// Persist an authorized request; queued cancellation is terminal in the
-    /// same transaction, while active execution retains its fenced lease.
-    async fn request_task_cancellation(
-        &self,
-        request: StorageTaskCancellationRequest,
-    ) -> Result<StorageTaskCancellationOutcome, StorageError>;
-
-    /// Pin the first execution deadline using the adapter's trusted clock.
-    async fn admit_task_execution(
-        &self,
-        request: StorageTaskExecutionAdmission,
-    ) -> Result<StorageTaskExecutionObservation, StorageError>;
-
-    /// Observe durable intent outside the executor's snapshot/transaction.
-    async fn poll_task_execution(
-        &self,
-        lease: StorageTaskLease,
-    ) -> Result<StorageTaskExecutionObservation, StorageError>;
-
-    /// Finalize a stopped executor under its live claim, reconciling durable
-    /// effects, results, cleanup and cancellation provenance atomically.
-    async fn acknowledge_task_stop(
-        &self,
-        lease: StorageTaskLease,
-    ) -> Result<StorageTask, StorageError>;
-
-    /// Fence and persist outbound intent before performing an external effect.
-    async fn begin_remote_dispatch(
-        &self,
-        request: StorageTaskRemoteDispatch,
-    ) -> Result<(), StorageError>;
-
-    async fn claim_next_task(
-        &self,
-        lease_duration: StorageTaskLeaseDuration,
-    ) -> Result<Option<StorageTaskClaim>, StorageError>;
-
-    async fn renew_task_lease(
-        &self,
-        lease: StorageTaskLease,
-        lease_duration: StorageTaskLeaseDuration,
-    ) -> Result<bool, StorageError>;
-
-    async fn recover_expired_task_leases(
-        &self,
-        batch_size: usize,
-    ) -> Result<Vec<StorageTask>, StorageError>;
-
-    async fn append_task_event(&self, event: StorageTaskEventAppend) -> Result<(), StorageError>;
-
-    async fn update_task_state(
-        &self,
-        update: StorageTaskActiveUpdate,
-    ) -> Result<StorageTask, StorageError>;
-
-    async fn complete_task(
-        &self,
-        completion: StorageTaskCompletion,
-    ) -> Result<StorageTask, StorageError>;
-
-    async fn fail_task(&self, failure: StorageTaskFailure) -> Result<StorageTask, StorageError>;
-
-    async fn get_schema_profile_output(
-        &self,
-        task_id: TaskId,
-    ) -> Result<StorageTaskOutputLookup<StorageSchemaProfileArtifact>, StorageError>;
-
-    async fn purge_expired_schema_profile_outputs(&self) -> Result<usize, StorageError>;
-
-    async fn purge_expired_export_outputs(&self) -> Result<usize, StorageError>;
-
-    async fn purge_expired_backup_outputs(&self) -> Result<usize, StorageError>;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1349,5 +1272,138 @@ mod tests {
         assert_eq!(counts.processed(), 5);
         assert_eq!(counts.succeeded(), 2);
         assert_eq!(counts.failed(), 1);
+    }
+}
+
+/// Cancellation of the exact task identity/ownership authorized by the service.
+/// Adapters must compare the captured kind and submitter again under their lock.
+#[derive(Clone, Debug)]
+pub struct StorageTaskCancellationRequest {
+    task_id: TaskId,
+    kind: StorageTaskKind,
+    submitted_by: Option<PrincipalId>,
+    context: EventContext,
+    reason: Option<TaskCancellationReason>,
+    expected_status: Option<StorageTaskStatus>,
+}
+
+impl StorageTaskCancellationRequest {
+    #[must_use]
+    pub fn new(task: &StorageTask, context: EventContext) -> Self {
+        Self {
+            task_id: task.id(),
+            kind: task.kind(),
+            submitted_by: task.submitted_by(),
+            context,
+            reason: None,
+            expected_status: None,
+        }
+    }
+
+    #[must_use]
+    pub fn reason(mut self, reason: Option<TaskCancellationReason>) -> Self {
+        self.reason = reason;
+        self
+    }
+
+    #[must_use]
+    pub const fn expected_status(mut self, status: Option<StorageTaskStatus>) -> Self {
+        self.expected_status = status;
+        self
+    }
+
+    #[must_use]
+    pub const fn task_id(&self) -> TaskId {
+        self.task_id
+    }
+    #[must_use]
+    pub const fn kind(&self) -> StorageTaskKind {
+        self.kind
+    }
+    #[must_use]
+    pub const fn submitted_by(&self) -> Option<PrincipalId> {
+        self.submitted_by
+    }
+    #[must_use]
+    pub const fn event_context(&self) -> &EventContext {
+        &self.context
+    }
+    #[must_use]
+    pub const fn cancellation_reason(&self) -> Option<&TaskCancellationReason> {
+        self.reason.as_ref()
+    }
+    #[must_use]
+    pub const fn required_status(&self) -> Option<StorageTaskStatus> {
+        self.expected_status
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageTaskCancellationChange {
+    CancelledQueued,
+    Requested,
+    Unchanged,
+}
+
+#[derive(Clone, Debug)]
+pub struct StorageTaskCancellationOutcome {
+    task: StorageTask,
+    change: StorageTaskCancellationChange,
+}
+
+impl StorageTaskCancellationOutcome {
+    #[must_use]
+    pub const fn new(task: StorageTask, change: StorageTaskCancellationChange) -> Self {
+        Self { task, change }
+    }
+    #[must_use]
+    pub const fn task(&self) -> &StorageTask {
+        &self.task
+    }
+    #[must_use]
+    pub const fn change(&self) -> StorageTaskCancellationChange {
+        self.change
+    }
+    #[must_use]
+    pub fn into_task(self) -> StorageTask {
+        self.task
+    }
+}
+
+/// First-claim admission pins a policy-derived deadline using the adapter's
+/// trusted clock. Subsequent claims must retain the original deadline.
+#[derive(Clone, Debug)]
+pub struct StorageTaskExecutionAdmission {
+    lease: StorageTaskLease,
+    limit: TaskExecutionLimit,
+}
+
+impl StorageTaskExecutionAdmission {
+    #[must_use]
+    pub const fn new(lease: StorageTaskLease, limit: TaskExecutionLimit) -> Self {
+        Self { lease, limit }
+    }
+    #[must_use]
+    pub fn into_parts(self) -> (StorageTaskLease, TaskExecutionLimit) {
+        (self.lease, self.limit)
+    }
+}
+
+/// A remote dispatch may start only after this record is durably admitted under
+/// the live lease and an uncancelled, unexpired task control state.
+#[derive(Clone, Debug)]
+pub struct StorageTaskRemoteDispatch {
+    lease: StorageTaskLease,
+    target: StorageRemoteCallArtifactTarget,
+}
+
+impl StorageTaskRemoteDispatch {
+    #[must_use]
+    pub const fn new(lease: StorageTaskLease, target: StorageRemoteCallArtifactTarget) -> Self {
+        Self { lease, target }
+    }
+    #[must_use]
+    pub fn into_parts(self) -> (StorageTaskLease, StorageRemoteCallArtifactTarget) {
+        (self.lease, self.target)
     }
 }

@@ -172,7 +172,12 @@ impl DiscoveredField {
         }
     }
 
-    fn observe(&mut self, object: usize, value: &Value) {
+    fn display_key(&self) -> (FieldSource, &str, &[FieldPathSegment]) {
+        (self.source, &self.field, &self.path)
+    }
+
+    fn observe(&mut self, object: usize, value: &Value, has_error: bool) {
+        self.error_count += usize::from(has_error);
         self.observation_count += 1;
         *self.types.entry(value.into()).or_default() += 1;
         if self.last_object != Some(object) {
@@ -265,8 +270,7 @@ impl FieldInventoryBuilder {
             FieldIdentity::Shared(key.into())
         };
         if let Some(field) = self.fields.get_mut(&identity) {
-            field.observe(object, value);
-            field.error_count += usize::from(has_error);
+            field.observe(object, value, has_error);
         }
     }
 
@@ -314,7 +318,7 @@ impl FieldInventoryBuilder {
                     }
                     DiscoveredField::new(display, FieldSource::Data, path.clone())
                 })
-                .observe(object, value);
+                .observe(object, value, false);
         }
         if path.len() >= self.options.depth.0 {
             if matches!(value, Value::Object(values) if !values.is_empty())
@@ -368,12 +372,8 @@ impl FieldInventoryBuilder {
         // Keep the bounded enabled selector set even when data paths exhaust
         // the response budget. Restore the documented display order afterward.
         fields.sort_by(|a, b| {
-            (a.source == FieldSource::Data, a.source, &a.field, &a.path).cmp(&(
-                b.source == FieldSource::Data,
-                b.source,
-                &b.field,
-                &b.path,
-            ))
+            (a.source == FieldSource::Data, a.display_key())
+                .cmp(&(b.source == FieldSource::Data, b.display_key()))
         });
         // Reserve a fixed allowance for the bounded response envelope and all
         // truncation flags. Per-field serialization accounts for JSON escaping.
@@ -392,7 +392,7 @@ impl FieldInventoryBuilder {
             keep += 1;
         }
         fields.truncate(keep);
-        fields.sort_by(|a, b| (a.source, &a.field, &a.path).cmp(&(b.source, &b.field, &b.path)));
+        fields.sort_by(|a, b| a.display_key().cmp(&b.display_key()));
         Ok(ClassFieldInventory {
             sampled: true,
             sampled_objects,

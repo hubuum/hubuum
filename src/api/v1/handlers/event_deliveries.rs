@@ -1,7 +1,6 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use actix_web::{Responder, get, http::StatusCode, post, routes, web};
 
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::events::{
     event_delivery_worker_health, event_fanout_worker_health, kick_event_delivery_worker,

@@ -1,3 +1,5 @@
+use crate::models::HubuumClassRelation;
+use crate::models::HubuumObjectRelation;
 use std::collections::HashMap;
 
 use hubuum_domain::{ClassRelationId, ObjectRelationId};
@@ -16,9 +18,7 @@ use crate::permissions::visibility::{
 };
 use crate::permissions::{ClassResourceEndpoint, ObjectResourceEndpoint, ResourceRef};
 use crate::services::authorization_resources::load_current_authorization_resources;
-use crate::services::relation_queries::{
-    class_relation_from_storage, object_relation_from_storage,
-};
+
 use crate::storage::{
     HistoryStorage, StorageHistoricalRelation, StorageHistoryEndpointSnapshot,
     StorageHistoryResource, StorageRelationHistoryEntry, StorageRelationHistoryQuery,
@@ -310,10 +310,10 @@ fn project(entry: StorageRelationHistoryEntry) -> Result<HistoricalRelation, Api
     let metadata = AppHistoryMetadata::from(metadata);
     let value = match relation {
         StorageHistoricalRelation::Class(row) => {
-            HistoricalRelationValue::Class(class_relation_from_storage(row)?)
+            HistoricalRelationValue::Class(HubuumClassRelation::from(row))
         }
         StorageHistoricalRelation::Object(row) => {
-            HistoricalRelationValue::Object(object_relation_from_storage(row)?)
+            HistoricalRelationValue::Object(HubuumObjectRelation::from(row))
         }
     };
     Ok(HistoricalRelation {

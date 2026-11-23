@@ -1,6 +1,5 @@
 use crate::api::etag::{RevisionedResource, revision_precondition_for_tag};
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::search::{QueryParamsExt, parse_query_parameter};

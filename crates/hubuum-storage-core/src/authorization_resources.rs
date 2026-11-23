@@ -1,9 +1,101 @@
 //! Lightweight facts for batching authorization enrichment, without policy decisions.
-use crate::{StorageAuthorizationClassResource, StorageAuthorizationObjectResource};
 use hubuum_domain::{
     ClassId, ClassRelationId, CollectionId, ExportTemplateId, ObjectId, ObjectRelationId,
     RemoteTargetId,
 };
+use std::fmt;
+
+/// Class facts needed to construct an authorization resource.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StorageAuthorizationClassResource {
+    id: ClassId,
+    collection_id: CollectionId,
+}
+
+impl StorageAuthorizationClassResource {
+    #[must_use]
+    pub const fn new(id: ClassId, collection_id: CollectionId) -> Self {
+        Self { id, collection_id }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> ClassId {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn collection_id(&self) -> CollectionId {
+        self.collection_id
+    }
+}
+
+impl fmt::Debug for StorageAuthorizationClassResource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorageAuthorizationClassResource")
+            .field("id", &"[redacted]")
+            .field("collection_id", &"[redacted]")
+            .finish()
+    }
+}
+
+/// Object facts needed to construct an authorization resource.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StorageAuthorizationObjectResource {
+    id: ObjectId,
+    collection_id: CollectionId,
+    class_id: ClassId,
+    name: String,
+}
+
+impl StorageAuthorizationObjectResource {
+    #[must_use]
+    pub fn new(
+        id: ObjectId,
+        collection_id: CollectionId,
+        class_id: ClassId,
+        name: impl Into<String>,
+    ) -> Self {
+        Self {
+            id,
+            collection_id,
+            class_id,
+            name: name.into(),
+        }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> ObjectId {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn collection_id(&self) -> CollectionId {
+        self.collection_id
+    }
+
+    #[must_use]
+    pub const fn class_id(&self) -> ClassId {
+        self.class_id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Debug for StorageAuthorizationObjectResource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorageAuthorizationObjectResource")
+            .field("id", &"[redacted]")
+            .field("collection_id", &"[redacted]")
+            .field("class_id", &"[redacted]")
+            .field("name", &"[redacted]")
+            .finish()
+    }
+}
 
 /// A resource identity whose current authorization facts are requested.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

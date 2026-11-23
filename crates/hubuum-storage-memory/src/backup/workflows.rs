@@ -52,7 +52,9 @@ pub(super) fn restore(
             .map_err(invalid_contract_value)?;
         state.query_usage.insert(value.metadata().id().id(), value);
     }
-    state.next_query_usage_id = next_id(&state.query_usage)?;
+    state
+        .query_usage_ids
+        .observe(state.query_usage.keys().next_back().copied().unwrap_or(0));
     state.event_sink_grants = sections[&StorageBackupStateSection::EventSinkCollectionGrants]
         .iter()
         .map(|row| {
@@ -165,8 +167,24 @@ pub(super) fn restore(
             .computed_fields
             .insert(value.metadata().id().id(), value);
     }
-    state.next_event_sink_id = next_id(&state.event_sinks)?;
-    state.next_event_subscription_id = next_id(&state.event_subscriptions)?;
-    state.next_computed_field_id = next_id(&state.computed_fields)?;
+    state
+        .event_sink_ids
+        .observe(state.event_sinks.keys().next_back().copied().unwrap_or(0));
+    state.event_subscription_ids.observe(
+        state
+            .event_subscriptions
+            .keys()
+            .next_back()
+            .copied()
+            .unwrap_or(0),
+    );
+    state.computed_field_ids.observe(
+        state
+            .computed_fields
+            .keys()
+            .next_back()
+            .copied()
+            .unwrap_or(0),
+    );
     Ok(())
 }

@@ -28,10 +28,12 @@ use opentelemetry::trace::{Span as _, Status, Tracer};
 use opentelemetry::{KeyValue, global};
 
 use super::{
-    DatabaseDiagnosticsProvider, DatabasePoolAcquisitions, DatabasePoolCapacity,
-    DatabasePoolConnections, DatabasePoolState, DatabaseStorageSnapshot, StorageBackendKind,
-    StorageError, StorageErrorKind, StorageHandle,
+    ApplicationStorageObserver, DatabaseDiagnosticsProvider, DatabasePoolAcquisitions,
+    DatabasePoolCapacity, DatabasePoolConnections, DatabasePoolState, DatabaseStorageSnapshot,
+    StorageBackendKind, StorageError, StorageErrorKind, StorageHandle, StorageObserver,
 };
+#[cfg(any(test, feature = "integration-test-support"))]
+use super::{StorageContext, context::private};
 
 /// Validated names for the database roles used by application composition.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -265,7 +267,7 @@ fn record_completed_database_span(
     span.end_with_timestamp(ended_at);
 }
 
-pub(super) fn compose_postgres(pool: PostgresPool) -> PostgresStorage {
+fn compose_postgres(pool: PostgresPool) -> PostgresStorage {
     let computed_reindex_batch_size = crate::config::get_config()
         .ok()
         .and_then(|config| NonZeroUsize::new(config.computed_reindex_batch_size))
@@ -319,10 +321,63 @@ impl DatabaseDiagnosticsProvider for PostgresDatabaseDiagnostics {
     }
 }
 
-pub(in crate::storage) fn postgres_database_diagnostics(
-    backend: PostgresStorage,
-) -> Arc<dyn DatabaseDiagnosticsProvider> {
-    Arc::new(PostgresDatabaseDiagnostics { backend })
+// Adapter-focused tests can opt into the historical pool-shaped context. The
+// production adapter and application composition both use their explicit
+// boundaries instead of making a concrete pool an application capability.
+#[cfg(any(test, feature = "integration-test-support"))]
+impl private::BackendAccess for PostgresPool {
+    fn storage_handle(&self) -> StorageHandle {
+        StorageHandle::postgres(self.clone())
+    }
+}
+
+#[cfg(any(test, feature = "integration-test-support"))]
+impl StorageContext for PostgresPool {}
+
+impl StorageHandle {
+    #[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]
+    pub(crate) fn postgres(pool: PostgresPool) -> Self {
+        Self::from_postgres_backend(compose_postgres(pool))
+    }
+
+    #[cfg(any(test, feature = "integration-test-support"))]
+    pub(crate) fn postgres_with_operational_pool_settings(
+        pool: PostgresPool,
+        settings: PostgresPoolSettings,
+    ) -> Self {
+        let task_lease_pool = build_postgres_pool(&settings)
+            .expect("validated task-lease pool settings must remain constructible");
+        let notification_listener_pool_settings = notification_listener_pool_settings(&settings)
+            .expect("validated notification-listener settings must remain constructible");
+        let notification_listener_pool = build_postgres_pool(&notification_listener_pool_settings)
+            .expect("validated notification-listener pool settings must remain constructible");
+        Self::from_postgres_backend(
+            compose_postgres(pool)
+                .with_task_lease_pool(task_lease_pool)
+                .with_notification_listener_pool(notification_listener_pool),
+        )
+    }
+
+    fn from_postgres_backend(backend: PostgresStorage) -> Self {
+        Self::from_postgres_backend_with_storage_observer(
+            backend,
+            Arc::new(ApplicationStorageObserver),
+        )
+    }
+
+    pub(crate) fn from_postgres_backend_with_storage_observer(
+        backend: PostgresStorage,
+        observer: Arc<dyn StorageObserver>,
+    ) -> Self {
+        let diagnostics = Arc::new(PostgresDatabaseDiagnostics {
+            backend: backend.clone(),
+        });
+        let provider = Arc::new(backend.clone());
+        Self::from_registered_backend_with_observer(backend, observer)
+            .with_database_diagnostics(diagnostics)
+            .with_worker_notification_provider(provider.clone())
+            .with_query_usage_analysis(provider)
+    }
 }
 
 pub(crate) struct StorageSettings {
@@ -553,7 +608,7 @@ fn operational_pool_settings(
         .build()
 }
 
-pub(in crate::storage) fn notification_listener_pool_settings(
+fn notification_listener_pool_settings(
     settings: &PostgresPoolSettings,
 ) -> Result<PostgresPoolSettings, PostgresPoolBuildError> {
     let listener_count = u32::try_from(StorageNotification::ALL.len())
@@ -728,6 +783,7 @@ pub(crate) async fn reconcile_query_usage_resources(
 
 #[cfg(test)]
 mod tests {
+    use hubuum_storage_conformance::RecordingStorageObserver;
     use rstest::rstest;
 
     use super::*;
@@ -772,6 +828,30 @@ mod tests {
             .acquire_timeout_ms(1_000)
             .build()
             .expect("settings should be valid")
+    }
+
+    #[rstest]
+    #[case::production(false)]
+    #[case::custom_observer(true)]
+    #[actix_web::test]
+    async fn postgres_handles_supply_operational_providers(#[case] custom_observer: bool) {
+        let url = "postgres://localhost/hubuum";
+        let handle = if custom_observer {
+            let pool_settings = PostgresPoolSettings::builder(url)
+                .max_size(1)
+                .statement_timeout_ms(500)
+                .acquire_timeout_ms(1_000)
+                .build()
+                .unwrap();
+            let backend = compose_postgres(build_postgres_pool(&pool_settings).unwrap());
+            StorageHandle::from_postgres_backend_with_storage_observer(
+                backend,
+                Arc::new(RecordingStorageObserver::default()),
+            )
+        } else {
+            initialize_storage(&postgres_settings(url)).unwrap()
+        };
+        handle.assert_postgres_providers_attached();
     }
 
     #[rstest]

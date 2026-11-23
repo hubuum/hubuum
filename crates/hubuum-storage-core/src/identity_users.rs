@@ -1,15 +1,114 @@
 use std::fmt;
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hubuum_domain::{IdentityScopeId, ResourceRevision, UserId};
-use hubuum_events_core::EventContext;
+use hubuum_domain::{IdentityScopeId, PrincipalKind, ResourceRevision, UserId};
+use hubuum_events_core::{EventContext, EventSubject};
 use hubuum_query::QueryOptions;
 
 use crate::validation::validate_sync_timestamps;
-use crate::{
-    StorageError, StorageMutationOutcome, StoragePage, StorageSyncedHuman, StorageValidationError,
-};
+use crate::{StorageSyncedHuman, StorageValidationError};
+
+/// Authentication evidence that must still match the human row when the token
+/// commits. Adapters check this while holding the password-reset principal lock.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StorageLogin {
+    subject: EventSubject,
+    user: StorageUser,
+    authentication_revision: Option<hubuum_domain::ResourceRevision>,
+}
+
+impl StorageLogin {
+    /// A credential/change fence suitable for short-lived interaction storage.
+    /// This retains neither the password nor its stored password hash.
+    pub fn interaction_fingerprint(&self) -> hubuum_domain::InteractionDigest {
+        Self::user_interaction_fingerprint(&self.user)
+    }
+
+    pub(crate) fn user_interaction_fingerprint(
+        user: &StorageUser,
+    ) -> hubuum_domain::InteractionDigest {
+        use sha2::{Digest, Sha256};
+        let parts = user.clone().into_parts();
+        let bytes = serde_json::to_vec(&(parts.id(), parts.updated_at(), parts.password_hash()))
+            .expect("credential fence is JSON-compatible");
+        hubuum_domain::InteractionDigest::new(
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+        )
+        .expect("SHA-256 is a lowercase hexadecimal digest")
+    }
+
+    /// Local login does not depend on an external provider revision.
+    pub fn try_new(
+        subject: EventSubject,
+        user: StorageUser,
+    ) -> Result<Self, StorageValidationError> {
+        if subject.identity_scope() != "local" || subject.authentication_provider_kind() != "local"
+        {
+            return Err(StorageValidationError::invalid(
+                "External login requires an authentication revision",
+            ));
+        }
+        Self::validated(subject, user, None)
+    }
+
+    /// External evidence must carry the revision used for provider authentication.
+    pub fn external(
+        subject: EventSubject,
+        user: StorageUser,
+        revision: hubuum_domain::ResourceRevision,
+    ) -> Result<Self, StorageValidationError> {
+        if subject.identity_scope() == "local" || subject.authentication_provider_kind() == "local"
+        {
+            return Err(StorageValidationError::invalid(
+                "External login requires an external identity scope",
+            ));
+        }
+        Self::validated(subject, user, Some(revision))
+    }
+
+    fn validated(
+        subject: EventSubject,
+        user: StorageUser,
+        authentication_revision: Option<hubuum_domain::ResourceRevision>,
+    ) -> Result<Self, StorageValidationError> {
+        if subject.principal_id().id() != user.id.id()
+            || subject.kind() != PrincipalKind::Human
+            || user.anonymized_at.is_some()
+        {
+            return Err(StorageValidationError::invalid(
+                "invalid authenticated login subject",
+            ));
+        }
+        Ok(Self {
+            subject,
+            user,
+            authentication_revision,
+        })
+    }
+
+    pub const fn authentication_revision(&self) -> Option<hubuum_domain::ResourceRevision> {
+        self.authentication_revision
+    }
+
+    pub fn subject(&self) -> &EventSubject {
+        &self.subject
+    }
+
+    pub(crate) fn with_administrator_status(mut self, is_admin: bool) -> Self {
+        self.subject = self.subject.with_administrator_status(is_admin);
+        self
+    }
+
+    pub fn matches_user(&self, current: &StorageUser) -> bool {
+        current.id == self.user.id
+            && current.password_hash == self.user.password_hash
+            && current.updated_at == self.user.updated_at
+            && current.anonymized_at.is_none()
+    }
+}
 
 /// Named fields returned when a storage user crosses an API boundary.
 pub struct StorageUserParts {
@@ -739,51 +838,6 @@ impl fmt::Debug for StorageUserAnonymize {
             .field("event_context", &"<redacted>")
             .finish()
     }
-}
-
-/// Complete human-user persistence required of every selectable backend.
-#[async_trait]
-pub trait UserStorage: Send + Sync {
-    async fn get_user(&self, id: UserId) -> Result<StorageUser, StorageError>;
-
-    async fn get_user_by_name(
-        &self,
-        identity_scope: String,
-        name: String,
-    ) -> Result<StorageUser, StorageError>;
-
-    async fn get_user_details(&self, id: UserId) -> Result<StorageUserDetails, StorageError>;
-
-    async fn list_users(
-        &self,
-        query: StorageUserListQuery,
-    ) -> Result<StoragePage<StorageUserListItem>, StorageError>;
-
-    async fn create_user(
-        &self,
-        request: StorageUserCreate,
-    ) -> Result<StorageMutationOutcome<StorageUser>, StorageError>;
-
-    async fn update_user(
-        &self,
-        request: StorageUserUpdate,
-    ) -> Result<StorageMutationOutcome<StorageUser>, StorageError>;
-
-    /// Replace a local password and revoke active credentials atomically.
-    async fn set_user_password(
-        &self,
-        request: StorageUserPasswordUpdate,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
-
-    async fn delete_user(
-        &self,
-        request: StorageUserDelete,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
-
-    async fn anonymize_user(
-        &self,
-        request: StorageUserAnonymize,
-    ) -> Result<StorageMutationOutcome<()>, StorageError>;
 }
 
 #[cfg(test)]

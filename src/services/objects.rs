@@ -1,3 +1,4 @@
+use hubuum_storage_core::StorageObjectUpdate;
 use std::sync::Arc;
 
 use crate::errors::ApiError;
@@ -6,11 +7,7 @@ use crate::models::{
     HubuumObject, NewHubuumObject, ObjectDataPatchDocument, ObjectSelector, ResolvedClassTarget,
     ResolvedObjectTarget, UpdateHubuumObject,
 };
-use crate::services::storage_boundary::{
-    object_create_to_storage, object_from_storage, object_patch_to_storage,
-    object_selector_to_storage, object_update_to_storage, resolved_class_to_storage,
-    resolved_object_from_storage, resolved_object_to_storage,
-};
+
 use crate::storage::ObjectStorage;
 
 /// Application-facing object resolution and lifecycle use cases.
@@ -29,10 +26,10 @@ impl ObjectService {
         selector: ObjectSelector,
     ) -> Result<ResolvedObjectTarget, ApiError> {
         self.storage
-            .resolve_object(object_selector_to_storage(selector))
+            .resolve_object(selector.into())
             .await
             .map_err(ApiError::from)
-            .and_then(resolved_object_from_storage)
+            .map(ResolvedObjectTarget::from)
     }
 
     pub async fn create(
@@ -41,13 +38,13 @@ impl ObjectService {
         command: NewHubuumObject,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
-        let class = resolved_class_to_storage(class);
+        let class = class.as_storage();
         self.storage
-            .create_object(class, object_create_to_storage(command)?, context)
+            .create_object(class, command.try_into()?, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(object_from_storage)
+            .map(HubuumObject::from)
     }
 
     pub async fn update(
@@ -56,13 +53,13 @@ impl ObjectService {
         changes: UpdateHubuumObject,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
-        let target = resolved_object_to_storage(target);
+        let target = target.as_storage();
         self.storage
-            .update_object(target, object_update_to_storage(changes)?, context)
+            .update_object(target, StorageObjectUpdate::try_from(changes)?, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(object_from_storage)
+            .map(HubuumObject::from)
     }
 
     pub async fn patch_data(
@@ -71,13 +68,13 @@ impl ObjectService {
         patch: ObjectDataPatchDocument,
         context: &EventContext,
     ) -> Result<HubuumObject, ApiError> {
-        let target = resolved_object_to_storage(target);
+        let target = target.as_storage();
         self.storage
-            .patch_object_data(target, object_patch_to_storage(patch)?, context)
+            .patch_object_data(target, patch.into(), context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(object_from_storage)
+            .map(HubuumObject::from)
     }
 
     pub async fn delete(
@@ -85,7 +82,7 @@ impl ObjectService {
         target: &ResolvedObjectTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        let target = resolved_object_to_storage(target);
+        let target = target.as_storage();
         self.storage
             .delete_object(target, context)
             .await

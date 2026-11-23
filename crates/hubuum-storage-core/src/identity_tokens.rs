@@ -1,121 +1,13 @@
-use crate::StorageTokenRevocations;
 use std::fmt;
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hubuum_domain::{PrincipalId, PrincipalKind, TokenId};
+use hubuum_domain::{PrincipalId, TokenId};
 use hubuum_events_core::{EventContext, EventSubject};
 
 use crate::{
     MAX_TOKEN_HASH_KEYS, StorageAuthenticationCredential, StorageAuthenticationTokenScope,
-    StorageError, StorageMutationOutcome, StoragePage, StorageTokenDigest, StorageTokenListQuery,
-    StorageTokenMetadata, StorageTokenObservation, StorageUser, StorageValidationError,
+    StorageLogin, StorageTokenDigest, StorageValidationError,
 };
-
-/// Authentication evidence that must still match the human row when the token
-/// commits. Adapters check this while holding the password-reset principal lock.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StorageLogin {
-    subject: EventSubject,
-    user: StorageUser,
-    authentication_revision: Option<hubuum_domain::ResourceRevision>,
-}
-
-impl StorageLogin {
-    /// A credential/change fence suitable for short-lived interaction storage.
-    /// This retains neither the password nor its stored password hash.
-    pub fn interaction_fingerprint(&self) -> hubuum_domain::InteractionDigest {
-        Self::user_interaction_fingerprint(&self.user)
-    }
-
-    pub(crate) fn user_interaction_fingerprint(
-        user: &StorageUser,
-    ) -> hubuum_domain::InteractionDigest {
-        use sha2::{Digest, Sha256};
-        let parts = user.clone().into_parts();
-        let bytes = serde_json::to_vec(&(parts.id(), parts.updated_at(), parts.password_hash()))
-            .expect("credential fence is JSON-compatible");
-        hubuum_domain::InteractionDigest::new(
-            Sha256::digest(bytes)
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>(),
-        )
-        .expect("SHA-256 is a lowercase hexadecimal digest")
-    }
-
-    /// Local login does not depend on an external provider revision.
-    pub fn try_new(
-        subject: EventSubject,
-        user: StorageUser,
-    ) -> Result<Self, StorageValidationError> {
-        if subject.identity_scope() != "local" || subject.authentication_provider_kind() != "local"
-        {
-            return Err(StorageValidationError::invalid(
-                "External login requires an authentication revision",
-            ));
-        }
-        Self::validated(subject, user, None)
-    }
-
-    /// External evidence must carry the revision used for provider authentication.
-    pub fn external(
-        subject: EventSubject,
-        user: StorageUser,
-        revision: hubuum_domain::ResourceRevision,
-    ) -> Result<Self, StorageValidationError> {
-        if subject.identity_scope() == "local" || subject.authentication_provider_kind() == "local"
-        {
-            return Err(StorageValidationError::invalid(
-                "External login requires an external identity scope",
-            ));
-        }
-        Self::validated(subject, user, Some(revision))
-    }
-
-    fn validated(
-        subject: EventSubject,
-        user: StorageUser,
-        authentication_revision: Option<hubuum_domain::ResourceRevision>,
-    ) -> Result<Self, StorageValidationError> {
-        let parts = user.clone().into_parts();
-        if subject.principal_id().id() != parts.id().id()
-            || subject.kind() != PrincipalKind::Human
-            || parts.anonymized_at().is_some()
-        {
-            return Err(StorageValidationError::invalid(
-                "invalid authenticated login subject",
-            ));
-        }
-        Ok(Self {
-            subject,
-            user,
-            authentication_revision,
-        })
-    }
-
-    pub const fn authentication_revision(&self) -> Option<hubuum_domain::ResourceRevision> {
-        self.authentication_revision
-    }
-
-    pub fn subject(&self) -> &EventSubject {
-        &self.subject
-    }
-
-    pub(crate) fn with_administrator_status(mut self, is_admin: bool) -> Self {
-        self.subject = self.subject.with_administrator_status(is_admin);
-        self
-    }
-
-    pub fn matches_user(&self, current: &StorageUser) -> bool {
-        let expected = self.user.clone().into_parts();
-        let current = current.clone().into_parts();
-        current.id() == expected.id()
-            && current.password_hash() == expected.password_hash()
-            && current.updated_at() == expected.updated_at()
-            && current.anonymized_at().is_none()
-    }
-}
 
 /// Aggregate retirement evidence for one persisted token-hash key identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -663,76 +555,6 @@ impl fmt::Debug for StoragePrincipalTokensRevoke {
             .field("event_context", &"<redacted>")
             .finish()
     }
-}
-
-/// Complete bearer-token lifecycle required of every selectable backend.
-#[async_trait]
-pub trait TokenStorage: Send + Sync {
-    /// Persist an operation-bound approval and its audit event atomically.
-    async fn create_credential_approval(
-        &self,
-        request: crate::StorageCredentialApprovalCreate,
-    ) -> Result<StorageMutationOutcome<crate::StorageCredentialApprovalMetadata>, StorageError>;
-    /// Non-secret retained evidence; callers enforce visibility before returning it.
-    async fn get_credential_approval(
-        &self,
-        id: i32,
-    ) -> Result<crate::StorageCredentialApprovalMetadata, StorageError>;
-
-    /// Return hash-free retained token metadata using the requested lifecycle
-    /// state, filters, stable cursor page, and optional exact total.
-    async fn list_retained_tokens(
-        &self,
-        query: StorageTokenListQuery,
-    ) -> Result<StoragePage<StorageTokenMetadata>, StorageError>;
-
-    /// Aggregate persisted token usage by non-secret hash key identity.
-    async fn token_key_usage(
-        &self,
-        observation: StorageTokenObservation,
-    ) -> Result<Vec<StorageTokenKeyUsage>, StorageError>;
-
-    /// Commit token.created and, for a login request, authentication.succeeded
-    /// with its supplied immutable subject in the same transaction. Return both
-    /// audit receipts; never derive the subject from later identity state.
-    async fn create_token(
-        &self,
-        request: StorageTokenCreate,
-    ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError>;
-
-    async fn renew_token(
-        &self,
-        request: StorageTokenRenew,
-    ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError>;
-
-    async fn get_token_metadata(
-        &self,
-        principal_id: PrincipalId,
-        token_id: TokenId,
-        observation: StorageTokenObservation,
-    ) -> Result<StorageTokenMetadata, StorageError>;
-
-    /// Load metadata for token IDs in the same order, including duplicates.
-    async fn load_token_metadata_by_ids(
-        &self,
-        token_ids: Vec<TokenId>,
-        observation: StorageTokenObservation,
-    ) -> Result<Vec<StorageTokenMetadata>, StorageError>;
-
-    async fn revoke_token(
-        &self,
-        request: StorageTokenRevoke,
-    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError>;
-
-    async fn revoke_token_by_hash(
-        &self,
-        request: StorageTokenHashRevoke,
-    ) -> Result<StorageMutationOutcome<Option<crate::StorageUpstreamSession>>, StorageError>;
-
-    async fn revoke_all_principal_tokens(
-        &self,
-        request: StoragePrincipalTokensRevoke,
-    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError>;
 }
 
 #[cfg(test)]

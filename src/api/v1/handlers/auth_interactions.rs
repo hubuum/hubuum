@@ -4,7 +4,7 @@ use hubuum_domain::{InteractionClientId, InteractionId};
 use hubuum_storage_core::StorageInteractionAccess;
 use uuid::Uuid;
 
-use crate::api::openapi::ApiErrorResponse;
+use crate::api::response::ApiErrorResponse;
 use crate::api::response::ApiResponse;
 use crate::errors::{ApiError, InteractionError};
 use crate::events::{EventContext, RequestProvenance};

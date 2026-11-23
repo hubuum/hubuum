@@ -1,6 +1,11 @@
-use crate::services::storage_boundary::{class_record_from_storage, class_selector_from_storage};
-use crate::storage::StorageResolvedClass;
+use hubuum_storage_core::StorageClass;
+
+use crate::storage::{StorageClassSelector, StorageResolvedClass};
 use async_trait::async_trait;
+use hubuum_domain::CollectionId;
+use hubuum_storage_core::StorageClassCreate;
+use hubuum_storage_core::StorageClassSchemaPolicy;
+use hubuum_storage_core::StorageClassUpdate;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use utoipa::ToSchema;
@@ -23,6 +28,33 @@ pub struct HubuumClass {
     pub revision: ResourceRevision,
 }
 
+impl From<StorageClass> for HubuumClass {
+    fn from(row: StorageClass) -> Self {
+        let (
+            id,
+            name,
+            collection_id,
+            json_schema,
+            validate_schema,
+            description,
+            created_at,
+            updated_at,
+            revision,
+        ) = row.into_parts();
+        Self {
+            id: id.id(),
+            name,
+            collection_id: collection_id.id(),
+            json_schema,
+            validate_schema,
+            description,
+            created_at: created_at.naive_utc(),
+            updated_at: updated_at.naive_utc(),
+            revision,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 #[schema(example = new_hubuum_class_example)]
 pub struct NewHubuumClass {
@@ -33,6 +65,25 @@ pub struct NewHubuumClass {
     pub description: String,
 }
 
+impl TryFrom<NewHubuumClass> for StorageClassCreate {
+    type Error = ApiError;
+
+    fn try_from(command: NewHubuumClass) -> Result<Self, Self::Error> {
+        let schema_policy = StorageClassSchemaPolicy::try_from_parts(
+            command.json_schema,
+            command.validate_schema.unwrap_or(false),
+        )
+        .map_err(|error| ApiError::from(error.into_request_error()))?;
+        Ok(StorageClassCreate::builder(
+            command.name,
+            CollectionId::new(command.collection_id)?,
+            command.description,
+        )
+        .schema_policy(schema_policy)
+        .build())
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 #[schema(example = update_hubuum_class_example)]
 pub struct UpdateHubuumClass {
@@ -41,6 +92,20 @@ pub struct UpdateHubuumClass {
     pub json_schema: Option<serde_json::Value>,
     pub validate_schema: Option<bool>,
     pub description: Option<String>,
+}
+
+impl TryFrom<UpdateHubuumClass> for StorageClassUpdate {
+    type Error = ApiError;
+
+    fn try_from(update: UpdateHubuumClass) -> Result<Self, Self::Error> {
+        Ok(StorageClassUpdate::builder()
+            .name(update.name)
+            .collection_id(update.collection_id.map(CollectionId::new).transpose()?)
+            .json_schema(update.json_schema)
+            .validate_schema(update.validate_schema)
+            .description(update.description)
+            .build())
+    }
 }
 
 impl UpdateHubuumClass {
@@ -125,25 +190,21 @@ pub use hubuum_domain::ClassId as HubuumClassID;
 /// The route chooses the constructor, so [`Self::by_name`] never interprets a numeric-looking
 /// class name as an ID.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ClassSelector(ClassSelectorKind);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ClassSelectorKind {
-    ById(HubuumClassID),
-    ByName(String),
-}
+pub struct ClassSelector(StorageClassSelector);
 
 impl ClassSelector {
     pub fn by_id(class_id: HubuumClassID) -> Self {
-        Self(ClassSelectorKind::ById(class_id))
+        Self(StorageClassSelector::Id(class_id))
     }
 
     pub fn by_name(class_name: impl Into<String>) -> Self {
-        Self(ClassSelectorKind::ByName(class_name.into()))
+        Self(StorageClassSelector::Name(class_name.into()))
     }
+}
 
-    pub(crate) fn kind(&self) -> &ClassSelectorKind {
-        &self.0
+impl From<ClassSelector> for StorageClassSelector {
+    fn from(selector: ClassSelector) -> Self {
+        selector.0
     }
 }
 
@@ -152,31 +213,26 @@ impl ClassSelector {
 #[derive(Clone)]
 pub struct ResolvedClassTarget {
     storage: StorageResolvedClass,
-    selector: ClassSelector,
     class: HubuumClass,
 }
 
-impl ResolvedClassTarget {
+impl From<StorageResolvedClass> for ResolvedClassTarget {
     /// Preserve the validated aggregate; private views serve domain and HTTP callers.
-    pub(crate) fn from_storage(storage: StorageResolvedClass) -> Result<Self, ApiError> {
-        Ok(Self {
-            selector: class_selector_from_storage(storage.selector().clone())?,
-            class: class_record_from_storage(storage.class().clone())?,
+    fn from(storage: StorageResolvedClass) -> Self {
+        Self {
+            class: HubuumClass::from(storage.class().clone()),
             storage,
-        })
+        }
     }
+}
 
+impl ResolvedClassTarget {
     pub(crate) fn as_storage(&self) -> &StorageResolvedClass {
         &self.storage
     }
 
     pub fn class(&self) -> &HubuumClass {
         &self.class
-    }
-
-    #[cfg(test)]
-    pub(crate) fn selector(&self) -> &ClassSelector {
-        &self.selector
     }
 }
 
@@ -317,7 +373,7 @@ impl AuthzTarget for HubuumClassID {
 impl fmt::Debug for ResolvedClassTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ResolvedClassTarget")
-            .field("selector", &self.selector)
+            .field("selector", self.storage.selector())
             .field("class", &self.class)
             .finish()
     }

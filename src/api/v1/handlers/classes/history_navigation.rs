@@ -1,5 +1,5 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use crate::api::v1::handlers::history::{HistoryResponse, resolve_history_principal_names};
-use crate::api::{openapi::ApiErrorResponse, response::ApiResponse};
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::{
