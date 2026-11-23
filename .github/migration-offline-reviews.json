@@ -79,6 +79,17 @@
           "authentication_provider_bindings_namespace_check"
         ]
       }
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-23-000001_verification_group_budget/up.sql",
+      "sha256": "305819f803c92cef42f9c562270f38d5c5e922d5d2738c7d87524eb777595835",
+      "reason": "Earlier replicas cannot read large verified group previews or leased OAuth profile credentials. Authentication replicas must agree on their persisted representation.",
+      "upgrade_action": "Stop API and worker replicas, back up the database, run migrations and restart matching binaries. Restore the pre-upgrade backup to downgrade. See docs/authentication_interactions.md#upgrade-and-recovery.",
+      "drop_constraints": {
+        "auth_interactions": [
+          "auth_interactions_document_check1"
+        ]
+      }
     }
   ]
 }

@@ -49,9 +49,16 @@ impl ExternalFixture {
         backend: &PostgresStorage,
         lifetime: Duration,
     ) -> (Interaction, hubuum_domain::InteractionAuthenticationClaim) {
+        Self::start_for_provider(backend, &self.provider, lifetime).await
+    }
+    async fn start_for_provider(
+        backend: &PostgresStorage,
+        provider: &StorageProviderIdentityBinding,
+        lifetime: Duration,
+    ) -> (Interaction, hubuum_domain::InteractionAuthenticationClaim) {
         let binding = InteractionBinding::try_new(
             InteractionId::new(Uuid::new_v4()).unwrap(),
-            InteractionProviderId::external(self.provider.id()).unwrap(),
+            InteractionProviderId::external(provider.id()).unwrap(),
             InteractionClientId::new("external-test").unwrap(),
             ResourceRevision::INITIAL,
             InteractionAuthority::login(),
@@ -71,7 +78,7 @@ impl ExternalFixture {
         backend
             .create_auth_interaction(
                 StorageInteractionCreate::builder(lifecycle, secret)
-                    .provider(self.provider.clone())
+                    .provider(provider.clone())
                     .try_build()
                     .unwrap(),
             )

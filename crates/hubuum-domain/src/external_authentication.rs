@@ -143,7 +143,7 @@ impl fmt::Debug for ExternalIdentityProfile {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-enum Namespace {
+pub(crate) enum Namespace {
     Oidc(String),
     OAuth(String),
 }
@@ -159,6 +159,9 @@ pub struct ExternalIdentity {
 }
 
 impl ExternalIdentity {
+    pub(crate) fn browser_namespace(&self) -> &Namespace {
+        &self.namespace
+    }
     pub const fn provider(&self) -> InteractionProviderId {
         self.provider
     }

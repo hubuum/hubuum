@@ -1,6 +1,7 @@
 //! Validated, non-secret configuration shared across authentication boundaries.
 use std::collections::BTreeMap;
 
+use crate::external_authentication::Namespace;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -421,15 +422,21 @@ impl OAuthProviderDefinition {
 /// restore, while newly issued identities always bind the profile headers.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub struct BrowserIdentityNamespace(String);
+pub struct BrowserIdentityNamespace(Namespace);
 
 impl BrowserIdentityNamespace {
     pub fn from_identity(identity: &crate::ExternalIdentity) -> Self {
-        Self(identity.namespace().to_owned())
+        Self(identity.browser_namespace().clone())
     }
 
     pub fn as_str(&self) -> &str {
-        &self.0
+        match &self.0 {
+            Namespace::Oidc(value) | Namespace::OAuth(value) => value,
+        }
+    }
+
+    pub fn is_oauth(&self) -> bool {
+        matches!(self.0, Namespace::OAuth(_))
     }
 }
 
@@ -443,7 +450,7 @@ impl TryFrom<String> for BrowserIdentityNamespace {
             ));
         }
         if AuthenticationEndpoint::try_from(value.clone()).is_ok() {
-            return Ok(Self(value));
+            return Ok(Self(Namespace::Oidc(value)));
         }
         #[derive(Serialize, Deserialize)]
         #[serde(untagged)]
@@ -466,13 +473,15 @@ impl TryFrom<String> for BrowserIdentityNamespace {
                 "OAuth identity namespace must be canonical",
             ));
         }
-        Ok(Self(value))
+        Ok(Self(Namespace::OAuth(value)))
     }
 }
 
 impl From<BrowserIdentityNamespace> for String {
     fn from(value: BrowserIdentityNamespace) -> Self {
-        value.0
+        match value.0 {
+            Namespace::Oidc(value) | Namespace::OAuth(value) => value,
+        }
     }
 }
 

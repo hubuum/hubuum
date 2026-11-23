@@ -196,6 +196,12 @@ pub struct InteractionVerificationDetails {
     groups: Option<Vec<(String, String)>>,
 }
 impl InteractionVerificationDetails {
+    const MAX_GROUP_FIELD_BYTES: usize = 255;
+    /// Maximum compact JSON array size for named pairs, including escaped
+    /// quotes/backslashes, string delimiters, commas and brackets.
+    pub const MAX_SERIALIZED_GROUP_BYTES: usize =
+        crate::ExternalMemberships::MAX_GROUPS * (4 * Self::MAX_GROUP_FIELD_BYTES + 8) + 1;
+
     pub fn new(
         admitted: bool,
         groups: Vec<(String, String)>,
@@ -210,9 +216,11 @@ impl InteractionVerificationDetails {
         let entries = groups.as_deref().unwrap_or_default();
         if entries.len() > crate::ExternalMemberships::MAX_GROUPS
             || entries.iter().any(|(key, name)| {
-                [key, name]
-                    .iter()
-                    .any(|v| v.is_empty() || v.len() > 255 || v.chars().any(char::is_control))
+                [key, name].iter().any(|v| {
+                    v.is_empty()
+                        || v.len() > Self::MAX_GROUP_FIELD_BYTES
+                        || v.chars().any(char::is_control)
+                })
             })
         {
             return Err(InteractionValidationError::InvalidSubject);

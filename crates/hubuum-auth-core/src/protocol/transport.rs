@@ -9,6 +9,19 @@ use super::ProtocolError;
 const RESPONSE_LIMIT: usize = 128 * 1024;
 static REQUESTS: Semaphore = Semaphore::const_new(32);
 
+fn temporary_status(status: u16) -> bool {
+    matches!(status, 408 | 429 | 500..)
+}
+
+fn transport_error(error: OutboundHttpError) -> ProtocolError {
+    match error {
+        OutboundHttpError::InvalidResponseBody { status } if !temporary_status(status) => {
+            ProtocolError::InvalidResponse
+        }
+        _ => ProtocolError::Unavailable,
+    }
+}
+
 /// No redirects, retries, proxies, permissive TLS or unbounded queue. Every call
 /// resolves and screens all addresses through the shared transport.
 #[derive(Clone, Copy)]
@@ -80,14 +93,7 @@ impl Transport {
             .allow_private_targets(self.allow_private_targets)
             .send_with_dispatch(dispatch)
             .await
-            .map_err(|error| match error {
-                OutboundHttpError::InvalidResponseBody { status }
-                    if status < 500 && status != 429 =>
-                {
-                    ProtocolError::InvalidResponse
-                }
-                _ => ProtocolError::Unavailable,
-            })?;
+            .map_err(transport_error)?;
         Self::response(
             response.status_code(),
             response.headers(),
@@ -100,7 +106,7 @@ impl Transport {
         headers: &serde_json::Value,
         body: Vec<u8>,
     ) -> Result<HttpResponse, ProtocolError> {
-        if status >= 500 || status == 429 {
+        if temporary_status(status) {
             return Err(ProtocolError::Unavailable);
         }
         if (300..400).contains(&status) {
@@ -141,6 +147,22 @@ impl Transport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_request_timeout_is_temporary() {
+        assert_eq!(
+            Transport::response(408, &serde_json::Value::Null, Vec::new()).unwrap_err(),
+            ProtocolError::Unavailable
+        );
+    }
+
+    #[test]
+    fn unreadable_provider_timeout_is_temporary() {
+        assert_eq!(
+            transport_error(OutboundHttpError::InvalidResponseBody { status: 408 }),
+            ProtocolError::Unavailable
+        );
+    }
 
     #[test]
     fn rate_limit_metadata_survives_transport_without_provider_cookies() {

@@ -180,7 +180,9 @@ can be removed at expiry. Valid initiating credentials receive
 receive `401 interaction_invalid`, as for any unknown identifier. Both require
 a fresh interaction; wrong client/secret credentials always receive `401`.
 Browser attachment and claim state are bounded within
-each record; persistence documents are limited to 256 KiB.
+each record. The persistence document is limited to 256 KiB excluding the
+verified group list in a provider verification preview. LDAP previews can
+retain up to 1,000 distinct key and display name pairs, each field up to 255 bytes.
 
 HTTP admission uses `governor`'s GCRA limiter for each IP, allowing bursts of
 30 begins and 600 total requests. Capacity replenishes continuously at one begin
