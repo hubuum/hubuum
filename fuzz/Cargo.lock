@@ -811,6 +811,7 @@ version = "0.20.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
+ "bigdecimal",
  "chrono",
  "hubuum-budget",
  "hubuum-computed-fields",
