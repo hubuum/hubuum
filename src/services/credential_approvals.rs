@@ -10,7 +10,8 @@ use crate::models::user::ValidatedLogin;
 use crate::models::{LoginUser, PrincipalID, User, configured_token_lifetime};
 use crate::permissions::AppContext;
 use crate::services::identity;
-use crate::storage::storage_handle;
+use crate::storage::{AuthenticationStorage, storage_handle};
+use crate::traits::PrincipalIdAccessor;
 use chrono::{SubsecRound, Utc};
 use hubuum_domain::{IdentityScopeId, TokenId};
 use hubuum_storage_core::{
@@ -22,9 +23,19 @@ use hubuum_storage_core::{
 /// An authenticated human with an unscoped credential. The originating token
 /// identity is retained all the way to the adapter's transactional recheck.
 pub struct CredentialActor {
-    user: User,
+    principal_id: PrincipalID,
     token_id: TokenId,
 }
+impl PrincipalIdAccessor for CredentialActor {
+    fn principal_id(&self) -> i32 {
+        self.principal_id.id()
+    }
+
+    fn validated_principal_id(&self) -> Result<PrincipalID, ApiError> {
+        Ok(self.principal_id)
+    }
+}
+
 impl CredentialActor {
     pub async fn resolve(
         context: &AppContext,
@@ -35,14 +46,18 @@ impl CredentialActor {
                 "Credential approval requires an unscoped human credential".into(),
             ));
         }
-        let user = identity::get_user(context, authenticated.principal.id().id()).await?;
+        let (_, human) = storage_handle(context)
+            .get_authentication_identity(authenticated.principal.id())
+            .await?
+            .into_parts();
+        let human = human.ok_or_else(|| ApiError::NotFound("User not found".into()))?;
         Ok(Self {
-            user,
+            principal_id: human.id().into(),
             token_id: authenticated.token_meta.id(),
         })
     }
     pub fn id(&self) -> i32 {
-        self.user.id
+        self.principal_id.id()
     }
     fn claim(
         &self,
@@ -52,7 +67,7 @@ impl CredentialActor {
         let now = Utc::now().naive_utc().trunc_subsecs(6);
         let cutoff = configured_token_lifetime()?.cutoff_from(now)?.and_utc();
         let mut claim = StorageCredentialClaim::new(
-            PrincipalID::new(self.user.id)?,
+            self.principal_id,
             self.token_id,
             operation.kind(),
             secret.digest(),
@@ -70,7 +85,7 @@ impl CredentialActor {
         context: &AppContext,
         operation: &CredentialOperation,
     ) -> Result<(), ApiError> {
-        let admin = context.is_admin(&self.user).await?;
+        let admin = context.is_admin(self).await?;
         match operation {
             CredentialOperation::CreateUser { .. }
             | CredentialOperation::UpdateUser { .. }
@@ -86,13 +101,13 @@ impl CredentialActor {
                 let principal = principal_id.principal(context).await?;
                 let allowed = admin
                     || if principal.principal_kind() == crate::models::PrincipalKind::Human {
-                        self.user.id == principal_id.id()
+                        self.principal_id == *principal_id
                     } else {
                         let account =
                             identity::get_service_account(context, principal_id.id()).await?;
                         identity::is_human_owner_group_member(
                             context,
-                            self.user.id,
+                            self.id(),
                             account.owner_group_id,
                         )
                         .await?
@@ -113,7 +128,7 @@ impl CredentialActor {
         context: &AppContext,
         password: String,
     ) -> Result<ValidatedLogin, ApiError> {
-        let point = identity::get_user_point(context, self.user.id).await?;
+        let point = identity::get_user_point(context, self.id()).await?;
         let scope = storage_handle(context)
             .resolve_identity_scope_name(IdentityScopeId::new(point.identity_scope_id)?)
             .await?;
@@ -216,7 +231,7 @@ pub async fn get(
 ) -> Result<CredentialApprovalRecord, ApiError> {
     let metadata: StorageCredentialApprovalMetadata =
         storage_handle(context).get_credential_approval(id).await?;
-    if metadata.actor_id().id() != actor.id() && !context.is_admin(&actor.user).await? {
+    if metadata.actor_id().id() != actor.id() && !context.is_admin(actor).await? {
         return Err(ApiError::NotFound("Credential approval not found".into()));
     }
     Ok(metadata.into())

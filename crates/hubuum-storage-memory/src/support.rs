@@ -255,32 +255,6 @@ pub(super) fn authorization_effective_group_grant(
     ))
 }
 
-pub(super) fn rebuild_event_delivery(
-    delivery: &StorageEventDelivery,
-    status: EventDeliveryStatus,
-    attempts: i32,
-    next_attempt_at: DateTime<Utc>,
-    last_error: Option<String>,
-    locked_until: Option<DateTime<Utc>>,
-) -> Result<StorageEventDelivery, StorageError> {
-    StorageEventDelivery::builder(
-        delivery.id(),
-        delivery.event_id(),
-        delivery.subscription_id(),
-        status,
-        next_attempt_at,
-        delivery.created_at(),
-        Utc::now(),
-    )
-    .purpose(delivery.purpose())
-    .deferred_reason(delivery.deferred_reason().map(str::to_owned))
-    .attempts(attempts)
-    .last_error(last_error)
-    .locked_until(locked_until)
-    .try_build()
-    .map_err(invalid_contract_value)
-}
-
 pub(super) fn event_status_counts(
     deliveries: impl IntoIterator<Item = EventDeliveryStatus>,
 ) -> Result<StorageEventDeliveryStatusSnapshot, StorageError> {

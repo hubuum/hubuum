@@ -12,11 +12,12 @@ use crate::events::EventContext;
 use crate::models::search::{FilterField, SortParam};
 use crate::models::{
     PrincipalID, REDACTED_DEBUG_VALUE, ResourceRevision, TokenIssuancePolicy, TokenLifetime,
-    TokenScope, TokenScopeDetails,
+    TokenResourceScope, TokenScope, TokenScopeDetails,
 };
 use crate::storage::{
-    StorageAuthenticatedToken, StorageAuthenticationCredential, StorageContext, StorageTokenDigest,
-    StorageTokenFormat, StorageTokenHashAlgorithm, StorageTokenHashKeyId,
+    StorageAuthenticatedToken, StorageAuthenticationCredential, StorageAuthenticationTokenScope,
+    StorageContext, StorageTokenDigest, StorageTokenFormat, StorageTokenHashAlgorithm,
+    StorageTokenHashKeyId, StorageTokenMetadata,
 };
 use crate::traits::{CursorPaginated, CursorValue};
 
@@ -223,7 +224,64 @@ pub struct CurrentTokenMetadata {
     pub revision: ResourceRevision,
 }
 
+fn token_scope_from_storage(
+    scope: StorageAuthenticationTokenScope,
+) -> Result<TokenScopeDetails, ApiError> {
+    let (permissions, resources) = scope.into_parts();
+    let permissions = permissions.map(|permissions| {
+        permissions
+            .into_iter()
+            .map(crate::permissions::permission_from_storage)
+            .collect::<Vec<_>>()
+    });
+    let resources = resources.map(|resources| {
+        let (collections, classes, objects) = resources.into_parts();
+        collections
+            .into_iter()
+            .map(TokenResourceScope::Collection)
+            .chain(classes.into_iter().map(TokenResourceScope::Class))
+            .chain(objects.into_iter().map(TokenResourceScope::Object))
+            .collect()
+    });
+    TokenScopeDetails::from_scope(TokenScope::from_stored_parts(permissions, resources)?)
+}
+
+impl TryFrom<StorageTokenMetadata> for PrincipalTokenMetadata {
+    type Error = ApiError;
+
+    fn try_from(metadata: StorageTokenMetadata) -> Result<Self, ApiError> {
+        let scope = metadata
+            .scope()
+            .cloned()
+            .map(token_scope_from_storage)
+            .transpose()?;
+        Ok(PrincipalTokenMetadata {
+            id: metadata.id(),
+            principal_id: metadata.principal_id(),
+            name: metadata.name().map(str::to_string),
+            description: metadata.description().map(str::to_string),
+            issued: metadata.issued().naive_utc(),
+            expires_at: metadata.expires_at().map(|timestamp| timestamp.naive_utc()),
+            last_used_at: metadata
+                .last_used_at()
+                .map(|timestamp| timestamp.naive_utc()),
+            revoked_at: metadata.revoked_at().map(|timestamp| timestamp.naive_utc()),
+            active: metadata.is_active(),
+            expired: metadata.is_expired(),
+            scope,
+            revision: metadata.revision(),
+        })
+    }
+}
+
 impl PrincipalTokenMetadata {
+    pub(crate) fn into_issued_token(self, token: Token) -> Result<IssuedToken, ApiError> {
+        let expires_at = self.expires_at.ok_or_else(|| {
+            ApiError::InternalServerError("Newly persisted token is missing its expiry".into())
+        })?;
+        Ok(IssuedToken::new(token, expires_at))
+    }
+
     /// Load exact scope metadata for every supplied token in a bounded number
     /// of database queries.
     ///
@@ -252,8 +310,7 @@ impl PrincipalTokenMetadata {
     where
         C: StorageContext,
     {
-        crate::services::identity::get_token_metadata(backend, principal_id.id(), token_id.id())
-            .await
+        crate::services::identity::get_token_metadata(backend, principal_id, token_id).await
     }
 }
 
@@ -264,12 +321,7 @@ impl CurrentTokenMetadata {
         scope: Option<TokenScope>,
     ) -> Result<Self, ApiError> {
         Ok(Self {
-            id: TokenID::new(value.id().id()).map_err(|_| {
-                ApiError::InternalServerError(format!(
-                    "Authenticated token has invalid identifier {}",
-                    value.id().id()
-                ))
-            })?,
+            id: value.id(),
             name: value.name().map(str::to_string),
             description: value.description().map(str::to_string),
             issued: value.issued().naive_utc(),
@@ -590,8 +642,7 @@ pub async fn revoke_token_by_id_for_principal<C>(
 where
     C: StorageContext,
 {
-    crate::services::identity::revoke_token(backend, token_id.id(), principal_id.id(), context)
-        .await
+    crate::services::identity::revoke_token(backend, token_id, principal_id, context).await
 }
 
 /// Mint a fresh token by copying one retained token's descriptive metadata and
@@ -612,8 +663,8 @@ where
     let issuance_policy = configured_token_issuance_policy()?;
     crate::services::identity::renew_token(
         backend,
-        token_id.id(),
-        principal_id.id(),
+        token_id,
+        principal_id,
         expires_at,
         issuance_policy,
         context,

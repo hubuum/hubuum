@@ -83,7 +83,7 @@ impl MemoryState {
             )
         }
         .expires_at(Some(access_expiry));
-        let (token, audits) = match super::identity::create_token_in_state(self, request)? {
+        let (token, audits) = match self.issue_token(request)? {
             StorageMutationOutcome::Committed { value, audits } => (value, audits),
             StorageMutationOutcome::Unchanged(_) => {
                 return Err(StorageError::internal("session issuance did not commit"));
@@ -306,7 +306,6 @@ impl MemoryState {
                 }
             }
         }
-        self.cleanup_credential_activity();
         ids.len()
     }
 }

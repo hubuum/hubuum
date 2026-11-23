@@ -4,7 +4,7 @@ use opentelemetry::KeyValue;
 
 use crate::middlewares::rate_limit;
 
-use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
+use super::refresh::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 use super::{Metrics, current};
 
 pub fn login_attempt(outcome: &'static str) {

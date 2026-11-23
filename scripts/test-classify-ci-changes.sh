@@ -73,7 +73,7 @@ for transport_path in tests/python/integration/event_transports.py tests/python/
   assert_flag "$transport_output" code true
 done
 
-for authorization_path in src/tests/permissions/candidate_paging.rs \
+for authorization_path in src/tasks/import_authorization.rs src/tests/permissions/candidate_paging.rs \
   src/tests/storage_contract/history_access.rs src/services/remote_targets/invocation.rs \
   src/services/history/computed.rs src/tests/storage_contract/history_computed.rs src/api/v1/handlers/classes/history_computed.rs \
   src/api/v1/handlers/classes/history_relations.rs src/tests/storage_contract/history_relations.rs \
@@ -83,6 +83,11 @@ for authorization_path in src/tests/permissions/candidate_paging.rs \
   authorization_output="$(bash "$classifier" "$authorization_path")"
   assert_flag "$authorization_output" code true
   assert_flag "$authorization_output" treetop_conformance true
+done
+
+for planner_test in src/tasks/tests/import_execution.rs src/tasks/tests/import_planning.rs; do
+  planner_output="$(bash "$classifier" "$planner_test")"
+  assert_flag "$planner_output" rust true
 done
 
 for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs crates/hubuum-storage-core/src/api_request_admission.rs src/middlewares/api_request_admission.rs src/models/runtime_settings/discovery.rs; do
@@ -370,6 +375,14 @@ assert_flag "$storage_contract_docs_output" code true
 assert_flag "$storage_contract_docs_output" container false
 assert_flag "$storage_contract_docs_output" artifacts false
 assert_flag "$storage_contract_docs_output" benchmarks false
+
+# Moving a storage scenario into a child module must retain its validation tier.
+for suite in storage_contract application_boundary storage_performance; do
+  while IFS= read -r scenario; do
+    scenario_flags="$(bash "$classifier" "$scenario")"
+    assert_flag "$scenario_flags" rust true
+  done < <(find "src/tests/$suite" -type f -name '*.rs')
+done
 
 markdown_config_output="$(bash "$classifier" .markdownlint.json)"
 assert_flag "$markdown_config_output" markdown true
@@ -928,6 +941,7 @@ for observation_test in src/storage/context/runtime_settings.rs \
   src/middlewares/runtime_settings.rs \
   src/tests/storage_contract/runtime_settings.rs \
   crates/hubuum-storage-core/src/runtime_settings.rs \
+  crates/hubuum-storage-core/src/query_observation_settings.rs \
   crates/hubuum-storage-postgres/tests/runtime_settings.rs \
   crates/hubuum-storage-postgres/migrations/2026-10-19-000001_query_observation_control/up.sql \
   crates/hubuum-storage-postgres/migrations/2026-11-06-000001_runtime_settings/up.sql \
@@ -1063,17 +1077,29 @@ for history_input in src/services/history/access.rs src/services/history/navigat
   assert_flag "$history_output" treetop_conformance true
 done
 
+for adapter_input in crates/hubuum-storage-postgres/src/operations/user_row.rs \
+  crates/hubuum-storage-postgres/src/operations/import_execution/identity.rs \
+  crates/hubuum-storage-postgres/src/operations/import_execution/integrations.rs \
+  crates/hubuum-storage-postgres/src/operations/import_execution/relations.rs \
+  crates/hubuum-storage-postgres/src/operations/relation_query/graph_walk.rs \
+  crates/hubuum-storage-postgres/src/operations/token_scope.rs \
+  crates/hubuum-storage-postgres/src/operations/object_aggregate/expressions.rs; do
+  adapter_output="$(bash "$classifier" "$adapter_input")"
+  assert_flag "$adapter_output" rust true
+  assert_flag "$adapter_output" container true
+done
+
 for repair_path in tests/computed_read_repair.rs crates/hubuum-storage-postgres/src/operations/computed_fields/read_repair.rs crates/hubuum-storage-postgres/tests/computed_read_repair_migration.rs crates/hubuum-storage-postgres/migrations/2026-10-25-000001_computed_read_repairs/up.sql; do
   repair_output="$(bash "$classifier" "$repair_path")"
   assert_flag "$repair_output" rust true
 done
 
-# Interactive auth and activity schemas must regenerate the public contract.
-for session_schema in src/api/v1/handlers/auth.rs src/models/auth_session.rs src/models/credential_activity.rs; do
-  session_output="$(bash "$classifier" "$session_schema")"
-  assert_flag "$session_output" rust true
-  assert_flag "$session_output" openapi true
-  assert_flag "$session_output" container true
+# Shared HTTP responses, registration, and interactive auth schemas feed the public contract.
+for schema_path in src/api/openapi.rs src/api/response.rs src/api/v1/handlers/auth.rs src/models/auth_session.rs src/models/credential_activity.rs; do
+  schema_output="$(bash "$classifier" "$schema_path")"
+  assert_flag "$schema_output" rust true
+  assert_flag "$schema_output" openapi true
+  assert_flag "$schema_output" container true
 done
 
 # Durable-wait state and diagnostics are public response schemas. The storage
@@ -1125,18 +1151,53 @@ for schema_input in crates/hubuum-domain/src/relation_limit.rs crates/hubuum-dom
   assert_flag "$schema_output" openapi true
 done
 for extracted_input in src/services/exports/execution.rs src/services/exports/hydration.rs \
-  src/tasks/planning/import.rs crates/hubuum-storage-memory/src/imports/relations.rs \
+  src/tasks/planning/import.rs crates/hubuum-storage-memory/src/imports/workflow.rs crates/hubuum-storage-memory/src/import_results.rs crates/hubuum-storage-memory/src/imports/relations.rs \
   crates/hubuum-storage-core/src/backup_snapshot/resources.rs \
   crates/hubuum-storage-core/src/backup_snapshot/normalization.rs \
+  crates/hubuum-storage-memory/src/id_sequence.rs crates/hubuum-storage-memory/src/restore_coordinator.rs \
+  crates/hubuum-storage-memory/src/history.rs crates/hubuum-storage-memory/src/identity/authorization.rs \
+  crates/hubuum-storage-memory/src/identity/credentials.rs crates/hubuum-storage-memory/src/token_issuance.rs \
   crates/hubuum-auth-core/src/credential.rs; do
   extracted_output="$(bash "$classifier" "$extracted_input")"
   assert_flag "$extracted_output" rust true
   assert_flag "$extracted_output" container true
 done
 
+for shared_record in crates/hubuum-storage-core/src/record.rs \
+  crates/hubuum-storage-core/src/capabilities/identity.rs \
+  crates/hubuum-storage-core/src/capabilities/workflows.rs \
+  crates/hubuum-storage-core/src/backup_snapshot/task_control.rs \
+  crates/hubuum-storage-core/src/restore_artifact.rs \
+  crates/hubuum-storage-core/src/event_administration/sink.rs; do
+  record_output="$(bash "$classifier" "$shared_record")"
+  assert_flag "$record_output" rust true
+  assert_flag "$record_output" container true
+done
+
 hash_benchmark_output="$(bash "$classifier" benches/computed_hash_criterion.rs)"
 assert_flag "$hash_benchmark_output" code true
 assert_flag "$hash_benchmark_output" benchmarks true
+
+# Moving a contract into a Rust child module must preserve its CI selection.
+for module_path in \
+  crates/hubuum-query/src/cursor_codec.rs crates/hubuum-events-core/src/audit.rs \
+  crates/hubuum-scale-core/src/sensitivity.rs crates/hubuum-storage-core/src/task_queue/tests.rs \
+  src/auth/tests.rs src/config/test_environment.rs src/models/task/tests.rs \
+  src/api/openapi/tests.rs src/operational_contracts/metrics.rs; do
+  module_dir="${module_path%/*}"
+  case "$module_dir" in
+    */src) module_root="$module_dir/lib.rs" ;;
+    *) module_root="$module_dir.rs" ;;
+  esac
+  [[ "$(bash "$classifier" "$module_root")" == "$(bash "$classifier" "$module_path")" ]] || {
+    echo "CI classification of $module_path differs from $module_root" >&2
+    exit 1
+  }
+done
+
+for openapi_source in src/api/openapi.rs src/api/openapi/tests.rs; do
+  assert_flag "$(bash "$classifier" "$openapi_source")" openapi true
+done
 
 for discovery_path in src/models/class_fields.rs src/models/class_fields/tests.rs src/api/v1/handlers/classes/field_discovery.rs; do
   discovery_output="$(bash "$classifier" "$discovery_path")"

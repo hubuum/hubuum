@@ -1,3 +1,4 @@
+use crate::errors::ApiError;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -6,9 +7,8 @@ use opentelemetry::metrics::{Meter, MeterProvider as _};
 use opentelemetry_sdk::metrics::{Aggregation, Instrument, SdkMeterProvider, Stream};
 use prometheus::{IntGaugeVec, Opts, Registry};
 
+use crate::build_git_sha;
 use crate::config::RuntimeRole;
-use crate::errors::ApiError;
-use crate::logger;
 use crate::operational_contracts::{MetricKind, metric_definition, runtime_metric_definition};
 
 use super::cache::ScrapeCache;
@@ -109,15 +109,13 @@ fn duration_histogram(meter: &Meter, name: &'static str) -> CheckedHistogram {
     CheckedMetric::new(builder.build(), definition)
 }
 
-fn build_provider(registry: &Registry) -> Result<SdkMeterProvider, ApiError> {
+fn build_provider(registry: &Registry) -> Result<SdkMeterProvider, String> {
     let exporter = opentelemetry_prometheus::exporter()
         .with_registry(registry.clone())
         .scope_info_enabled(false)
         .without_target_info()
         .build()
-        .map_err(|error| {
-            ApiError::InternalServerError(format!("Failed to initialize metrics exporter: {error}"))
-        })?;
+        .map_err(|error| format!("Failed to initialize metrics exporter: {error}"))?;
 
     Ok(SdkMeterProvider::builder()
         .with_reader(exporter)
@@ -135,11 +133,11 @@ pub fn init() -> Result<(), ApiError> {
     }
 
     METRICS
-        .set(build_metrics()?)
+        .set(build_metrics().map_err(ApiError::InternalServerError)?)
         .map_err(|_| ApiError::InternalServerError("Metrics already initialized".to_string()))
 }
 
-fn build_metrics() -> Result<Metrics, ApiError> {
+fn build_metrics() -> Result<Metrics, String> {
     let registry = Registry::new();
     let process_metrics = ProcessMetrics::new(&registry)?;
     let provider = build_provider(&registry)?;
@@ -153,18 +151,10 @@ fn build_metrics() -> Result<Metrics, ApiError> {
         ),
         export_template_definition.labels,
     )
-    .map_err(|error| {
-        ApiError::InternalServerError(format!(
-            "Failed to create export template info metric: {error}"
-        ))
-    })?;
+    .map_err(|error| format!("Failed to create export template info metric: {error}"))?;
     registry
         .register(Box::new(export_template_info.clone()))
-        .map_err(|error| {
-            ApiError::InternalServerError(format!(
-                "Failed to register export template info metric: {error}"
-            ))
-        })?;
+        .map_err(|error| format!("Failed to register export template info metric: {error}"))?;
 
     let metrics = Metrics {
         registry,
@@ -305,7 +295,7 @@ fn build_metrics() -> Result<Metrics, ApiError> {
         1,
         &[
             KeyValue::new("version", env!("CARGO_PKG_VERSION")),
-            KeyValue::new("git_sha", logger::build_git_sha()),
+            KeyValue::new("git_sha", build_git_sha()),
         ],
     );
     metrics.process_start_time.record(

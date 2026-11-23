@@ -1,3 +1,4 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 pub(crate) mod discovery;
 use std::collections::{HashMap, HashSet};
 
@@ -8,8 +9,6 @@ use hubuum_task_core::TaskStopReason;
 
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, post, routes, web};
 
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
 use crate::models::search::{QueryOptions, parse_query_parameter_with_passthrough};

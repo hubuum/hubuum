@@ -280,17 +280,28 @@ pub(super) fn restore(
             .logical_identities
             .restore_association(key, r.identity()?);
     }
-    state.next_identity_scope_id = next_id(&state.identity_scopes)?;
-    state.next_principal_id = next_id(&state.principals)?;
-    state.next_group_id = next_id(&state.groups)?;
-    state.next_authorization_grant_id = state
+    state.identity_scope_ids.observe(
+        state
+            .identity_scopes
+            .keys()
+            .next_back()
+            .copied()
+            .unwrap_or(0),
+    );
+    state
+        .principal_ids
+        .observe(state.principals.keys().next_back().copied().unwrap_or(0));
+    state
+        .group_ids
+        .observe(state.groups.keys().next_back().copied().unwrap_or(0));
+    if let Some(id) = state
         .authorization_grants
         .values()
-        .map(|v| v.id().id())
+        .map(|grant| grant.id().id())
         .max()
-        .unwrap_or(0)
-        .checked_add(1)
-        .ok_or_else(|| invalid("authorization grant sequence"))?;
+    {
+        state.authorization_grant_ids.observe(id);
+    }
     Ok(())
 }
 

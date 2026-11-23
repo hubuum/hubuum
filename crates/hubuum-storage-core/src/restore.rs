@@ -7,20 +7,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{StorageError, StorageValidationError};
-
-fn validate_sha256(value: &str, description: &'static str) -> Result<(), StorageValidationError> {
-    if value.len() != 64
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-    {
-        return Err(StorageValidationError::invalid(format!(
-            "{description} must contain exactly 64 lowercase hexadecimal characters"
-        )));
-    }
-    Ok(())
-}
+use crate::validation::validate_sha256;
+use crate::{StorageError, StorageRestoreArtifactSummary, StorageValidationError};
 
 /// Persisted restore lifecycle state, independent of an adapter's encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,75 +119,6 @@ impl fmt::Debug for StorageRestoreInitiator {
             .debug_struct("StorageRestoreInitiator")
             .field("has_principal", &self.principal_id.is_some())
             .field("identity", &"[redacted]")
-            .finish()
-    }
-}
-
-/// Non-secret artifact identity shared by restore projections.
-#[derive(Clone, PartialEq, Eq)]
-pub struct StorageRestoreArtifactSummary {
-    byte_size: i64,
-    sha256: String,
-}
-
-/// Named restore-artifact components used by adapters and application mappers.
-pub struct StorageRestoreArtifactSummaryParts {
-    byte_size: i64,
-    sha256: String,
-}
-
-impl StorageRestoreArtifactSummaryParts {
-    #[must_use]
-    pub const fn byte_size(&self) -> i64 {
-        self.byte_size
-    }
-
-    #[must_use]
-    pub fn sha256(&self) -> &str {
-        &self.sha256
-    }
-}
-
-impl StorageRestoreArtifactSummary {
-    pub fn try_new(
-        byte_size: i64,
-        sha256: impl Into<String>,
-    ) -> Result<Self, StorageValidationError> {
-        let sha256 = sha256.into();
-        if byte_size < 0 {
-            return Err(StorageValidationError::invalid(
-                "Restore artifact byte size must not be negative",
-            ));
-        }
-        validate_sha256(&sha256, "Restore artifact SHA-256 digest")?;
-        Ok(Self { byte_size, sha256 })
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> StorageRestoreArtifactSummaryParts {
-        StorageRestoreArtifactSummaryParts {
-            byte_size: self.byte_size,
-            sha256: self.sha256,
-        }
-    }
-
-    #[must_use]
-    pub const fn byte_size(&self) -> i64 {
-        self.byte_size
-    }
-
-    #[must_use]
-    pub fn sha256(&self) -> &str {
-        &self.sha256
-    }
-}
-
-impl fmt::Debug for StorageRestoreArtifactSummary {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("StorageRestoreArtifactSummary")
-            .field("byte_size", &self.byte_size)
-            .field("digest", &"[redacted]")
             .finish()
     }
 }

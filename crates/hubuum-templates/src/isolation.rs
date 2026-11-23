@@ -500,6 +500,75 @@ impl WorkerRuntime {
         })
     }
 
+    async fn submit(
+        &self,
+        request: WorkerRequest<'_>,
+        spool_pins: Option<SpoolPins>,
+        started: Instant,
+    ) -> Result<Vec<RenderedTemplate>, TemplateError> {
+        let capacity = self.admit(started)?;
+        let max_response_bytes = if spool_pins.is_some() {
+            1024 * 1024
+        } else {
+            request
+                .max_output_bytes
+                .saturating_mul(6)
+                .saturating_add(1024 * 1024)
+        };
+        // Borrowed input is encoded into a size-bounded buffer before transferring
+        // ownership. No unbounded clone of the caller's context is made.
+        let mut encoded = SizeLimitedWriter::new(MAX_REQUEST_BYTES);
+        serde_json::to_writer(&mut encoded, &request).map_err(|_| {
+            event("input_limit", started);
+            TemplateError::boundary("template input budget exceeded")
+        })?;
+        let encoded = encoded
+            .into_string()
+            .map_err(|_| TemplateError::boundary("invalid template protocol input"))?;
+        let mut command = Command::new(worker_executable()?);
+        command.env_clear();
+        #[cfg(unix)]
+        if let Some((rows, output)) = &spool_pins {
+            let [data, index] = rows.raw_fds();
+            let descriptors = [data, index, output.raw_fd()];
+            // SAFETY: only async-signal-safe fcntl runs after fork. The supervisor
+            // pins all three files until the child is reaped; parent CLOEXEC stays set.
+            unsafe {
+                command.pre_exec(move || {
+                    for descriptor in descriptors {
+                        if libc::fcntl(descriptor, libc::F_SETFD, 0) == -1 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                    }
+                    Ok(())
+                });
+            }
+        }
+        let (response, result) = oneshot::channel();
+        let span = info_span!("template_execution", operation_id = NEXT_OPERATION.fetch_add(1, Ordering::Relaxed), operation = ?request.operation, pid = tracing::field::Empty);
+        let job = Job {
+            spool_pins,
+            encoded,
+            max_response_bytes,
+            expected_results: request.templates.len(),
+            started,
+            deadline: started + MAX_WORKER_EXECUTION_TIME,
+            response,
+            capacity,
+            span,
+            dispatcher: tracing::dispatcher::get_default(Clone::clone),
+            command,
+        };
+        self.jobs
+            .try_send(job)
+            .map_err(|_| TemplateError::boundary("template supervisor unavailable"))?;
+        // Dropping this receiver cancels queued or executing work. The independent
+        // supervisor retains its permits until pipe teardown and child reaping.
+        result
+            .await
+            .map_err(|_| TemplateError::boundary("template supervisor unavailable"))?
+    }
+
     async fn shutdown(&self) -> Result<(), TemplateError> {
         self.capacity.close();
         let _ = self.stopping.send(true);
@@ -568,68 +637,7 @@ async fn execute_pinned(
             "template supervisor is shutting down",
         ));
     }
-    let capacity = runtime.admit(started)?;
-    let max_response_bytes = if spool_pins.is_some() {
-        1024 * 1024
-    } else {
-        request
-            .max_output_bytes
-            .saturating_mul(6)
-            .saturating_add(1024 * 1024)
-    };
-    // Borrowed input is encoded into a size-bounded buffer before transferring
-    // ownership. No unbounded clone of the caller's context is made.
-    let mut encoded = SizeLimitedWriter::new(MAX_REQUEST_BYTES);
-    serde_json::to_writer(&mut encoded, &request).map_err(|_| {
-        event("input_limit", started);
-        TemplateError::boundary("template input budget exceeded")
-    })?;
-    let encoded = encoded
-        .into_string()
-        .map_err(|_| TemplateError::boundary("invalid template protocol input"))?;
-    let mut command = Command::new(worker_executable()?);
-    command.env_clear();
-    #[cfg(unix)]
-    if let Some((rows, output)) = &spool_pins {
-        let [data, index] = rows.raw_fds();
-        let descriptors = [data, index, output.raw_fd()];
-        // SAFETY: only async-signal-safe fcntl runs after fork. The supervisor
-        // pins all three files until the child is reaped; parent CLOEXEC stays set.
-        unsafe {
-            command.pre_exec(move || {
-                for descriptor in descriptors {
-                    if libc::fcntl(descriptor, libc::F_SETFD, 0) == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                }
-                Ok(())
-            });
-        }
-    }
-    let (response, result) = oneshot::channel();
-    let span = info_span!("template_execution", operation_id = NEXT_OPERATION.fetch_add(1, Ordering::Relaxed), operation = ?request.operation, pid = tracing::field::Empty);
-    let job = Job {
-        spool_pins,
-        encoded,
-        max_response_bytes,
-        expected_results: request.templates.len(),
-        started,
-        deadline: started + MAX_WORKER_EXECUTION_TIME,
-        response,
-        capacity,
-        span,
-        dispatcher: tracing::dispatcher::get_default(Clone::clone),
-        command,
-    };
-    runtime
-        .jobs
-        .try_send(job)
-        .map_err(|_| TemplateError::boundary("template supervisor unavailable"))?;
-    // Dropping this receiver cancels queued or executing work. The independent
-    // supervisor retains its permits until pipe teardown and child reaping.
-    result
-        .await
-        .map_err(|_| TemplateError::boundary("template supervisor unavailable"))?
+    runtime.submit(request, spool_pins, started).await
 }
 
 async fn supervise(

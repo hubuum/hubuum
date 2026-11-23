@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::{Value, json};
 
 impl MemoryStorage {
     pub(super) async fn request_cancellation(
@@ -160,19 +161,7 @@ impl MemoryStorage {
                 Some("Remote dispatch admitted; outcome is not yet known".to_string()),
             ),
         );
-        crate::backup::store_remote_call_result(&mut state, lease.task_id(), artifact, now)?;
-        if let Some(row) = state.remote_call_results.iter_mut().find(|row| {
-            row.get("task_id").and_then(serde_json::Value::as_i64)
-                == Some(i64::from(lease.task_id().id()))
-        }) {
-            let mut fields = row.fields().clone();
-            fields.insert(
-                "side_effect_state".to_string(),
-                serde_json::json!("possibly_sent"),
-            );
-            *row = StorageBackupRow::try_from_value(serde_json::Value::Object(fields))
-                .map_err(invalid_contract_value)?;
-        }
+        state.store_remote_call_result(lease.task_id(), artifact, now, control.phase())?;
         state
             .tasks
             .get_mut(&lease.task_id().id())
@@ -207,6 +196,74 @@ impl MemoryState {
         Ok(())
     }
 
+    pub(super) fn store_remote_call_result(
+        &mut self,
+        task_id: TaskId,
+        artifact: StorageRemoteCallTaskArtifact,
+        created_at: DateTime<Utc>,
+        phase: StorageTaskExecutionPhase,
+    ) -> Result<(), StorageError> {
+        let (target, response, outcome) = artifact.into_parts();
+        let target = target.into_parts();
+        let (response_status, response_headers, response_body_preview) = response.into_parts();
+        let (duration_ms, success, error) = outcome.into_parts();
+        let previous = self.remote_call_results.iter().find(|row| {
+            row.get("task_id").and_then(Value::as_i64) == Some(i64::from(task_id.id()))
+        });
+        let id = match previous
+            .and_then(|row| row.get("id"))
+            .and_then(Value::as_i64)
+        {
+            Some(id) => id,
+            None => self
+                .remote_call_results
+                .iter()
+                .filter_map(|r| r.get("id").and_then(Value::as_i64))
+                .max()
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or_else(|| {
+                    StorageError::backend_failure(
+                        "Invalid logical backup field 'remote result sequence'",
+                    )
+                })?,
+        };
+        let created_at = previous
+            .and_then(|row| row.get("created_at"))
+            .cloned()
+            .unwrap_or(json!(created_at));
+        let side_effect_state = if response_status.is_some() {
+            "response_received"
+        } else if matches!(phase, StorageTaskExecutionPhase::RemoteDispatched { .. }) {
+            "possibly_sent"
+        } else {
+            "not_sent"
+        };
+        let evidence = previous
+            .and_then(|row| row.get("logical_identity"))
+            .cloned()
+            .unwrap_or_else(|| {
+                json!(self.logical_identities.task_outcome(
+                    task_id,
+                    target.target_id(),
+                    Some((target.subject_type(), target.subject_id()))
+                ))
+            });
+        let result = StorageBackupRow::try_from_value(json!({
+        "logical_identity": evidence, "id": id, "task_id": task_id.id(), "target_id": target.target_id().map(RemoteTargetId::id),
+        "subject_type": target.subject_type().as_str(), "subject_id": target.subject_id().id(),
+        "method": target.method().map_or("unknown", |method| method.as_str()), "rendered_url": target.rendered_url(),
+        "response_status": response_status, "response_headers": response_headers, "response_body_preview": response_body_preview,
+        "duration_ms": duration_ms, "success": success, "error": error, "created_at": created_at,
+        "side_effect_state": side_effect_state
+    })).map_err(invalid_contract_value)?;
+        self.remote_call_results.retain(|row| {
+            row.get("task_id").and_then(Value::as_i64) != Some(i64::from(task_id.id()))
+        });
+        self.remote_call_results.push(result);
+        Ok(())
+    }
+
     pub(super) fn finish_stopped_task(
         &mut self,
         id: TaskId,
@@ -219,19 +276,15 @@ impl MemoryState {
         })?;
         let kind = task.kind;
         let counts = if kind == StorageTaskKind::Import {
-            let results = self.import_task_results.get(&id.id());
-            let processed = results.map_or(0, |results| {
-                results
-                    .iter()
-                    .filter(|result| result.outcome() != "unattempted")
-                    .count()
-            });
-            let failed = results.map_or(0, |results| {
-                results
-                    .iter()
-                    .filter(|result| matches!(result.outcome(), "failed" | "stale_revision"))
-                    .count()
-            });
+            let results = self.import_task_results.for_task(id);
+            let processed = results
+                .iter()
+                .filter(|result| result.outcome() != "unattempted")
+                .count();
+            let failed = results
+                .iter()
+                .filter(|result| matches!(result.outcome(), "failed" | "stale_revision"))
+                .count();
             StorageTaskResultCounts::try_new(
                 i32::try_from(processed)
                     .map_err(|_| StorageError::internal("Import result count overflow"))?,
@@ -295,6 +348,24 @@ impl MemoryState {
         } else {
             format!("Task stopped: {}", reason.as_str())
         };
+        let unattempted_result = if kind == StorageTaskKind::Import && unattempted > 0 {
+            let result_id = self.import_task_results.id_cursor().allocate()?;
+            let result = StorageImportTaskResult::builder(
+                result_id,
+                id,
+                "task",
+                "not_attempted",
+                "unattempted",
+                now,
+            )
+            .details(Some(
+                serde_json::json!({"count": unattempted, "reason": reason.as_str()}),
+            ))
+            .build();
+            Some(result)
+        } else {
+            None
+        };
         if status == StorageTaskStatus::Cancelled {
             self.schema_profile_outputs.remove(&id.id());
             self.export_outputs.remove(&id.id());
@@ -324,22 +395,7 @@ impl MemoryState {
                 work.finish(StorageSchemaWorkStatus::Cancelled, epoch);
             }
         }
-        if kind == StorageTaskKind::Import && unattempted > 0 {
-            let result_id = ImportTaskResultId::new(self.next_import_result_id)
-                .map_err(|error| StorageError::internal(error.to_string()))?;
-            self.next_import_result_id += 1;
-            let result = StorageImportTaskResult::builder(
-                result_id,
-                id,
-                "task",
-                "not_attempted",
-                "unattempted",
-                now,
-            )
-            .details(Some(
-                serde_json::json!({"count": unattempted, "reason": reason.as_str()}),
-            ))
-            .build();
+        if let Some(result) = unattempted_result {
             self.store_import_result(result);
         }
         if remote_possible {
@@ -407,6 +463,45 @@ mod tests {
 
     use super::*;
     use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
+
+    #[test]
+    fn updating_a_dispatched_result_preserves_its_id_when_the_sequence_is_full() {
+        let mut state = MemoryState::new();
+        let task_id = TaskId::new(1).unwrap();
+        let now = Utc::now();
+        state.remote_call_results.push(
+            StorageBackupRow::try_from_value(json!({
+                "id": i64::MAX,
+                "task_id": task_id.id(),
+                "created_at": now
+            }))
+            .unwrap(),
+        );
+        let target = StorageRemoteCallArtifactTarget::new(
+            None,
+            StorageRemoteTargetSubjectType::Object,
+            ResourceId::new(1).unwrap(),
+            Some(StorageRemoteTargetHttpMethod::Post),
+            "https://example.invalid/dispatch",
+        );
+        let artifact = StorageRemoteCallTaskArtifact::new(
+            target,
+            StorageRemoteCallArtifactResponse::new(Some(200), None, None),
+            StorageRemoteCallArtifactOutcome::new(1, true, None),
+        );
+        state
+            .store_remote_call_result(
+                task_id,
+                artifact,
+                now,
+                StorageTaskExecutionPhase::RemoteDispatched { at: now },
+            )
+            .unwrap();
+        let [row] = state.remote_call_results.as_slice() else {
+            panic!("expected a single updated result")
+        };
+        assert_eq!(row.get("id").and_then(Value::as_i64), Some(i64::MAX));
+    }
 
     fn run(future: impl Future<Output = ()>) {
         tokio::runtime::Builder::new_current_thread()
@@ -618,7 +713,7 @@ mod tests {
             .unwrap();
         let mut staged = storage.state.read().await.unwrap().clone();
         let generation = staged.generation.clone();
-        staged.next_collection_id += 1;
+        staged.collection_ids.allocate().unwrap();
         quarantine(&storage).await;
         let result = storage
             .state
@@ -682,7 +777,7 @@ mod tests {
             let (_, lease) = claim.into_parts();
             let mut staged = storage.state.read().await.unwrap().clone();
             let generation = staged.generation.clone();
-            staged.next_collection_id += 1;
+            staged.collection_ids.allocate().unwrap();
             storage
                 .request_task_cancellation(StorageTaskCancellationRequest::new(
                     &task,

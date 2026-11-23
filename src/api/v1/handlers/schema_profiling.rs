@@ -7,7 +7,10 @@ use hubuum_storage_core::{
     StorageTaskOutputLookup, TaskExecutionStorage, TaskMetadataDetails, TaskOutputMetadata,
 };
 
-use crate::api::{locations, openapi::ApiErrorResponse, response::ApiResponse};
+use crate::api::{
+    locations,
+    response::{ApiErrorResponse, ApiResponse},
+};
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::schema_profiling::{

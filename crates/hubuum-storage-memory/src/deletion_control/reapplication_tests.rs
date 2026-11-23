@@ -784,7 +784,13 @@ async fn worker_admission_observes_maintenance_and_preserves_its_permit(#[case] 
         .capture_application_execution(Some(owner.clone()))
         .await
         .unwrap();
-    storage.state.write_control().await.maintenance_state = MaintenanceState::Draining;
+    storage
+        .state
+        .write_control()
+        .await
+        .restore_coordinator
+        .start(RestoreJobId::new(1).unwrap())
+        .unwrap();
     let scope = if inherited {
         StorageExecutionScope::default().with_application_access(original.clone())
     } else {

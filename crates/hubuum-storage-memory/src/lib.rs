@@ -170,13 +170,6 @@ struct MemoryRestoreRecord {
     validation_summary: serde_json::Value,
 }
 
-#[derive(Clone, Copy)]
-struct MemoryRestoreInstance {
-    generation: i64,
-    drained: bool,
-    heartbeat_at: DateTime<Utc>,
-}
-
 struct MemoryEventAppend<'a> {
     entity_type: EntityType,
     entity_id: i32,
@@ -390,27 +383,26 @@ struct MemoryState {
     schema_work: BTreeMap<i32, StorageSchemaWork>,
     schema_findings: BTreeMap<(i32, i32), StorageSchemaImpactFinding>,
     schema_repair_reports: BTreeMap<i32, StorageSchemaRepairReport>,
-    next_collection_id: i32,
-    next_class_id: i32,
-    next_object_id: i32,
-    next_class_relation_id: i32,
-    next_object_relation_id: i32,
-    next_event_sequence: i64,
-    next_identity_scope_id: i32,
-    next_principal_id: i32,
-    next_group_id: i32,
-    next_token_id: i32,
-    next_task_id: i32,
-    next_import_result_id: i32,
-    next_computed_field_id: i32,
-    next_export_template_id: i32,
-    next_remote_target_id: i32,
-    next_authorization_grant_id: i32,
-    next_event_sink_id: i32,
-    next_event_subscription_id: i32,
-    next_event_delivery_id: i64,
-    next_history_id: i64,
-    next_restore_job_id: i64,
+    collection_ids: IdSequence,
+    class_ids: IdSequence,
+    object_ids: IdSequence,
+    class_relation_ids: IdSequence,
+    object_relation_ids: IdSequence,
+    event_sequences: IdSequence<i64>,
+    identity_scope_ids: IdSequence,
+    principal_ids: IdSequence,
+    group_ids: IdSequence,
+    token_ids: IdSequence,
+    task_ids: IdSequence,
+    computed_field_ids: IdSequence,
+    export_template_ids: IdSequence,
+    remote_target_ids: IdSequence,
+    authorization_grant_ids: IdSequence,
+    event_sink_ids: IdSequence,
+    event_subscription_ids: IdSequence,
+    delivery_ids: IdSequence<i64>,
+    history_ids: IdSequence<i64>,
+    restore_job_ids: IdSequence<i64>,
     fanout_event_cursor: i64,
     collections: BTreeMap<i32, StorageCollection>,
     classes: BTreeMap<i32, StorageClass>,
@@ -429,14 +421,11 @@ struct MemoryState {
     sessions: BTreeMap<Uuid, auth_sessions::MemorySession>,
     credential_activity:
         BTreeMap<credential_activity::ActivityOwner, credential_activity::MemoryActivity>,
-    credential_approvals:
-        BTreeMap<i32, (StorageCredentialClaim, StorageCredentialApprovalMetadata)>,
-    credential_approval_digests: BTreeMap<String, i32>,
-    next_credential_approval_id: i32,
+    credential_approvals: credential_approval::CredentialApprovals,
     service_accounts: BTreeMap<i32, StorageServiceAccount>,
     tasks: BTreeMap<i32, MemoryTaskRecord>,
     task_events: BTreeMap<i32, Vec<StorageTaskEvent>>,
-    import_task_results: BTreeMap<i32, Vec<StorageImportTaskResult>>,
+    import_task_results: import_results::ImportResults,
     import_execution_receipts: BTreeSet<(i32, usize)>,
     schema_profile_outputs: BTreeMap<i32, hubuum_storage_core::StorageSchemaProfileArtifact>,
     export_outputs: BTreeMap<i32, StorageExportOutput>,
@@ -447,15 +436,14 @@ struct MemoryState {
     computed_history: Vec<StorageComputedFieldHistory>,
     query_usage: BTreeMap<i32, StorageQueryUsageDeclaration>,
     runtime_settings: runtime_settings::MemoryRuntimeSettings,
-    next_query_usage_id: i32,
+    query_usage_ids: IdSequence,
     computation_states: BTreeMap<i32, StorageClassComputationState>,
     computed_rebuild_tasks: BTreeMap<i32, ClassId>,
     authorization_grants: BTreeMap<(i32, i32), StorageAuthorizationGrant>,
     event_sinks: BTreeMap<i32, StorageEventSink>,
     event_sink_grants: BTreeSet<(i32, i32)>,
     event_subscriptions: BTreeMap<i32, StorageEventSubscription>,
-    event_deliveries: BTreeMap<i64, StorageEventDelivery>,
-    event_delivery_claims: BTreeMap<i64, Uuid>,
+    event_deliveries: EventDeliveries,
     event_sink_schedule: BTreeMap<i32, (DateTime<Utc>, DateTime<Utc>)>,
     event_retention_batches: BTreeMap<Uuid, Vec<i64>>,
     history: Vec<MemoryHistoryEntry>,
@@ -465,14 +453,17 @@ struct MemoryState {
     restore_jobs: BTreeMap<i64, MemoryRestoreRecord>,
     restore_receipts: BTreeMap<i64, MemoryRestoreRecord>,
     event_dispatched_at: BTreeMap<i64, DateTime<Utc>>,
-    maintenance_state: MaintenanceState,
-    maintenance_restore_job_id: Option<RestoreJobId>,
-    maintenance_generation: i64,
-    restore_instances: BTreeMap<Uuid, MemoryRestoreInstance>,
+    restore_coordinator: restore_coordinator::RestoreCoordinator,
     events: Vec<StorageRecordedEvent>,
 }
 
 impl MemoryState {
+    fn ensure_audited_history_capacity(&self, entries: usize) -> Result<(), StorageError> {
+        self.history_ids.after(entries)?;
+        self.event_sequences.next()?;
+        Ok(())
+    }
+
     fn append_event_record(
         &mut self,
         request: MemoryEventAppend<'_>,
@@ -488,9 +479,8 @@ impl MemoryState {
             before_revision,
             after_revision,
         } = request;
-        let sequence = EventSequence::new(self.next_event_sequence)
+        let sequence = EventSequence::new(self.event_sequences.next()?)
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
-        self.next_event_sequence += 1;
         let event_id = Uuid::new_v4();
         let actor_user_id = context.actor_user_id();
         let principal = |principal_id| ProvenancePrincipal {
@@ -533,6 +523,7 @@ impl MemoryState {
             .logical_identities
             .event(&envelope, before_revision, after_revision);
         self.index_task_event(&envelope, &identity)?;
+        self.event_sequences.observe(sequence.get());
         let recorded = StorageRecordedEvent::new(envelope, before_revision, after_revision)
             .with_logical_identity(identity);
         let receipt = recorded.clone().into_audit_receipt();
@@ -591,6 +582,8 @@ impl MemoryState {
         operation: StorageHistoryOperation,
         context: &EventContext,
     ) -> Result<(), StorageError> {
+        let id = HistoryRecordId::new(self.history_ids.allocate()?)
+            .map_err(|error| StorageError::internal(error.to_string()))?;
         match &value {
             MemoryHistoryValue::Class(class) if operation == StorageHistoryOperation::Delete => {
                 self.schema_delete_class(class, context)?
@@ -618,9 +611,6 @@ impl MemoryState {
             }
             _ => {}
         }
-        let id = HistoryRecordId::new(self.next_history_id)
-            .map_err(|error| StorageError::internal(error.to_string()))?;
-        self.next_history_id += 1;
         let now = Utc::now();
         for previous in &mut self.history {
             if previous.valid_to.is_none()
@@ -889,9 +879,15 @@ mod computed_history;
 mod credential_activity;
 mod credential_approval;
 mod deletion_control;
+mod event_deliveries;
+use event_deliveries::EventDeliveries;
 mod events;
 mod execution;
+mod history;
+mod id_sequence;
+use id_sequence::IdSequence;
 mod identity;
+mod import_results;
 mod imports;
 mod logical_identity;
 mod object_filters;
@@ -899,6 +895,7 @@ mod operational;
 mod queries;
 mod query_usage;
 mod resources;
+mod restore_coordinator;
 mod runtime_settings;
 mod schema_evolution;
 mod state;
@@ -908,6 +905,7 @@ mod task_control;
 mod task_retention;
 mod task_scheduling;
 mod task_waits;
+mod token_issuance;
 use state_lock::MemoryStateLock;
 mod workflows;
 

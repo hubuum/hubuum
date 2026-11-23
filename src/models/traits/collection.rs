@@ -5,14 +5,13 @@ use crate::models::collection::{
 };
 use crate::models::group::GroupID;
 use crate::models::search::{FilterField, SortParam};
-use crate::services::storage_boundary::{
-    collection_create_to_storage, collection_from_storage, collection_update_to_storage,
-};
+
 use crate::storage::{StorageContext, storage_handle};
 use crate::traits::accessors::{CollectionAdapter, IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 use crate::traits::{CollectionAccessors, CursorPaginated, PermissionController};
 use hubuum_domain::CollectionId;
+use hubuum_storage_core::StorageCollectionUpdate;
 
 impl SaveAdapter for Collection {
     type Output = Collection;
@@ -29,13 +28,13 @@ impl SaveAdapter for Collection {
             .collection_store()
             .update_collection(
                 CollectionId::new(self.id)?,
-                collection_update_to_storage(updated_collection),
+                StorageCollectionUpdate::from(updated_collection),
                 &EventContext::system(),
             )
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 
     async fn save_adapter(
@@ -51,13 +50,13 @@ impl SaveAdapter for Collection {
             .collection_store()
             .update_collection(
                 CollectionId::new(self.id)?,
-                collection_update_to_storage(updated_collection),
+                StorageCollectionUpdate::from(updated_collection),
                 context,
             )
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 }
 
@@ -128,13 +127,13 @@ impl UpdateAdapter for UpdateCollection {
             .collection_store()
             .update_collection(
                 target_collection_id,
-                collection_update_to_storage(self.clone()),
+                self.clone().into(),
                 &EventContext::system(),
             )
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 
     async fn update_adapter(
@@ -145,15 +144,11 @@ impl UpdateAdapter for UpdateCollection {
     ) -> Result<Self::Output, ApiError> {
         storage_handle(pool)
             .collection_store()
-            .update_collection(
-                target_collection_id,
-                collection_update_to_storage(self.clone()),
-                context,
-            )
+            .update_collection(target_collection_id, self.clone().into(), context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 }
 
@@ -166,14 +161,11 @@ impl SaveAdapter for NewCollectionWithAssignee {
     ) -> Result<Collection, ApiError> {
         storage_handle(pool)
             .collection_store()
-            .create_collection(
-                collection_create_to_storage(self.clone()),
-                &EventContext::system(),
-            )
+            .create_collection(self.clone().into(), &EventContext::system())
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 
     async fn save_adapter(
@@ -183,11 +175,11 @@ impl SaveAdapter for NewCollectionWithAssignee {
     ) -> Result<Collection, ApiError> {
         storage_handle(pool)
             .collection_store()
-            .create_collection(collection_create_to_storage(self.clone()), context)
+            .create_collection(self.clone().into(), context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 }
 
@@ -257,7 +249,7 @@ impl CollectionAdapter for CollectionID {
             .get_collection(*self)
             .await
             .map_err(ApiError::from)
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 }
 
@@ -285,14 +277,11 @@ impl NewCollection {
         };
         storage_handle(backend)
             .collection_store()
-            .create_collection(
-                collection_create_to_storage(command),
-                &EventContext::system(),
-            )
+            .create_collection(command.into(), &EventContext::system())
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 }
 

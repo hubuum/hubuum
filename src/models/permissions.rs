@@ -5,8 +5,6 @@ use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 
-use super::search::ParsedQueryParam;
-
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone, Copy, ToSchema)]
 pub enum Permissions {
     ReadCollection,
@@ -250,13 +248,6 @@ impl PermissionsList {
             }
         }
         Self(permissions)
-    }
-
-    pub fn from_query_params(
-        query_params: Vec<ParsedQueryParam>,
-    ) -> Result<PermissionsList, ApiError> {
-        use crate::models::search::QueryParamsExt;
-        query_params.permissions()
     }
 
     pub fn contains(&self, item: &Permissions) -> bool {

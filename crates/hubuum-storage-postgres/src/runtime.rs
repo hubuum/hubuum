@@ -212,25 +212,6 @@ impl PostgresRuntime {
         &self.pool
     }
 
-    pub(crate) async fn effective_computed_reindex_batch_size(
-        &self,
-    ) -> Result<usize, PostgresStorageError> {
-        use hubuum_storage_core::{StorageRuntimeSettingsGroup, StorageRuntimeSettingsValue};
-        let snapshot = crate::operations::runtime_settings::load_runtime_settings(self).await?;
-        Ok(
-            match snapshot
-                .record(StorageRuntimeSettingsGroup::Tasks)
-                .assignment()
-                .value()
-            {
-                Some(StorageRuntimeSettingsValue::Tasks(policy)) => {
-                    *policy.computed_reindex_batch_size()
-                }
-                _ => self.computed_reindex_batch_size(),
-            },
-        )
-    }
-
     pub(crate) fn computed_reindex_batch_size(&self) -> usize {
         self.computed_reindex_batch_size.get()
     }

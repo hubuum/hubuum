@@ -23,7 +23,7 @@ impl MemoryState {
             .find(|record| record.class_id() == class_id && record.valid_to().is_none());
         let mut boundary = DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
             .expect("current time fits microsecond precision");
-        if let Some(previous) = previous {
+        if let Some(previous) = previous.as_ref() {
             if exists
                 && previous.definitions() == definitions
                 && previous.evaluator_version() == HISTORICAL_COMPUTED_EVALUATOR_VERSION
@@ -31,23 +31,31 @@ impl MemoryState {
                 return Ok(());
             }
             boundary = boundary.max(previous.valid_from() + Duration::microseconds(1));
+        }
+        let next = if exists {
+            let id = HistoryRecordId::new(self.history_ids.next()?)
+                .map_err(|error| StorageError::internal(error.to_string()))?;
+            Some(
+                StorageComputedFieldHistory::builder(class_id, id, boundary)
+                    .logical_identity(Some(
+                        self.logical_identities
+                            .computed_history(class_id, &definitions),
+                    ))
+                    .definitions(definitions)
+                    .build()
+                    .map_err(invalid_contract_value)?,
+            )
+        } else {
+            None
+        };
+        if let Some(previous) = previous {
             previous
                 .close_at(boundary)
                 .map_err(invalid_contract_value)?;
         }
-        if exists {
-            let id = HistoryRecordId::new(self.next_history_id)
-                .map_err(|error| StorageError::internal(error.to_string()))?;
-            let record = StorageComputedFieldHistory::builder(class_id, id, boundary)
-                .logical_identity(Some(
-                    self.logical_identities
-                        .computed_history(class_id, &definitions),
-                ))
-                .definitions(definitions)
-                .build()
-                .map_err(invalid_contract_value)?;
-            self.next_history_id += 1;
-            self.computed_history.push(record);
+        if let Some(next) = next {
+            self.history_ids.observe(next.history_entry_id().id());
+            self.computed_history.push(next);
         }
         Ok(())
     }

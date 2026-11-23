@@ -6,13 +6,16 @@
 //! does not unlock PostgreSQL rows: all locks last until transaction completion.
 
 use super::read_repair::{self, BatchResult, RepairQueue};
+use crate::operations::runtime_settings::load_runtime_settings_group;
 use crate::operations::task_execution;
 use crate::operations::task_rows::TaskRow;
 use crate::runtime::require_deletion_execution;
 use diesel::{ExpressionMethods, OptionalExtension, QueryDsl, SelectableHelper};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::TaskId;
 use hubuum_storage_core::{
-    StorageTaskEventInput, StorageTaskLease, StorageTaskResultCounts, StorageTaskTerminalStatus,
+    StorageRuntimeSettingsGroup, StorageRuntimeSettingsValue, StorageTaskEventInput,
+    StorageTaskLease, StorageTaskResultCounts, StorageTaskTerminalStatus,
     StorageTaskTerminalUpdate,
 };
 
@@ -188,7 +191,8 @@ impl LockedComputedObjects<'_> {
     ) -> Result<ReindexBatch, PostgresStorageError> {
         let connection = self.class.transaction.connection;
         let state = ensure_computation_state(connection, self.class.class_id).await?;
-        if state.evaluation_revision != target_revision || state.active_task_id != Some(claimed.id)
+        if state.evaluation_revision != target_revision
+            || state.active_task()?.map(TaskId::id) != Some(claimed.id)
         {
             return Ok(ReindexBatch::Superseded);
         }
@@ -214,13 +218,23 @@ impl LockedComputedObjects<'_> {
     }
 }
 
+async fn effective_computed_reindex_batch_size(
+    runtime: &PostgresRuntime,
+) -> Result<usize, PostgresStorageError> {
+    let record = load_runtime_settings_group(runtime, StorageRuntimeSettingsGroup::Tasks).await?;
+    Ok(match record.assignment().value() {
+        Some(StorageRuntimeSettingsValue::Tasks(policy)) => *policy.computed_reindex_batch_size(),
+        _ => runtime.computed_reindex_batch_size(),
+    })
+}
+
 pub(super) async fn reindex_batch(
     runtime: &PostgresRuntime,
     claimed: ClaimedTask,
     payload: &ComputedReindexPayload,
     cursor: i32,
 ) -> Result<ReindexBatch, PostgresStorageError> {
-    let batch_size = runtime.effective_computed_reindex_batch_size().await?;
+    let batch_size = effective_computed_reindex_batch_size(runtime).await?;
     with_computed_transaction(runtime, async move |mut transaction| {
         transaction.batch_size = batch_size;
         transaction
@@ -242,7 +256,7 @@ pub(super) async fn repair_queue_batch(
     lease: StorageTaskLease,
 ) -> Result<BatchResult, PostgresStorageError> {
     let claimed = task_execution::claimed_task(&lease)?;
-    let batch_size = runtime.effective_computed_reindex_batch_size().await?;
+    let batch_size = effective_computed_reindex_batch_size(runtime).await?;
     runtime
         .with_transaction(async move |connection| {
             require_deletion_execution(connection).await?;

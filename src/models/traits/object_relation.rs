@@ -1,9 +1,5 @@
 use crate::errors::ApiError;
 use crate::events::EventContext;
-use crate::services::storage_boundary::{
-    object_relation_create_to_storage, object_relation_from_storage,
-    object_relation_selector_to_storage, resolved_object_relation_from_storage,
-};
 use crate::services::{prepare_and_create_object_relation, resolve_and_delete_object_relation};
 
 use crate::models::{
@@ -21,12 +17,10 @@ async fn resolve_object_relation(
 ) -> Result<ResolvedObjectRelationTarget, ApiError> {
     storage_handle(backend)
         .object_relation_store()
-        .resolve_object_relation(object_relation_selector_to_storage(
-            ObjectRelationSelector::by_id(id),
-        ))
+        .resolve_object_relation(ObjectRelationSelector::by_id(id).into())
         .await
         .map_err(ApiError::from)
-        .and_then(resolved_object_relation_from_storage)
+        .map(ResolvedObjectRelationTarget::from)
 }
 
 impl IdAccessor for HubuumObjectRelationID {
@@ -129,13 +123,13 @@ impl SaveAdapter for NewHubuumObjectRelation {
         let storage = storage_handle(pool).object_relation_store();
         prepare_and_create_object_relation(
             storage.as_ref(),
-            object_relation_create_to_storage(self.clone())?,
+            self.clone().try_into()?,
             &EventContext::system(),
         )
         .await
         .map_err(ApiError::from)
         .map(|outcome| outcome.into_value())
-        .and_then(object_relation_from_storage)
+        .map(HubuumObjectRelation::from)
     }
 
     async fn save_adapter(
@@ -144,15 +138,11 @@ impl SaveAdapter for NewHubuumObjectRelation {
         context: &EventContext,
     ) -> Result<HubuumObjectRelation, ApiError> {
         let storage = storage_handle(pool).object_relation_store();
-        prepare_and_create_object_relation(
-            storage.as_ref(),
-            object_relation_create_to_storage(self.clone())?,
-            context,
-        )
-        .await
-        .map_err(ApiError::from)
-        .map(|outcome| outcome.into_value())
-        .and_then(object_relation_from_storage)
+        prepare_and_create_object_relation(storage.as_ref(), self.clone().try_into()?, context)
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .map(HubuumObjectRelation::from)
     }
 }
 

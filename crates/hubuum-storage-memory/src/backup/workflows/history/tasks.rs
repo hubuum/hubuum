@@ -41,7 +41,7 @@ pub(super) fn capture(
     }
     sections.insert(StorageBackupHistorySection::TerminalTasks, tasks);
     let mut results = Vec::new();
-    for r in state.import_task_results.values().flatten() {
+    for r in state.import_task_results.rows() {
         progress.scan_row()?;
         if !terminal(r.task_id().id()) {
             continue;
@@ -202,11 +202,7 @@ pub(super) fn restore(
         state
             .logical_identities
             .restore_association(Association::ImportResult(result.id()), r.identity()?);
-        state
-            .import_task_results
-            .entry(result.task_id().id())
-            .or_default()
-            .push(result);
+        state.import_task_results.insert(result);
     }
     let artifact_references =
         state.restore_export_artifacts(&sections[&StorageBackupHistorySection::ExportArtifacts])?;
@@ -262,16 +258,9 @@ pub(super) fn restore(
         state.export_outputs.insert(output.task_id().id(), output);
     }
     state.remote_call_results = sections[&StorageBackupHistorySection::RemoteCallResults].clone();
-    state.next_task_id = next_id(&state.tasks)?;
-    state.next_import_result_id = state
-        .import_task_results
-        .values()
-        .flatten()
-        .map(|v| v.id().id())
-        .max()
-        .unwrap_or(0)
-        .checked_add(1)
-        .ok_or_else(|| invalid("import result sequence"))?;
+    state
+        .task_ids
+        .observe(state.tasks.keys().next_back().copied().unwrap_or(0));
     Ok(())
 }
 

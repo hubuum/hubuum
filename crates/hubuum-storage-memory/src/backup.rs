@@ -203,11 +203,7 @@ fn enqueue_computed_rebuilds(state: &mut MemoryState) -> Result<(), StorageError
         .collect::<BTreeSet<_>>();
     for class_id in classes {
         let now = Utc::now();
-        let id = TaskId::new(state.next_task_id).map_err(|_| invalid("rebuild task id"))?;
-        state.next_task_id = state
-            .next_task_id
-            .checked_add(1)
-            .ok_or_else(|| invalid("task sequence"))?;
+        let id = TaskId::new(state.task_ids.allocate()?).map_err(|_| invalid("rebuild task id"))?;
         let record = MemoryTaskRecord {
             checkpoint: None,
             wait_token: None,
@@ -266,16 +262,6 @@ fn enqueue_computed_rebuilds(state: &mut MemoryState) -> Result<(), StorageError
     Ok(())
 }
 
-fn next_id<T>(values: &BTreeMap<i32, T>) -> Result<i32, StorageError> {
-    values
-        .keys()
-        .next_back()
-        .copied()
-        .unwrap_or(0)
-        .checked_add(1)
-        .ok_or_else(|| invalid("id sequence"))
-}
-
 pub(super) fn append_restore_event(
     state: &mut MemoryState,
     job: &MemoryRestoreRecord,
@@ -285,21 +271,15 @@ pub(super) fn append_restore_event(
     let (version, created_at, source_version) = metadata.into_parts();
     let (id, _, initiator, artifact, _, _) = job.job.summary().clone().into_parts();
     let initiator = initiator.into_parts();
-    let approval = state
-        .credential_approvals
-        .values()
-        .map(|(_, metadata)| metadata)
-        .filter(|metadata| {
-            metadata.restore_job_id() == Some(id) && metadata.consumed_at().is_some()
-        })
-        .max_by_key(|metadata| metadata.consumed_at());
+    let approval = state.credential_approvals.consumed_for_restore(id);
     let document = AuditDocument::try_new("System restore completed", None, None, json!({
         "restore_job_id": id.id(), "backup_sha256": artifact.sha256(), "credential_approval": approval, "backup_version": version,
         "backup_source_version": source_version, "backup_created_at": created_at, "includes_history": includes_history,
         "initiated_by": {"principal_id": initiator.principal_id().map(PrincipalId::id), "identity_scope": initiator.identity_scope(), "name": initiator.name()}
     })).map_err(|_| invalid("restore provenance"))?;
     let envelope = EventEnvelope::builder()
-        .id(EventSequence::new(state.next_event_sequence).map_err(|_| invalid("event sequence"))?)
+        .id(EventSequence::new(state.event_sequences.next()?)
+            .map_err(|_| invalid("event sequence"))?)
         .event_id(Uuid::new_v4())
         .occurred_at(Utc::now())
         .entity_type(EntityType::Restore)
@@ -311,10 +291,7 @@ pub(super) fn append_restore_event(
         .schema_version(document.schema_version())
         .try_build()
         .map_err(|_| invalid("restore provenance"))?;
-    state.next_event_sequence = state
-        .next_event_sequence
-        .checked_add(1)
-        .ok_or_else(|| invalid("event sequence"))?;
+    state.event_sequences.observe(envelope.id().get());
     let identity = state.logical_identities.event(&envelope, None, None);
     let references = job
         .logical_identity
@@ -381,6 +358,7 @@ fn record_relation_history(
     context: &EventContext,
 ) -> Result<(), StorageError> {
     let now = Utc::now();
+    let id = state.history_ids.next()?;
     let rows = state.relation_history.entry(section).or_default();
     for previous in rows.iter_mut() {
         if previous.get("id") == snapshot.get("id")
@@ -392,82 +370,11 @@ fn record_relation_history(
         }
     }
     let mut fields = snapshot.fields().clone();
-    fields.extend(json!({"history_entry_id": state.next_history_id, "operation": operation.as_str(), "valid_from": now,
+    fields.extend(json!({"history_entry_id": id, "operation": operation.as_str(), "valid_from": now,
         "valid_to": (operation == StorageHistoryOperation::Delete).then_some(now), "actor_kind": context.actor_kind().as_str(),
         "actor_principal_id": context.actor_user_id().map(PrincipalId::id), "initiator_principal_id": context.initiator_user_id().map(PrincipalId::id), "task_id": context.task_id().map(TaskId::id)
     }).as_object().expect("literal object").clone());
     rows.push(row(Value::Object(fields))?);
-    state.next_history_id = state
-        .next_history_id
-        .checked_add(1)
-        .ok_or_else(|| invalid("history sequence"))?;
-    Ok(())
-}
-
-pub(super) fn store_remote_call_result(
-    state: &mut MemoryState,
-    task_id: TaskId,
-    artifact: StorageRemoteCallTaskArtifact,
-    created_at: DateTime<Utc>,
-) -> Result<(), StorageError> {
-    let (target, response, outcome) = artifact.into_parts();
-    let target = target.into_parts();
-    let (response_status, response_headers, response_body_preview) = response.into_parts();
-    let (duration_ms, success, error) = outcome.into_parts();
-    let id = state
-        .remote_call_results
-        .iter()
-        .filter_map(|r| r.get("id").and_then(Value::as_i64))
-        .max()
-        .unwrap_or(0)
-        .checked_add(1)
-        .ok_or_else(|| invalid("remote result sequence"))?;
-    let previous = state
-        .remote_call_results
-        .iter()
-        .find(|row| row.get("task_id").and_then(Value::as_i64) == Some(i64::from(task_id.id())));
-    let id = previous
-        .and_then(|row| row.get("id"))
-        .and_then(Value::as_i64)
-        .unwrap_or(id);
-    let created_at = previous
-        .and_then(|row| row.get("created_at"))
-        .cloned()
-        .unwrap_or(json!(created_at));
-    let dispatched = state.tasks.get(&task_id.id()).is_some_and(|task| {
-        matches!(
-            task.control.phase(),
-            StorageTaskExecutionPhase::RemoteDispatched { .. }
-        )
-    });
-    let side_effect_state = if response_status.is_some() {
-        "response_received"
-    } else if dispatched {
-        "possibly_sent"
-    } else {
-        "not_sent"
-    };
-    let evidence = previous
-        .and_then(|row| row.get("logical_identity"))
-        .cloned()
-        .unwrap_or_else(|| {
-            json!(state.logical_identities.task_outcome(
-                task_id,
-                target.target_id(),
-                Some((target.subject_type(), target.subject_id()))
-            ))
-        });
-    state
-        .remote_call_results
-        .retain(|row| row.get("task_id").and_then(Value::as_i64) != Some(i64::from(task_id.id())));
-    state.remote_call_results.push(row(json!({
-        "logical_identity": evidence,
-        "id": id, "task_id": task_id.id(), "target_id": target.target_id().map(RemoteTargetId::id),
-        "subject_type": target.subject_type().as_str(), "subject_id": target.subject_id().id(),
-        "method": target.method().map_or("unknown", |method| method.as_str()), "rendered_url": target.rendered_url(),
-        "response_status": response_status, "response_headers": response_headers, "response_body_preview": response_body_preview,
-        "duration_ms": duration_ms, "success": success, "error": error, "created_at": created_at,
-        "side_effect_state": side_effect_state
-    }))?);
+    state.history_ids.observe(id);
     Ok(())
 }
