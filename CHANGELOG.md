@@ -12,6 +12,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Remove the unused Actix Web cookie feature and its dependency on
   `cookie` 0.16.2 (RUSTSEC-2026-0594).
 
+- Require `url` 2.5.9 or later to fix a stack overflow during URL origin
+  calculation (RUSTSEC-2026-0592).
+
 ## [0.0.23] - 2026-11-21
 
 ### Security
