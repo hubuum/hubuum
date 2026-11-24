@@ -15,6 +15,24 @@ mod workflows;
 #[cfg(test)]
 mod tests;
 
+pub(super) fn bounded_encoded_bytes(
+    value: &impl serde::Serialize,
+    limit: u64,
+) -> Result<Option<u64>, StorageError> {
+    // Reuse the existing bounded JSON writer without allocating a payload copy.
+    // No valid JSON value can fit a zero-byte remainder.
+    if limit == 0 {
+        return Ok(None);
+    }
+    let budget = StorageBackupBudget::new(usize::try_from(limit).unwrap_or(usize::MAX), 1)
+        .map_err(invalid_contract_value)?;
+    match budget.serialize_into(value, std::io::sink()) {
+        Ok(bytes) => Ok(Some(bytes as u64)),
+        Err(error) if error.kind() == StorageErrorKind::InputTooLarge => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 fn row(value: Value) -> Result<StorageBackupRow, StorageError> {
     StorageBackupRow::try_from_value(value).map_err(invalid_contract_value)
 }

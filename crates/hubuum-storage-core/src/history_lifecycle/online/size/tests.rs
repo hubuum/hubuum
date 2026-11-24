@@ -307,6 +307,65 @@ fn intent_identity_cannot_reuse_a_pressure_operation() {
 }
 
 #[rstest]
+#[case::local_selection_before_end(true, false)]
+#[case::checkpoint_selection_before_end(false, false)]
+#[case::local_selection_after_end(true, true)]
+#[case::checkpoint_selection_after_end(false, true)]
+fn recovery_checks_retained_selection_against_the_combined_pressure_lineage(
+    #[case] local_selection: bool,
+    #[case] select_after_end: bool,
+) {
+    let (initial, mut rows) = fixture();
+    let (start, _) = plan(&initial, &rows);
+    let snapshot = |control: &HistoryLifecycleControl| {
+        HistoryLifecycleSnapshot::new(
+            control.clone(),
+            initial.fence().incarnation(),
+            initial.fence().deletion_revision(),
+            at(100),
+        )
+        .unwrap()
+    };
+    let common = snapshot(start.next());
+    let (end, _) = plan(&common, &[]);
+    let ended = snapshot(end.next());
+
+    let (selected, _) = admitted(&common, &rows);
+    let selected = if select_after_end {
+        rows.extend(fixture().1);
+        let (selected, manifest) = admitted(&selected, &rows);
+        assert_eq!(
+            manifest.fence().authority_revision(),
+            ended.fence().authority_revision()
+        );
+        selected
+    } else {
+        selected
+    };
+
+    let (local, checkpoint) = if local_selection {
+        (selected, ended)
+    } else {
+        (ended, selected)
+    };
+    let required = checkpoint.control().authority();
+    let recovery = HistoryLifecycleRecovery::new(local, required.clone());
+    if select_after_end {
+        assert!(recovery.is_err());
+    } else {
+        let recovery = recovery.unwrap();
+        let recovered =
+            HistoryLifecycleControl::decode(&recovery.recovered().encode().unwrap()).unwrap();
+        assert!(recovered.authority().covers(required));
+        assert!(
+            recovered
+                .authority()
+                .covers(recovery.expected().authority())
+        );
+    }
+}
+
+#[rstest]
 #[case::pressure_ended(false)]
 #[case::new_hold(true)]
 fn cleanup_preserves_original_size_cause_but_rechecks_holds(#[case] held: bool) {

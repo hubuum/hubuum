@@ -133,7 +133,7 @@ impl MemoryHistoryValue {
             Self::Collection(value) => value.id(),
             Self::Class(value) => value.collection_id(),
             Self::Object(value) => value.collection_id(),
-            Self::ExportTemplate(value) => value.clone().into_parts().1,
+            Self::ExportTemplate(value) => value.collection_id(),
             Self::RemoteTarget(value) => value.collection_id(),
         }
     }
@@ -149,8 +149,17 @@ impl MemoryHistoryValue {
     }
 }
 
+// The resource snapshot is immutable. Clocks and identity evidence can change
+// on close or restore and are measured from the current metadata on every scan.
+#[derive(Clone, Copy)]
+struct MemoryHistoryResourceSize {
+    encoded: Option<u64>,
+    logical: Option<HistoryLogicalBytes>,
+}
+
 #[derive(Clone)]
 struct MemoryHistoryEntry {
+    resource_size: MemoryHistoryResourceSize,
     // Ordinary history mixes native tables whose restored record IDs may overlap.
     scan_position: u64,
     logical_identity: StorageIdentityEvidence,
@@ -237,7 +246,7 @@ impl MemoryHistoryEntry {
             MemoryHistoryValue::RemoteTarget(_) => StorageIdentityHistoryKind::RemoteTarget,
         }
     }
-    fn metadata(&self) -> Result<StorageHistoryMetadata, StorageError> {
+    fn interval_metadata(&self) -> Result<StorageHistoryMetadata, StorageError> {
         StorageHistoryMetadata::try_new(
             self.operation,
             self.valid_from,
@@ -245,14 +254,16 @@ impl MemoryHistoryEntry {
             self.id,
             self.value.revision(),
         )
-        .map(|metadata| {
-            metadata
-                .actor(self.actor_id, self.actor_kind.clone())
-                .initiator_principal_id(self.initiator_principal_id)
-                .task_id(self.task_id)
-                .with_logical_identity(self.logical_identity.clone())
-        })
+        .map(|metadata| metadata.with_logical_identity(self.logical_identity.clone()))
         .map_err(invalid_contract_value)
+    }
+
+    fn metadata(&self) -> Result<StorageHistoryMetadata, StorageError> {
+        Ok(self
+            .interval_metadata()?
+            .actor(self.actor_id, self.actor_kind.clone())
+            .initiator_principal_id(self.initiator_principal_id)
+            .task_id(self.task_id))
     }
 }
 
@@ -596,6 +607,7 @@ impl MemoryState {
         operation: StorageHistoryOperation,
         context: &EventContext,
     ) -> Result<(), StorageError> {
+        let resource_size = value.history_resource_size()?;
         let id = HistoryRecordId::new(self.history_ids.allocate()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
         match &value {
@@ -638,6 +650,7 @@ impl MemoryState {
             .logical_identities
             .history(&value, operation, Some(context));
         self.history.push(MemoryHistoryEntry {
+            resource_size,
             scan_position: id.id() as u64,
             logical_identity,
             id,

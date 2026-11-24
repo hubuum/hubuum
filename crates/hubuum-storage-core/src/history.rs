@@ -669,12 +669,20 @@ impl StorageObjectHistoryRecord {
         record: StorageObject,
         metadata: StorageHistoryMetadata,
     ) -> Result<Self, StorageValidationError> {
+        Self::validate_revision(&record, &metadata)?;
+        Ok(Self { record, metadata })
+    }
+
+    pub(crate) fn validate_revision(
+        record: &StorageObject,
+        metadata: &StorageHistoryMetadata,
+    ) -> Result<(), StorageValidationError> {
         if record.revision() != metadata.revision() {
             return Err(StorageValidationError::invalid(
                 "object history record and metadata revisions must match",
             ));
         }
-        Ok(Self { record, metadata })
+        Ok(())
     }
 
     #[must_use]

@@ -1,6 +1,7 @@
 mod accounting;
 mod expiry;
 use super::*;
+use crate::backup::bounded_encoded_bytes;
 use serde_json::Value;
 use std::time::{Duration as StdDuration, Instant};
 
@@ -2670,8 +2671,7 @@ impl MemoryState {
                 ExpirySource::Backup(row) => {
                     let raw = row.get("logical_identity").filter(|value| !value.is_null());
                     let evidence = if let Some(raw) = raw {
-                        let Some(bytes) = expiry::bounded_encoded_bytes(raw, remaining_bytes)?
-                        else {
+                        let Some(bytes) = bounded_encoded_bytes(raw, remaining_bytes)? else {
                             byte_limit_reached = true;
                             break;
                         };
@@ -2714,7 +2714,7 @@ impl MemoryState {
                 }
             };
             if let Some(Cow::Borrowed(evidence)) = evidence {
-                let Some(bytes) = expiry::bounded_encoded_bytes(evidence, remaining_bytes)? else {
+                let Some(bytes) = bounded_encoded_bytes(evidence, remaining_bytes)? else {
                     byte_limit_reached = true;
                     break;
                 };

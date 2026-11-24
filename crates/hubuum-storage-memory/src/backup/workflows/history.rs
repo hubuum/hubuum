@@ -2,12 +2,11 @@ use super::*;
 
 mod tasks;
 
-impl MemoryHistoryEntry {
-    pub(crate) fn backup_history_row(
+impl MemoryHistoryValue {
+    fn backup_resource(
         &self,
     ) -> Result<(StorageBackupHistorySection, StorageBackupRow), StorageError> {
-        let entry = self;
-        let (section, snapshot) = match &entry.value {
+        Ok(match self {
             MemoryHistoryValue::Collection(v) => (
                 StorageBackupHistorySection::CollectionHistory,
                 resources::collections(v)?,
@@ -28,11 +27,61 @@ impl MemoryHistoryEntry {
                 StorageBackupHistorySection::RemoteTargetHistory,
                 resources::remote_targets(v)?,
             ),
+        })
+    }
+
+    pub(crate) fn history_resource_size(&self) -> Result<MemoryHistoryResourceSize, StorageError> {
+        let (_, resource) = self.backup_resource()?;
+        let encoded = bounded_encoded_bytes(
+            &resource,
+            u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES),
+        )?;
+        // A value outside logical-accounting limits may still be stored and backed up.
+        let logical = HistoryLogicalBytes::measure_fields_json_v1(resource.fields()).ok();
+        Ok(MemoryHistoryResourceSize { encoded, logical })
+    }
+}
+
+impl MemoryHistoryEntry {
+    pub(crate) fn history_metadata(&self) -> impl serde::Serialize + '_ {
+        #[derive(serde::Serialize)]
+        struct Metadata<'a> {
+            logical_identity: &'a StorageIdentityEvidence,
+            history_entry_id: HistoryRecordId,
+            operation: &'a str,
+            valid_from: DateTime<Utc>,
+            valid_to: Option<DateTime<Utc>>,
+            actor_principal_id: Option<PrincipalId>,
+            actor_kind: Option<&'a str>,
+            initiator_principal_id: Option<PrincipalId>,
+            task_id: Option<TaskId>,
+        }
+        Metadata {
+            logical_identity: &self.logical_identity,
+            history_entry_id: self.id,
+            operation: self.operation.as_str(),
+            valid_from: self.valid_from,
+            valid_to: self.valid_to,
+            actor_principal_id: self.actor_id,
+            actor_kind: self.actor_kind.as_deref(),
+            initiator_principal_id: self.initiator_principal_id,
+            task_id: self.task_id,
+        }
+    }
+
+    pub(crate) fn backup_history_row(
+        &self,
+    ) -> Result<(StorageBackupHistorySection, StorageBackupRow), StorageError> {
+        let (section, resource) = self.value.backup_resource()?;
+        let Value::Object(mut fields) = resource.into_value() else {
+            unreachable!("typed backup row")
         };
-        let mut fields = snapshot.fields().clone();
-        fields.extend(json!({"logical_identity": entry.logical_identity, "history_entry_id": entry.id.id(), "operation": entry.operation.as_str(),
-            "valid_from": entry.valid_from, "valid_to": entry.valid_to, "actor_principal_id": entry.actor_id.map(PrincipalId::id),
-            "actor_kind": entry.actor_kind, "initiator_principal_id": entry.initiator_principal_id.map(PrincipalId::id), "task_id": entry.task_id.map(TaskId::id)}).as_object().expect("literal object").clone());
+        let Value::Object(metadata) = serde_json::to_value(self.history_metadata())
+            .map_err(|error| StorageError::internal(error.to_string()))?
+        else {
+            unreachable!("typed backup row")
+        };
+        fields.extend(metadata);
         Ok((section, row(Value::Object(fields))?))
     }
 }
@@ -319,6 +368,7 @@ pub(in crate::backup) fn restore_history(
             };
             state.history.push(MemoryHistoryEntry {
                 scan_position: 0,
+                resource_size: value.history_resource_size()?,
                 logical_identity: serde_json::from_value(r.value("logical_identity")?.clone())
                     .map_err(|_| invalid("logical_identity"))?,
                 id: HistoryRecordId::new(r.number("history_entry_id")?)

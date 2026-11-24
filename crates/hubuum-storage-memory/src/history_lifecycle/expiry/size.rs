@@ -22,26 +22,7 @@ pub(super) fn plan(
         selection.remaining_time().map_err(invalid_contract_value)?;
         match source {
             ExpirySource::History(row) if row.family() != family => {}
-            ExpirySource::History(row) => consider(
-                state,
-                &scan,
-                &row.backup_history_row()?.1,
-                Some(row),
-                &mut selection,
-            )?,
-            ExpirySource::Backup(row) => consider(state, &scan, row, None, &mut selection)?,
-            ExpirySource::Computed(row) => {
-                let raw = serde_json::to_value(row).map_err(|_| {
-                    StorageError::backend_failure("Cannot encode computed expiry metadata")
-                })?;
-                consider(
-                    state,
-                    &scan,
-                    &StorageBackupRow::try_from_value(raw).map_err(invalid_contract_value)?,
-                    None,
-                    &mut selection,
-                )?;
-            }
+            source => consider(state, &scan, source, &mut selection)?,
         }
     }
     selection.finish().map_err(invalid_contract_value)
@@ -50,65 +31,41 @@ pub(super) fn plan(
 fn consider(
     state: &MemoryState,
     scan: &HistoryLifecycleScan,
-    row: &StorageBackupRow,
-    source: Option<&MemoryHistoryEntry>,
+    source: ExpirySource<'_>,
     selection: &mut HistoryExpirySizeSelection,
 ) -> Result<(), StorageError> {
     let family = scan.key().family();
-    let raw = row
-        .get("logical_identity")
-        .filter(|value| !value.is_null())
+    let mut metadata_bytes = source
+        .identity_bytes()?
+        .ok_or_else(|| StorageError::unavailable("Size selection identity exceeds its budget"))?;
+    let evidence = source
+        .evidence()?
         .ok_or_else(|| StorageError::unavailable("Size selection identity is unresolved"))?;
-    let mut metadata_bytes =
-        bounded_encoded_bytes(raw, HistoryLifecycleScan::MAX_INPUT_BYTES as u64)?.ok_or_else(
-            || StorageError::unavailable("Size selection identity exceeds its budget"),
-        )?;
-    let evidence: StorageIdentityEvidence = serde_json::from_value(raw.clone())
-        .map_err(|_| StorageError::backend_failure("Invalid size selection identity"))?;
-    let time = |field| {
-        row.get(field)
-            .filter(|value| !value.is_null())
-            .cloned()
-            .map(serde_json::from_value::<DateTime<Utc>>)
-            .transpose()
-            .map_err(|_| StorageError::backend_failure("Invalid size selection interval"))
-    };
-    let from = time(if family == StorageIdentityHistoryKind::ClassSchema {
-        "occurred_at"
-    } else {
-        "valid_from"
-    })?
-    .ok_or_else(|| StorageError::backend_failure("Missing size selection interval"))?;
-    let until = time("valid_to")?;
-    let anchor = if family == StorageIdentityHistoryKind::ClassSchema {
-        Some(HistoryRetentionAnchor::SchemaEvent(from))
-    } else if row.get("operation").and_then(Value::as_str) == Some("delete") {
-        Some(HistoryRetentionAnchor::Deleted(from))
-    } else {
-        until.map(HistoryRetentionAnchor::Closed)
-    };
+    let interval = source
+        .interval(family)?
+        .ok_or_else(|| StorageError::backend_failure("Missing size selection interval"))?;
     let mut candidate = HistoryExpiryCandidate::from_evidence(
         family,
         &evidence,
-        anchor,
+        interval.anchor,
         state.history_candidate_has_dependency(family, &evidence),
     )
     .map_err(invalid_contract_value)?
     .ok_or_else(|| StorageError::unavailable("Size selection ancestry is unresolved"))?;
     let visible = state.history_identity_visible(family, Some(&evidence));
     let selected = visible && scan.includes(&candidate);
-    if selected && anchor.is_some() {
+    if selected && interval.anchor.is_some() {
         candidate = candidate
-            .with_native_interval(from, until)
+            .with_native_interval(interval.from, interval.until)
             .map_err(invalid_contract_value)?;
     }
-    let input_bytes =
-        bounded_encoded_bytes(row, u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES))?
-            .unwrap_or(u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES) + 1);
+    let input_bytes = source
+        .encoded_bytes()?
+        .unwrap_or(u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES) + 1);
     if input_bytes <= u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES)
         && selected
-        && anchor.is_some()
-        && let Some(source) = source
+        && interval.anchor.is_some()
+        && let Some(source) = source.entry()
         && let MemoryHistoryValue::Object(value) = &source.value
     {
         let Some(facts) = object_authorization(source, value)? else {

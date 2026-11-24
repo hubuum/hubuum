@@ -6,11 +6,154 @@ mod size;
 
 use super::*;
 use hubuum_storage_core::StorageValidationErrorKind;
+use serde::Deserialize;
+use std::borrow::Cow;
 
+#[derive(Clone, Copy)]
 pub(super) enum ExpirySource<'a> {
     History(&'a MemoryHistoryEntry),
     Backup(&'a StorageBackupRow),
     Computed(&'a StorageComputedFieldHistory),
+}
+
+pub(super) struct NativeHistoryInterval {
+    from: DateTime<Utc>,
+    until: Option<DateTime<Utc>>,
+    pub(super) anchor: Option<HistoryRetentionAnchor>,
+}
+
+impl<'a> ExpirySource<'a> {
+    fn entry(self) -> Option<&'a MemoryHistoryEntry> {
+        match self {
+            Self::History(entry) => Some(entry),
+            _ => None,
+        }
+    }
+
+    fn encoded_bytes(self) -> Result<Option<u64>, StorageError> {
+        let limit = u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES);
+        match self {
+            Self::History(entry) => {
+                let Some(resource) = entry.resource_size.encoded else {
+                    return Ok(None);
+                };
+                // Merging two nonempty objects replaces their adjacent braces with a comma.
+                Ok(
+                    bounded_encoded_bytes(&entry.history_metadata(), limit - resource + 1)?
+                        .map(|metadata| resource - 1 + metadata),
+                )
+            }
+            Self::Backup(row) => bounded_encoded_bytes(row, limit),
+            Self::Computed(row) => bounded_encoded_bytes(row, limit),
+        }
+    }
+
+    pub(super) fn identity_bytes(self) -> Result<Option<u64>, StorageError> {
+        let limit = HistoryLifecycleScan::MAX_INPUT_BYTES as u64;
+        match self {
+            Self::History(entry) => bounded_encoded_bytes(&entry.logical_identity, limit),
+            Self::Computed(row) => row
+                .logical_identity()
+                .map_or(Ok(Some(0)), |value| bounded_encoded_bytes(value, limit)),
+            Self::Backup(row) => row
+                .get("logical_identity")
+                .filter(|value| !value.is_null())
+                .map_or(Ok(Some(0)), |value| bounded_encoded_bytes(value, limit)),
+        }
+    }
+
+    pub(super) fn evidence(self) -> Result<Option<Cow<'a, StorageIdentityEvidence>>, StorageError> {
+        match self {
+            Self::History(entry) => Ok(Some(Cow::Borrowed(&entry.logical_identity))),
+            Self::Computed(row) => Ok(row.logical_identity().map(Cow::Borrowed)),
+            Self::Backup(row) => row
+                .get("logical_identity")
+                .filter(|value| !value.is_null())
+                .map(|value| StorageIdentityEvidence::deserialize(value).map(Cow::Owned))
+                .transpose()
+                .map_err(|_| StorageError::backend_failure("Invalid native history identity")),
+        }
+    }
+
+    pub(super) fn interval(
+        self,
+        family: StorageIdentityHistoryKind,
+    ) -> Result<Option<NativeHistoryInterval>, StorageError> {
+        let (from, until, deleted) = match self {
+            Self::History(entry) => (
+                entry.valid_from,
+                entry.valid_to,
+                entry.operation == StorageHistoryOperation::Delete,
+            ),
+            Self::Computed(row) => (row.valid_from(), row.valid_to(), false),
+            Self::Backup(row) => {
+                let time = |field| {
+                    row.get(field)
+                        .filter(|value| !value.is_null())
+                        .cloned()
+                        .map(serde_json::from_value::<DateTime<Utc>>)
+                        .transpose()
+                        .map_err(|_| {
+                            StorageError::backend_failure("Invalid native history interval")
+                        })
+                };
+                let start = if family == StorageIdentityHistoryKind::ClassSchema {
+                    "occurred_at"
+                } else {
+                    "valid_from"
+                };
+                let Some(from) = time(start)? else {
+                    return Ok(None);
+                };
+                (
+                    from,
+                    time("valid_to")?,
+                    row.get("operation").and_then(Value::as_str) == Some("delete"),
+                )
+            }
+        };
+        let anchor = if family == StorageIdentityHistoryKind::ClassSchema {
+            Some(HistoryRetentionAnchor::SchemaEvent(from))
+        } else if deleted {
+            Some(HistoryRetentionAnchor::Deleted(from))
+        } else {
+            until.map(HistoryRetentionAnchor::Closed)
+        };
+        Ok(Some(NativeHistoryInterval {
+            from,
+            until,
+            anchor,
+        }))
+    }
+
+    pub(super) fn logical_bytes(self) -> Result<HistoryLogicalBytes, StorageError> {
+        let unmeasurable =
+            || StorageError::unavailable("History row exceeds logical accounting limits");
+        let result = match self {
+            Self::History(entry) => {
+                let resource = entry
+                    .resource_size
+                    .logical
+                    .ok_or_else(unmeasurable)?
+                    .value();
+                // Typed history metadata contains only strings, integers, nulls and containers,
+                // so its compact encoding is already the canonical logical encoding.
+                let metadata = bounded_encoded_bytes(
+                    &entry.history_metadata(),
+                    i64::MAX as u64 - resource + 1,
+                )?
+                .ok_or_else(unmeasurable)?;
+                HistoryLogicalBytes::new(resource - 1 + metadata)
+            }
+            Self::Backup(row) => HistoryLogicalBytes::measure_fields_json_v1(row.fields()),
+            Self::Computed(row) => {
+                let value = serde_json::to_value(row)
+                    .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+                HistoryLogicalBytes::measure_json_v1(&value)
+            }
+        };
+        result.map_err(|error| StorageError::unavailable(error.to_string()))
+    }
 }
 
 enum ScanStep {
@@ -224,9 +367,10 @@ fn find_copy(state: &MemoryState, member: &HistoryExpiryMember) -> Option<CopyLo
     };
     let matches_row = |row: &StorageBackupRow| {
         row.get("logical_identity")
-            .cloned()
-            .and_then(|raw| serde_json::from_value::<StorageIdentityEvidence>(raw).ok())
-            .is_some_and(|evidence| matches(&evidence))
+            .and_then(|evidence| evidence.get("subject"))
+            .and_then(|subject| StorageIdentitySubject::deserialize(subject).ok())
+            .and_then(|subject| subject.record_identity())
+            == Some(target)
     };
     use StorageIdentityHistoryKind as F;
     match family {
@@ -288,56 +432,28 @@ pub(super) fn remove_member_on(
             "Exact history copy is missing without its first receipt",
         ));
     };
-    let row = match location {
-        CopyLocation::History(index) => state.history[index].backup_history_row()?.1,
-        CopyLocation::Schema(index) => state.schema_history[index].clone(),
-        CopyLocation::Relation(section, index) => state.relation_history[&section][index].clone(),
-        CopyLocation::Computed(index) => StorageBackupRow::try_from_value(
-            serde_json::to_value(&state.computed_history[index]).map_err(|_| {
-                StorageError::backend_failure("Cannot encode computed history copy")
-            })?,
-        )
-        .map_err(invalid_contract_value)?,
+    let source = match location {
+        CopyLocation::History(index) => ExpirySource::History(&state.history[index]),
+        CopyLocation::Schema(index) => ExpirySource::Backup(&state.schema_history[index]),
+        CopyLocation::Relation(section, index) => {
+            ExpirySource::Backup(&state.relation_history[&section][index])
+        }
+        CopyLocation::Computed(index) => ExpirySource::Computed(&state.computed_history[index]),
     };
     let family = member.family();
     let target = member.target();
-    use StorageIdentityHistoryKind as F;
-    if bounded_encoded_bytes(&row, u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES))?.is_none() {
-        return Err(StorageError::input_too_large(
-            "Exact history copy exceeds removal budget",
-        ));
-    }
-    let time = |field| {
-        row.get(field)
-            .filter(|value| !value.is_null())
-            .cloned()
-            .map(serde_json::from_value::<DateTime<Utc>>)
-            .transpose()
-            .map_err(|_| StorageError::backend_failure("Invalid native history interval"))
-    };
-    let from = time(if family == F::ClassSchema {
-        "occurred_at"
-    } else {
-        "valid_from"
-    })?
-    .ok_or_else(|| StorageError::conflict("Native history start is missing"))?;
-    let until = time("valid_to")?;
-    let deleted = row.get("operation").and_then(Value::as_str) == Some("delete");
-    let anchor = if family == F::ClassSchema {
-        HistoryRetentionAnchor::SchemaEvent(from)
-    } else if deleted {
-        HistoryRetentionAnchor::Deleted(from)
-    } else {
-        HistoryRetentionAnchor::Closed(
-            until.ok_or_else(|| StorageError::conflict("History copy is no longer closed"))?,
-        )
-    };
-    let evidence: StorageIdentityEvidence = serde_json::from_value(
-        row.get("logical_identity")
-            .cloned()
-            .ok_or_else(|| StorageError::conflict("Exact history identity is missing"))?,
-    )
-    .map_err(|_| StorageError::backend_failure("Invalid native history identity"))?;
+    source.encoded_bytes()?.ok_or_else(|| {
+        StorageError::input_too_large("Exact history copy exceeds removal budget")
+    })?;
+    let interval = source
+        .interval(family)?
+        .ok_or_else(|| StorageError::conflict("Native history start is missing"))?;
+    let anchor = interval
+        .anchor
+        .ok_or_else(|| StorageError::conflict("History copy is no longer closed"))?;
+    let evidence = source
+        .evidence()?
+        .ok_or_else(|| StorageError::conflict("Exact history identity is missing"))?;
     let candidate = HistoryExpiryCandidate::from_evidence(
         family,
         &evidence,
@@ -346,7 +462,7 @@ pub(super) fn remove_member_on(
     )
     .map_err(invalid_contract_value)?
     .ok_or_else(|| StorageError::conflict("History removal identity is unresolved"))?
-    .with_native_interval(from, until)
+    .with_native_interval(interval.from, interval.until)
     .map_err(invalid_contract_value)?;
     member
         .validate_removal(
@@ -538,18 +654,14 @@ fn admit_age_on(
     })?;
     let family = request.scan().key().family();
     let mut window = request
-        .scan_window((state.next_history_id - 1) as u64)
+        .scan_window(state.history_ids.last() as u64)
         .map_err(invalid_contract_value)?;
     let rows = sources(state, family, window.after(), window.through());
     let remaining = rows.len();
     let mut input_bytes = 0;
     let mut metadata_bytes = 0;
-    let mut consider = |row: &StorageBackupRow,
-                        source: Option<&MemoryHistoryEntry>|
-     -> Result<ScanStep, StorageError> {
-        let Some(bytes) =
-            bounded_encoded_bytes(row, u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES))?
-        else {
+    let mut consider = |source: ExpirySource<'_>| -> Result<ScanStep, StorageError> {
+        let Some(bytes) = source.encoded_bytes()? else {
             return Ok(ScanStep::Oversized);
         };
         if bytes > u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES) - input_bytes {
@@ -557,54 +669,27 @@ fn admit_age_on(
         }
         input_bytes += bytes;
         let metadata_before_row = metadata_bytes;
-        let raw = row.get("logical_identity").filter(|value| !value.is_null());
-        if let Some(raw) = raw {
-            let Some(bytes) =
-                bounded_encoded_bytes(raw, HistoryLifecycleScan::MAX_INPUT_BYTES as u64)?
-            else {
-                return Ok(ScanStep::Oversized);
-            };
-            if bytes > HistoryLifecycleScan::MAX_INPUT_BYTES as u64 - metadata_bytes {
-                return Ok(ScanStep::Defer);
-            }
-            metadata_bytes += bytes;
-        }
-        let time = |field| {
-            row.get(field)
-                .filter(|value| !value.is_null())
-                .cloned()
-                .map(serde_json::from_value::<DateTime<Utc>>)
-                .transpose()
-                .map_err(|_| StorageError::backend_failure("Invalid native expiry interval"))
+        let Some(identity_bytes) = source.identity_bytes()? else {
+            return Ok(ScanStep::Oversized);
         };
-        let from = time(if family == StorageIdentityHistoryKind::ClassSchema {
-            "occurred_at"
-        } else {
-            "valid_from"
-        })?
-        .ok_or_else(|| StorageError::backend_failure("Missing native expiry start"))?;
-        let until = time("valid_to")?;
-        let deleted = row.get("operation").and_then(Value::as_str) == Some("delete");
-        if family != StorageIdentityHistoryKind::ClassSchema && until.is_none() && !deleted {
-            return Ok(ScanStep::Advance);
+        if identity_bytes > HistoryLifecycleScan::MAX_INPUT_BYTES as u64 - metadata_bytes {
+            return Ok(ScanStep::Defer);
         }
-        let Some(raw) = row.get("logical_identity").filter(|value| !value.is_null()) else {
+        metadata_bytes += identity_bytes;
+        let interval = source
+            .interval(family)?
+            .ok_or_else(|| StorageError::backend_failure("Missing native expiry start"))?;
+        let Some(anchor) = interval.anchor else {
             return Ok(ScanStep::Advance);
         };
-        let evidence: StorageIdentityEvidence = serde_json::from_value(raw.clone())
-            .map_err(|_| StorageError::backend_failure("Invalid native expiry identity"))?;
+        let Some(evidence) = source.evidence()? else {
+            return Ok(ScanStep::Advance);
+        };
         if evidence.has_unknown_restore_source()
             || !state.history_identity_visible(family, Some(&evidence))
         {
             return Ok(ScanStep::Advance);
         }
-        let anchor = if family == StorageIdentityHistoryKind::ClassSchema {
-            HistoryRetentionAnchor::SchemaEvent(from)
-        } else if deleted {
-            HistoryRetentionAnchor::Deleted(from)
-        } else {
-            HistoryRetentionAnchor::Closed(until.expect("closed above"))
-        };
         let Some(mut candidate) = HistoryExpiryCandidate::from_evidence(
             family,
             &evidence,
@@ -619,9 +704,9 @@ fn admit_age_on(
             return Ok(ScanStep::Advance);
         }
         candidate = candidate
-            .with_native_interval(from, until)
+            .with_native_interval(interval.from, interval.until)
             .map_err(invalid_contract_value)?;
-        if let Some(source) = source
+        if let Some(source) = source.entry()
             && let MemoryHistoryValue::Object(value) = &source.value
         {
             // Capture authorization only after bounded identity/scope selection.
@@ -670,23 +755,7 @@ fn admit_age_on(
         window.observe(position).map_err(invalid_contract_value)?;
         let step = match row {
             ExpirySource::History(row) if row.family() != family => ScanStep::Advance,
-            ExpirySource::History(row) => consider(&row.backup_history_row()?.1, Some(row))?,
-            ExpirySource::Backup(row) => consider(row, None)?,
-            ExpirySource::Computed(row) => {
-                if bounded_encoded_bytes(row, u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES))?
-                    .is_none()
-                {
-                    ScanStep::Oversized
-                } else {
-                    let raw = serde_json::to_value(row).map_err(|_| {
-                        StorageError::backend_failure("Cannot encode computed expiry source")
-                    })?;
-                    consider(
-                        &StorageBackupRow::try_from_value(raw).map_err(invalid_contract_value)?,
-                        None,
-                    )?
-                }
-            }
+            source => consider(source)?,
         };
         match step {
             ScanStep::Advance => window.advance(),
@@ -728,29 +797,10 @@ fn object_authorization(
     source: &MemoryHistoryEntry,
     object: &StorageObject,
 ) -> Result<Option<HistoryObjectAuthorizationFacts>, StorageError> {
-    let record = StorageObjectHistoryRecord::try_new(object.clone(), source.metadata()?)
-        .map_err(invalid_contract_value)?;
-    match HistoryObjectAuthorizationFacts::capture(record) {
+    match HistoryObjectAuthorizationFacts::capture_borrowed(object, &source.interval_metadata()?) {
         Ok(facts) => Ok(Some(facts)),
         Err(error) if error.kind() == StorageValidationErrorKind::ValueTooLarge => Ok(None),
         Err(error) => Err(invalid_contract_value(error)),
-    }
-}
-
-pub(super) fn bounded_encoded_bytes(
-    value: &impl serde::Serialize,
-    limit: u64,
-) -> Result<Option<u64>, StorageError> {
-    // Reuse the existing bounded JSON writer without allocating a payload copy.
-    // No valid JSON value can fit a zero-byte remainder.
-    if limit == 0 {
-        return Ok(None);
-    }
-    let budget = StorageBackupBudget::new(limit as usize, 1).map_err(invalid_contract_value)?;
-    match budget.serialize_into(value, std::io::sink()) {
-        Ok(bytes) => Ok(Some(bytes as u64)),
-        Err(error) if error.kind() == StorageErrorKind::InputTooLarge => Ok(None),
-        Err(error) => Err(error),
     }
 }
 
@@ -762,6 +812,67 @@ mod task_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[rstest::rstest]
+    #[case(StorageIdentityHistoryKind::Collection)]
+    #[case(StorageIdentityHistoryKind::Class)]
+    #[case(StorageIdentityHistoryKind::Object)]
+    #[case(StorageIdentityHistoryKind::ExportTemplate)]
+    #[case(StorageIdentityHistoryKind::RemoteTarget)]
+    #[tokio::test]
+    async fn native_measurements_match_the_complete_backup_after_closure(
+        #[case] family: StorageIdentityHistoryKind,
+    ) {
+        let storage = MemoryStorage::new();
+        progress_tests::seed(&storage, family, "measurement", "é\n\"").await;
+        let state = storage.state.read_control().await;
+        let rows: Vec<_> = state
+            .history
+            .iter()
+            .filter(|row| row.family() == family && row.valid_to.is_some())
+            .collect();
+        assert!(!rows.is_empty());
+        for row in rows {
+            let source = ExpirySource::History(row);
+            let (_, backup) = row.backup_history_row().unwrap();
+            assert_eq!(
+                source.encoded_bytes().unwrap(),
+                Some(serde_json::to_vec(&backup).unwrap().len() as u64)
+            );
+            assert_eq!(
+                source.logical_bytes().unwrap(),
+                HistoryLogicalBytes::measure_fields_json_v1(backup.fields()).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_resource_still_counts_toward_logical_pressure() {
+        let mut state = MemoryState::new();
+        let now = Utc::now();
+        let limit = HistoryExpiryInputBytes::MAX_BATCH_BYTES;
+        let metadata = StorageRecordMetadata::try_new(
+            ResourceId::new(2).unwrap(),
+            now,
+            now,
+            ResourceRevision::INITIAL,
+        )
+        .unwrap();
+        let collection =
+            StorageCollection::try_new(metadata, "large", "x".repeat(limit as usize), None)
+                .unwrap();
+        state
+            .append_history(
+                MemoryHistoryValue::Collection(collection),
+                StorageHistoryOperation::Create,
+                &EventContext::system(),
+            )
+            .unwrap();
+        let entry = state.history.last().unwrap();
+        let source = ExpirySource::History(entry);
+        assert!(source.encoded_bytes().unwrap().is_none());
+        assert!(source.logical_bytes().unwrap().value() > u64::from(limit));
+    }
 
     async fn schema_class(storage: &MemoryStorage, name: &str) -> StorageClass {
         storage

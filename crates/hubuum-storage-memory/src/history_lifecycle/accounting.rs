@@ -1,4 +1,4 @@
-use super::expiry::{ExpirySource, bounded_encoded_bytes, sources};
+use super::expiry::{ExpirySource, sources};
 use super::*;
 
 pub(super) async fn observe(
@@ -44,50 +44,28 @@ pub(super) fn fold_on(
     census: &mut HistorySizeCensus,
 ) -> Result<(), StorageError> {
     let started = std::time::Instant::now();
-    let mut consider = |row: &StorageBackupRow| -> Result<(), StorageError> {
+    let mut consider = |source: ExpirySource<'_>| -> Result<(), StorageError> {
         if started.elapsed() > std::time::Duration::from_secs(5) {
             return Err(StorageError::unavailable(
                 "Complete history accounting exceeded its time budget",
             ));
         }
-        let raw = row
-            .get("logical_identity")
-            .filter(|value| !value.is_null())
+        let metadata_bytes = source.identity_bytes()?.ok_or_else(|| {
+            StorageError::unavailable("History accounting identity exceeds its budget")
+        })?;
+        let evidence = source
+            .evidence()
+            .map_err(|_| StorageError::unavailable("History accounting has invalid identity"))?
             .ok_or_else(|| {
                 StorageError::unavailable("History accounting has unresolved identity")
             })?;
-        let metadata_bytes =
-            bounded_encoded_bytes(raw, HistoryLifecycleScan::MAX_INPUT_BYTES as u64)?.ok_or_else(
-                || StorageError::unavailable("History accounting identity exceeds its budget"),
-            )?;
-        let evidence: StorageIdentityEvidence = serde_json::from_value(raw.clone())
-            .map_err(|_| StorageError::unavailable("History accounting has invalid identity"))?;
-        let time = |field| {
-            row.get(field)
-                .filter(|value| !value.is_null())
-                .cloned()
-                .map(serde_json::from_value::<DateTime<Utc>>)
-                .transpose()
-                .map_err(|_| StorageError::backend_failure("Invalid history accounting clock"))
-        };
-        let from = time(if family == StorageIdentityHistoryKind::ClassSchema {
-            "occurred_at"
-        } else {
-            "valid_from"
-        })?
-        .ok_or_else(|| StorageError::backend_failure("Missing history accounting clock"))?;
-        let until = time("valid_to")?;
-        let anchor = if family == StorageIdentityHistoryKind::ClassSchema {
-            Some(HistoryRetentionAnchor::SchemaEvent(from))
-        } else if row.get("operation").and_then(Value::as_str) == Some("delete") {
-            Some(HistoryRetentionAnchor::Deleted(from))
-        } else {
-            until.map(HistoryRetentionAnchor::Closed)
-        };
-        let candidate = HistoryExpiryCandidate::from_evidence(family, &evidence, anchor, false)
-            .map_err(invalid_contract_value)?;
-        let bytes = HistoryLogicalBytes::measure_fields_json_v1(row.fields())
-            .map_err(|error| StorageError::unavailable(error.to_string()))?;
+        let interval = source
+            .interval(family)?
+            .ok_or_else(|| StorageError::backend_failure("Missing history accounting clock"))?;
+        let candidate =
+            HistoryExpiryCandidate::from_evidence(family, &evidence, interval.anchor, false)
+                .map_err(invalid_contract_value)?;
+        let bytes = source.logical_bytes()?;
         census
             .observe(candidate.as_ref(), bytes, metadata_bytes)
             .map_err(|error| StorageError::unavailable(error.to_string()))
@@ -100,16 +78,7 @@ pub(super) fn fold_on(
         }
         match source {
             ExpirySource::History(row) if row.family() != family => {}
-            ExpirySource::History(row) => consider(&row.backup_history_row()?.1)?,
-            ExpirySource::Backup(row) => consider(row)?,
-            ExpirySource::Computed(row) => {
-                let raw = serde_json::to_value(row).map_err(|_| {
-                    StorageError::backend_failure(
-                        "Cannot encode computed history accounting source",
-                    )
-                })?;
-                consider(&StorageBackupRow::try_from_value(raw).map_err(invalid_contract_value)?)?;
-            }
+            source => consider(source)?,
         }
     }
     Ok(())

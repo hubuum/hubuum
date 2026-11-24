@@ -10,6 +10,7 @@ use super::*;
 #[case("1e-7", 9)]
 #[case("-0.000", 1)]
 #[case("-12.3400", 6)]
+#[case("100e9223372036854775804", i64::MAX as u64)]
 #[case("[ 1.00, 0.001e3, null, false ]", 16)]
 fn logical_json_v1_normalizes_numbers(#[case] raw: &str, #[case] bytes: u64) {
     let value: Value = serde_json::from_str(raw).unwrap();
@@ -32,9 +33,11 @@ fn logical_json_v1_preserves_standard_string_escaping(#[case] value: &str) {
     );
 }
 
-#[test]
-fn logical_json_v1_rejects_exponent_expansion_outside_the_byte_range() {
-    let value: Value = serde_json::from_str("1e9223372036854775807").unwrap();
+#[rstest]
+#[case("1e9223372036854775807")]
+#[case("100e9223372036854775807")]
+fn logical_json_v1_rejects_exponent_expansion_outside_the_byte_range(#[case] raw: &str) {
+    let value: Value = serde_json::from_str(raw).unwrap();
     assert!(HistoryLogicalBytes::measure_json_v1(&value).is_err());
 }
 

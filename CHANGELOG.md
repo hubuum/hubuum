@@ -443,6 +443,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- History recovery keeps the database quarantined when a restored checkpoint and
+  local history disagree on whether size pressure still authorized an expiry
+  selection. Selections made before pressure ended remain recoverable.
+- History size accounting returns a validation error when a JSON number's
+  expanded decimal representation exceeds the supported byte count.
+- In-memory expiry scans check ordinary history row sizes without copying their
+  payloads. Size accounting includes policy lookup in its five-second deadline.
 - History policy inspection and previews omit copies already owned by expiry.
   A review that expires or loses hold protection during commit returns its
   specific conflict reason. Policy listing reports recovery when protected task

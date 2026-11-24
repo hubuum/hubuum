@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
+use std::time::{Duration, Instant};
 
 use bigdecimal::BigDecimal;
 use hubuum_domain::VersionIdentity;
@@ -52,15 +53,20 @@ fn json_bytes(value: &Value, depth: u16) -> Result<u64, StorageValidationError> 
         Value::String(value) => string_bytes(value),
         Value::Number(value) => {
             let decimal = BigDecimal::from_str(&value.to_string())
-                .map_err(|_| invalid("Logical history number exceeds the v1 format"))?
-                .normalized();
-            let (coefficient, scale) = decimal.as_bigint_and_exponent();
+                .map_err(|_| invalid("Logical history number exceeds the v1 format"))?;
+            let (coefficient, scale) = decimal.into_bigint_and_scale();
             let coefficient = coefficient.to_string();
             if coefficient == "0" {
                 return Ok(1);
             }
             let sign = u64::from(coefficient.starts_with('-'));
-            let digits = coefficient.trim_start_matches('-').len() as u64;
+            let magnitude = coefficient.trim_start_matches('-');
+            let significant = magnitude.trim_end_matches('0');
+            let trailing_zeros = (magnitude.len() - significant.len()) as i64;
+            let scale = scale
+                .checked_sub(trailing_zeros)
+                .ok_or_else(|| invalid("Logical history bytes exceed their supported range"))?;
+            let digits = significant.len() as u64;
             // Count expansion without allocating an exponent-sized string.
             let unsigned = if scale <= 0 {
                 add(digits, scale.unsigned_abs())?
@@ -140,7 +146,7 @@ pub struct HistorySizeCensus {
     seen: BTreeMap<(ResourceIdentity, VersionIdentity), HistoryLogicalBytes>,
     metadata_bytes: u64,
     failed: bool,
-    started: std::time::Instant,
+    started: Instant,
 }
 impl HistorySizeCensus {
     pub const MAX_ROWS: usize = 100_000;
@@ -149,10 +155,11 @@ impl HistorySizeCensus {
         snapshot: HistoryLifecycleSnapshot,
         reference: &HistoryPolicyReference,
     ) -> Result<Self, StorageValidationError> {
+        let started = Instant::now();
         let policy = snapshot.control().authority().policies().exact(reference)?;
         HistorySizePressure::measure(&policy, HistoryLogicalBytes::new(0)?, None)?;
         let family = reference.key().family();
-        Ok(Self::with_policies(snapshot, family, vec![policy]))
+        Ok(Self::with_policies(snapshot, family, vec![policy], started))
     }
     /// One complete family fold shares identity and byte budgets across all
     /// immutable size-bearing sources, including distinct relation endpoints.
@@ -160,19 +167,19 @@ impl HistorySizeCensus {
         snapshot: HistoryLifecycleSnapshot,
         family: StorageIdentityHistoryKind,
     ) -> Result<Self, StorageValidationError> {
+        let started = Instant::now();
         let policies = snapshot.control().authority().policies().records().iter()
             .filter(|record| record.proposal().key().family() == family)
-            .map(HistoryPolicyReference::from)
-            .map(|reference| snapshot.control().authority().policies().exact(&reference))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter().filter(|policy| matches!(policy.binding(), HistoryPolicyBinding::Expire { trigger, .. } if trigger.size().is_some()))
+            .filter(|record| matches!(record.proposal().binding(), HistoryPolicyBinding::Expire { trigger, .. } if trigger.size().is_some()))
+            .map(HistoryEffectivePolicy::from_record)
             .collect();
-        Ok(Self::with_policies(snapshot, family, policies))
+        Ok(Self::with_policies(snapshot, family, policies, started))
     }
     fn with_policies(
         snapshot: HistoryLifecycleSnapshot,
         family: StorageIdentityHistoryKind,
         policies: Vec<HistoryEffectivePolicy>,
+        started: Instant,
     ) -> Self {
         let policy_indices = policies
             .iter()
@@ -201,7 +208,7 @@ impl HistorySizeCensus {
             seen: Default::default(),
             metadata_bytes: 0,
             failed: false,
-            started: std::time::Instant::now(),
+            started,
         }
     }
     pub fn observe(
@@ -220,7 +227,7 @@ impl HistorySizeCensus {
         bytes: HistoryLogicalBytes,
         metadata_bytes: u64,
     ) -> Result<(), StorageValidationError> {
-        if self.started.elapsed() > std::time::Duration::from_secs(5)
+        if self.started.elapsed() > Duration::from_secs(5)
             || self.seen.len() == Self::MAX_ROWS
             || metadata_bytes > HistoryLifecycleScan::MAX_INPUT_BYTES as u64
         {
@@ -295,7 +302,7 @@ impl HistorySizeCensus {
             .expect("one census source"))
     }
     pub fn finish_family(self) -> Result<HistoryFamilySizeAccounting, StorageValidationError> {
-        if self.failed || self.started.elapsed() > std::time::Duration::from_secs(5) {
+        if self.failed || self.started.elapsed() > Duration::from_secs(5) {
             return Err(invalid(
                 "A failed or expired history census cannot produce complete accounting",
             ));
@@ -320,6 +327,9 @@ impl HistorySizeCensus {
                 })
             })
             .collect::<Result<Vec<_>, StorageValidationError>>()?;
+        if self.started.elapsed() > Duration::from_secs(5) {
+            return Err(invalid("History accounting exceeded its time budget"));
+        }
         Ok(HistoryFamilySizeAccounting {
             family: self.family,
             snapshot: self.snapshot,
@@ -341,7 +351,7 @@ pub struct HistoryFamilySizeAccounting {
     pub(super) reserved: BTreeMap<(HistoryPolicyKey, HistoryPolicyRevision), u64>,
     pub(super) rows: BTreeMap<(ResourceIdentity, VersionIdentity), HistoryLogicalBytes>,
     pub(super) metadata_bytes: u64,
-    pub(super) started: std::time::Instant,
+    pub(super) started: Instant,
 }
 
 impl HistoryFamilySizeAccounting {

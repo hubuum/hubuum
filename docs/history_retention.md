@@ -114,6 +114,10 @@ most five seconds; both adapters enforce a five-second complete-fold deadline.
 Exhausting a budget returns unavailable and commits no partial total or pressure
 transition. This bounded full scan is an initial accounting implementation;
 larger scopes need transactionally maintained counters and separate qualification.
+The memory adapter measures immutable resource fields when it records or restores
+a history version. Each scan adds the current interval and identity metadata.
+An oversized version still contributes to logical pressure even when the expiry
+worker cannot select it within the input budget.
 
 Pressure starts strictly above the upper threshold, remains active above the
 lower target, and ends at or below that target. Only start/end transitions create
@@ -417,7 +421,11 @@ It preserves anchors and exact UUIDs, retains compact governing-policy reference
 into the immutable catalog, re-evaluates eligibility against captured authority, and rejects duplicate/open
 membership. Retained intent modeling preserves exclusions on cancellation and
 completion, retains first removal clocks/checkpoint identities, and merges
-compatible recovery descendants without losing local outcomes. The journal permits
+compatible recovery descendants without losing local outcomes. Recovery checks
+each retained selection against the combined size-pressure history before saving
+the checkpoint. If either branch ended pressure before the other branch selected
+a version under that pressure, recovery keeps the database quarantined.
+The journal permits
 at most 256 retained intents within 4 MiB and reserves 512 encoded bytes per pending removal plus 256 bytes per unrecorded
 cancellation. These are bounded source contracts, not measured resource
 acceptance. These types are now included in typed protected history authority and the memory adapter's

@@ -56,11 +56,7 @@ impl HistoryPolicyCatalog {
             .iter()
             .find(|record| HistoryPolicyReference::from(*record) == *reference)
             .ok_or_else(|| invalid("Unknown immutable history policy revision"))?;
-        Ok(HistoryEffectivePolicy {
-            source: Some(reference.clone()),
-            inherited: Vec::new(),
-            binding: record.proposal().binding().clone(),
-        })
+        Ok(HistoryEffectivePolicy::from_record(record))
     }
     pub fn current_revision(&self, key: HistoryPolicyKey) -> HistoryPolicyRevision {
         self.0
@@ -215,6 +211,13 @@ pub struct HistoryEffectivePolicy {
     binding: HistoryPolicyBinding,
 }
 impl HistoryEffectivePolicy {
+    pub(super) fn from_record(record: &HistoryPolicyRecord) -> Self {
+        Self {
+            source: Some(record.into()),
+            inherited: Vec::new(),
+            binding: record.proposal().binding().clone(),
+        }
+    }
     pub const fn source(&self) -> Option<&HistoryPolicyReference> {
         self.source.as_ref()
     }

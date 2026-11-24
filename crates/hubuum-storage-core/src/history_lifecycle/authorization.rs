@@ -11,8 +11,9 @@ use hubuum_domain::{ClassId, CollectionId, ObjectId, ResourceRevision, VersionId
 
 use super::*;
 use crate::{
-    StorageCapturedIdentity, StorageHistoryOperation, StorageIdentityResourceKind,
-    StorageObjectHistoryRecord, StorageRecordIdentity, StorageRestoreVersionAncestry,
+    StorageCapturedIdentity, StorageHistoryMetadata, StorageHistoryOperation,
+    StorageIdentityResourceKind, StorageObject, StorageObjectHistoryRecord, StorageRecordIdentity,
+    StorageRestoreVersionAncestry,
 };
 
 /// Retained encoded facts are separately bounded from the native payload input.
@@ -175,6 +176,15 @@ impl HistoryObjectAuthorizationFacts {
     /// exact row to its claimed native version; these facts are not permission.
     pub fn capture(row: StorageObjectHistoryRecord) -> Result<Self, StorageValidationError> {
         let (record, metadata) = row.into_parts();
+        Self::capture_borrowed(&record, &metadata)
+    }
+
+    /// Read the original authorization coordinates without copying object data.
+    pub fn capture_borrowed(
+        record: &StorageObject,
+        metadata: &StorageHistoryMetadata,
+    ) -> Result<Self, StorageValidationError> {
+        StorageObjectHistoryRecord::validate_revision(record, metadata)?;
         let evidence = metadata
             .logical_identity()
             .ok_or_else(|| invalid("Object authorization requires original identity evidence"))?;

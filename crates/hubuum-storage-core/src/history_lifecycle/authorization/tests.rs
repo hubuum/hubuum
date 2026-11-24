@@ -174,6 +174,21 @@ fn candidate(facts: &HistoryObjectAuthorizationFacts) -> HistoryExpiryCandidate 
     .unwrap()
 }
 
+#[test]
+fn borrowed_authorization_requires_matching_resource_and_history_revisions() {
+    let (record, metadata) = Fixture::new().row(1, "original").into_parts();
+    let altered = StorageHistoryMetadata::try_new(
+        metadata.operation(),
+        metadata.valid_from(),
+        metadata.valid_to(),
+        metadata.history_entry_id(),
+        ResourceRevision::new(record.revision().get() + 1).unwrap(),
+    )
+    .unwrap()
+    .with_logical_identity(metadata.logical_identity().unwrap().clone());
+    assert!(HistoryObjectAuthorizationFacts::capture_borrowed(&record, &altered).is_err());
+}
+
 #[rstest]
 #[case::closed_value(false, Some(at(150)))]
 #[case::unbounded_tombstone(true, None)]

@@ -344,6 +344,7 @@ impl HistoryLifecycleAuthority {
                 as u64
                 + merged.expiry.revision().value(),
         )?;
+        merged.validate()?;
         Ok(merged)
     }
     pub fn hold_revisions(&self) -> &[HistoryHoldRevision] {
@@ -539,16 +540,29 @@ impl Default for HistoryLifecycleAuthority {
 impl TryFrom<AuthorityInput> for HistoryLifecycleAuthority {
     type Error = StorageValidationError;
     fn try_from(value: AuthorityInput) -> Result<Self, Self::Error> {
-        if value.holds.len() > Self::MAX_HOLD_REVISIONS
-            || value.revision.value()
-                != (value.policies.records().len()
-                    + value.holds.len()
-                    + value.size_transitions.len()) as u64
-                    + value.expiry.revision().value()
+        let authority = Self {
+            revision: value.revision,
+            policies: value.policies,
+            holds: value.holds,
+            expiry: value.expiry,
+            size_transitions: value.size_transitions,
+        };
+        authority.validate()?;
+        Ok(authority)
+    }
+}
+
+impl HistoryLifecycleAuthority {
+    fn validate(&self) -> Result<(), StorageValidationError> {
+        if self.holds.len() > Self::MAX_HOLD_REVISIONS
+            || self.revision.value()
+                != (self.policies.records().len() + self.holds.len() + self.size_transitions.len())
+                    as u64
+                    + self.expiry.revision().value()
         {
             return Err(invalid("Invalid history authority revision or capacity"));
         }
-        let mut operations = value
+        let mut operations = self
             .policies
             .records()
             .iter()
@@ -556,12 +570,12 @@ impl TryFrom<AuthorityInput> for HistoryLifecycleAuthority {
             .collect::<std::collections::BTreeSet<_>>();
         let mut last = 0;
         let mut known = std::collections::BTreeMap::<Uuid, &HistoryHoldRevision>::new();
-        for entry in &value.holds {
+        for entry in &self.holds {
             if !operations.insert(entry.operation)
                 || entry.operation.get_variant() != uuid::Variant::RFC4122
                 || entry.operation.get_version().is_none()
                 || entry.revision.value() <= last
-                || entry.revision > value.revision
+                || entry.revision > self.revision
                 || entry.recorded_at < entry.hold.created_at()
             {
                 return Err(invalid(
@@ -602,7 +616,7 @@ impl TryFrom<AuthorityInput> for HistoryLifecycleAuthority {
             }
             last = entry.revision.value();
         }
-        if value
+        if self
             .expiry
             .intents()
             .iter()
@@ -610,15 +624,15 @@ impl TryFrom<AuthorityInput> for HistoryLifecycleAuthority {
         {
             return Err(invalid("Duplicate retained history operation identity"));
         }
-        for intent in value.expiry.intents() {
+        for intent in self.expiry.intents() {
             let manifest = intent.manifest();
-            if manifest.fence().authority_revision() >= value.revision
+            if manifest.fence().authority_revision() >= self.revision
                 || manifest
                     .members()
                     .iter()
                     .flat_map(HistoryExpiryMember::policies)
                     .any(|source| {
-                        !value.policies.records().iter().any(|record| {
+                        !self.policies.records().iter().any(|record| {
                             record.revision() == source.revision()
                                 && record.proposal().key() == source.key()
                                 && record.applied_at() <= manifest.selected_at()
@@ -630,21 +644,14 @@ impl TryFrom<AuthorityInput> for HistoryLifecycleAuthority {
                 ));
             }
         }
-        let authority = Self {
-            revision: value.revision,
-            policies: value.policies,
-            holds: value.holds,
-            expiry: value.expiry,
-            size_transitions: value.size_transitions,
-        };
-        if authority.holds.len() + authority.pending_hold_completions() > Self::MAX_HOLD_REVISIONS {
+        if self.holds.len() + self.pending_hold_completions() > Self::MAX_HOLD_REVISIONS {
             return Err(invalid(
                 "History authority must reserve terminal hold revisions",
             ));
         }
-        authority.validate_size_transitions()?;
-        authority.validate_size_membership()?;
-        Ok(authority)
+        self.validate_size_transitions()?;
+        self.validate_size_membership()?;
+        Ok(())
     }
 }
 
