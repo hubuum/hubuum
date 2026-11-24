@@ -224,12 +224,6 @@ impl CollectionStorage for MemoryStorage {
             })
             .map(|subscription| subscription.id().id())
             .collect::<std::collections::BTreeSet<_>>();
-        let deliveries = state
-            .event_deliveries
-            .values()
-            .filter(|delivery| subscriptions.contains(&delivery.subscription_id().id()))
-            .map(|delivery| delivery.id().id())
-            .collect::<std::collections::BTreeSet<_>>();
         state
             .event_sinks
             .retain(|sink, _| !owned_sinks.contains(sink));
@@ -244,10 +238,7 @@ impl CollectionStorage for MemoryStorage {
             .retain(|subscription, _| !subscriptions.contains(subscription));
         state
             .event_deliveries
-            .retain(|delivery, _| !deliveries.contains(delivery));
-        state
-            .event_delivery_claims
-            .retain(|delivery, _| !deliveries.contains(delivery));
+            .remove_where(|delivery| subscriptions.contains(&delivery.subscription_id().id()));
         state.collections.remove(&id.id());
         Ok(StorageMutationOutcome::committed((), receipt))
     }

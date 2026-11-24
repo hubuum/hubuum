@@ -1,0 +1,35 @@
+# Run deslop-please --allow .deslop-please.allow to apply these reviewed exceptions.
+
+# Independent benchmark targets, workspace members, and contract-test topics each have their own entry.
+wide-directory benches/
+wide-directory crates/
+wide-directory src/tests/storage_contract/
+
+# The downstream compile fixture implements every required SDK method.
+long-file crates/hubuum-storage-core/tests/complete_external_adapter.rs
+
+# The SDK root publishes the complete backend-neutral storage contract.
+shallow-module hubuum_storage_core
+
+# Adapters consume these query options through the query API. Filter and sort collections enforce their own bounds.
+field-leak hubuum_query::QueryOptions::filters
+field-leak hubuum_query::QueryOptions::include_total
+field-leak hubuum_query::QueryOptions::sort
+field-leak hubuum_query::QueryOptions::structured_filter
+
+# Resolved targets expose borrowed domain views and forward the original resolved storage value across the application boundary.
+field-leak hubuum::models::class::ResolvedClassTarget::class
+field-leak hubuum::models::class::ResolvedClassTarget::storage
+field-leak hubuum::models::object::ResolvedObjectTarget::class
+field-leak hubuum::models::object::ResolvedObjectTarget::object
+field-leak hubuum::models::object::ResolvedObjectTarget::storage
+
+# Each export schema points to a typed documentation example which constructs that same schema.
+tangle hubuum::models::export::ExportJsonResponse,hubuum::models::export::openapi_examples::export_json_response_example
+tangle hubuum::models::export::ExportLimits,hubuum::models::export::openapi_examples::export_limits_example
+tangle hubuum::models::export::ExportMeta,hubuum::models::export::openapi_examples::export_meta_example
+tangle hubuum::models::export::ExportRelationContext,hubuum::models::export::openapi_examples::export_relation_context_example
+tangle hubuum::models::export::ExportRequest,hubuum::models::export::openapi_examples::export_request_example
+tangle hubuum::models::export::ExportScope,hubuum::models::export::openapi_examples::export_scope_example
+tangle hubuum::models::export::ExportTemplateRunRequest,hubuum::models::export::openapi_examples::export_template_run_request_example
+tangle hubuum::models::export::ExportWarning,hubuum::models::export::openapi_examples::export_warning_example

@@ -159,9 +159,8 @@ impl MemoryState {
             event_sinks: BTreeMap::new(),
             event_sink_grants: BTreeSet::new(),
             event_subscriptions: BTreeMap::new(),
-            event_deliveries: BTreeMap::new(),
+            event_deliveries: Default::default(),
             event_sink_schedule: BTreeMap::new(),
-            event_delivery_claims: BTreeMap::new(),
             event_retention_batches: BTreeMap::new(),
             history: vec![MemoryHistoryEntry {
                 id: HistoryRecordId::new(1).expect("initial history id"),

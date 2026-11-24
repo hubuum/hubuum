@@ -1,4 +1,5 @@
 use super::credential_approvals::approve_request;
+use crate::api::response::{ApiErrorResponse, ApiResponse, LoginResponse};
 use crate::models::credential_approval::CredentialOperation;
 use crate::services::credential_approvals;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, web};
@@ -6,8 +7,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::api::etag::{RevisionedResource, revision_precondition};
-use crate::api::openapi::{ApiErrorResponse, LoginResponse};
-use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::extractors::{
     AccessEventContext, Authenticated, ManagementAccess, PrincipalSettingsPatchPayload,

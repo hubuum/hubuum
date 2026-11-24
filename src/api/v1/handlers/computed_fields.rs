@@ -1,9 +1,8 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, web};
 use hubuum_storage_core::StorageAuthorizationResourceKey;
 
 use crate::api::etag::{RevisionedResource, revision_precondition};
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::can;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};
