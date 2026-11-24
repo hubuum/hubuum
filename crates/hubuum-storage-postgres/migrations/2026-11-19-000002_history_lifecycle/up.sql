@@ -849,6 +849,10 @@ CREATE INDEX remote_targets_history_open_dependency ON public.remote_targets_his
 CREATE INDEX computed_field_history_open_dependency ON public.computed_field_history
     ((logical_identity #>> '{subject,identity,identity}')) WHERE valid_to IS NULL; -- hubuum-compat: bounded-transactional-index
 
+-- Any retained schema revision, including one with unresolved class identity, can block an event.
+CREATE INDEX class_schema_revisions_class_dependency ON public.class_schema_revisions
+    ((logical_identity #>> '{references,/class_id,reference,identity}')); -- hubuum-compat: bounded-transactional-index
+
 -- Separate from policy/hold CAS: exact predecessor, one immutable new intent,
 -- native source correspondence and the fleet fence are required together.
 -- Rust validates policy/hold decisions while holding these same authority locks.

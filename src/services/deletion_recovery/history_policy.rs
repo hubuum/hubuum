@@ -593,13 +593,17 @@ pub(crate) async fn release_hold(
     let principal = principal(context, admin).await?;
     let session = protected_session(context, options).await?;
     let snapshot = storage_handle(context).capture_history_lifecycle().await?;
-    let hold = snapshot
+    let latest = snapshot
         .control()
         .authority()
-        .current_holds()
-        .find(|hold| hold.identity() == identity)
+        .hold_revisions()
+        .iter()
+        .rev()
+        .find(|entry| entry.hold().identity() == identity)
         .ok_or_else(|| ApiError::NotFound("Hold was not found".into()))?;
-    if hold.released_at().is_none() && expected != snapshot.control().authority().revision() {
+    if latest.transition() == HistoryHoldTransition::Created
+        && expected != snapshot.control().authority().revision()
+    {
         return Err(ApiError::HistoryPolicyReview(
             HistoryPolicyReviewConflict::StalePreview,
         ));

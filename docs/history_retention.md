@@ -63,6 +63,9 @@ versions are blocked. Relation decisions require both captured endpoints to
 permit expiry. Missing historical attribution, retained dependencies, holds,
 protected minimums and unavailable logical-size accounting are explicit blockers.
 No present-day parent lookup fills a missing historical reference.
+Templates and remote targets may have no class. If a captured class reference
+exists, expiry requires its UUID to be resolved. An unresolved class on a
+retained schema revision also blocks expiry of a potentially dependent event.
 
 Native deletion tombstones retain their original point interval
 (`valid_to == valid_from`); older unbounded tombstones remain supported. Both
@@ -119,6 +122,13 @@ active episode, and preserves original actors, clocks, policy references and
 pressure through signed recovery. Operation inspection returns exact retained
 transition evidence. Pressure alone changes no history visibility or expiry
 membership.
+
+New pressure receipts record the observation source (`administrator`,
+`manual_run`, or `scheduled_run`). Their `actor` field identifies the
+initiating principal. Worker audit events identify the worker as the immediate
+actor and preserve the initiating principal and trigger. The audit policy ID
+stays stable across edits, and the revision identifies the measured binding.
+Receipts predating the source field replay their original audit metadata.
 
 The gated executor implements oldest-eligible size selection and protected exact
 cleanup; production activation still requires qualification. Existing inspection and policy previews
@@ -192,6 +202,10 @@ A publication failure leaves an inspectable pending outcome. Policy listing
 reports `protected`, `pending`, `recovery_required`, `unconfigured` or
 `unavailable`; it does not equate a committed database row with independent
 protection.
+
+A repeated hold release returns its existing terminal state after either an
+explicit release or a recorded natural expiry. A first transition still
+requires the expected authority revision.
 
 ## Pending execution boundary
 

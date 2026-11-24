@@ -601,8 +601,11 @@ async fn revoked_administrator_cannot_observe_scope_or_recovery_state(#[case] op
     assert!(matches!(result, Err(ApiError::Forbidden(_))));
 }
 
+#[rstest::rstest]
+#[case::maintenance(false)]
+#[case::release_retry(true)]
 #[actix_web::test]
-async fn natural_hold_expiry_is_settled_and_protected_once() {
+async fn natural_hold_expiry_is_settled_and_protected_once(#[case] release: bool) {
     let fixture = Fixture::new().await;
     let storage = storage_handle(&fixture.context);
     let snapshot = storage.capture_history_lifecycle().await.unwrap();
@@ -620,7 +623,7 @@ async fn natural_hold_expiry_is_settled_and_protected_once() {
         .control()
         .create_hold(hold, snapshot.fence())
         .unwrap();
-    commit_protected(
+    let created = commit_protected(
         &fixture.context,
         session(&fixture.options).await.unwrap(),
         change,
@@ -628,9 +631,34 @@ async fn natural_hold_expiry_is_settled_and_protected_once() {
     .await
     .unwrap();
 
-    assert!(settle_expired_hold(&fixture.context).await.unwrap());
+    let expected = created.control().authority().revision();
+    if release {
+        release_hold(
+            &fixture.context,
+            &fixture.admin,
+            &fixture.options,
+            identity,
+            expected,
+        )
+        .await
+        .unwrap();
+    } else {
+        assert!(settle_expired_hold(&fixture.context).await.unwrap());
+    }
     let settled = storage.capture_history_lifecycle().await.unwrap();
-    assert!(!settle_expired_hold(&fixture.context).await.unwrap());
+    if release {
+        release_hold(
+            &fixture.context,
+            &fixture.admin,
+            &fixture.options,
+            identity,
+            expected,
+        )
+        .await
+        .unwrap();
+    } else {
+        assert!(!settle_expired_hold(&fixture.context).await.unwrap());
+    }
     let repeated = storage.capture_history_lifecycle().await.unwrap();
     assert_eq!(settled.control(), repeated.control());
     let expiry = settled

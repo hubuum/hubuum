@@ -496,9 +496,10 @@ impl MemoryState {
         };
         self.require_history_copies_safe(&BTreeSet::from([family]), scan, |family, copy| {
             let dependent = if family == StorageIdentityHistoryKind::ClassSchema {
-                copy.references()
-                    .get("/class_id")
-                    .is_none_or(|class| Some(class) == evidence.references().get("/class_id"))
+                let class = StorageIdentityResourceKind::Class;
+                copy.resource_reference("/class_id", class)
+                    .zip(evidence.resource_reference("/class_id", class))
+                    .is_none_or(|(retained, candidate)| retained == candidate)
             } else {
                 copy.subject()
                     .and_then(|subject| subject.record_identity())

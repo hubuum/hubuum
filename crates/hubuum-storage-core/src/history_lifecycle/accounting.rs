@@ -347,7 +347,8 @@ pub struct HistoryFamilySizeAccounting {
 impl HistoryFamilySizeAccounting {
     pub(super) fn retain(
         mut self,
-        actor: PrincipalIdentity,
+        initiator: PrincipalIdentity,
+        source: HistorySizeObservationSource,
     ) -> Result<(Self, HistoryLifecycleControlChange), StorageValidationError> {
         let original = self.snapshot.clone();
         let mut control = original.control().clone();
@@ -365,7 +366,10 @@ impl HistoryFamilySizeAccounting {
                 control.authority().revision(),
                 original.fence().deletion_revision(),
             )?;
-            control = control.observe_size(accounting, actor)?.next().clone();
+            control = control
+                .observe_size_from(accounting, initiator, source)?
+                .next()
+                .clone();
         }
         let change = original.control().change(control, original.fence())?;
         self.snapshot = HistoryLifecycleSnapshot::new(
@@ -378,6 +382,16 @@ impl HistoryFamilySizeAccounting {
     }
 }
 
+/// Identifies who performed the observation on behalf of its initiating principal.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistorySizeObservationSource {
+    Administrator,
+    ManualRun,
+    ScheduledRun,
+}
+
 /// Immutable pressure start/end receipt; gauges between transitions are not
 /// retained as new authority. Exact policy revision and original clock survive
 /// restore, with a terminal slot reserved for every active episode.
@@ -388,8 +402,12 @@ pub struct HistorySizeTransition {
     #[cfg_attr(feature = "openapi", schema(value_type = String, format = "uuid"))]
     operation: uuid::Uuid,
     revision: HistoryAuthorityRevision,
+    /// Initiating principal. The source distinguishes a direct observation from worker execution.
     #[cfg_attr(feature = "openapi", schema(value_type = String, format = "uuid"))]
     actor: PrincipalIdentity,
+    /// Older receipts lack this field and retain their original canonical audit projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<HistorySizeObservationSource>,
     #[cfg_attr(feature = "openapi", schema(value_type = String, format = DateTime))]
     observed_at: DateTime<Utc>,
     pressure: HistorySizePressure,
@@ -403,6 +421,9 @@ impl HistorySizeTransition {
     }
     pub const fn actor(&self) -> PrincipalIdentity {
         self.actor
+    }
+    pub const fn source(&self) -> Option<HistorySizeObservationSource> {
+        self.source
     }
     pub const fn observed_at(&self) -> DateTime<Utc> {
         self.observed_at
@@ -492,6 +513,7 @@ impl HistoryLifecycleAuthority {
         &self,
         accounting: &mut HistorySizeAccounting,
         actor: PrincipalIdentity,
+        source: HistorySizeObservationSource,
     ) -> Result<Self, StorageValidationError> {
         if accounting.fence.authority_revision() != self.revision() {
             return Err(invalid("History accounting authority changed"));
@@ -515,6 +537,7 @@ impl HistoryLifecycleAuthority {
             operation,
             revision: next.revision,
             actor,
+            source: Some(source),
             observed_at: accounting.observed_at,
             pressure: pressure.clone(),
         });
@@ -529,8 +552,23 @@ impl HistoryLifecycleControl {
         accounting: &mut HistorySizeAccounting,
         actor: PrincipalIdentity,
     ) -> Result<HistoryLifecycleControlChange, StorageValidationError> {
+        self.observe_size_from(
+            accounting,
+            actor,
+            HistorySizeObservationSource::Administrator,
+        )
+    }
+
+    fn observe_size_from(
+        &self,
+        accounting: &mut HistorySizeAccounting,
+        initiator: PrincipalIdentity,
+        source: HistorySizeObservationSource,
+    ) -> Result<HistoryLifecycleControlChange, StorageValidationError> {
         let mut next = self.clone();
-        next.authority = self.authority().observe_size(accounting, actor)?;
+        next.authority = self
+            .authority()
+            .observe_size(accounting, initiator, source)?;
         self.change(next, accounting.fence)
     }
 }

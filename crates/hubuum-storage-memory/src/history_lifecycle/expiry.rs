@@ -760,12 +760,42 @@ mod tests {
     }
 
     #[rstest::rstest]
-    #[case::retained(true)]
-    #[case::released(false)]
+    #[case::retained(true, false)]
+    #[case::unresolved(true, true)]
+    #[case::released(false, false)]
     #[tokio::test]
-    async fn inspection_preserves_schema_revision_dependency(#[case] retained: bool) {
+    async fn inspection_preserves_schema_revision_dependency(
+        #[case] retained: bool,
+        #[case] unresolved: bool,
+    ) {
         let storage = MemoryStorage::new();
         let class = schema_class(&storage, "schema dependency").await;
+        if unresolved {
+            let mut state = storage.state.write_control().await;
+            let revision = state.schema_revisions[&(class.id().id(), 1)].clone();
+            let original = revision.logical_identity().unwrap();
+            let mut references = original.references().clone();
+            references.insert(
+                "/class_id".into(),
+                StorageCapturedIdentity::Resource {
+                    family: StorageIdentityResourceKind::Class,
+                    reference: IdentityReference::Unresolved {
+                        legacy: UnresolvedIdentity::new(
+                            LegacyIdentityCohort::generate(),
+                            ResourceId::new(class.id().id()).unwrap(),
+                        ),
+                    },
+                },
+            );
+            let evidence =
+                StorageIdentityEvidence::try_new(original.subject(), references).unwrap();
+            let revision = state
+                .logical_identities
+                .schema_revision(revision.with_logical_identity(evidence));
+            state
+                .schema_revisions
+                .insert((class.id().id(), 1), revision);
+        }
         if !retained {
             delete_schema_class(&storage, &class).await;
         }

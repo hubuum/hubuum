@@ -1,5 +1,5 @@
 use super::*;
-use crate::{StorageCapturedIdentity, StorageIdentityEvidence, StorageIdentityResourceKind};
+use crate::{StorageIdentityEvidence, StorageIdentityResourceKind};
 
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -108,12 +108,7 @@ impl HistoryExpiryCandidate {
         else {
             return Ok(None);
         };
-        let reference = |path: &str, kind| match evidence.references().get(path) {
-            Some(StorageCapturedIdentity::Resource { family, reference }) if *family == kind => {
-                reference.known_identity()
-            }
-            _ => None,
-        };
+        let reference = |path, kind| evidence.resource_reference(path, kind);
         let collection = reference("/collection_id", StorageIdentityResourceKind::Collection);
         let class = reference("/class_id", StorageIdentityResourceKind::Class);
         let attribution = match family {
@@ -133,6 +128,9 @@ impl HistoryExpiryCandidate {
             }
             StorageIdentityHistoryKind::ExportTemplate
             | StorageIdentityHistoryKind::RemoteTarget => {
+                if class.is_none() && evidence.references().contains_key("/class_id") {
+                    return Ok(None);
+                }
                 collection.map(|collection| vec![HistoryScopeAttribution::new(collection, class)])
             }
             StorageIdentityHistoryKind::ComputedDefinitions
@@ -183,9 +181,77 @@ impl HistoryExpiryCandidate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hubuum_domain::{IdentityReference, VersionIdentity};
+    use crate::StorageCapturedIdentity;
+    use hubuum_domain::{
+        IdentityReference, LegacyIdentityCohort, ResourceId, UnresolvedIdentity, VersionIdentity,
+    };
     use rstest::rstest;
     use std::collections::BTreeMap;
+
+    #[rstest]
+    #[case::unscoped(None)]
+    #[case::resolved(Some(true))]
+    #[case::unresolved(Some(false))]
+    fn optional_class_requires_resolved_evidence_when_present(
+        #[case] resolved: Option<bool>,
+        #[values(
+            StorageIdentityHistoryKind::ExportTemplate,
+            StorageIdentityHistoryKind::RemoteTarget
+        )]
+        family: StorageIdentityHistoryKind,
+    ) {
+        let collection = ResourceIdentity::generate();
+        let class = ResourceIdentity::generate();
+        let mut references = BTreeMap::from([(
+            "/collection_id".into(),
+            StorageCapturedIdentity::Resource {
+                family: StorageIdentityResourceKind::Collection,
+                reference: IdentityReference::Known {
+                    identity: collection,
+                },
+            },
+        )]);
+        if let Some(known) = resolved {
+            let reference = if known {
+                IdentityReference::Known { identity: class }
+            } else {
+                IdentityReference::Unresolved {
+                    legacy: UnresolvedIdentity::new(
+                        LegacyIdentityCohort::generate(),
+                        ResourceId::new(42).unwrap(),
+                    ),
+                }
+            };
+            references.insert(
+                "/class_id".into(),
+                StorageCapturedIdentity::Resource {
+                    family: StorageIdentityResourceKind::Class,
+                    reference,
+                },
+            );
+        }
+        let evidence = StorageIdentityEvidence::try_new(
+            Some(crate::StorageIdentitySubject::Resource {
+                identity: IdentityReference::Known {
+                    identity: ResourceIdentity::generate(),
+                },
+                version: VersionIdentity::generate(),
+            }),
+            references,
+        )
+        .unwrap();
+        let candidate =
+            HistoryExpiryCandidate::from_evidence(family, &evidence, None, false).unwrap();
+        let expected = match resolved {
+            None => Some(HistoryScopeAttribution::new(collection, None)),
+            Some(true) => Some(HistoryScopeAttribution::new(collection, Some(class))),
+            Some(false) => None,
+        };
+        assert_eq!(
+            candidate.as_ref().map(|row| row.attributions()),
+            expected.as_ref().map(std::slice::from_ref)
+        );
+    }
 
     #[rstest]
     #[case::collection(StorageIdentityHistoryKind::Collection)]

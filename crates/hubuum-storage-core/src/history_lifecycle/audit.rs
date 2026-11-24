@@ -45,13 +45,6 @@ impl HistoryAuditRecord {
         authority: serde_json::Value,
         membership: Option<HistoryAuditMembership>,
     ) -> Result<NewEvent, StorageValidationError> {
-        let actor_kind = if self.attribution.actor.is_some() {
-            ActorKind::User
-        } else if membership.is_some() {
-            ActorKind::Worker
-        } else {
-            ActorKind::System
-        };
         let scope = membership.as_ref().map_or_else(
             || json!({"kind":"system"}),
             |evidence| json!({"kind":"collection","collection_uuid":evidence.collection}),
@@ -69,11 +62,24 @@ impl HistoryAuditRecord {
                 "copies": {"source_tier": null, "destination_tier": null, "destination_id": null, "artifact_id": null, "source_destination_id": null, "source_artifact_id": null},
                 "evidence": {"membership": membership.as_ref().map(|evidence| &evidence.evidence), "verification_id": null, "receipt_id": membership.as_ref().map_or(self.operation, |evidence| evidence.receipt)}, "delivery": null
             }})).try_build().map_err(|error| invalid(&error.to_string()))?;
-        NewEvent::from_document(EntityType::Lifecycle, self.action, actor_kind, document)
-            .map(|event| {
-                event.with_recorded_identity(event_identity(self.operation, self.name), self.at)
-            })
-            .map_err(|error| invalid(&error.to_string()))
+        NewEvent::from_document(
+            EntityType::Lifecycle,
+            self.action,
+            self.attribution.kind,
+            document,
+        )
+        .map(|event| {
+            event.with_recorded_identity(event_identity(self.operation, self.name), self.at)
+        })
+        .map_err(|error| invalid(&error.to_string()))
+    }
+}
+impl HistoryPolicyCatalog {
+    fn audit_policy_id(&self, key: HistoryPolicyKey) -> Option<Uuid> {
+        self.records()
+            .iter()
+            .find(|record| record.proposal().key() == key)
+            .map(HistoryPolicyRecord::operation)
     }
 }
 impl HistoryLifecycleAuthority {
@@ -97,11 +103,8 @@ impl HistoryLifecycleAuthority {
             let created = record.proposal().expected_policy_revision().value() == 0;
             let policy_id = self
                 .policies()
-                .records()
-                .iter()
-                .find(|source| source.proposal().key() == record.proposal().key())
-                .expect("current policy has an initial revision")
-                .operation();
+                .audit_policy_id(record.proposal().key())
+                .expect("current policy has an initial revision");
             events.push(HistoryAuditRecord {
                 operation: record.operation(), name: if created { "lifecycle.policy.created" } else { "lifecycle.policy.changed" }, action: if created { Action::Created } else { Action::Updated },
                 attribution: HistoryAuditAttribution::manual(record.principal()), at: record.applied_at(),
@@ -109,16 +112,32 @@ impl HistoryLifecycleAuthority {
             }.into_event(json!({"policy_id": policy_id, "policy_revision": record.revision(), "review_id": record.review().map(|review| review.reference().preview_id()), "hold_generation": null, "deletion_generation": null}))?);
         }
         for entry in &self.size_transitions()[previous.size_transitions().len()..] {
-            let policy_id = self
-                .policies()
-                .records()
-                .iter()
-                .find(|record| HistoryPolicyReference::from(*record) == *entry.pressure().policy())
-                .expect("validated pressure policy")
-                .operation();
+            let policy = entry.pressure().policy();
+            let policy_id = if entry.source().is_some() {
+                self.policies().audit_policy_id(policy.key())
+            } else {
+                // Original receipts must reconstruct the exact event already in the audit log.
+                self.policies()
+                    .records()
+                    .iter()
+                    .find(|record| record.revision() == policy.revision())
+                    .map(HistoryPolicyRecord::operation)
+            }
+            .expect("validated pressure policy");
+            let attribution = match entry.source() {
+                Some(HistorySizeObservationSource::ScheduledRun) => {
+                    HistoryAuditAttribution::worker(entry.actor(), "scheduled")
+                }
+                Some(HistorySizeObservationSource::ManualRun) => {
+                    HistoryAuditAttribution::worker(entry.actor(), "manual")
+                }
+                Some(HistorySizeObservationSource::Administrator) | None => {
+                    HistoryAuditAttribution::manual(entry.actor())
+                }
+            };
             events.push(HistoryAuditRecord {
                 operation: entry.operation(), name: if entry.pressure().reclaiming() { "lifecycle.policy.size_pressure_started" } else { "lifecycle.policy.size_pressure_ended" }, action: Action::Updated,
-                attribution: HistoryAuditAttribution::manual(entry.actor()), at: entry.observed_at(), caused_by: None, observed_at: Some(entry.observed_at()),
+                attribution, at: entry.observed_at(), caused_by: None, observed_at: Some(entry.observed_at()),
             }.into_event(json!({"policy_id": policy_id, "policy_revision": entry.pressure().policy().revision(), "review_id": null, "hold_generation": null, "deletion_generation": null}))?);
         }
         for entry in &self.hold_revisions()[previous.hold_revisions().len()..] {
@@ -146,6 +165,7 @@ impl HistoryLifecycleAuthority {
                     Action::Updated,
                     entry.hold().expires_at().expect("validated expiry"),
                     HistoryAuditAttribution {
+                        kind: ActorKind::System,
                         actor: None,
                         initiator: Some(entry.hold().principal()),
                         trigger: "scheduled",
@@ -168,13 +188,7 @@ impl HistoryLifecycleAuthority {
         review: &HistoryPolicyReviewEvidence,
     ) -> Result<NewEvent, StorageValidationError> {
         let policy_id = (proposal.expected_policy_revision().value() != 0)
-            .then(|| {
-                self.policies()
-                    .records()
-                    .iter()
-                    .find(|record| record.proposal().key() == proposal.key())
-                    .map(HistoryPolicyRecord::operation)
-            })
+            .then(|| self.policies().audit_policy_id(proposal.key()))
             .flatten();
         let revision = (proposal.expected_policy_revision().value() != 0)
             .then_some(proposal.expected_policy_revision());
@@ -215,6 +229,7 @@ impl HistoryLifecycleControl {
     }
 }
 struct HistoryAuditAttribution {
+    kind: ActorKind,
     actor: Option<PrincipalIdentity>,
     initiator: Option<PrincipalIdentity>,
     trigger: &'static str,
@@ -222,9 +237,18 @@ struct HistoryAuditAttribution {
 impl HistoryAuditAttribution {
     fn manual(principal: PrincipalIdentity) -> Self {
         Self {
+            kind: ActorKind::User,
             actor: Some(principal),
             initiator: Some(principal),
             trigger: "manual",
+        }
+    }
+    fn worker(initiator: PrincipalIdentity, trigger: &'static str) -> Self {
+        Self {
+            kind: ActorKind::Worker,
+            actor: None,
+            initiator: Some(initiator),
+            trigger,
         }
     }
 }
@@ -390,7 +414,7 @@ fn expiry_event(
     let versions = if removal.is_some() { 1 } else { pairs.len() };
     HistoryAuditRecord {
         operation, name, action,
-        attribution: HistoryAuditAttribution { actor, initiator, trigger },
+        attribution: HistoryAuditAttribution { kind: if actor.is_some() { ActorKind::User } else { ActorKind::Worker }, actor, initiator, trigger },
         at, caused_by: caused_by_name.map(|name| event_identity(scope_operation, name)), observed_at: None,
     }.into_scoped_event(json!({"policy_id":null,"policy_revision":null,"review_id":null,"hold_generation":null,"deletion_generation":null}), Some(HistoryAuditMembership {
         collection, run: manifest.run(), batch: manifest.identity(), receipt: intent.identity(),

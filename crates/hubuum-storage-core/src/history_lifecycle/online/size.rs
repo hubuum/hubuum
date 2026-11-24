@@ -190,12 +190,18 @@ impl HistoryExpirySizeSelection {
                 "Size selection requires an initial finite family pass",
             ));
         }
-        let actor = match &request.origin {
-            HistoryExpiryOrigin::Manual { principal } => Some(*principal),
-            HistoryExpiryOrigin::Scheduled { initiator, .. } => *initiator,
-        }
-        .ok_or_else(|| invalid("Size selection requires its original initiating principal"))?;
-        let (mut accounting, pressure_change) = accounting.retain(actor)?;
+        let (initiator, source) = match &request.origin {
+            HistoryExpiryOrigin::Manual { principal } => {
+                (*principal, HistorySizeObservationSource::ManualRun)
+            }
+            HistoryExpiryOrigin::Scheduled { initiator, .. } => (
+                initiator.ok_or_else(|| {
+                    invalid("Size selection requires its original initiating principal")
+                })?,
+                HistorySizeObservationSource::ScheduledRun,
+            ),
+        };
+        let (mut accounting, pressure_change) = accounting.retain(initiator, source)?;
         request.fence = accounting.snapshot.fence();
         let authority = accounting.snapshot.control().authority();
         let measurements = accounting

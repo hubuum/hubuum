@@ -272,6 +272,20 @@ impl TryFrom<IdentityEvidenceInput> for StorageIdentityEvidence {
 }
 
 impl StorageIdentityEvidence {
+    /// Return the captured UUID only when both the resource family and identity are known.
+    pub fn resource_reference(
+        &self,
+        path: &str,
+        kind: StorageIdentityResourceKind,
+    ) -> Option<ResourceIdentity> {
+        match self.references.get(path) {
+            Some(StorageCapturedIdentity::Resource { family, reference }) if *family == kind => {
+                reference.known_identity()
+            }
+            _ => None,
+        }
+    }
+
     /// Resolve only a captured, immutable task correspondence.
     pub fn task_reference(&self, path: &str) -> Option<TaskIdentity> {
         match self.references.get(path) {

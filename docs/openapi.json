@@ -36471,6 +36471,15 @@
           }
         }
       },
+      "HistorySizeObservationSource": {
+        "type": "string",
+        "description": "Identifies who performed the observation on behalf of its initiating principal.",
+        "enum": [
+          "administrator",
+          "manual_run",
+          "scheduled_run"
+        ]
+      },
       "HistorySizePressure": {
         "type": "object",
         "description": "A complete logical-byte measurement for one exact effective policy. The\nadapter must measure the full governed set; bounded preview samples cannot\nestablish this value. Hysteresis persists until the lower target is reached.",
@@ -36519,7 +36528,8 @@
         "properties": {
           "actor": {
             "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "description": "Initiating principal. The source distinguishes a direct observation from worker execution."
           },
           "observed_at": {
             "type": "string",
@@ -36534,6 +36544,17 @@
           },
           "revision": {
             "$ref": "#/components/schemas/HistoryAuthorityRevision"
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HistorySizeObservationSource",
+                "description": "Older receipts lack this field and retain their original canonical audit projection."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false

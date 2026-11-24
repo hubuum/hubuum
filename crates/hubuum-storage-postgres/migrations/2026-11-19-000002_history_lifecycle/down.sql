@@ -30,6 +30,7 @@ END
 $rollback_guard$;
 
 DROP INDEX IF EXISTS public.tasks_history_expiry_scope_active;
+DROP INDEX public.class_schema_revisions_class_dependency;
 
 DO $open_dependencies$
 DECLARE source TEXT;

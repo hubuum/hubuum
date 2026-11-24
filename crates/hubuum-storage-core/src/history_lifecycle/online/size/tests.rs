@@ -70,10 +70,10 @@ fn fixture() -> (HistoryLifecycleSnapshot, Vec<HistoryExpiryCandidate>) {
         .collect();
     (snapshot, rows)
 }
-fn selection(
+fn census(
     snapshot: &HistoryLifecycleSnapshot,
     rows: &[HistoryExpiryCandidate],
-) -> HistoryExpirySizeSelection {
+) -> HistoryFamilySizeAccounting {
     let family = StorageIdentityHistoryKind::ClassSchema;
     let mut census = HistorySizeCensus::for_family(snapshot.clone(), family).unwrap();
     for row in rows {
@@ -81,7 +81,13 @@ fn selection(
             .observe(Some(row), HistoryLogicalBytes::new(100).unwrap(), 10)
             .unwrap();
     }
-    HistoryExpirySizeSelection::new(request(snapshot), census.finish_family().unwrap()).unwrap()
+    census.finish_family().unwrap()
+}
+fn selection(
+    snapshot: &HistoryLifecycleSnapshot,
+    rows: &[HistoryExpiryCandidate],
+) -> HistoryExpirySizeSelection {
+    HistoryExpirySizeSelection::new(request(snapshot), census(snapshot, rows)).unwrap()
 }
 fn request(snapshot: &HistoryLifecycleSnapshot) -> HistoryExpiryAdmissionRequest {
     HistoryExpiryAdmissionRequest::new(
@@ -156,6 +162,42 @@ fn complete_selection_orders_original_clocks_and_stops_at_lower_target() {
         pressure.next().authority().size_transitions()[0]
             .pressure()
             .reclaiming()
+    );
+}
+
+#[rstest]
+#[case::scheduled(true, "scheduled")]
+#[case::manual(false, "manual")]
+fn worker_pressure_audit_preserves_initiation_after_recovery(
+    #[case] scheduled: bool,
+    #[case] trigger: &str,
+) {
+    let (snapshot, rows) = fixture();
+    let policy = &snapshot.control().authority().policies().records()[0];
+    let principal = policy.principal();
+    let mut request = request(&snapshot);
+    request.origin = if scheduled {
+        HistoryExpiryOrigin::Scheduled {
+            initiator: Some(principal),
+            policy: Some(HistoryPolicyReference::from(policy)),
+        }
+    } else {
+        HistoryExpiryOrigin::Manual { principal }
+    };
+    let selection = HistoryExpirySizeSelection::new(request, census(&snapshot, &rows)).unwrap();
+    let recovered =
+        HistoryLifecycleControl::decode(&selection.pressure_change.next().encode().unwrap())
+            .unwrap();
+    let events = recovered.audit_events_since(snapshot.control()).unwrap();
+    assert_eq!(
+        events[0].actor_kind(),
+        hubuum_events_core::ActorKind::Worker
+    );
+    assert_eq!(
+        events[0].metadata()["lifecycle"]["attribution"],
+        serde_json::json!({
+            "actor_principal_uuid": null, "initiator_principal_uuid": principal, "trigger": trigger
+        })
     );
 }
 
@@ -458,7 +500,10 @@ fn multiple_sources_commit_original_pressure_receipts_one_at_a_time() {
     let (_, change) = census
         .finish_family()
         .unwrap()
-        .retain(PrincipalIdentity::generate())
+        .retain(
+            PrincipalIdentity::generate(),
+            HistorySizeObservationSource::ManualRun,
+        )
         .unwrap();
     let expected = change.next().clone();
     let mut current = snapshot.control().clone();

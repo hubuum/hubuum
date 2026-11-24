@@ -440,6 +440,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- History expiry blocks templates and remote targets with unresolved class
+  references. Memory storage also protects schema history when a retained
+  revision's class is unresolved. PostgreSQL indexes this dependency check.
+- New size-pressure audit events keep the policy ID across revisions and
+  distinguish administrator observations from manual and scheduled worker runs.
+- Retrying a hold release after it recorded natural expiry returns the original
+  terminal hold even if the authority revision has advanced.
+
 - History inspection returns HTTP 404 for unknown class and collection UUIDs.
   Policy preview issuance reports HTTP 429 when review capacity is exhausted.
 - Pending history expiry reserves only the bytes currently charged to each

@@ -148,6 +148,70 @@ fn upper_threshold_is_strict(#[case] bytes: u64, #[case] reclaiming: bool) {
         reclaiming
     );
 }
+
+#[rstest]
+#[case::current(false)]
+#[case::old_receipt(true)]
+fn pressure_replay_uses_the_recorded_policy_id_convention(#[case] legacy: bool) {
+    let (first, reference) = fixture(StorageIdentityHistoryKind::Object);
+    let initial = &first.control().authority().policies().records()[0];
+    let replacement = HistoryPolicyChange::new(
+        reference.key(),
+        reference.revision(),
+        initial.proposal().binding().clone(),
+        HistoryPolicyApplication::Prospective,
+    )
+    .unwrap();
+    let change = first
+        .control()
+        .apply(
+            HistoryPolicyApplyRequest::new(replacement, None),
+            initial.principal(),
+            first.fence(),
+            at(150),
+        )
+        .unwrap();
+    let snapshot = HistoryLifecycleSnapshot::new(
+        change.next().clone(),
+        first.fence().incarnation(),
+        first.fence().deletion_revision(),
+        at(200),
+    )
+    .unwrap();
+    let replacement = &snapshot.control().authority().policies().records()[1];
+    let reference = HistoryPolicyReference::from(replacement);
+    let started = apply(&snapshot, &mut measure(&snapshot, &reference, 101));
+    let ended = apply(&started, &mut measure(&started, &reference, 0));
+    let mut material = serde_json::to_value(ended.control()).unwrap();
+    if legacy {
+        for receipt in material["authority"]["size_transitions"]
+            .as_array_mut()
+            .unwrap()
+        {
+            receipt.as_object_mut().unwrap().remove("source");
+        }
+    }
+    let replay: HistoryLifecycleControl = serde_json::from_value(material.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&replay).unwrap(), material);
+    let events = replay.audit_events_since(snapshot.control()).unwrap();
+    assert_eq!(events.len(), 2);
+    for event in events {
+        let authority = &event.metadata()["lifecycle"]["authority"];
+        assert_eq!(
+            authority["policy_id"],
+            serde_json::json!(if legacy {
+                replacement.operation()
+            } else {
+                initial.operation()
+            })
+        );
+        assert_eq!(
+            authority["policy_revision"],
+            serde_json::json!(reference.revision())
+        );
+        assert_eq!(event.actor_kind(), hubuum_events_core::ActorKind::User);
+    }
+}
 #[rstest]
 #[case(100, true)]
 #[case(51, true)]

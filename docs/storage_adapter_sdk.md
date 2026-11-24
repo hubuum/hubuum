@@ -50,7 +50,9 @@ ambiguous or over-budget scan cannot produce a complete gauge. Use the versioned
 `HistoryLogicalBytes::measure_json_v1` / `measure_fields_json_v1` format or its
 native equivalent, never compressed or physical table bytes. Persist immutable
 `HistorySizeTransition` lineage, including terminal capacity reserves, through
-checkpoint, merge and recovery; preserve exact clocks and actors. Keep pressure
+checkpoint, merge and recovery. Preserve the original clock, initiating
+principal and observation source. Older receipts without a source must replay
+their original audit metadata. Keep pressure
 progress out of history read revisions because it changes no exclusion or
 permission. Return `HistorySizeObservation` for independent protection by the
 trusted service before acknowledgement. This capability authorizes no deletion.

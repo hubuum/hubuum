@@ -177,6 +177,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn schema_dependency_index_serves_unknown_and_matching_class_references() {
+        #[derive(QueryableByName)]
+        struct Plan {
+            #[diesel(sql_type = Text, column_name = "QUERY PLAN")]
+            line: String,
+        }
+        let pool = integration_test_pool(1);
+        let plan = crate::with_transaction(&pool, async |connection| {
+            connection.batch_execute("SET LOCAL enable_seqscan = off").await?;
+            // Run the predicate on the migrated relation, with both branches needed for safe expiry.
+            sql_query("EXPLAIN (COSTS OFF) SELECT 1 FROM public.class_schema_revisions WHERE logical_identity #>> '{references,/class_id,reference,identity}' IS NULL OR logical_identity #>> '{references,/class_id,reference,identity}'=$1")
+                .bind::<Text, _>(Uuid::new_v4().to_string())
+                .load::<Plan>(connection).await.map_err(PostgresStorageError::from)
+        }).await.unwrap();
+        assert!(
+            plan.iter()
+                .any(|row| row.line.contains("class_schema_revisions_class_dependency"))
+        );
+    }
+
+    #[tokio::test]
     async fn native_census_preserves_an_inherited_timeout_and_reports_unavailability() {
         let pool = integration_test_pool(2);
         let backend = PostgresStorage::unobserved(pool.clone());
