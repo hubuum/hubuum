@@ -765,7 +765,10 @@ impl GrantResponse {
         response: Result<CoreTokenResponse, TokenError>,
     ) -> Result<CoreTokenResponse, OidcError> {
         match self.envelope.get() {
-            Some(Ok(())) => response.map_err(|_| OidcError::InvalidResponse),
+            Some(Ok(())) => response.map_err(|error| match error {
+                openidconnect::RequestTokenError::Parse(..) => OidcError::InvalidResponse,
+                other => token_error(other),
+            }),
             Some(Err(error)) => Err(error.clone()),
             None => response.map_err(token_error),
         }

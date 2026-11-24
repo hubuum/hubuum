@@ -758,6 +758,7 @@ async fn oidc_outage_consumes_only_the_claimed_credential(#[case] sibling: bool)
 #[case::rejected(Some(StorageUpstreamFailure::Rejected))]
 #[case::pre_dispatch(Some(StorageUpstreamFailure::UnavailableBeforeSubmission))]
 #[case::post_dispatch(Some(StorageUpstreamFailure::Unavailable))]
+#[case::interrupted(Some(StorageUpstreamFailure::Interrupted))]
 #[case::successful_refresh(None)]
 #[tokio::test]
 async fn fresh_authentication_fences_old_memory_refresh(

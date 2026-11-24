@@ -429,10 +429,15 @@ async fn refresh_classifies_wire_responses(
 }
 
 #[rstest]
-#[case::grant(false)]
-#[case::contradictory_grant(true)]
+#[case::grant(false, "application/json", None)]
+#[case::contradictory_grant(true, "application/json", Some(OidcError::InvalidResponse))]
+#[case::incorrect_media_type(false, "text/plain", Some(OidcError::Unavailable))]
 #[tokio::test]
-async fn decodable_refresh_requires_an_unambiguous_grant(#[case] error_member: bool) {
+async fn classifies_decodable_refresh_grants(
+    #[case] error_member: bool,
+    #[case] content_type: &str,
+    #[case] expected: Option<OidcError>,
+) {
     let (adapter, discovered, context) = fixture();
     let claims = claims();
     let retained = retained_credentials(
@@ -453,15 +458,12 @@ async fn decodable_refresh_requires_an_unambiguous_grant(#[case] error_member: b
         .refresh_using(&discovered, retained, &context, |_| {
             std::future::ready(Ok(openidconnect::http::Response::builder()
                 .status(200)
-                .header("content-type", "application/json")
+                .header("content-type", content_type)
                 .body(serde_json::to_vec(&wire).unwrap())
                 .unwrap()))
         })
         .await;
-    assert_eq!(
-        result.err(),
-        error_member.then_some(OidcError::InvalidResponse)
-    );
+    assert_eq!(result.err(), expected);
 }
 
 #[rstest]

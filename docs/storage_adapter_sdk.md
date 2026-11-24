@@ -578,6 +578,11 @@ new revision. Return `AuthenticationRequired` when a session or claim fence
 rejects renewal. Failed renewal finalizes local state. Dropping the uninstalled
 credential preserves shared upstream sessions across scopes and later logins.
 On `UnavailableBeforeSubmission`, restore the claimed grant with bounded backoff.
+Handle `StorageUpstreamFailure::Interrupted` for a locally interrupted OAuth read
+or an OIDC exchange stopped before submission. Fence the claim as usual, release
+its lease, make the same grant immediately eligible, and preserve both principal
+sync timestamps. Adapters can use `defer_credential_retry` and `sync_failure`
+to apply these rules.
 Return the issued family's retained grant from `revoke_auth_interaction_session`
 in the local revocation transaction so the server can revoke it after commit.
 For `revoke_auth_sessions`, `revoke_token` and `revoke_all_principal_tokens`,

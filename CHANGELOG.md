@@ -191,11 +191,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   outage using a valid unscoped human bearer. A profile HTTP 401 retires the
   affected OAuth bearer as soon as the headers arrive, even if the response body
   is incomplete, and lets another session verify the same identity. Each request
-  checks up to eight OAuth grants within one 25-second deadline.
+  checks up to eight OAuth grants within one 25-second deadline. Exhausting the
+  budget returns HTTP 503 and leaves the bearer eligible for immediate retry.
+  Only a recorded verification outage permits use of stale membership.
 - OIDC renewal discards uninstalled grants locally so newer logins and other
   provider scopes keep their shared upstream client session. Malformed ID tokens
   and contradictory grant responses invalidate cached authority. Restore
   maintenance waits for renewal finalization after a client disconnects.
+  An incorrect media type on a valid OIDC grant follows the outage policy.
+  Cancelling a background task stops new renewal claims and lets submitted
+  exchanges finish.
 - HTTP 408 responses during external identity verification preserve the last
   successful verification within its configured freshness window. OAuth profile
   reads retain their grant across unrelated provider edits. Logout uses the
@@ -207,6 +212,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   migration `2026-11-23-000001_verification_group_budget`, and restart matching
   binaries. Keep OAuth bearers recoverable during profile reads and return
   `AuthenticationRequired` when a session or claim fence rejects renewal.
+  **Breaking for external storage adapters on the unreleased 0.11 SDK.** Handle
+  the new `StorageUpstreamFailure::Interrupted` variant by releasing the fenced
+  claim for immediate retry and preserving the principal's sync timestamps.
 
 - Hosted browser interactions use `cookie` 0.18.3 or later in the 0.18 series.
   This removes the older Actix cookie dependency flagged by RUSTSEC-2026-0594.

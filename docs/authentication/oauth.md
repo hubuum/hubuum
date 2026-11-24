@@ -127,7 +127,9 @@ that bearer as soon as the response headers arrive, even if the body is incomple
 A due eligibility check tries another retained
 grant for the same principal when available. One request checks at most eight
 grants with a shared 25-second deadline. If the budget runs out, Hubuum returns
-HTTP 503 and a later request can continue checking eligible grants. The worker
+HTTP 503. The bearer becomes eligible for retry as soon as the worker releases
+its claim. Exhausting this local budget preserves the verification timestamps
+and does not grant access under the cached-membership outage policy. The worker
 finishes recording any provider response it already received before releasing
 its restore guard. Once all access tokens have expired, the user must sign in
 again. Existing Hubuum sessions and personal
