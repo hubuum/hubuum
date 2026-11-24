@@ -538,6 +538,50 @@ async fn policy_listing_serializes_capture_with_checkpoint_publication() {
         "Concurrent checkpoint publication must remain excluded during capture"
     );
 }
+#[actix_web::test]
+async fn policy_listing_reports_rollback_of_independently_protected_task_authority() {
+    use hubuum_storage_core::{
+        ControlCheckpointCapture, TaskRetentionPolicy, TaskRetentionPolicyRevision,
+    };
+    let fixture = Fixture::new().await;
+    let storage = storage_handle(&fixture.context);
+    let primary = storage.capture_control_checkpoint().await.unwrap();
+    let tasks = primary
+        .task_control()
+        .with_policy(
+            TaskRetentionPolicy::new(
+                TaskRetentionPolicyRevision::new(1).unwrap(),
+                std::time::Duration::from_secs(120),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let checkpoint = ControlCheckpointCapture::new(primary.deletion().clone(), tasks)
+        .unwrap()
+        .with_history_lifecycle(primary.history_lifecycle().cloned().unwrap_or_default());
+    session(&fixture.options)
+        .await
+        .unwrap()
+        .publish_control(&checkpoint)
+        .unwrap();
+    let page = list(
+        &fixture.context,
+        &fixture.admin,
+        HistoryPolicyListRequest {
+            after_revision: HistoryPolicyRevision::new(0).unwrap(),
+            limit: 100,
+        },
+        &fixture.options,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        page.protection,
+        HistoryAuthorityProtection::RecoveryRequired
+    ));
+}
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.root).unwrap();

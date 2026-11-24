@@ -17,7 +17,7 @@ pub(super) fn plan(
         census.finish_family().map_err(invalid_contract_value)?,
     )
     .map_err(invalid_contract_value)?;
-    for source in sources(state, family) {
+    for (_, source) in sources(state, family, 0, u64::MAX) {
         selection.remaining_time().map_err(invalid_contract_value)?;
         match source {
             ExpirySource::History(row) if row.family() != family => {}

@@ -71,7 +71,9 @@ Native deletion tombstones retain their original point interval
 (`valid_to == valid_from`); older unbounded tombstones remain supported. Both
 represent a deletion gap from that point onward, rather than an empty read
 exclusion. Unknown restore ancestry is reported as unresolved inspection coverage
-and cannot become an eligible preview candidate.
+and cannot become an eligible preview candidate. Inspection and preview charge
+already excluded copies against the scan budget and omit them from eligible
+counts and samples.
 
 Age, size, age-or-size and age-and-size are separate rule variants. Size pressure
 uses measured logical bytes and persists hysteresis until its lower target is
@@ -198,7 +200,8 @@ Configure and initialize the existing
 [independent control repository](deletion_recovery.md) before applying policies
 or creating/releasing holds. The service commits authority, publishes a signed
 checkpoint, reads it back, and only then acknowledges protected application.
-A publication failure leaves an inspectable pending outcome. Policy listing
+A publication failure leaves an inspectable pending outcome. A primary behind
+the signed deletion, task, or history authority requires recovery. Policy listing
 reports `protected`, `pending`, `recovery_required`, `unconfigured` or
 `unavailable`; it does not equate a committed database row with independent
 protection.

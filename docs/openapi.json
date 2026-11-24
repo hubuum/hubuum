@@ -930,6 +930,29 @@
         "summary": "Get Api V1 Admin History Lifecycle Policies",
         "description": "Auto-generated documentation for GET /api/v1/admin/history-lifecycle/policies.",
         "operationId": "getApiV1AdminHistoryLifecyclePolicies",
+        "parameters": [
+          {
+            "name": "after_revision",
+            "in": "query",
+            "description": "Exclusive revision cursor. Defaults to 0.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/HistoryPolicyRevision"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum revisions per page. Defaults to 100.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 100,
+              "minimum": 1
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Bounded immutable policy revisions",
@@ -937,6 +960,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HistoryPolicyPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid cursor or page limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             }

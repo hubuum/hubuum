@@ -350,9 +350,7 @@ pub(crate) async fn list(
         Some(Ok(session)) => {
             let checkpoint = session.checkpoint();
             let protected = checkpoint.history_lifecycle();
-            let state = if !primary.deletion().state().covers(checkpoint.state())
-                || protected.is_some_and(|required| !authority.covers(required))
-            {
+            let state = if !covers_checkpoint(&primary, checkpoint) {
                 HistoryAuthorityProtection::RecoveryRequired
             } else if protected.is_some_and(|protected| protected.covers(&authority)) {
                 HistoryAuthorityProtection::Protected

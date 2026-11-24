@@ -514,6 +514,7 @@ pub struct StorageError {
     current_revision: Option<ResourceRevision>,
     task_capacity: Option<TaskCapacityRejection>,
     api_request: Option<ApiRequestRejection>,
+    history_policy_review: Option<HistoryPolicyReviewConflict>,
     history_population_gap: Option<Box<HistoryObjectPopulationGap>>,
     history_archive_budget: Option<Box<HistoryArchiveBudgetEvidence>>,
 }
@@ -600,6 +601,20 @@ impl StorageError {
     #[must_use]
     pub fn invalid_input(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::InvalidInput, message, None)
+    }
+
+    #[must_use]
+    pub fn history_policy_review(reason: HistoryPolicyReviewConflict) -> Self {
+        let mut error = match reason {
+            HistoryPolicyReviewConflict::InaccessiblePreview => Self::not_found(reason.as_str()),
+            _ => Self::conflict(reason.as_str()),
+        };
+        error.history_policy_review = Some(reason);
+        error
+    }
+
+    pub const fn history_policy_review_conflict(&self) -> Option<HistoryPolicyReviewConflict> {
+        self.history_policy_review
     }
 
     #[must_use]
@@ -705,6 +720,7 @@ impl StorageError {
             current_revision,
             task_capacity: None,
             api_request: None,
+            history_policy_review: None,
             history_population_gap: None,
             history_archive_budget: None,
         }

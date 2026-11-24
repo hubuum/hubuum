@@ -296,9 +296,10 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             .await
             .unwrap();
         let snapshot = storage.capture_history_lifecycle().await.unwrap();
+        let scope = StorageExecutionScope::default().with_application_access(application);
         let admitted = storage
             .run_in_scope(
-                StorageExecutionScope::default().with_application_access(application),
+                scope.clone(),
                 storage.admit_history_expiry(
                     HistoryExpiryAdmissionRequest::new(
                         Uuid::new_v4(),
@@ -314,7 +315,6 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
                 ),
             )
             .await;
-        storage.unregister_runtime(runtime).await.unwrap();
         let manifest = admitted
             .unwrap()
             .manifest()
@@ -325,6 +325,33 @@ async fn full_history_restore_replays_exact_expiry_and_preserves_first_receipts(
             backup: backup.clone(),
         });
         assert_eq!(manifest.members().len(), closed.len());
+        let owner = storage
+            .run_in_scope(
+                scope.clone(),
+                storage.admit_history_publication(HistoryPublicationKind::HttpResponse),
+            )
+            .await
+            .unwrap();
+        let inspection = storage
+            .run_in_scope(
+                scope.with_history_read(owner.context()),
+                storage.scan_history_lifecycle(HistoryLifecycleScan::new(key, 1000).unwrap()),
+            )
+            .await;
+        let settled = owner
+            .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+            .await
+            .unwrap();
+        storage.settle_history_publication(settled).await.unwrap();
+        storage.unregister_runtime(runtime).await.unwrap();
+        let inspection = inspection.unwrap();
+        assert!(
+            inspection.candidates().iter().all(|candidate| manifest
+                .members()
+                .iter()
+                .all(|member| member.target() != candidate.target())),
+            "inspection must omit admitted copies before cleanup"
+        );
         if family == Family::ObjectRelation {
             let deletions = manifest
                 .members()

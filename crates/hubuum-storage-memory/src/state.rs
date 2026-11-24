@@ -193,6 +193,7 @@ impl MemoryState {
             event_sink_schedule: BTreeMap::new(),
             event_retention_batches: BTreeMap::new(),
             history: vec![MemoryHistoryEntry {
+                scan_position: 1,
                 logical_identity: root_identity,
                 id: HistoryRecordId::new(1).expect("initial history id"),
                 value: MemoryHistoryValue::Collection(root),

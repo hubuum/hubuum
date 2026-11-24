@@ -414,40 +414,68 @@ fn task_for_expiry(
     task.projection()
 }
 
+/// All source slices are ordered by immutable positions at insertion or restore.
+fn positioned_rows<T>(
+    rows: &[T],
+    after: u64,
+    through: u64,
+    position: impl Fn(&T) -> u64,
+) -> impl ExactSizeIterator<Item = (u64, &T)> {
+    let start = rows.partition_point(|row| position(row) <= after);
+    let end = rows.partition_point(|row| position(row) <= through);
+    rows[start..end].iter().map(move |row| (position(row), row))
+}
+
 pub(super) fn sources(
     state: &MemoryState,
     family: StorageIdentityHistoryKind,
-) -> Box<dyn ExactSizeIterator<Item = ExpirySource<'_>> + '_> {
+    after: u64,
+    through: u64,
+) -> Box<dyn ExactSizeIterator<Item = (u64, ExpirySource<'_>)> + '_> {
+    use StorageIdentityHistoryKind as Family;
     match family {
-        StorageIdentityHistoryKind::ClassSchema => {
-            Box::new(state.schema_history.iter().map(ExpirySource::Backup))
-        }
-        StorageIdentityHistoryKind::ComputedDefinitions => {
-            Box::new(state.computed_history.iter().map(ExpirySource::Computed))
-        }
-        StorageIdentityHistoryKind::ClassRelation | StorageIdentityHistoryKind::ObjectRelation => {
-            let section = if family == StorageIdentityHistoryKind::ClassRelation {
-                StorageBackupHistorySection::ClassRelationHistory
-            } else {
-                StorageBackupHistorySection::ObjectRelationHistory
+        Family::ComputedDefinitions => Box::new(
+            positioned_rows(&state.computed_history, after, through, |row| {
+                row.history_entry_id().id() as u64
+            })
+            .map(|(pos, row)| (pos, ExpirySource::Computed(row))),
+        ),
+        Family::ClassSchema | Family::ClassRelation | Family::ObjectRelation => {
+            let (rows, key) = match family {
+                Family::ClassSchema => (state.schema_history.as_slice(), "id"),
+                family => {
+                    let section = if family == Family::ClassRelation {
+                        StorageBackupHistorySection::ClassRelationHistory
+                    } else {
+                        StorageBackupHistorySection::ObjectRelationHistory
+                    };
+                    (
+                        state
+                            .relation_history
+                            .get(&section)
+                            .map(Vec::as_slice)
+                            .unwrap_or_default(),
+                        "history_entry_id",
+                    )
+                }
             };
             Box::new(
-                state
-                    .relation_history
-                    .get(&section)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[])
-                    .iter()
-                    .map(ExpirySource::Backup),
+                positioned_rows(rows, after, through, move |row| {
+                    row.get(key)
+                        .and_then(Value::as_u64)
+                        .expect("native history ID validated at insertion or restore")
+                })
+                .map(|(pos, row)| (pos, ExpirySource::Backup(row))),
             )
         }
-        StorageIdentityHistoryKind::Collection
-        | StorageIdentityHistoryKind::Class
-        | StorageIdentityHistoryKind::Object
-        | StorageIdentityHistoryKind::ExportTemplate
-        | StorageIdentityHistoryKind::RemoteTarget => {
-            Box::new(state.history.iter().map(ExpirySource::History))
-        }
+        Family::Collection
+        | Family::Class
+        | Family::Object
+        | Family::ExportTemplate
+        | Family::RemoteTarget => Box::new(
+            positioned_rows(&state.history, after, through, |row| row.scan_position)
+                .map(|(pos, row)| (pos, ExpirySource::History(row))),
+        ),
     }
 }
 
@@ -508,17 +536,11 @@ fn admit_age_on(
         StorageError::conflict("Expiry authority changed or batch already admitted")
     })?;
     let family = request.scan().key().family();
-    let rows = sources(state, family);
     let mut window = request
-        .scan_window(rows.len() as u64)
+        .scan_window((state.next_history_id - 1) as u64)
         .map_err(invalid_contract_value)?;
-    let start = usize::try_from(window.after()).map_err(|_| {
-        StorageError::invalid_input("History scan position exceeds this adapter's range")
-    })?;
-    let span = usize::try_from(window.through() - window.after()).map_err(|_| {
-        StorageError::invalid_input("History scan boundary exceeds this adapter's range")
-    })?;
-    let remaining = rows.len().saturating_sub(start).min(span);
+    let rows = sources(state, family, window.after(), window.through());
+    let remaining = rows.len();
     let mut input_bytes = 0;
     let mut metadata_bytes = 0;
     let mut consider = |row: &StorageBackupRow,
@@ -645,15 +667,8 @@ fn admit_age_on(
     // Bound examined source rows before family, closure, scope, identity, visibility
     // or dependency filtering. Skipping an unselectable source never replenishes this budget.
     let mut stopped = false;
-    for (index, row) in rows
-        .enumerate()
-        .skip(start)
-        .take(span)
-        .take(request.scan().limit() as usize)
-    {
-        window
-            .observe(index as u64 + 1)
-            .map_err(invalid_contract_value)?;
+    for (position, row) in rows.take(request.scan().limit() as usize) {
+        window.observe(position).map_err(invalid_contract_value)?;
         let step = match row {
             ExpirySource::History(row) if row.family() != family => ScanStep::Advance,
             ExpirySource::History(row) => consider(&row.backup_history_row()?.1, Some(row))?,

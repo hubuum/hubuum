@@ -440,6 +440,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- History policy inspection and previews omit copies already owned by expiry.
+  A review that expires or loses hold protection during commit returns its
+  specific conflict reason. Policy listing reports recovery when protected task
+  authority is ahead of the primary and documents both pagination parameters.
+- In-memory history expiry continues past concurrently removed rows within the
+  original pass. New schema events keep distinct IDs after expiry removes the
+  highest retained event.
+
 - History expiry blocks templates and remote targets with unresolved class
   references. Memory storage also protects schema history when a retained
   revision's class is unresolved. PostgreSQL indexes this dependency check.

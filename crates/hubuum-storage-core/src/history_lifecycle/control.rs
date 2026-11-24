@@ -386,6 +386,17 @@ impl HistoryLifecycleControlChange {
         let rest = prefix.change(self.next, fence)?;
         Ok((first, Some(rest)))
     }
+    /// Classify an authority fence change for the operation that requested it.
+    pub fn authority_conflict(&self) -> StorageError {
+        let appended = &self.next.authority.policies().records()
+            [self.expected.authority.policies().records().len()..];
+        if appended.iter().any(|record| record.review().is_some()) {
+            StorageError::history_policy_review(HistoryPolicyReviewConflict::StalePreview)
+        } else {
+            StorageError::conflict("History policy authority or application incarnation changed")
+        }
+    }
+
     /// Recheck clock-dependent review protection under the adapter's commit
     /// lock, after verifying the exact predecessor and fence. Preparing a change
     /// does not extend its review lifetime or freeze a hold's expiry clock.

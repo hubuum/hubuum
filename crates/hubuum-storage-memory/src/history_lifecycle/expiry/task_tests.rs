@@ -1,4 +1,4 @@
-use super::progress_tests::{fixture_write, seed};
+use super::progress_tests::{fixture_write, protection, seed};
 use super::*;
 use hubuum_storage_core::{
     StorageTaskClaimRequest, TaskByteLimit, TaskCapacityLimit, TaskCapacityRejection,
@@ -415,18 +415,6 @@ async fn unsupported_expiry_work_stays_queued(#[case] mode: &str) {
         })
         .await;
     storage.unregister_runtime(runtime).await.unwrap();
-}
-
-fn protection(snapshot: &HistoryLifecycleSnapshot) -> HistoryExposureProtection {
-    HistoryExposureProtection::new(
-        snapshot.control().authority().clone(),
-        ApplicationFence::new(
-            snapshot.fence().incarnation(),
-            snapshot.fence().deletion_revision().value() as i64,
-        )
-        .unwrap(),
-        DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
-    )
 }
 
 #[rstest]

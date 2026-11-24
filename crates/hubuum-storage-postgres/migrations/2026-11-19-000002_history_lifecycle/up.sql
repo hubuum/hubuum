@@ -579,7 +579,7 @@ REVOKE ALL ON FUNCTION public.hubuum_history_lifecycle_capture() FROM PUBLIC;
 -- The operation accepts a validated Rust transition and still fences exact
 -- authority and application incarnation in the database. It grants no table access.
 CREATE FUNCTION public.hubuum_history_lifecycle_commit(expected JSONB, replacement JSONB, expected_incarnation UUID, expected_deletion BIGINT)
-RETURNS BOOLEAN LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog AS $function$
+RETURNS TEXT LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog AS $function$
 DECLARE current_material JSONB; old_authority JSONB; new_authority JSONB;
     previous_count INTEGER; next_count INTEGER; additions INTEGER; pending_completions INTEGER; pending_size INTEGER;
     old_size JSONB; new_size JSONB;
@@ -587,17 +587,18 @@ DECLARE current_material JSONB; old_authority JSONB; new_authority JSONB;
 BEGIN
     PERFORM id FROM hubuum_control.deletion_authority WHERE id=1
         AND (material->>'revision')::BIGINT=expected_deletion FOR SHARE;
-    IF NOT FOUND THEN RETURN FALSE; END IF;
+    IF NOT FOUND THEN RETURN 'authority_changed'; END IF;
     PERFORM id FROM hubuum_control.application_control WHERE id=1
         AND incarnation=expected_incarnation FOR SHARE;
-    IF NOT FOUND THEN RETURN FALSE; END IF;
+    IF NOT FOUND THEN RETURN 'authority_changed'; END IF;
     SELECT material INTO current_material FROM hubuum_control.history_lifecycle_control WHERE id=1 FOR UPDATE;
-    IF current_material IS DISTINCT FROM expected THEN RETURN FALSE; END IF;
-    IF replacement=current_material THEN RETURN TRUE; END IF;
+    IF current_material->'authority' IS DISTINCT FROM expected->'authority' THEN RETURN 'authority_changed'; END IF;
+    IF current_material IS DISTINCT FROM expected THEN RETURN 'previews_changed'; END IF;
+    IF replacement=current_material THEN RETURN 'committed'; END IF;
     -- Generic policy/hold CAS preserves retained expiry byte-for-byte. Native
     -- intent/outcome admission needs its separate protected executor boundary.
     IF replacement #> '{authority,expiry}' IS DISTINCT FROM current_material #> '{authority,expiry}'
-       THEN RETURN FALSE; END IF;
+       THEN RETURN 'conflict'; END IF;
     IF jsonb_typeof(replacement) IS DISTINCT FROM 'object'
        OR replacement - ARRAY['authority','previews'] <> '{}'::jsonb
        OR jsonb_typeof(replacement->'authority') IS DISTINCT FROM 'object'
@@ -606,27 +607,27 @@ BEGIN
        OR jsonb_typeof(replacement #> '{authority,holds}') IS DISTINCT FROM 'array'
        OR jsonb_typeof(coalesce(replacement #> '{authority,size_transitions}','[]')) IS DISTINCT FROM 'array'
        OR jsonb_typeof(replacement->'previews') IS DISTINCT FROM 'array'
-       OR octet_length(replacement::text)>4194304 THEN RETURN FALSE; END IF;
+       OR octet_length(replacement::text)>4194304 THEN RETURN 'conflict'; END IF;
     old_authority := current_material->'authority';
     new_authority := replacement->'authority';
     old_size := coalesce(old_authority->'size_transitions','[]'::JSONB);
     new_size := coalesce(new_authority->'size_transitions','[]'::JSONB);
-    IF jsonb_array_length(new_size)>1024 THEN RETURN FALSE; END IF;
+    IF jsonb_array_length(new_size)>1024 THEN RETURN 'conflict'; END IF;
     SELECT count(*) INTO pending_size FROM (
         SELECT DISTINCT ON (value #> '{pressure,policy}') value
         FROM jsonb_array_elements(new_size) WITH ORDINALITY AS entries(value,ordinal)
         ORDER BY value #> '{pressure,policy}',ordinal DESC
     ) latest WHERE value #>> '{pressure,reclaiming}'='true';
-    IF jsonb_array_length(new_size)+pending_size>1024 THEN RETURN FALSE; END IF;
+    IF jsonb_array_length(new_size)+pending_size>1024 THEN RETURN 'conflict'; END IF;
     IF jsonb_array_length(new_authority->'policies')>4096 OR jsonb_array_length(new_authority->'holds')>4096
-       OR jsonb_array_length(replacement->'previews')>256 THEN RETURN FALSE; END IF;
+       OR jsonb_array_length(replacement->'previews')>256 THEN RETURN 'conflict'; END IF;
     SELECT count(*) INTO pending_completions FROM (
         SELECT DISTINCT ON (value #>> '{hold,identity}') value
         FROM jsonb_array_elements(new_authority->'holds') WITH ORDINALITY AS entries(value,ordinal)
         ORDER BY value #>> '{hold,identity}',ordinal DESC
     ) latest WHERE value->>'transition'='created';
     IF jsonb_array_length(new_authority->'holds')+pending_completions>4096
-       OR octet_length(replacement::text)+(pending_completions+pending_size)*1024>4194304 THEN RETURN FALSE; END IF;
+       OR octet_length(replacement::text)+(pending_completions+pending_size)*1024>4194304 THEN RETURN 'conflict'; END IF;
     -- Prefix comparisons preserve order and exact immutable records. JSONB
     -- containment alone would incorrectly accept reordered or rewritten history.
     IF (SELECT coalesce(jsonb_agg(value ORDER BY ordinal),'[]') FROM jsonb_array_elements(new_authority->'policies') WITH ORDINALITY AS entries(value,ordinal)
@@ -634,19 +635,19 @@ BEGIN
        OR (SELECT coalesce(jsonb_agg(value ORDER BY ordinal),'[]') FROM jsonb_array_elements(new_authority->'holds') WITH ORDINALITY AS entries(value,ordinal)
           WHERE ordinal<=jsonb_array_length(old_authority->'holds')) <> old_authority->'holds'
        OR (SELECT coalesce(jsonb_agg(value ORDER BY ordinal),'[]') FROM jsonb_array_elements(new_size) WITH ORDINALITY AS entries(value,ordinal)
-          WHERE ordinal<=jsonb_array_length(old_size)) <> old_size THEN RETURN FALSE; END IF;
+          WHERE ordinal<=jsonb_array_length(old_size)) <> old_size THEN RETURN 'conflict'; END IF;
     previous_count := jsonb_array_length(old_authority->'policies')+jsonb_array_length(old_authority->'holds')+jsonb_array_length(old_size);
     next_count := jsonb_array_length(new_authority->'policies')+jsonb_array_length(new_authority->'holds')+jsonb_array_length(new_size);
     additions := next_count-previous_count;
     IF additions NOT IN (0,1) OR jsonb_typeof(new_authority->'revision') IS DISTINCT FROM 'string'
        OR new_authority->>'revision' !~ '^(0|[1-9][0-9]*)$'
-       OR (new_authority->>'revision')::BIGINT<>(old_authority->>'revision')::BIGINT+additions THEN RETURN FALSE; END IF;
-    IF additions=0 AND new_authority<>old_authority THEN RETURN FALSE; END IF;
-    IF additions=1 AND replacement->'previews'<>current_material->'previews' THEN RETURN FALSE; END IF;
+       OR (new_authority->>'revision')::BIGINT<>(old_authority->>'revision')::BIGINT+additions THEN RETURN 'conflict'; END IF;
+    IF additions=0 AND new_authority<>old_authority THEN RETURN 'conflict'; END IF;
+    IF additions=1 AND replacement->'previews'<>current_material->'previews' THEN RETURN 'conflict'; END IF;
     IF jsonb_array_length(new_authority->'policies')>jsonb_array_length(old_authority->'policies') THEN
         new_policy := new_authority->'policies'->-1;
         IF new_policy #>> '{proposal,application,kind}'='retrospective' AND
-           (new_policy->'review' IS NULL OR new_policy->'review'='null'::jsonb) THEN RETURN FALSE; END IF;
+           (new_policy->'review' IS NULL OR new_policy->'review'='null'::jsonb) THEN RETURN 'conflict'; END IF;
         IF new_policy->'review' IS NOT NULL AND new_policy->'review'<>'null'::jsonb THEN
             SELECT value INTO issued FROM jsonb_array_elements(current_material->'previews')
                 WHERE value->'reference'=new_policy #> '{review,reference}';
@@ -654,11 +655,12 @@ BEGIN
                OR issued->'principal'<>new_policy->'principal'
                OR new_policy->'review'<>jsonb_build_object('reference',issued->'reference','principal',issued->'principal',
                     'fence',issued->'fence','issued_at',issued->'issued_at','expires_at',issued->'expires_at','coverage',issued #> '{impact,coverage}')
-               OR issued #>> '{fence,incarnation}'<>expected_incarnation::TEXT
+               THEN RETURN 'conflict'; END IF;
+            IF issued #>> '{fence,incarnation}'<>expected_incarnation::TEXT
                OR issued #>> '{fence,authority_revision}'<>old_authority->>'revision'
                OR issued #>> '{fence,deletion_revision}'<>expected_deletion::TEXT
-               OR (issued->>'issued_at')::TIMESTAMPTZ>clock_timestamp()
-               OR (issued->>'expires_at')::TIMESTAMPTZ<=clock_timestamp() THEN RETURN FALSE; END IF;
+               OR (issued->>'issued_at')::TIMESTAMPTZ>clock_timestamp() THEN RETURN 'stale_preview'; END IF;
+            IF (issued->>'expires_at')::TIMESTAMPTZ<=clock_timestamp() THEN RETURN 'preview_expired'; END IF;
             -- A natural hold expiry changes protection even without a write.
             IF EXISTS (SELECT 1 FROM (
                 SELECT DISTINCT ON (value #>> '{hold,identity}') value->'hold' AS hold
@@ -667,7 +669,7 @@ BEGIN
             ) latest WHERE (hold->>'created_at')::TIMESTAMPTZ <= (issued->>'issued_at')::TIMESTAMPTZ
                 AND (hold->>'released_at' IS NULL OR (hold->>'released_at')::TIMESTAMPTZ>(issued->>'issued_at')::TIMESTAMPTZ)
                 AND (hold->>'expires_at')::TIMESTAMPTZ>(issued->>'issued_at')::TIMESTAMPTZ
-                AND (hold->>'expires_at')::TIMESTAMPTZ<=clock_timestamp()) THEN RETURN FALSE; END IF;
+                AND (hold->>'expires_at')::TIMESTAMPTZ<=clock_timestamp()) THEN RETURN 'stale_preview'; END IF;
         END IF;
     END IF;
     IF additions=0 THEN
@@ -677,13 +679,13 @@ BEGIN
             SELECT value INTO next_preview FROM jsonb_array_elements(replacement->'previews')
                 WHERE value #>> '{reference,preview_id}'=old_preview #>> '{reference,preview_id}';
             IF next_preview IS NULL THEN
-                IF (old_preview->>'expires_at')::TIMESTAMPTZ>clock_timestamp() THEN RETURN FALSE; END IF;
-            ELSIF next_preview<>old_preview THEN RETURN FALSE;
+                IF (old_preview->>'expires_at')::TIMESTAMPTZ>clock_timestamp() THEN RETURN 'conflict'; END IF;
+            ELSIF next_preview<>old_preview THEN RETURN 'conflict';
             END IF;
         END LOOP;
     END IF;
     UPDATE hubuum_control.history_lifecycle_control SET material=replacement WHERE id=1;
-    RETURN TRUE;
+    RETURN 'committed';
 END
 $function$;
 REVOKE ALL ON FUNCTION public.hubuum_history_lifecycle_commit(JSONB,JSONB,UUID,BIGINT) FROM PUBLIC;

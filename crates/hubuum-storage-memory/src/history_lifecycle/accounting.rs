@@ -92,7 +92,7 @@ pub(super) fn fold_on(
             .observe(candidate.as_ref(), bytes, metadata_bytes)
             .map_err(|error| StorageError::unavailable(error.to_string()))
     };
-    for source in sources(state, family) {
+    for (_, source) in sources(state, family, 0, u64::MAX) {
         if started.elapsed() > std::time::Duration::from_secs(5) {
             return Err(StorageError::unavailable(
                 "Complete history accounting exceeded its time budget",

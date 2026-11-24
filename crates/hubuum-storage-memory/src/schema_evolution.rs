@@ -84,9 +84,6 @@ impl MemoryState {
         if let Some(epoch) = self.schema_epochs.get(&class_id.id()) {
             delta.schema_epochs.insert(class_id.id(), *epoch);
         }
-        if let Some(last) = self.schema_history.last() {
-            delta.schema_history.push(last.clone());
-        }
         for work in self
             .schema_work
             .values()
@@ -162,25 +159,14 @@ impl MemoryState {
             if let Some(previous) = self
                 .history
                 .iter_mut()
-                .find(|previous| previous.id == entry.id)
+                .find(|previous| previous.scan_position == entry.scan_position)
             {
                 *previous = entry;
             } else {
                 self.history.push(entry);
             }
         }
-        let last = self
-            .schema_history
-            .last()
-            .and_then(|row| row.get("id"))
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(0);
-        self.schema_history
-            .extend(delta.schema_history.into_iter().filter(|row| {
-                row.get("id")
-                    .and_then(serde_json::Value::as_i64)
-                    .is_some_and(|id| id > last)
-            }));
+        self.schema_history.extend(delta.schema_history);
         self.events.extend(delta.events);
         for (id, events) in delta.task_events {
             self.task_events.entry(id).or_default().extend(events);
@@ -322,14 +308,7 @@ impl MemoryState {
             .schema_revisions
             .get(&(class_id.id(), number))
             .ok_or_else(|| StorageError::not_found("Schema revision was not found"))?;
-        let id = self
-            .schema_history
-            .last()
-            .and_then(|row| row.get("id"))
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(0)
-            .checked_add(1)
-            .ok_or_else(|| StorageError::internal("Schema history identity exhausted"))?;
+        let id = self.history_ids.allocate()?;
         let logical_identity = self.logical_identities.schema_history(revision, context);
         self.schema_history.push(StorageBackupRow::try_from_value(json!({"logical_identity": logical_identity, "id":id,"class_id":class_id,"revision":number,"snapshot":revision.snapshot(),"operation":operation,"occurred_at":Utc::now().trunc_subsecs(6),"actor_principal_id":context.actor_user_id(),"task_id":context.task_id()})).map_err(schema_error)?);
         Ok(())

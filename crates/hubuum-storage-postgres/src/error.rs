@@ -6,8 +6,8 @@ use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind, PositiveIdError, Resou
 use hubuum_events_core::{AuditDocumentError, EventIdentifierError};
 use hubuum_storage_core::{
     ApiRequestRejection, HistoryArchiveBudgetEvidence, HistoryObjectPopulationGap,
-    StorageCandidatePage, StorageCandidatePageLimit, StorageError, StorageErrorKind, StoragePage,
-    StorageValidationError, TaskCapacityRejection,
+    HistoryPolicyReviewConflict, StorageCandidatePage, StorageCandidatePageLimit, StorageError,
+    StorageErrorKind, StoragePage, StorageValidationError, TaskCapacityRejection,
 };
 use hubuum_task_core::TaskStopReason;
 use tracing::{debug, error};
@@ -27,6 +27,7 @@ pub struct PostgresStorageError {
     current_revision: Option<ResourceRevision>,
     task_capacity: Option<TaskCapacityRejection>,
     api_request: Option<ApiRequestRejection>,
+    history_policy_review: Option<HistoryPolicyReviewConflict>,
     history_population_gap: Option<Box<HistoryObjectPopulationGap>>,
     history_archive_budget: Option<Box<HistoryArchiveBudgetEvidence>>,
 }
@@ -58,6 +59,7 @@ impl PostgresStorageError {
             current_revision,
             task_capacity: None,
             api_request: None,
+            history_policy_review: None,
             history_population_gap: None,
             history_archive_budget: None,
         }
@@ -245,6 +247,11 @@ impl std::error::Error for PostgresStorageError {}
 
 impl From<StorageError> for PostgresStorageError {
     fn from(error: StorageError) -> Self {
+        if let Some(reason) = error.history_policy_review_conflict() {
+            let mut converted = Self::new(error.kind(), reason.as_str(), None);
+            converted.history_policy_review = Some(reason);
+            return converted;
+        }
         if let Some(reason) = error.api_request_rejection() {
             let mut converted = Self::new(error.kind(), reason.as_str(), None);
             converted.api_request = Some(reason);
@@ -444,6 +451,9 @@ impl From<DieselError> for PostgresStorageError {
 
 impl From<PostgresStorageError> for StorageError {
     fn from(error: PostgresStorageError) -> Self {
+        if let Some(reason) = error.history_policy_review {
+            return Self::history_policy_review(reason);
+        }
         if let Some(reason) = error.api_request {
             return Self::api_request(reason);
         }

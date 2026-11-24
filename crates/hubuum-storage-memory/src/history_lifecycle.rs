@@ -330,14 +330,17 @@ impl HistoryLifecycleStorage for MemoryStorage {
         );
         let mut state = self.state.write_history_control(&fallback).await?;
         let current = state.history_lifecycle_snapshot()?;
-        if current.control() != change.expected() || current.fence() != change.fence() {
+        if current.fence() != change.fence() {
+            return Err(change.authority_conflict());
+        }
+        if current.control() != change.expected() {
             return Err(StorageError::conflict(
-                "History policy authority or application incarnation changed",
+                "History policy preview registry changed",
             ));
         }
         change
             .validate_commit_at(current.observed_at())
-            .map_err(|reason| StorageError::conflict(reason.as_str()))?;
+            .map_err(StorageError::history_policy_review)?;
         if change.next().authority().expiry() != change.expected().authority().expiry() {
             return Err(StorageError::conflict(
                 "Generic policy control cannot change retained expiry",
@@ -2333,7 +2336,14 @@ mod tests {
             )
             .unwrap();
         let error = storage.commit_history_lifecycle(change).await.unwrap_err();
-        assert_eq!(error.kind(), StorageErrorKind::Conflict);
+        assert_eq!(
+            error.history_policy_review_conflict(),
+            Some(if review_expired {
+                HistoryPolicyReviewConflict::PreviewExpired
+            } else {
+                HistoryPolicyReviewConflict::StalePreview
+            })
+        );
         assert_eq!(
             storage.capture_history_lifecycle().await.unwrap().control(),
             issued.control()
@@ -2597,11 +2607,16 @@ impl MemoryState {
                 )
                 .map_err(invalid_contract_value)?
                 {
-                    Some(candidate) if scan.includes(&candidate) => candidates.push(
-                        candidate
-                            .with_native_interval(from, until)
-                            .map_err(invalid_contract_value)?,
-                    ),
+                    Some(candidate)
+                        if scan.includes(&candidate)
+                            && self.history_identity_visible(family, Some(evidence)) =>
+                    {
+                        candidates.push(
+                            candidate
+                                .with_native_interval(from, until)
+                                .map_err(invalid_contract_value)?,
+                        )
+                    }
                     Some(_) => {}
                     None => unresolved += 1,
                 }
@@ -2616,6 +2631,7 @@ impl MemoryState {
                 for row in &self.schema_history {
                     let evidence = row
                         .get("logical_identity")
+                        .filter(|value| !value.is_null())
                         .cloned()
                         .map(serde_json::from_value::<StorageIdentityEvidence>)
                         .transpose()
@@ -2661,6 +2677,7 @@ impl MemoryState {
                 for row in self.relation_history.get(&section).into_iter().flatten() {
                     let evidence = row
                         .get("logical_identity")
+                        .filter(|value| !value.is_null())
                         .cloned()
                         .map(serde_json::from_value::<StorageIdentityEvidence>)
                         .transpose()

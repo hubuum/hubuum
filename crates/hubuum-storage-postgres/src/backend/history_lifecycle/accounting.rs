@@ -358,7 +358,7 @@ mod concurrency_tests {
                     let snapshot = capture_on(connection).await?;
                     let material = serde_json::to_value(snapshot.control()).unwrap();
                     let committed = sql_query(
-                        "SELECT public.hubuum_history_lifecycle_commit($1,$1,$2,$3) AS committed",
+                        "SELECT public.hubuum_history_lifecycle_commit($1,$1,$2,$3) = 'committed' AS committed",
                     )
                     .bind::<Jsonb, _>(material)
                     .bind::<SqlUuid, _>(snapshot.fence().incarnation())

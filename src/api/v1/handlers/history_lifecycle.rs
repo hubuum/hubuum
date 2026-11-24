@@ -1,7 +1,7 @@
 use actix_web::{Responder, error::JsonPayloadError, get, http::StatusCode, post, put, web};
 use hubuum_storage_core::{
-    HistoryPolicyPreview, HistoryPolicyRecord, HistoryPolicyReference, HistoryRetentionHold,
-    HistorySizeAccounting,
+    HistoryPolicyPreview, HistoryPolicyRecord, HistoryPolicyReference, HistoryPolicyRevision,
+    HistoryRetentionHold, HistorySizeAccounting,
 };
 
 use crate::api::response::ApiErrorResponse;
@@ -17,7 +17,10 @@ use crate::models::history_lifecycle::{
 use crate::permissions::AppContext;
 use crate::services::deletion_recovery::history_policy;
 
-#[utoipa::path(get, path = "/api/v1/admin/history-lifecycle/policies", tag = "admin", security(("bearer_auth" = [])), responses((status = 200, description = "Bounded immutable policy revisions", body = HistoryPolicyPage), (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse)))]
+#[utoipa::path(get, path = "/api/v1/admin/history-lifecycle/policies", tag = "admin", security(("bearer_auth" = [])),
+    params(("after_revision" = Option<HistoryPolicyRevision>, Query, description = "Exclusive revision cursor. Defaults to 0."),
+           ("limit" = Option<u16>, Query, minimum = 1, maximum = 100, description = "Maximum revisions per page. Defaults to 100.")),
+    responses((status = 400, description = "Invalid cursor or page limit", body = ApiErrorResponse), (status = 200, description = "Bounded immutable policy revisions", body = HistoryPolicyPage), (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse)))]
 #[get("/policies")]
 pub async fn policies(
     context: AppContext,

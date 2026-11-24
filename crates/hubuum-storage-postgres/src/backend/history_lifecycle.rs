@@ -22,12 +22,20 @@ use std::time::{Duration as StdDuration, Instant};
 use uuid::Uuid;
 
 use super::PostgresStorage;
-use crate::operations::history::resource_identity_path;
+use crate::operations::history::{history_version_visible, resource_identity_path};
 use crate::{PostgresConnection, PostgresStorageError};
 
 #[diesel::declare_sql_function]
 extern "SQL" {
     fn octet_length(value: Nullable<Text>) -> Nullable<Integer>;
+
+    #[sql_name = "public.hubuum_history_lifecycle_commit"]
+    fn history_lifecycle_commit(
+        expected: Jsonb,
+        replacement: Jsonb,
+        incarnation: SqlUuid,
+        deletion: BigInt,
+    ) -> Text;
 
     #[sql_name = "public.hubuum_history_expiry_dependency"]
     fn history_expiry_dependency(family: Text, identity: Nullable<Jsonb>) -> Bool;
@@ -58,6 +66,11 @@ macro_rules! history_scan_query {
             $anchor,
             $deleted,
             within_budget(),
+            case_when(
+                within_budget(),
+                history_version_visible($family, $table::logical_identity),
+            )
+            .otherwise(false),
             case_when(
                 within_budget(),
                 history_expiry_dependency($family, $table::logical_identity),
@@ -150,6 +163,7 @@ struct HistoryRow {
     anchor: Option<DateTime<Utc>>,
     deleted: bool,
     within_budget: bool,
+    visible: bool,
     dependency: bool,
 }
 #[derive(Deserialize)]
@@ -875,7 +889,7 @@ impl HistoryLifecycleStorage for PostgresStorage {
                         anchor,
                         row.dependency,
                     )? {
-                        Some(candidate) if scan.includes(&candidate) => candidates
+                        Some(candidate) if row.visible && scan.includes(&candidate) => candidates
                             .push(candidate.with_native_interval(row.valid_from, row.valid_to)?),
                         Some(_) => {}
                         None => unresolved += 1,
@@ -989,19 +1003,37 @@ async fn commit_on(
     let replacement = serde_json::to_value(change.next()).map_err(|_| {
         PostgresStorageError::invalid_input("Cannot encode history lifecycle transition")
     })?;
-    let committed =
-        sql_query("SELECT public.hubuum_history_lifecycle_commit($1,$2,$3,$4) AS committed")
-            .bind::<Jsonb, _>(expected)
-            .bind::<Jsonb, _>(replacement)
-            .bind::<SqlUuid, _>(change.fence().incarnation())
-            .bind::<BigInt, _>(change.fence().deletion_revision().value() as i64)
-            .get_result::<CommittedRow>(connection)
-            .await?
-            .committed;
-    if !committed {
-        return Err(PostgresStorageError::conflict(
-            "History policy authority or application incarnation changed",
-        ));
+    let outcome = diesel::select(history_lifecycle_commit(
+        expected,
+        replacement,
+        change.fence().incarnation(),
+        change.fence().deletion_revision().value() as i64,
+    ))
+    .get_result::<String>(connection)
+    .await?;
+    let conflict = match outcome.as_str() {
+        "committed" => None,
+        "authority_changed" => Some(change.authority_conflict()),
+        "previews_changed" => Some(StorageError::conflict(
+            "History policy preview registry changed",
+        )),
+        "preview_expired" => Some(StorageError::history_policy_review(
+            HistoryPolicyReviewConflict::PreviewExpired,
+        )),
+        "stale_preview" => Some(StorageError::history_policy_review(
+            HistoryPolicyReviewConflict::StalePreview,
+        )),
+        "conflict" => Some(StorageError::conflict(
+            "Invalid history lifecycle transition",
+        )),
+        _ => {
+            return Err(PostgresStorageError::database(
+                "Unknown history lifecycle commit outcome",
+            ));
+        }
+    };
+    if let Some(error) = conflict {
+        return Err(error.into());
     }
     for event in change.next().audit_events_since(change.expected())? {
         crate::operations::event_record::append_retained_lifecycle_event(connection, &event)
@@ -1022,6 +1054,93 @@ mod scan_tests {
     struct Created {
         #[diesel(sql_type = Integer)]
         id: i32,
+    }
+
+    #[rstest::rstest]
+    #[case::expired_review(301, HistoryPolicyReviewConflict::PreviewExpired)]
+    #[case::expired_hold(10, HistoryPolicyReviewConflict::StalePreview)]
+    #[tokio::test]
+    async fn policy_commit_returns_the_locked_review_decision(
+        #[case] elapsed: i64,
+        #[case] expected: HistoryPolicyReviewConflict,
+    ) {
+        use chrono::Duration;
+        use hubuum_domain::PrincipalIdentity;
+
+        let storage = PostgresStorage::unobserved(integration_test_pool(1));
+        let application = storage.capture_application_execution(None).await.unwrap();
+        storage
+            .runtime()
+            .with_history_control_transaction(application, async |connection| {
+                connection
+                    .batch_execute("SAVEPOINT review_clock_fixture")
+                    .await?;
+                let mut snapshot = capture_on(connection).await?;
+                let issued_at = snapshot.observed_at() - Duration::seconds(elapsed);
+                let principal = PrincipalIdentity::generate();
+                let key = HistoryPolicyKey::new(
+                    StorageIdentityHistoryKind::Object,
+                    HistoryPolicyScope::Deployment,
+                )?;
+                if expected == HistoryPolicyReviewConflict::StalePreview {
+                    let hold = HistoryRetentionHold::new(
+                        Uuid::new_v4(),
+                        key,
+                        issued_at - Duration::seconds(1),
+                        Some(issued_at + Duration::seconds(1)),
+                        principal,
+                    )?;
+                    snapshot = commit_on(
+                        connection,
+                        snapshot.control().create_hold(hold, snapshot.fence())?,
+                    )
+                    .await?;
+                }
+                let proposal = HistoryPolicyChange::new(
+                    key,
+                    snapshot
+                        .control()
+                        .authority()
+                        .policies()
+                        .current_revision(key),
+                    HistoryPolicyBinding::Indefinite,
+                    HistoryPolicyApplication::Retrospective {
+                        closed_through: issued_at - Duration::seconds(1),
+                    },
+                )?;
+                let preview = HistoryPolicyPreview::issue(
+                    principal,
+                    proposal.clone(),
+                    snapshot.fence(),
+                    issued_at,
+                    HistoryPreviewImpact::new(HistoryPreviewCoverage::Complete, 0, 0, vec![])?,
+                )?;
+                let issued = commit_on(
+                    connection,
+                    snapshot
+                        .control()
+                        .issue_preview(preview.clone(), snapshot.fence())?,
+                )
+                .await?;
+                let change = issued
+                    .control()
+                    .apply(
+                        HistoryPolicyApplyRequest::new(proposal, Some(preview.reference().clone())),
+                        principal,
+                        issued.fence(),
+                        issued_at,
+                    )
+                    .unwrap();
+                let error = StorageError::from(commit_on(connection, change).await.unwrap_err());
+                assert_eq!(error.history_policy_review_conflict(), Some(expected));
+                assert_eq!(capture_on(connection).await?.control(), issued.control());
+                connection
+                    .batch_execute("ROLLBACK TO SAVEPOINT review_clock_fixture")
+                    .await?;
+                Ok::<_, PostgresStorageError>(())
+            })
+            .await
+            .unwrap();
     }
 
     #[rstest::rstest]

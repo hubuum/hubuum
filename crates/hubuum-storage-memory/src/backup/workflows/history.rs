@@ -279,7 +279,7 @@ pub(in crate::backup) fn restore_history(
         .collect::<Result<_, _>>()?;
     state
         .computed_history
-        .sort_by_key(|record| (record.valid_from(), record.history_entry_id()));
+        .sort_by_key(StorageComputedFieldHistory::history_entry_id);
     if let Some(retained_id) = state
         .computed_history
         .iter()
@@ -318,6 +318,7 @@ pub(in crate::backup) fn restore_history(
                 _ => unreachable!("temporal resource selection"),
             };
             state.history.push(MemoryHistoryEntry {
+                scan_position: 0,
                 logical_identity: serde_json::from_value(r.value("logical_identity")?.clone())
                     .map_err(|_| invalid("logical_identity"))?,
                 id: HistoryRecordId::new(r.number("history_entry_id")?)
@@ -353,36 +354,40 @@ pub(in crate::backup) fn restore_history(
     state
         .history
         .sort_by_key(|entry| (entry.valid_from, entry.id));
+    // Preserve chronological reads while assigning a unique position across native tables.
+    for (index, entry) in state.history.iter_mut().enumerate() {
+        entry.scan_position = index as u64 + 1;
+    }
     for section in [
         StorageBackupHistorySection::ClassRelationHistory,
         StorageBackupHistorySection::ObjectRelationHistory,
     ] {
-        state
-            .relation_history
-            .insert(section, sections[&section].clone());
+        let mut rows = sections[&section].clone();
+        rows.sort_by_key(|row| row.get("history_entry_id").and_then(Value::as_i64));
+        state.relation_history.insert(section, rows);
     }
-    let last_id = sections
-        .iter()
-        .filter(|(s, _)| {
-            matches!(
-                s,
-                StorageBackupHistorySection::ComputedFieldHistory
-                    | StorageBackupHistorySection::CollectionHistory
-                    | StorageBackupHistorySection::ClassHistory
-                    | StorageBackupHistorySection::ObjectHistory
-                    | StorageBackupHistorySection::ClassRelationHistory
-                    | StorageBackupHistorySection::ObjectRelationHistory
-                    | StorageBackupHistorySection::ExportTemplateHistory
-                    | StorageBackupHistorySection::RemoteTargetHistory
-            )
-        })
-        .flat_map(|(_, rows)| rows)
-        .map(|r| Row(r).number("history_entry_id"))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .max()
-        .unwrap_or(0);
-    state.history_ids.observe(last_id);
+    let mut highest =
+        i64::try_from(state.history.len()).map_err(|_| invalid("history sequence"))?;
+    for (section, rows) in &sections {
+        use StorageBackupHistorySection::*;
+        let column = match section {
+            ClassSchemaHistory => "id",
+            ComputedFieldHistory
+            | CollectionHistory
+            | ClassHistory
+            | ObjectHistory
+            | ClassRelationHistory
+            | ObjectRelationHistory
+            | ExportTemplateHistory
+            | RemoteTargetHistory => "history_entry_id",
+            _ => continue,
+        };
+        for row in rows {
+            let id = HistoryRecordId::new(Row(row).number(column)?).map_err(|_| invalid(column))?;
+            highest = highest.max(id.id());
+        }
+    }
+    state.history_ids.observe(highest);
     state.events.clear();
     state.task_events.clear();
     for row in &sections[&StorageBackupHistorySection::AuditEvents] {

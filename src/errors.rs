@@ -224,6 +224,9 @@ impl ApiError {
 
 impl From<StorageError> for ApiError {
     fn from(error: StorageError) -> Self {
+        if let Some(reason) = error.history_policy_review_conflict() {
+            return Self::HistoryPolicyReview(reason);
+        }
         if let Some(reason) = error.api_request_rejection() {
             return Self::ApiRequestAdmission(reason);
         }
@@ -707,6 +710,14 @@ mod tests {
                 "permission_backend_unavailable",
             ),
             (StorageError::invalid_input("invalid move"), "bad_request"),
+            (
+                StorageError::history_policy_review(HistoryPolicyReviewConflict::PreviewExpired),
+                "preview_expired",
+            ),
+            (
+                StorageError::history_policy_review(HistoryPolicyReviewConflict::StalePreview),
+                "stale_preview",
+            ),
             (
                 StorageError::conflict("collection has children"),
                 "conflict",

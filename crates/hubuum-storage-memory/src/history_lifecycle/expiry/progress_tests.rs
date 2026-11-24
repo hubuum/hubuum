@@ -308,6 +308,16 @@ impl<'a> Run<'a> {
         family: StorageIdentityHistoryKind,
         limit: u32,
     ) -> Self {
+        let key = HistoryPolicyKey::new(family, HistoryPolicyScope::Deployment).unwrap();
+        Self::scoped(storage, runtime, key, limit).await
+    }
+
+    async fn scoped(
+        storage: &'a MemoryStorage,
+        runtime: &RuntimeRegistration,
+        key: HistoryPolicyKey,
+        limit: u32,
+    ) -> Self {
         let application = storage
             .capture_application_execution(Some(runtime.owner()))
             .await
@@ -323,11 +333,7 @@ impl<'a> Run<'a> {
                     initiator: None,
                     policy: None,
                 },
-                HistoryLifecycleScan::new(
-                    HistoryPolicyKey::new(family, HistoryPolicyScope::Deployment).unwrap(),
-                    limit,
-                )
-                .unwrap(),
+                HistoryLifecycleScan::new(key, limit).unwrap(),
                 before.fence(),
             )
             .unwrap(),
@@ -377,6 +383,151 @@ impl<'a> Run<'a> {
         }
         panic!("memory expiry must finish its finite pass")
     }
+}
+
+pub(super) fn protection(snapshot: &HistoryLifecycleSnapshot) -> HistoryExposureProtection {
+    HistoryExposureProtection::new(
+        snapshot.control().authority().clone(),
+        ApplicationFence::new(
+            snapshot.fence().incarnation(),
+            snapshot.fence().deletion_revision().value() as i64,
+        )
+        .unwrap(),
+        DeletionCheckpointIdentity::new("a".repeat(64)).unwrap(),
+    )
+}
+
+async fn remove_manifest(storage: &MemoryStorage, manifest: &HistoryExpiryManifest) {
+    let mut state = storage.state.write_control().await;
+    for member in manifest.members() {
+        let snapshot = state.history_lifecycle_snapshot().unwrap();
+        assert!(
+            remove_member_on(
+                &mut state,
+                member,
+                manifest.identity(),
+                &snapshot,
+                &protection(&snapshot),
+                HistoryCopyScan::Bounded
+            )
+            .unwrap()
+        );
+    }
+}
+
+#[tokio::test]
+async fn scoped_pass_preserves_the_next_row_after_another_scope_compacts_the_prefix() {
+    let storage = MemoryStorage::new();
+    let family = StorageIdentityHistoryKind::Collection;
+    let earlier = seed(&storage, family, "earlier", "before").await;
+    let later = seed(&storage, family, "later", "before").await;
+    let runtime = storage.register_history_runtime(None).await.unwrap();
+    let prefix = storage
+        .state
+        .read_control()
+        .await
+        .history
+        .iter()
+        .position(|row| {
+            row.logical_identity
+                .subject()
+                .and_then(|subject| subject.record_identity())
+                .is_some_and(|id| {
+                    HistoryPolicyScope::Collection {
+                        identity: id.resource(),
+                    } == later.scope()
+                })
+        })
+        .unwrap();
+    let mut run = Run::scoped(&storage, &runtime, later, prefix as u32).await;
+    let first = run.page().await;
+    assert!(first.manifest().is_none());
+    assert!(matches!(
+        first.progress(),
+        HistoryExpiryScanProgress::Continue(_)
+    ));
+    let removed = Run::scoped(&storage, &runtime, earlier, 1000)
+        .await
+        .page()
+        .await
+        .into_manifest()
+        .unwrap();
+    remove_manifest(&storage, &removed).await;
+    assert_eq!(run.pass().await.len(), 1);
+}
+
+#[tokio::test]
+async fn inspection_omits_an_admitted_copy_before_physical_cleanup() {
+    let storage = MemoryStorage::new();
+    let family = StorageIdentityHistoryKind::Collection;
+    let key = seed(&storage, family, "excluded", "before").await;
+    let runtime = storage.register_history_runtime(None).await.unwrap();
+    let scan = HistoryLifecycleScan::new(key, 1000).unwrap();
+    let before = storage
+        .state
+        .read_control()
+        .await
+        .scan_history_policy(&scan)
+        .unwrap();
+    let admitted = Run::scoped(&storage, &runtime, key, 1000)
+        .await
+        .page()
+        .await
+        .into_manifest()
+        .unwrap();
+    let target = admitted.members()[0].target();
+    assert!(before.candidates().iter().any(|row| row.target() == target));
+    let after = storage
+        .state
+        .read_control()
+        .await
+        .scan_history_policy(&scan)
+        .unwrap();
+    assert_eq!(before.scanned(), after.scanned());
+    assert!(!after.candidates().iter().any(|row| row.target() == target));
+}
+
+#[tokio::test]
+async fn schema_history_does_not_reuse_an_expired_event_id() {
+    let storage = MemoryStorage::new();
+    let family = StorageIdentityHistoryKind::ClassSchema;
+    let key = seed(&storage, family, "expired schema", "before").await;
+    let id = |row: &StorageBackupRow| row.get("id").unwrap().as_u64().unwrap();
+    let highest = storage
+        .state
+        .read_control()
+        .await
+        .schema_history
+        .last()
+        .map(id)
+        .unwrap();
+    let runtime = storage.register_history_runtime(None).await.unwrap();
+    let admitted = Run::scoped(&storage, &runtime, key, 1000)
+        .await
+        .page()
+        .await
+        .into_manifest()
+        .unwrap();
+    remove_manifest(&storage, &admitted).await;
+    assert!(
+        !storage
+            .state
+            .read_control()
+            .await
+            .schema_history
+            .iter()
+            .any(|row| id(row) == highest)
+    );
+    seed(&storage, family, "new schema", "after").await;
+    assert!(
+        storage
+            .state
+            .read_control()
+            .await
+            .schema_history
+            .iter()
+            .all(|row| id(row) > highest)
+    );
 }
 
 #[rstest]

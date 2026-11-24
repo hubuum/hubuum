@@ -151,6 +151,8 @@ impl MemoryHistoryValue {
 
 #[derive(Clone)]
 struct MemoryHistoryEntry {
+    // Ordinary history mixes native tables whose restored record IDs may overlap.
+    scan_position: u64,
     logical_identity: StorageIdentityEvidence,
     id: HistoryRecordId,
     value: MemoryHistoryValue,
@@ -636,6 +638,7 @@ impl MemoryState {
             .logical_identities
             .history(&value, operation, Some(context));
         self.history.push(MemoryHistoryEntry {
+            scan_position: id.id() as u64,
             logical_identity,
             id,
             value,
