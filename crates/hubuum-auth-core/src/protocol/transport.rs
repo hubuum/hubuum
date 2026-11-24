@@ -85,25 +85,21 @@ impl Transport {
         url: String,
         dispatch: impl FnOnce(),
     ) -> Result<HttpResponse, ProtocolError> {
-        let result = OutboundRequest::new(method, url, Duration::from_secs(5))
+        let request = OutboundRequest::new(method, url, Duration::from_secs(5))
             .headers(headers)
             .body((!body.is_empty()).then_some(body))
             .max_response_bytes(RESPONSE_LIMIT)
             .require_complete_body()
-            .allow_private_targets(self.allow_private_targets)
-            .send_with_dispatch(dispatch)
-            .await;
-        let response = match result {
-            Ok(response) => response,
-            // Profile authentication depends on the HTTP status even when a 401
-            // arrived with an unreadable error page.
-            Err(OutboundHttpError::InvalidResponseBody { status: 401 })
-                if method == OutboundMethod::Get =>
-            {
-                return Self::response(401, &serde_json::Value::Null, Vec::new());
-            }
-            Err(error) => return Err(transport_error(error)),
+            .allow_private_targets(self.allow_private_targets);
+        let request = if method == OutboundMethod::Get {
+            request.skip_body_for_status(401)
+        } else {
+            request
         };
+        let response = request
+            .send_with_dispatch(dispatch)
+            .await
+            .map_err(transport_error)?;
         Self::response(
             response.status_code(),
             response.headers(),

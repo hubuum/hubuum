@@ -397,6 +397,7 @@ pub struct OutboundRequest {
     timeout: Duration,
     max_response_bytes: usize,
     require_complete_body: bool,
+    skip_body_status: Option<u16>,
     allow_private_targets: bool,
     dangerous_accept_invalid_certs: bool,
     dangerous_allow_localhost: bool,
@@ -412,6 +413,7 @@ impl OutboundRequest {
             timeout,
             max_response_bytes: 64 * 1024,
             require_complete_body: false,
+            skip_body_status: None,
             allow_private_targets: false,
             dangerous_accept_invalid_certs: false,
             dangerous_allow_localhost: false,
@@ -437,6 +439,12 @@ impl OutboundRequest {
     /// interpreting the lossy preview used by diagnostic/task consumers.
     pub fn require_complete_body(mut self) -> Self {
         self.require_complete_body = true;
+        self
+    }
+
+    /// Return headers immediately when this status alone decides the protocol outcome.
+    pub fn skip_body_for_status(mut self, status: u16) -> Self {
+        self.skip_body_status = Some(status);
         self
     }
 
@@ -600,6 +608,7 @@ where
             response,
             request.max_response_bytes,
             request.require_complete_body,
+            request.skip_body_status,
         )
         .await?;
         Span::current().record("http.response.body.size", body_preview.len());
@@ -747,8 +756,12 @@ async fn read_capped_body(
     mut response: reqwest::Response,
     limit: usize,
     require_complete: bool,
+    skip_body_status: Option<u16>,
 ) -> Result<String, OutboundHttpError> {
     let status = response.status().as_u16();
+    if skip_body_status == Some(status) {
+        return Ok(String::new());
+    }
     let mut buffer: Vec<u8> = Vec::new();
     while require_complete || buffer.len() < limit {
         match response.chunk().await.map_err(|error| {
@@ -854,12 +867,14 @@ mod tests {
     static CLIENT_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[rstest::rstest]
-    #[case::exact_limit(b"{}", 2, 2, None)]
-    #[case::over_limit(b"{} ", 3, 2, Some("invalid_response_body"))]
-    #[case::truncated(b"{}", 3, 3, Some("response_read"))]
-    #[case::invalid_utf8(b"\xff", 1, 2, Some("invalid_response_body"))]
+    #[case::exact_limit(200, b"{}", 2, 2, None)]
+    #[case::over_limit(200, b"{} ", 3, 2, Some("invalid_response_body"))]
+    #[case::truncated(200, b"{}", 3, 3, Some("response_read"))]
+    #[case::unauthorized_truncated(401, b"{}", 3, 3, None)]
+    #[case::invalid_utf8(200, b"\xff", 1, 2, Some("invalid_response_body"))]
     #[tokio::test]
     async fn complete_body_rejects_lossy_protocol_responses(
+        #[case] status: u16,
         #[case] body: &'static [u8],
         #[case] content_length: usize,
         #[case] limit: usize,
@@ -877,7 +892,7 @@ mod tests {
             assert!(stream.read(&mut request).unwrap() > 0);
             write!(
                 stream,
-                "HTTP/1.1 200 OK\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n"
+                "HTTP/1.1 {status} Response\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n"
             )
             .unwrap();
             stream.write_all(body).unwrap();
@@ -892,7 +907,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            read_capped_body(response, limit, true)
+            read_capped_body(response, limit, true, Some(401))
                 .await
                 .err()
                 .as_ref()

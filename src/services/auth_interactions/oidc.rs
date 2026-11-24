@@ -13,7 +13,7 @@ use hubuum_secrets::SecretValue;
 use hubuum_storage_core::StorageEncryptedUpstreamCredential;
 use hubuum_storage_core::StorageRuntimeSettingsValue;
 use hubuum_storage_core::StorageUpstreamFailure;
-use hubuum_storage_core::{ExternalIdentityStorage, StorageError, StorageErrorKind};
+use hubuum_storage_core::{AuthSessionId, ExternalIdentityStorage, StorageError};
 use hubuum_storage_core::{
     StorageAuthenticationProvider, StorageBrowserProviderDefinition,
     StorageExternalInteractionAuthentication, StorageInteractionAction,
@@ -29,6 +29,7 @@ use crate::{
     errors::{ApiError, InteractionError},
     models::auth_interaction::browser::BrowserSession,
     permissions::AppContext,
+    restores::MaintenanceActivityGuard,
     storage::storage_handle,
 };
 
@@ -431,11 +432,12 @@ pub(crate) async fn renew(
     // disconnects, including while storage is acknowledging the claim.
     let storage = storage.clone();
     let provider = provider.clone();
-    tokio::spawn(
-        async move { renew_claimed_grants(&storage, principal, revision, &provider).await },
-    )
-    .await
-    .map_err(|_| ApiError::ServiceUnavailable("External identity refresh was interrupted".into()))?
+    MaintenanceActivityGuard::begin()
+        .spawn(async move { renew_claimed_grants(&storage, principal, revision, &provider).await })
+        .await
+        .map_err(|_| {
+            ApiError::ServiceUnavailable("External identity refresh was interrupted".into())
+        })?
 }
 
 async fn renew_claimed_grants(
@@ -551,6 +553,7 @@ async fn attempt_renewal(
     // Bound the complete attempt, including secret resolution, to the claim lease.
     let submitted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let dispatch = submitted.clone();
+    let session = claim.session().session();
     let mut returned_grant = None;
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(25), async {
         let original = claim.session();
@@ -621,13 +624,15 @@ async fn attempt_renewal(
             Ok(RenewalAttempt::ExpiredCredential)
         }
         Ok(Some(renewal)) => {
-            on_renewal_fence(storage.finish_upstream_renewal(renewal).await, || {
-                revoke_uninstalled_oidc(provider, returned_grant)
-            })?;
+            cleanup_after_storage(
+                session,
+                GrantOnCommit::Retained,
+                storage.finish_upstream_renewal(renewal).await,
+                || revoke_uninstalled_oidc(provider, returned_grant),
+            )?;
             Ok(RenewalAttempt::Refreshed)
         }
         Err(failure) => {
-            revoke_uninstalled_oidc(provider, returned_grant);
             let (disposition, result) =
                 failure.disposition(submitted.load(std::sync::atomic::Ordering::Relaxed));
             if disposition == StorageUpstreamFailure::UnavailableBeforeSubmission
@@ -636,31 +641,49 @@ async fn attempt_renewal(
                     Some(StorageBrowserProviderDefinition::Oidc(_))
                 )
             {
-                on_renewal_fence(
+                cleanup_after_storage(
+                    session,
+                    GrantOnCommit::Retained,
                     storage
                         .fail_upstream_renewal(claim.clone(), disposition)
                         .await,
                     || revoke_unsubmitted_oidc(provider, claim),
                 )?;
             } else {
-                storage.fail_upstream_renewal(claim, disposition).await?;
+                // A fresh login may have superseded this claim and reused the same
+                // upstream client session. Wait for storage before revoking anything.
+                cleanup_after_storage(
+                    session,
+                    GrantOnCommit::Discarded,
+                    storage.fail_upstream_renewal(claim, disposition).await,
+                    || revoke_uninstalled_oidc(provider, returned_grant),
+                )?;
             }
             result
         }
     }
 }
 
-fn on_renewal_fence(
+#[derive(Clone, Copy)]
+enum GrantOnCommit {
+    Retained,
+    Discarded,
+}
+
+fn cleanup_after_storage(
+    session: AuthSessionId,
+    on_commit: GrantOnCommit,
     result: Result<(), StorageError>,
-    revoke_uninstalled: impl FnOnce(),
+    revoke: impl FnOnce(),
 ) -> Result<(), StorageError> {
-    result.inspect_err(|failure| {
-        // A definitive fence refused the write. A lost commit acknowledgement
-        // may instead refer to a grant already installed in a live session.
-        if failure.kind() == StorageErrorKind::AuthenticationRequired {
-            revoke_uninstalled();
-        }
-    })
+    let safe_to_revoke = match &result {
+        Ok(()) => matches!(on_commit, GrantOnCommit::Discarded),
+        Err(error) => error.revoked_upstream_session() == Some(session),
+    };
+    if safe_to_revoke {
+        revoke();
+    }
+    result
 }
 
 fn retain_credentials(provider: &StorageAuthenticationProvider) -> bool {
@@ -675,24 +698,54 @@ fn retain_credentials(provider: &StorageAuthenticationProvider) -> bool {
 
 #[cfg(test)]
 mod renewal_tests {
-    use super::{ApiError, InteractionError, OidcError, RenewalFailure, StorageUpstreamFailure};
+    use super::{
+        ApiError, AuthSessionId, GrantOnCommit, InteractionError, OidcError, RenewalFailure,
+        StorageUpstreamFailure, cleanup_after_storage,
+    };
     use hubuum_storage_core::StorageError;
+    use uuid::Uuid;
 
     #[rstest::rstest]
-    #[case::logout_won(Err(StorageError::authentication_required("session revoked")), true)]
-    #[case::installed(Ok(()), false)]
+    #[case::logout_won(
+        Err(StorageError::upstream_session_revoked(AuthSessionId::new(Uuid::nil()))),
+        true
+    )]
+    #[case::different_session(
+        Err(StorageError::upstream_session_revoked(AuthSessionId::new(Uuid::max()))),
+        false
+    )]
+    #[case::superseded(
+        Err(StorageError::authentication_required("Upstream session changed")),
+        false
+    )]
     #[case::unknown_commit(Err(StorageError::unavailable("lost acknowledgement")), false)]
-    fn rotated_grant_cleanup_follows_the_storage_fence(
+    fn rejected_storage_write_only_revokes_after_confirmed_logout(
         #[case] result: Result<(), StorageError>,
-        #[case] expected_revocation: bool,
+        #[case] expected: bool,
+        #[values(GrantOnCommit::Retained, GrantOnCommit::Discarded)] grant: GrantOnCommit,
     ) {
         let mut revoked = false;
-        let installed = result.is_ok();
-        assert_eq!(
-            super::on_renewal_fence(result, || revoked = true).is_ok(),
-            installed
+        assert!(
+            cleanup_after_storage(AuthSessionId::new(Uuid::nil()), grant, result, || revoked =
+                true)
+            .is_err()
         );
-        assert_eq!(revoked, expected_revocation);
+        assert_eq!(revoked, expected);
+    }
+
+    #[rstest::rstest]
+    #[case::retained(GrantOnCommit::Retained, false)]
+    #[case::discarded(GrantOnCommit::Discarded, true)]
+    fn committed_storage_write_only_revokes_a_discarded_grant(
+        #[case] grant: GrantOnCommit,
+        #[case] expected: bool,
+    ) {
+        let mut revoked = false;
+        cleanup_after_storage(AuthSessionId::new(Uuid::nil()), grant, Ok(()), || {
+            revoked = true
+        })
+        .unwrap();
+        assert_eq!(revoked, expected);
     }
 
     #[rstest::rstest]

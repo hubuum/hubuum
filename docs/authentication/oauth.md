@@ -123,7 +123,8 @@ does not extend the cached membership lifetime.
 This profile does **not** perform refresh-token grants. GitHub OAuth Apps may
 issue expiring tokens and refresh tokens; the adapter honors access-token expiry
 and retires the expired grant. A profile HTTP 401 during renewal also retires
-that bearer. A due eligibility check tries another retained
+that bearer as soon as the response headers arrive, even if the body is incomplete.
+A due eligibility check tries another retained
 grant for the same principal when available. Once all access tokens have
 expired, the user must sign in again. Existing Hubuum sessions and personal
 access tokens remain subject to the same identity freshness check. The adapter

@@ -471,6 +471,7 @@ pub struct StorageError {
     kind: StorageErrorKind,
     message: String,
     current_revision: Option<ResourceRevision>,
+    revoked_upstream_session: Option<AuthSessionId>,
 }
 
 impl StorageError {
@@ -567,6 +568,21 @@ impl StorageError {
         Self::new(StorageErrorKind::Unavailable, message, None)
     }
 
+    /// The adapter confirmed revocation of this local session while fencing its
+    /// renewal. A superseded claim or an unknown commit cannot establish this.
+    #[must_use]
+    pub fn upstream_session_revoked(session: AuthSessionId) -> Self {
+        Self {
+            revoked_upstream_session: Some(session),
+            ..Self::authentication_required("Upstream session revoked")
+        }
+    }
+
+    #[must_use]
+    pub fn revoked_upstream_session(&self) -> Option<AuthSessionId> {
+        self.revoked_upstream_session
+    }
+
     #[must_use]
     pub fn authentication_required(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::AuthenticationRequired, message, None)
@@ -586,6 +602,7 @@ impl StorageError {
             kind,
             message: message.into(),
             current_revision,
+            revoked_upstream_session: None,
         }
     }
 

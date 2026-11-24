@@ -599,6 +599,25 @@ impl ServiceAccountStorage for MemoryStorage {
     }
 }
 
+impl MemoryState {
+    fn ineligible_upstream_claim(&self, claim: &StorageUpstreamClaim) -> StorageError {
+        let original = claim.session();
+        let revoked = self
+            .sessions
+            .get(&original.session().value())
+            .is_some_and(|s| s.revoked && s.principal_id() == original.principal());
+        let last_success = self
+            .users
+            .get(&original.principal().id())
+            .and_then(|user| user.last_sync_success_at);
+        if revoked && last_success.is_some_and(|at| at <= claim.started_at()) {
+            StorageError::upstream_session_revoked(original.session())
+        } else {
+            StorageError::authentication_required("Upstream session changed")
+        }
+    }
+}
+
 #[async_trait]
 impl ExternalIdentityStorage for MemoryStorage {
     async fn upstream_approval_session(
@@ -637,7 +656,7 @@ impl ExternalIdentityStorage for MemoryStorage {
         let record = state
             .upstream_sessions
             .get(&original.session().value())
-            .ok_or_else(|| StorageError::authentication_required("Upstream session changed"))?;
+            .ok_or_else(|| state.ineligible_upstream_claim(&claim))?;
         let now = Utc::now();
         if !state.upstream_eligible(record, now)
             || !record.accepts(&claim, now)
@@ -649,9 +668,7 @@ impl ExternalIdentityStorage for MemoryStorage {
                         .is_some_and(|at| at > claim.started_at())
                 })
         {
-            return Err(StorageError::authentication_required(
-                "Upstream session changed",
-            ));
+            return Err(state.ineligible_upstream_claim(&claim));
         }
         let provider = state
             .runtime_settings
@@ -717,11 +734,9 @@ impl ExternalIdentityStorage for MemoryStorage {
             .upstream_sessions
             .get(&original.session().value())
             .cloned()
-            .ok_or_else(|| StorageError::authentication_required("Upstream session changed"))?;
+            .ok_or_else(|| state.ineligible_upstream_claim(request.claim()))?;
         if !state.upstream_eligible(&record, Utc::now()) {
-            return Err(StorageError::authentication_required(
-                "Upstream session changed",
-            ));
+            return Err(state.ineligible_upstream_claim(request.claim()));
         }
         record
             .renewed(

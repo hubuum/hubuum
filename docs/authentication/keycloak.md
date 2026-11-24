@@ -141,7 +141,10 @@ logout API performs local logout and best-effort token revocation. If renewal
 fails before sending the token request and logout prevents restoring the original
 grant, the worker attempts to revoke it. If the token endpoint succeeds and
 UserInfo verification fails, the worker attempts to revoke the grant from that
-exchange.
+exchange. A malformed ID token also leaves an unambiguous replacement refresh
+token eligible for cleanup. A superseding authentication or an uncertain storage
+commit suppresses revocation because the upstream session may still be in use.
+Restore maintenance waits for active renewal workers even if their callers disconnect.
 
 Credential approval uses `max_age=0` and a signed `auth_time` at or after the
 interaction start, with one second of clock skew. Existing SSO, a new token

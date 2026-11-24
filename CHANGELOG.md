@@ -189,21 +189,26 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Users can log out all of their interactive sessions during an identity-provider
   outage using a valid unscoped human bearer. A profile HTTP 401 retires the
-  affected OAuth bearer and lets another session verify the same identity.
-- OIDC renewal now attempts to revoke the returned grant if UserInfo verification
-  fails, and the original unsubmitted grant if logout prevents its restoration.
+  affected OAuth bearer as soon as the headers arrive, even if the response body
+  is incomplete, and lets another session verify the same identity.
+- OIDC renewal can revoke a replacement grant when ID token decoding or UserInfo
+  verification fails, and the original unsubmitted grant if logout prevents its
+  restoration. Superseded claims preserve the freshly authenticated upstream
+  session. Restore maintenance waits for renewals after client disconnects.
 - HTTP 408 responses during external identity verification preserve the last
   successful verification within its configured freshness window. OAuth profile
   reads retain their grant across unrelated provider edits. Logout uses the
-  original provider configuration for queued revocations, and a fenced OIDC
-  renewal attempts to revoke its returned refresh grant.
+  original provider configuration for queued revocations, and an OIDC renewal
+  fenced by confirmed logout attempts to revoke its returned refresh grant.
 - Hosted LDAP verification preserves complete group previews at the supported
   key and display name limits.
 - **Breaking for mixed-version preview deployments and external storage
   adapters.** Stop API and worker replicas, back up the database, apply
   migration `2026-11-23-000001_verification_group_budget`, and restart matching
   binaries. Keep OAuth bearers recoverable during profile reads and return
-  `AuthenticationRequired` when a session or claim fence rejects renewal.
+  `AuthenticationRequired` when a session or claim fence rejects renewal. Return
+  `StorageError::upstream_session_revoked(id)` for a confirmed logout of the
+  claimed session when no newer authentication superseded it.
 
 - Hosted browser interactions use `cookie` 0.18.3 or later in the 0.18 series.
   This removes the older Actix cookie dependency flagged by RUSTSEC-2026-0594.

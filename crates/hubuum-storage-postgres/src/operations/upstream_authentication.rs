@@ -9,8 +9,9 @@ use hubuum_domain::FreshExternalAuthentication;
 use hubuum_domain::PrincipalId;
 use hubuum_domain::ResourceRevision;
 use hubuum_storage_core::{
-    SessionRevocation, StorageExternalInteractionAuthentication, StorageUpstreamApproval,
-    StorageUpstreamClaimOutcome, StorageUpstreamRenewal, StorageUpstreamSession,
+    SessionRevocation, StorageError, StorageExternalInteractionAuthentication,
+    StorageUpstreamApproval, StorageUpstreamClaim, StorageUpstreamClaimOutcome,
+    StorageUpstreamRenewal, StorageUpstreamSession,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -29,6 +30,33 @@ struct Revision {
 fn invalid() -> PostgresStorageError {
     PostgresStorageError::authentication_required("Upstream session changed")
 }
+async fn reject_ineligible_claim(
+    connection: &mut PostgresConnection,
+    claim: &StorageUpstreamClaim,
+) -> Result<(), PostgresStorageError> {
+    use crate::schema::auth_sessions::dsl as sessions;
+    use diesel::{ExpressionMethods, QueryDsl, dsl::exists, select};
+
+    let original = claim.session();
+    let revoked = select(exists(
+        sessions::auth_sessions
+            .filter(sessions::id.eq(original.session().value()))
+            .filter(sessions::principal_id.eq(original.principal().id()))
+            .filter(sessions::revoked_at.is_not_null()),
+    ))
+    .get_result::<bool>(connection)
+    .await?;
+    if revoked {
+        let latest =
+            super::external_identity::sync_success_on_connection(connection, original.principal())
+                .await?;
+        if latest.is_some_and(|at| at <= claim.started_at()) {
+            return Err(StorageError::upstream_session_revoked(original.session()).into());
+        }
+    }
+    Err(invalid())
+}
+
 fn decode(row: Row) -> Result<StorageUpstreamSession, PostgresStorageError> {
     serde_json::from_value(row.document)
         .map_err(|_| PostgresStorageError::database("Invalid upstream session record"))
@@ -229,7 +257,7 @@ pub async fn finish(
             )
             .await?
             else {
-                return Err(invalid());
+                return reject_ineligible_claim(connection, request.claim()).await;
             };
             record
                 .renewed(
@@ -333,7 +361,7 @@ pub async fn fail(
             )
             .await?
             else {
-                return Err(invalid());
+                return reject_ineligible_claim(connection, &claim).await;
             };
             let now = Utc::now();
             if !record.accepts(&claim, now) {

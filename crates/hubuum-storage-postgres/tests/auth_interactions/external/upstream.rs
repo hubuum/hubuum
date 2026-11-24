@@ -268,28 +268,30 @@ async fn fresh_authentication_replaces_retained_credential_before_operation_comp
 }
 
 #[rstest::rstest]
-#[case::rejected_refresh(false)]
-#[case::successful_refresh(true)]
+#[case::rejected(Some(StorageUpstreamFailure::Rejected))]
+#[case::pre_dispatch(Some(StorageUpstreamFailure::UnavailableBeforeSubmission))]
+#[case::post_dispatch(Some(StorageUpstreamFailure::Unavailable))]
+#[case::successful_refresh(None)]
 #[tokio::test]
-async fn fresh_authentication_fences_old_refresh_completion(#[case] success: bool) {
+async fn fresh_authentication_fences_old_refresh_completion(
+    #[case] failure: Option<StorageUpstreamFailure>,
+) {
     let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
     let principal = f.retained_login().await;
     let old = f.upstream_claim(principal).await;
     let proof = f.renewal_proof(&old, "alice");
     let command = f.fresh_retention_command(principal).await;
     f.backend.advance_auth_interaction(command).await.unwrap();
-    let stale = if success {
+    let stale = if let Some(disposition) = failure {
+        f.backend.fail_upstream_renewal(old, disposition).await
+    } else {
         f.backend
             .finish_upstream_renewal(
                 StorageUpstreamRenewal::new(old, proof, Some(encrypted("stale"))).unwrap(),
             )
             .await
-    } else {
-        f.backend
-            .fail_upstream_renewal(old, StorageUpstreamFailure::Rejected)
-            .await
     };
-    assert!(stale.is_err());
+    assert_eq!(stale.unwrap_err().revoked_upstream_session(), None);
     assert_eq!(
         f.upstream_claim(principal).await.credential().ciphertext(),
         "fresh-encrypted-token"
@@ -367,55 +369,74 @@ async fn renewal_atomically_rotates_credentials_and_removes_provider_membership(
 }
 
 #[rstest::rstest]
-#[case::logout("UPDATE auth_sessions SET revoked_at=now(),revocation_reason='fixture'")]
+#[case::logout(
+    "UPDATE auth_sessions SET revoked_at=now(),revocation_reason='fixture'",
+    true
+)]
 #[case::configuration(
-    "UPDATE runtime_settings SET revision=revision+1 WHERE setting_group='authentication'"
+    "UPDATE runtime_settings SET revision=revision+1 WHERE setting_group='authentication'",
+    false
 )]
 #[case::expired_session(
-    "UPDATE auth_sessions SET authenticated_at=now()-interval '2 hours',idle_expires_at=now()-interval '1 hour'"
+    "UPDATE auth_sessions SET authenticated_at=now()-interval '2 hours',idle_expires_at=now()-interval '1 hour'",
+    false
 )]
 #[tokio::test]
-async fn local_revocation_fences_an_inflight_renewal(#[case] change: &str) {
+async fn local_revocation_fences_an_inflight_renewal(
+    #[case] change: &str,
+    #[case] logged_out: bool,
+) {
     let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
     let principal = f.retained_login().await;
     let claim = f.upstream_claim(principal).await;
+    let session = claim.session().session();
     let proof = f.renewal_proof(&claim, "alice");
     f.database.owner(change).await.unwrap();
+    let failure = f
+        .backend
+        .finish_upstream_renewal(
+            StorageUpstreamRenewal::new(claim, proof, Some(encrypted("rotated"))).unwrap(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(failure.kind(), StorageErrorKind::AuthenticationRequired);
     assert_eq!(
-        f.backend
-            .finish_upstream_renewal(
-                StorageUpstreamRenewal::new(claim, proof, Some(encrypted("rotated"))).unwrap()
-            )
-            .await
-            .unwrap_err()
-            .kind(),
-        StorageErrorKind::AuthenticationRequired
+        failure.revoked_upstream_session(),
+        logged_out.then_some(session)
     );
     f.database.cleanup().await;
 }
 
+#[rstest::rstest]
+#[case::claimed_grant(false)]
+#[case::superseded_grant(true)]
 #[tokio::test]
-async fn logout_fences_restoration_of_an_unsubmitted_oidc_grant() {
+async fn logout_fences_restoration_of_an_unsubmitted_oidc_grant(#[case] reauthenticate: bool) {
     let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
     let principal = f.retained_login().await;
     let claim = f.upstream_claim(principal).await;
+    let session = claim.session().session();
+    if reauthenticate {
+        let command = f.fresh_retention_command(principal).await;
+        f.backend.advance_auth_interaction(command).await.unwrap();
+    }
     let revoked = f
         .backend
-        .revoke_auth_sessions(
-            SessionRevocation::Session(claim.session().session()),
-            EventContext::system(),
-        )
+        .revoke_auth_sessions(SessionRevocation::Session(session), EventContext::system())
         .await
         .unwrap()
         .into_value();
     assert_eq!(revoked.count(), 1);
-    assert!(revoked.into_grants().is_empty());
+    assert_eq!(revoked.into_grants().is_empty(), !reauthenticate);
     let failure = f
         .backend
         .fail_upstream_renewal(claim, StorageUpstreamFailure::UnavailableBeforeSubmission)
         .await
         .unwrap_err();
-    assert_eq!(failure.kind(), StorageErrorKind::AuthenticationRequired);
+    assert_eq!(
+        failure.revoked_upstream_session(),
+        (!reauthenticate).then_some(session)
+    );
     f.database.cleanup().await;
 }
 

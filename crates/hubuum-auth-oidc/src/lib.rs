@@ -1,5 +1,9 @@
 //! OIDC protocol adapter. Protocol types and upstream credentials stay private.
-use std::time::Duration;
+use std::{
+    future::Future,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
@@ -15,8 +19,8 @@ use hubuum_domain::{
 use hubuum_secrets::SecretValue;
 use openidconnect::{
     AccessTokenHash, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet,
-    EndpointNotSet, EndpointSet, Nonce, NonceVerifier, OAuth2TokenResponse, PkceCodeVerifier,
-    RedirectUrl, RefreshToken, Scope, TokenResponse,
+    EndpointNotSet, EndpointSet, HttpRequest, HttpResponse, Nonce, NonceVerifier,
+    OAuth2TokenResponse, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope, TokenResponse,
     core::{
         CoreAuthenticationFlow, CoreClient, CoreJsonWebKeySet, CoreJwsSigningAlgorithm,
         CoreProviderMetadata, CoreTokenResponse,
@@ -256,17 +260,54 @@ impl OidcAdapter {
             return Err(OidcError::Denied);
         }
         let discovered = self.discover().await?;
+        let transport = self.transport;
+        self.refresh_using(&discovered, retained, context, received, move |request| {
+            transport.send_with_dispatch(request, submitting.clone())
+        })
+        .await
+    }
+
+    async fn refresh_using<F>(
+        &self,
+        discovered: &Discovered,
+        mut retained: RetainedCredentials,
+        context: &ExternalAuthenticationContext,
+        received: impl FnOnce(RetainedCredentials),
+        send: impl Fn(HttpRequest) -> F,
+    ) -> Result<Authentication, OidcError>
+    where
+        F: Future<Output = Result<HttpResponse, OidcError>>,
+    {
+        // The SDK decodes the ID token as part of parsing the token response.
+        // A trusted endpoint may have already rotated an unambiguous refresh token.
+        let replacement = Arc::new(OnceLock::new());
         let response = discovered
             .client
             .exchange_refresh_token(&RefreshToken::new(retained.refresh.clone()))
             .map_err(|_| OidcError::Configuration)?
             .request_async(&|request| {
-                self.transport
-                    .send_with_dispatch(request, submitting.clone())
+                let pending = send(request);
+                let replacement = Arc::clone(&replacement);
+                async move {
+                    let reply = pending.await?;
+                    if let Some(token) = cleanup_replacement(&reply) {
+                        let _ = replacement.set(token);
+                    }
+                    Ok(reply)
+                }
             })
-            .await
-            .map_err(token_error)?;
-        self.verify_refresh(&discovered, response, retained, context, received)
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                if let Some(token) = replacement.get() {
+                    retained.refresh.clone_from(token);
+                    received(retained);
+                }
+                return Err(token_error(error));
+            }
+        };
+        self.verify_refresh(discovered, response, retained, context, received)
             .await
     }
 
@@ -722,6 +763,27 @@ fn discovery_error(error: OidcError) -> OidcError {
     match error {
         OidcError::Configuration => OidcError::Configuration,
         _ => OidcError::Unavailable,
+    }
+}
+
+/// This credential can only be offered for cleanup. The identity proof always
+/// comes from the SDK's complete token response and signature checks.
+fn cleanup_replacement(reply: &HttpResponse) -> Option<String> {
+    if reply.status() != openidconnect::http::StatusCode::OK {
+        return None;
+    }
+    let mut document = profile::parse(reply.body()).ok()?;
+    let object = document.as_object_mut()?;
+    if object.contains_key("error") {
+        return None;
+    }
+    match object.remove("refresh_token")? {
+        Value::String(token)
+            if !token.is_empty() && token.bytes().all(|b| (0x20..=0x7e).contains(&b)) =>
+        {
+            Some(token)
+        }
+        _ => None,
     }
 }
 

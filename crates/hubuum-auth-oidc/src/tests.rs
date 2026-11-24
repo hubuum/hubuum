@@ -61,6 +61,20 @@ fn fixture() -> (OidcAdapter, Discovered, ExternalAuthenticationContext) {
     .unwrap();
     (adapter, discovered, context)
 }
+fn retained_credentials(
+    adapter: &OidcAdapter,
+    auth_time: Option<DateTime<Utc>>,
+) -> RetainedCredentials {
+    RetainedCredentials {
+        refresh: "original".into(),
+        nonce: "nonce".into(),
+        subject: "stable-subject".into(),
+        issuer: adapter.definition.issuer().as_str().into(),
+        client_id: adapter.definition.client_id().into(),
+        auth_time,
+    }
+}
+
 fn signing_key(id: &str) -> CoreRsaPrivateSigningKey {
     // Public, disposable test fixture; never a production signing credential.
     CoreRsaPrivateSigningKey::from_pem(
@@ -368,6 +382,46 @@ async fn initial_login_requires_nonce() {
 }
 
 #[rstest]
+#[case::malformed_id_token(200, r#"{"access_token":"access","token_type":"Bearer","refresh_token":"replacement","id_token":"malformed"}"#, Some("replacement"))]
+#[case::duplicate_refresh_token(200, r#"{"access_token":"access","token_type":"Bearer","refresh_token":"one","refresh_token":"two","id_token":"malformed"}"#, None)]
+#[case::error_document(
+    200,
+    r#"{"error":"invalid_grant","refresh_token":"replacement"}"#,
+    None
+)]
+#[case::error_status(
+    400,
+    r#"{"error":"invalid_grant","refresh_token":"replacement"}"#,
+    None
+)]
+#[tokio::test]
+async fn rejected_wire_response_exposes_only_an_unambiguous_replacement_for_cleanup(
+    #[case] status: u16,
+    #[case] wire: &'static str,
+    #[case] expected: Option<&str>,
+) {
+    let (adapter, discovered, context) = fixture();
+    let mut cleanup = None;
+    let result = adapter
+        .refresh_using(
+            &discovered,
+            retained_credentials(&adapter, None),
+            &context,
+            |grant| cleanup = Some(grant.refresh),
+            |_| {
+                std::future::ready(Ok(openidconnect::http::Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(wire.as_bytes().to_vec())
+                    .unwrap()))
+            },
+        )
+        .await;
+    assert!(result.is_err());
+    assert_eq!(cleanup.as_deref(), expected);
+}
+
+#[rstest]
 #[case::rotated(Some("replacement"), "replacement")]
 #[case::non_rotating(None, "original")]
 #[tokio::test]
@@ -377,14 +431,10 @@ async fn verified_refresh_retains_usable_token(
 ) {
     let (adapter, discovered, context) = fixture();
     let mut claims = claims();
-    let original = RetainedCredentials {
-        refresh: "original".into(),
-        nonce: "nonce".into(),
-        subject: "stable-subject".into(),
-        issuer: adapter.definition.issuer().as_str().into(),
-        client_id: adapter.definition.client_id().into(),
-        auth_time: DateTime::from_timestamp(claims["auth_time"].as_i64().unwrap(), 0),
-    };
+    let original = retained_credentials(
+        &adapter,
+        DateTime::from_timestamp(claims["auth_time"].as_i64().unwrap(), 0),
+    );
     let original_time = original.auth_time;
     claims.as_object_mut().unwrap().remove("auth_time");
     let mut response = response(
@@ -419,14 +469,10 @@ async fn unavailable_userinfo_leaves_the_exchange_grant_available_for_cleanup(
     // request fails deterministically without contacting the network.
     discovered.userinfo = Some("https://127.0.0.1/userinfo".into());
     let claims = claims();
-    let retained = RetainedCredentials {
-        refresh: "original".into(),
-        nonce: "nonce".into(),
-        subject: "stable-subject".into(),
-        issuer: adapter.definition.issuer().as_str().into(),
-        client_id: adapter.definition.client_id().into(),
-        auth_time: DateTime::from_timestamp(claims["auth_time"].as_i64().unwrap(), 0),
-    };
+    let retained = retained_credentials(
+        &adapter,
+        DateTime::from_timestamp(claims["auth_time"].as_i64().unwrap(), 0),
+    );
     let mut response = response(
         claims,
         "current",

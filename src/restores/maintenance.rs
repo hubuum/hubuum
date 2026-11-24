@@ -1,4 +1,9 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    future::Future,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+use tokio::task::JoinHandle;
+use tracing::Instrument;
 
 static ACTIVE_MAINTENANCE_WORK: AtomicUsize = AtomicUsize::new(0);
 
@@ -22,6 +27,21 @@ impl MaintenanceActivityGuard {
             counter: &ACTIVE_MAINTENANCE_WORK,
         }
     }
+
+    /// Transfer an admitted operation to a worker before its caller can be cancelled.
+    pub(crate) fn spawn<F>(self, work: F) -> JoinHandle<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        tokio::spawn(
+            async move {
+                let _activity = self;
+                work.await
+            }
+            .in_current_span(),
+        )
+    }
 }
 
 impl Drop for MaintenanceActivityGuard {
@@ -42,6 +62,28 @@ mod tests {
 
     use crate::permissions::{AppContext, LocalPermissionBackend};
     use crate::storage::StorageHandle;
+
+    #[tokio::test]
+    async fn detached_worker_stays_counted_after_its_caller_leaves() {
+        use super::{AtomicUsize, MaintenanceActivityGuard, Ordering};
+        static COUNT: AtomicUsize = AtomicUsize::new(1);
+        let guard = MaintenanceActivityGuard { counter: &COUNT };
+        let (release, wait) = tokio::sync::oneshot::channel::<()>();
+        let task = guard.spawn(async move { wait.await.unwrap() });
+        let worker = task.abort_handle();
+        drop(task);
+        tokio::task::yield_now().await;
+        assert_eq!(COUNT.load(Ordering::Acquire), 1);
+        release.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !worker.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(COUNT.load(Ordering::Acquire), 0);
+    }
 
     #[actix_web::test]
     async fn admitted_http_handler_remains_counted_until_it_returns() {

@@ -5,7 +5,8 @@ use diesel_async::pooled_connection::bb8::RunError as PoolError;
 use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind, PositiveIdError, ResourceRevision};
 use hubuum_events_core::{AuditDocumentError, EventIdentifierError};
 use hubuum_storage_core::{
-    StorageCandidatePage, StorageCandidatePageLimit, StorageError, StorageErrorKind, StoragePage,
+    AuthSessionId, StorageCandidatePage, StorageCandidatePageLimit, StorageError, StorageErrorKind,
+    StoragePage,
 };
 use hubuum_task_core::TaskStopReason;
 use tracing::{debug, error};
@@ -23,6 +24,7 @@ pub struct PostgresStorageError {
     kind: StorageErrorKind,
     message: String,
     current_revision: Option<ResourceRevision>,
+    revoked_upstream_session: Option<AuthSessionId>,
 }
 
 impl PostgresStorageError {
@@ -50,6 +52,7 @@ impl PostgresStorageError {
             kind,
             message: message.into(),
             current_revision,
+            revoked_upstream_session: None,
         }
     }
 
@@ -224,6 +227,12 @@ impl std::error::Error for PostgresStorageError {}
 
 impl From<StorageError> for PostgresStorageError {
     fn from(error: StorageError) -> Self {
+        if let Some(session) = error.revoked_upstream_session() {
+            return Self {
+                revoked_upstream_session: Some(session),
+                ..Self::authentication_required(error.message())
+            };
+        }
         let (kind, message, current_revision) = error.into_parts();
         match kind {
             StorageErrorKind::TaskCancelled => {
@@ -357,6 +366,9 @@ impl From<DieselError> for PostgresStorageError {
 
 impl From<PostgresStorageError> for StorageError {
     fn from(error: PostgresStorageError) -> Self {
+        if let Some(session) = error.revoked_upstream_session {
+            return Self::upstream_session_revoked(session);
+        }
         match error.kind {
             StorageErrorKind::TaskCancelled => Self::task_stopped(TaskStopReason::Cancelled),
             StorageErrorKind::TaskDeadlineExceeded => {
