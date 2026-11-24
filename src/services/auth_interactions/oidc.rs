@@ -20,8 +20,8 @@ use hubuum_storage_core::{
     StorageInteractionAuthorization, StorageInteractionOutcome,
     StorageProtectedAuthenticationState,
 };
-use revocation::revoke_uninstalled_oidc;
 pub(crate) use revocation::{revoke_best_effort, revoke_provider_best_effort};
+use revocation::{revoke_uninstalled_oidc, revoke_unsubmitted_oidc};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -424,10 +424,27 @@ pub(crate) async fn renew(
     revision: ResourceRevision,
     provider: &StorageAuthenticationProvider,
 ) -> Result<bool, ApiError> {
-    use hubuum_storage_core::StorageUpstreamClaimOutcome;
     if !retain_credentials(provider) {
         return Ok(false);
     }
+    // Keep the claim transaction and its cleanup alive if the HTTP client
+    // disconnects, including while storage is acknowledging the claim.
+    let storage = storage.clone();
+    let provider = provider.clone();
+    tokio::spawn(
+        async move { renew_claimed_grants(&storage, principal, revision, &provider).await },
+    )
+    .await
+    .map_err(|_| ApiError::ServiceUnavailable("External identity refresh was interrupted".into()))?
+}
+
+async fn renew_claimed_grants(
+    storage: &crate::storage::StorageHandle,
+    principal: PrincipalId,
+    revision: ResourceRevision,
+    provider: &StorageAuthenticationProvider,
+) -> Result<bool, ApiError> {
+    use hubuum_storage_core::StorageUpstreamClaimOutcome;
     loop {
         let claim = match storage
             .claim_upstream_credential(revision, principal)
@@ -532,7 +549,8 @@ async fn attempt_renewal(
 ) -> Result<RenewalAttempt, ApiError> {
     use hubuum_storage_core::StorageUpstreamRenewal;
     // Bound the complete attempt, including secret resolution, to the claim lease.
-    let submitted = std::sync::atomic::AtomicBool::new(false);
+    let submitted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let dispatch = submitted.clone();
     let mut returned_grant = None;
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(25), async {
         let original = claim.session();
@@ -560,9 +578,12 @@ async fn attempt_renewal(
         .map_err(error)?;
         let authentication = match configured_adapter(provider)
             .await?
-            .refresh(credentials, &provider_context, || {
-                submitted.store(true, std::sync::atomic::Ordering::Relaxed)
-            })
+            .refresh(
+                credentials,
+                &provider_context,
+                move || dispatch.store(true, std::sync::atomic::Ordering::Relaxed),
+                |grant| returned_grant = Some(grant),
+            )
             .await
         {
             Ok(authentication) => authentication,
@@ -570,8 +591,7 @@ async fn attempt_renewal(
             Err(failure) => return Err(RenewalFailure::Provider(failure)),
         };
         let (proof, credentials) = authentication.into_parts();
-        returned_grant = credentials;
-        let credentials = match &returned_grant {
+        let credentials = match credentials {
             Some(credentials) => Some(
                 StorageEncryptedUpstreamCredential::new(
                     protect(
@@ -601,32 +621,46 @@ async fn attempt_renewal(
             Ok(RenewalAttempt::ExpiredCredential)
         }
         Ok(Some(renewal)) => {
-            complete_renewal(storage.finish_upstream_renewal(renewal).await, || {
+            on_renewal_fence(storage.finish_upstream_renewal(renewal).await, || {
                 revoke_uninstalled_oidc(provider, returned_grant)
-            })
+            })?;
+            Ok(RenewalAttempt::Refreshed)
         }
         Err(failure) => {
             revoke_uninstalled_oidc(provider, returned_grant);
             let (disposition, result) =
                 failure.disposition(submitted.load(std::sync::atomic::Ordering::Relaxed));
-            storage.fail_upstream_renewal(claim, disposition).await?;
+            if disposition == StorageUpstreamFailure::UnavailableBeforeSubmission
+                && matches!(
+                    provider.browser_definition(),
+                    Some(StorageBrowserProviderDefinition::Oidc(_))
+                )
+            {
+                on_renewal_fence(
+                    storage
+                        .fail_upstream_renewal(claim.clone(), disposition)
+                        .await,
+                    || revoke_unsubmitted_oidc(provider, claim),
+                )?;
+            } else {
+                storage.fail_upstream_renewal(claim, disposition).await?;
+            }
             result
         }
     }
 }
 
-fn complete_renewal(
+fn on_renewal_fence(
     result: Result<(), StorageError>,
     revoke_uninstalled: impl FnOnce(),
-) -> Result<RenewalAttempt, ApiError> {
+) -> Result<(), StorageError> {
     result.inspect_err(|failure| {
         // A definitive fence refused the write. A lost commit acknowledgement
         // may instead refer to a grant already installed in a live session.
         if failure.kind() == StorageErrorKind::AuthenticationRequired {
             revoke_uninstalled();
         }
-    })?;
-    Ok(RenewalAttempt::Refreshed)
+    })
 }
 
 fn retain_credentials(provider: &StorageAuthenticationProvider) -> bool {
@@ -655,7 +689,7 @@ mod renewal_tests {
         let mut revoked = false;
         let installed = result.is_ok();
         assert_eq!(
-            super::complete_renewal(result, || revoked = true).is_ok(),
+            super::on_renewal_fence(result, || revoked = true).is_ok(),
             installed
         );
         assert_eq!(revoked, expected_revocation);

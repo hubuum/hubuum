@@ -395,6 +395,31 @@ async fn local_revocation_fences_an_inflight_renewal(#[case] change: &str) {
 }
 
 #[tokio::test]
+async fn logout_fences_restoration_of_an_unsubmitted_oidc_grant() {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let principal = f.retained_login().await;
+    let claim = f.upstream_claim(principal).await;
+    let revoked = f
+        .backend
+        .revoke_auth_sessions(
+            SessionRevocation::Session(claim.session().session()),
+            EventContext::system(),
+        )
+        .await
+        .unwrap()
+        .into_value();
+    assert_eq!(revoked.count(), 1);
+    assert!(revoked.into_grants().is_empty());
+    let failure = f
+        .backend
+        .fail_upstream_renewal(claim, StorageUpstreamFailure::UnavailableBeforeSubmission)
+        .await
+        .unwrap_err();
+    assert_eq!(failure.kind(), StorageErrorKind::AuthenticationRequired);
+    f.database.cleanup().await;
+}
+
+#[tokio::test]
 async fn credential_expiry_preserves_other_session_and_personal_token() {
     let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
     let (other_session, _, other_credential) = f.retained_session().await;

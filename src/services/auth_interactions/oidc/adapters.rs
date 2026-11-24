@@ -79,11 +79,12 @@ impl BrowserAdapter {
         &self,
         credentials: RetainedCredentials,
         context: &ExternalAuthenticationContext,
-        submitting: impl Fn() + Sync,
+        submitting: impl Fn() + Clone + Sync,
+        received_oidc: impl FnOnce(hubuum_auth_oidc::RetainedCredentials),
     ) -> Result<Authentication, ProtocolError> {
         match (self, credentials) {
             (Self::Oidc(adapter), RetainedCredentials::Oidc(credentials)) => adapter
-                .refresh(credentials, context, submitting)
+                .refresh(credentials, context, submitting, received_oidc)
                 .await
                 .map(Authentication::Oidc),
             (Self::OAuth(adapter), RetainedCredentials::OAuth(credentials)) => adapter

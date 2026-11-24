@@ -394,6 +394,24 @@ async fn renewal_requires_same_subject_and_complete_memberships(#[case] changed_
     );
 }
 
+#[tokio::test]
+async fn initial_profile_unauthorized_denies_sign_in() {
+    let (adapter, context) = fixture(false);
+    let credentials = adapter.credentials(token()).unwrap();
+    let client = |_: oauth2::HttpRequest| {
+        std::future::ready(Ok(http::Response::builder()
+            .status(401)
+            .body(Vec::new())
+            .unwrap()))
+    };
+    assert!(matches!(
+        adapter
+            .authenticate_using(credentials, &context, &client)
+            .await,
+        Err(OAuthError::Denied)
+    ));
+}
+
 #[rstest]
 #[case::primary(true, 403, Some(("x-ratelimit-remaining", "0")), "API rate limit exceeded", OAuthError::Unavailable)]
 #[case::secondary_retry(true, 403, Some(("retry-after", "60")), "Please wait", OAuthError::Unavailable)]
@@ -405,7 +423,8 @@ async fn renewal_requires_same_subject_and_complete_memberships(#[case] changed_
     OAuthError::Unavailable
 )]
 #[case::forbidden(true, 403, Some(("x-ratelimit-remaining", "100")), "Resource not accessible", OAuthError::Denied)]
-#[case::revoked(true, 401, Some(("x-ratelimit-remaining", "0")), "Bad credentials", OAuthError::Denied)]
+#[case::revoked_bearer(true, 401, Some(("x-ratelimit-remaining", "0")), "Bad credentials", OAuthError::CredentialExpired)]
+#[case::expired_bearer(false, 401, Some(("www-authenticate", r#"Bearer error="invalid_token""#)), "", OAuthError::CredentialExpired)]
 #[case::generic_provider(false, 403, Some(("x-ratelimit-remaining", "0")), "Resource not accessible", OAuthError::Denied)]
 #[tokio::test]
 async fn renewal_distinguishes_github_rate_limits_from_rejection(
@@ -416,7 +435,8 @@ async fn renewal_distinguishes_github_rate_limits_from_rejection(
     #[case] expected: OAuthError,
 ) {
     let (adapter, context) = fixture(github);
-    let credentials = adapter.credentials(token()).unwrap();
+    let mut credentials = adapter.credentials(token()).unwrap();
+    credentials.subject = Some("previously-verified".into());
     let client = |_: oauth2::HttpRequest| {
         let mut response = http::Response::builder()
             .status(status)

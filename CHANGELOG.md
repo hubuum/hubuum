@@ -187,6 +187,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Users can log out all of their interactive sessions during an identity-provider
+  outage using a valid unscoped human bearer. A profile HTTP 401 retires the
+  affected OAuth bearer and lets another session verify the same identity.
+- OIDC renewal now attempts to revoke the returned grant if UserInfo verification
+  fails, and the original unsubmitted grant if logout prevents its restoration.
 - HTTP 408 responses during external identity verification preserve the last
   successful verification within its configured freshness window. OAuth profile
   reads retain their grant across unrelated provider edits. Logout uses the

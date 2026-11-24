@@ -241,11 +241,14 @@ impl OidcAdapter {
 
     /// The application serializes rotation and destroys the previous credential
     /// on any ambiguous exchange. This method never retries a refresh token.
+    /// `received` supplies the grant available for cleanup as soon as the token
+    /// endpoint answers. Only a successful return provides verified identity.
     pub async fn refresh(
         &self,
         retained: RetainedCredentials,
         context: &ExternalAuthenticationContext,
-        submitting: impl Fn() + Sync,
+        submitting: impl Fn() + Clone + Sync,
+        received: impl FnOnce(RetainedCredentials),
     ) -> Result<Authentication, OidcError> {
         if retained.issuer != self.definition.issuer().as_str()
             || retained.client_id != self.definition.client_id()
@@ -257,10 +260,13 @@ impl OidcAdapter {
             .client
             .exchange_refresh_token(&RefreshToken::new(retained.refresh.clone()))
             .map_err(|_| OidcError::Configuration)?
-            .request_async(&|request| self.transport.send_with_dispatch(request, &submitting))
+            .request_async(&|request| {
+                self.transport
+                    .send_with_dispatch(request, submitting.clone())
+            })
             .await
             .map_err(token_error)?;
-        self.verify_refresh(&discovered, response, retained, context)
+        self.verify_refresh(&discovered, response, retained, context, received)
             .await
     }
 
@@ -268,9 +274,16 @@ impl OidcAdapter {
         &self,
         discovered: &Discovered,
         response: CoreTokenResponse,
-        retained: RetainedCredentials,
+        mut retained: RetainedCredentials,
         context: &ExternalAuthenticationContext,
+        received: impl FnOnce(RetainedCredentials),
     ) -> Result<Authentication, OidcError> {
+        // The token endpoint completed the exchange. Transfer a cleanup copy
+        // before any fallible identity checks or asynchronous UserInfo reads.
+        if let Some(replacement) = response.refresh_token() {
+            retained.refresh = replacement.secret().clone();
+        }
+        received(retained.clone());
         let mut authentication = self
             .verify(
                 discovered,
@@ -280,7 +293,7 @@ impl OidcAdapter {
                 Some((&retained.subject, retained.auth_time)),
             )
             .await?;
-        authentication.credentials.get_or_insert(retained);
+        authentication.credentials = Some(retained);
         Ok(authentication)
     }
 
@@ -559,7 +572,7 @@ pub struct AcceptedCallback {
     code: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RetainedCredentials {
     refresh: String,

@@ -227,10 +227,11 @@ impl OAuthAdapter {
         &self,
         credentials: RetainedCredentials,
         context: &ExternalAuthenticationContext,
-        submitting: impl Fn() + Sync,
+        submitting: impl Fn() + Clone + Sync,
     ) -> Result<Authentication, OAuthError> {
         self.authenticate_using(credentials, context, &|request| {
-            self.transport.send_with_dispatch(request, &submitting)
+            self.transport
+                .send_with_dispatch(request, submitting.clone())
         })
         .await
     }
@@ -246,6 +247,11 @@ impl OAuthAdapter {
         let response = client.call(request).await?;
         if *self.definition.profile() == OAuthProfile::Github && github_rate_limited(&response) {
             return Err(OAuthError::Unavailable);
+        }
+        // The authenticated-user endpoint rejected this bearer. Another session
+        // must still prove the same subject and current eligibility independently.
+        if response.status() == http::StatusCode::UNAUTHORIZED && credentials.subject.is_some() {
+            return Err(OAuthError::CredentialExpired);
         }
         if response.status() != http::StatusCode::OK {
             return Err(OAuthError::Denied);

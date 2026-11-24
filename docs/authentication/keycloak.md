@@ -137,7 +137,11 @@ Local logout commits first and destroys the retained credential. Supported
 OIDC revocation is attempted afterward with a bounded deadline and cannot delay
 or undo local revocation. Local logout does not promise global Keycloak SSO
 logout. RP-initiated browser logout is not exposed by this profile. The current
-logout API performs local logout and best-effort token revocation.
+logout API performs local logout and best-effort token revocation. If renewal
+fails before sending the token request and logout prevents restoring the original
+grant, the worker attempts to revoke it. If the token endpoint succeeds and
+UserInfo verification fails, the worker attempts to revoke the grant from that
+exchange.
 
 Credential approval uses `max_age=0` and a signed `auth_time` at or after the
 interaction start, with one second of clock skew. Existing SSO, a new token

@@ -202,8 +202,14 @@ async fn only_temporary_outages_allow_cached_authority(
     .unwrap();
 }
 
+#[rstest]
+#[case::current("/api/v1/auth/logout", false)]
+#[case::all("/api/v1/auth/logout_all", true)]
 #[actix_web::test]
-async fn local_logout_revokes_session_when_provider_authority_is_unavailable() {
+async fn local_logout_revokes_session_when_provider_authority_is_unavailable(
+    #[case] path: &str,
+    #[case] revoke_other: bool,
+) {
     use crate::tests::api_operations::post_request;
     use actix_web::http::StatusCode;
     let context = TestContext::new().await;
@@ -226,7 +232,11 @@ async fn local_logout_revokes_session_when_provider_authority_is_unavailable() {
         provider_kind: "ldap".into(),
         authentication_revision: Some(ResourceRevision::INITIAL),
     };
-    let issued = issue_login_token(app.get_ref(), &login, EventContext::system())
+    let event = EventContext::system();
+    let issued = issue_login_token(app.get_ref(), &login, event.clone())
+        .await
+        .unwrap();
+    let other = issue_login_token(app.get_ref(), &login, event)
         .await
         .unwrap();
     assert!(
@@ -237,12 +247,16 @@ async fn local_logout_revokes_session_when_provider_authority_is_unavailable() {
     let result = post_request(
         &context.pool,
         issued.token().as_str(),
-        "/api/v1/auth/logout",
+        path,
         &serde_json::json!({}),
     )
     .await;
     let revoked =
         crate::services::authentication::authenticate_bearer_token(&context.pool, issued.token())
+            .await
+            .is_err();
+    let other_revoked =
+        crate::services::authentication::authenticate_bearer_token(&context.pool, other.token())
             .await
             .is_err();
     with_transaction(&context.pool, async |connection| {
@@ -260,4 +274,5 @@ async fn local_logout_revokes_session_when_provider_authority_is_unavailable() {
     .unwrap();
     assert_eq!(result.status(), StatusCode::OK);
     assert!(revoked);
+    assert_eq!(other_revoked, revoke_other);
 }

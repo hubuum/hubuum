@@ -395,12 +395,53 @@ async fn verified_refresh_retains_usable_token(
     );
     response.set_refresh_token(replacement.map(|token| RefreshToken::new(token.into())));
     let verified = adapter
-        .verify_refresh(&discovered, response, original, &context)
+        .verify_refresh(&discovered, response, original, &context, |_| {})
         .await
         .unwrap();
     let credential = verified.credentials.unwrap();
     assert_eq!(credential.refresh, expected);
     assert_eq!(credential.auth_time, original_time);
+}
+
+#[rstest]
+#[case::rotated(Some("replacement"), "replacement")]
+#[case::non_rotating(None, "original")]
+#[tokio::test]
+async fn unavailable_userinfo_leaves_the_exchange_grant_available_for_cleanup(
+    #[case] replacement: Option<&str>,
+    #[case] expected: &str,
+) {
+    let (mut adapter, mut discovered, context) = fixture();
+    let mut config = serde_json::to_value(&adapter.definition).unwrap();
+    config["membership"]["claim_source"] = json!("userinfo");
+    adapter.definition = serde_json::from_value(config).unwrap();
+    // Private outbound targets are disabled in this fixture; the UserInfo
+    // request fails deterministically without contacting the network.
+    discovered.userinfo = Some("https://127.0.0.1/userinfo".into());
+    let claims = claims();
+    let retained = RetainedCredentials {
+        refresh: "original".into(),
+        nonce: "nonce".into(),
+        subject: "stable-subject".into(),
+        issuer: adapter.definition.issuer().as_str().into(),
+        client_id: adapter.definition.client_id().into(),
+        auth_time: DateTime::from_timestamp(claims["auth_time"].as_i64().unwrap(), 0),
+    };
+    let mut response = response(
+        claims,
+        "current",
+        CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
+        false,
+    );
+    response.set_refresh_token(replacement.map(|token| RefreshToken::new(token.into())));
+    let mut cleanup = None;
+    let result = adapter
+        .verify_refresh(&discovered, response, retained, &context, |grant| {
+            cleanup = Some(grant)
+        })
+        .await;
+    assert!(matches!(result, Err(OidcError::Unavailable)));
+    assert_eq!(cleanup.unwrap().refresh, expected);
 }
 
 #[rstest]

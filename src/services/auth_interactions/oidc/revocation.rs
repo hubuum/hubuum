@@ -8,32 +8,47 @@ use crate::{
 use hubuum_domain::ResourceRevision;
 use hubuum_storage_core::{
     RuntimeSettingsStorage, StorageAuthenticationProvider, StorageAuthenticationProviders,
-    StorageProviderIdentityBinding, StorageRuntimeSettingsGroup,
-    StorageRuntimeSettingsHistoryQuery, StorageRuntimeSettingsValue, StorageUpstreamSession,
+    StorageEncryptedUpstreamCredential, StorageProviderIdentityBinding,
+    StorageRuntimeSettingsGroup, StorageRuntimeSettingsHistoryQuery, StorageRuntimeSettingsValue,
+    StorageUpstreamClaim, StorageUpstreamSession,
 };
 use std::{collections::BTreeMap, future::Future, time::Duration};
 use tokio::sync::OnceCell;
 
 pub(super) fn revoke_uninstalled_oidc(
     provider: &StorageAuthenticationProvider,
-    grant: Option<RetainedCredentials>,
+    grant: Option<hubuum_auth_oidc::RetainedCredentials>,
 ) {
-    // OAuth profile reads leave the same bearer available to the winning claim.
-    let Some(grant @ RetainedCredentials::Oidc(_)) = grant else {
+    let Some(grant) = grant else {
         return;
     };
     let provider = provider.clone();
     tokio::spawn(async move {
-        dispatch_revocations(vec![grant], |grant| {
-            bounded_revocation(async {
-                configured_adapter(&provider)
-                    .await?
-                    .revoke(grant)
-                    .await
-                    .map_err(error)?;
-                Ok(())
-            })
-        })
+        with_revocation_permit(bounded_revocation(async {
+            configured_adapter(&provider)
+                .await?
+                .revoke(RetainedCredentials::Oidc(grant))
+                .await
+                .map_err(error)?;
+            Ok(())
+        }))
+        .await;
+    });
+}
+
+/// A definitive fence prevented storage from restoring this unsubmitted OIDC
+/// grant. The encrypted claim still owns the credential removed by the lease.
+pub(super) fn revoke_unsubmitted_oidc(
+    provider: &StorageAuthenticationProvider,
+    claim: StorageUpstreamClaim,
+) {
+    let provider = provider.clone();
+    tokio::spawn(async move {
+        with_revocation_permit(revoke_encrypted(
+            &provider,
+            claim.session(),
+            claim.credential(),
+        ))
         .await;
     });
 }
@@ -143,28 +158,37 @@ pub(crate) fn revoke_provider_best_effort(
     }
 }
 
-// Share capacity across concurrent logouts, and keep pending work in each batch.
+const CONCURRENCY: usize = 32;
+
+async fn with_revocation_permit(work: impl Future<Output = ()>) {
+    static REVOCATIONS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(CONCURRENCY);
+    let _permit = REVOCATIONS
+        .acquire()
+        .await
+        .expect("revocation semaphore stays open");
+    work.await;
+}
+
+// Share capacity with in-flight renewal cleanup and keep pending work in each batch.
 async fn dispatch_revocations<T, F: Future<Output = ()>>(records: Vec<T>, revoke: impl Fn(T) -> F) {
     use futures_util::{StreamExt, stream};
-    const CONCURRENCY: usize = 32;
-    static REVOCATIONS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(CONCURRENCY);
-    let revoke = &revoke;
     stream::iter(records)
-        .for_each_concurrent(CONCURRENCY, |record| async move {
-            let _permit = REVOCATIONS
-                .acquire()
-                .await
-                .expect("revocation semaphore stays open");
-            revoke(record).await;
-        })
+        .for_each_concurrent(CONCURRENCY, |record| with_revocation_permit(revoke(record)))
         .await;
 }
 
 async fn revoke_record(provider: &StorageAuthenticationProvider, record: StorageUpstreamSession) {
+    if let Some(credential) = record.credential() {
+        revoke_encrypted(provider, &record, credential).await;
+    }
+}
+
+async fn revoke_encrypted(
+    provider: &StorageAuthenticationProvider,
+    record: &StorageUpstreamSession,
+    credential: &StorageEncryptedUpstreamCredential,
+) {
     bounded_revocation(async {
-        let Some(credential) = record.credential() else {
-            return Ok::<_, ApiError>(());
-        };
         let credentials = RetainedCredentials::restore(
             &unprotect(
                 record.binding(),
