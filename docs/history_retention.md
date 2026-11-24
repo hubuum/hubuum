@@ -191,10 +191,14 @@ another change.
 
 Inspection scans at most 1000 source rows and 1 MiB of identity metadata, and
 returns at most 16 payload-free samples. Coverage distinguishes complete from
-bounded scans. Zero observed eligible records with bounded coverage is not a
-complete empty result. A review covers its declared scope and cutoff, including
+bounded scans. In the memory adapter, several history families share one source,
+so rows from other families can consume the row limit. With bounded coverage,
+eligible records can exist beyond the scan even when the sample is empty.
+A review covers its declared scope and cutoff, including
 additional retained or late-committing records, rather than only sampled IDs.
 Issuance reserves no later execution capacity and does not pin candidates.
+If authority changes during inspection, the endpoint returns HTTP 409. Retry
+the inspection to read the current policy and hold decisions.
 
 Configure and initialize the existing
 [independent control repository](deletion_recovery.md) before applying policies
@@ -205,6 +209,9 @@ the signed deletion, task, or history authority requires recovery. Policy listin
 reports `protected`, `pending`, `recovery_required`, `unconfigured` or
 `unavailable`; it does not equate a committed database row with independent
 protection.
+A freshly initialized checkpoint covers pristine history authority at revision
+zero. Its protected history revision stays absent until a history decision is
+published.
 
 A repeated hold release returns its existing terminal state after either an
 explicit release or a recorded natural expiry. A first transition still

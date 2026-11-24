@@ -23,13 +23,13 @@ async fn fixture() -> MemoryStorage {
     }
     storage
 }
-fn install(state: &mut MemoryState, trigger: HistoryExpiryTrigger) -> HistoryPolicyKey {
+fn install(
+    state: &mut MemoryState,
+    family: StorageIdentityHistoryKind,
+    trigger: HistoryExpiryTrigger,
+) -> HistoryPolicyKey {
     let snapshot = state.history_lifecycle_snapshot().unwrap();
-    let key = HistoryPolicyKey::new(
-        StorageIdentityHistoryKind::ClassSchema,
-        HistoryPolicyScope::Deployment,
-    )
-    .unwrap();
+    let key = HistoryPolicyKey::new(family, HistoryPolicyScope::Deployment).unwrap();
     let proposal = HistoryPolicyChange::new(
         key,
         HistoryPolicyRevision::new(0).unwrap(),
@@ -93,6 +93,7 @@ async fn complete_native_measurement_selects_the_oldest_copy_once() {
         .sum::<u64>();
     let key = install(
         &mut state,
+        StorageIdentityHistoryKind::ClassSchema,
         HistoryExpiryTrigger::LogicalSize {
             upper_logical_bytes: HistoryLogicalBytes::new(total - 1).unwrap(),
             lower_logical_bytes: HistoryLogicalBytes::new(total - 2).unwrap(),
@@ -126,6 +127,7 @@ async fn an_unavailable_complete_census_preserves_age_or_size_short_circuit() {
     let mut state = storage.state.write_control().await;
     let key = install(
         &mut state,
+        StorageIdentityHistoryKind::ClassSchema,
         HistoryExpiryTrigger::AgeOrSize {
             age: HistoryAgeRule::new(HistoryRetentionSeconds::new(0).unwrap(), None),
             size: HistorySizeRule::new(
@@ -157,6 +159,7 @@ async fn size_required_audit_keeps_both_pressure_and_intent_atomic() {
     let mut state = storage.state.write_control().await;
     let key = install(
         &mut state,
+        StorageIdentityHistoryKind::ClassSchema,
         HistoryExpiryTrigger::LogicalSize {
             upper_logical_bytes: HistoryLogicalBytes::new(1).unwrap(),
             lower_logical_bytes: HistoryLogicalBytes::new(0).unwrap(),
@@ -170,4 +173,48 @@ async fn size_required_audit_keeps_both_pressure_and_intent_atomic() {
     assert!(super::super::admit_on(&mut state, admission).is_err());
     assert_eq!(state.history_lifecycle, before);
     assert_eq!(state.events.len(), events);
+}
+
+#[rstest::rstest]
+#[case::foreign_scope(false)]
+#[case::deployment(true)]
+#[tokio::test]
+async fn oversized_object_authorization_preserves_other_eligible_rows(#[case] deployment: bool) {
+    use super::super::progress_tests::seed;
+    let storage = MemoryStorage::new();
+    let family = StorageIdentityHistoryKind::Object;
+    let key = {
+        let mut state = storage.state.write_control().await;
+        install(
+            &mut state,
+            family,
+            HistoryExpiryTrigger::LogicalSize {
+                upper_logical_bytes: HistoryLogicalBytes::new(1).unwrap(),
+                lower_logical_bytes: HistoryLogicalBytes::new(0).unwrap(),
+            },
+        )
+    };
+    seed(
+        &storage,
+        family,
+        &"x".repeat(HistoryAuthorizationBytes::MAX_BYTES),
+        "",
+    )
+    .await;
+    let small = seed(&storage, family, "ordinary object", "").await;
+    let state = storage.state.read_control().await;
+    let plan = plan(
+        &state,
+        request(&state, if deployment { key } else { small }),
+    )
+    .unwrap();
+    let (_, result) = plan.into_parts();
+    assert_eq!(result.oversized_source_rows() > 0, deployment);
+    let members = result.manifest().unwrap().members();
+    assert!(members.iter().all(|member| {
+        member
+            .attributions()
+            .iter()
+            .any(|scope| scope.matches(small.scope()))
+    }));
 }

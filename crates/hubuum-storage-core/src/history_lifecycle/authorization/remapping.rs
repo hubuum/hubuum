@@ -44,9 +44,7 @@ impl HistoryAuthorizationResource {
         }
     }
     fn require_identity(&self, expected: ResourceIdentity) -> Result<(), StorageValidationError> {
-        let encoded = serde_json::to_vec(&self.evidence)
-            .map_err(|_| invalid("Cannot measure historical correspondence"))?;
-        HistoryAuthorizationBytes::measure(encoded.len())?;
+        HistoryAuthorizationBytes::encode(&self.evidence, io::sink())?;
         if self.evidence.has_unknown_restore_source()
             || self
                 .evidence
@@ -151,9 +149,8 @@ impl HistoryObjectAuthorizationRemapping {
         })
     }
     fn digest(facts: &HistoryObjectAuthorizationFacts) -> Result<[u8; 32], StorageValidationError> {
-        let encoded = serde_json::to_vec(facts)
-            .map_err(|_| invalid("Cannot bind historical authorization facts"))?;
-        HistoryAuthorizationBytes::measure(encoded.len())?;
+        let mut encoded = Vec::new();
+        HistoryAuthorizationBytes::encode(facts, &mut encoded)?;
         Ok(Sha256::digest(encoded).into())
     }
     pub fn matches(

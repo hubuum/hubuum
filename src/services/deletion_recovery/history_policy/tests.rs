@@ -464,6 +464,93 @@ impl hubuum_storage_core::StorageObserver for ApplyOnCapture {
 }
 
 #[actix_web::test]
+async fn inspection_rejects_an_authority_change_during_the_scan() {
+    let observer = Arc::new(ApplyOnCapture::default());
+    let storage = StorageHandle::from_registered_backend_with_observer(
+        hubuum_storage_memory::MemoryStorage::new(),
+        observer.clone(),
+    );
+    let fixture = Fixture::with_storage(storage.clone()).await;
+    let key = fixture.proposal().key();
+    let snapshot = storage.capture_history_lifecycle().await.unwrap();
+    let hold = HistoryRetentionHold::new(
+        Uuid::new_v4(),
+        key,
+        snapshot.observed_at(),
+        None,
+        PrincipalIdentity::generate(),
+    )
+    .unwrap();
+    let change = snapshot
+        .control()
+        .create_hold(hold, snapshot.fence())
+        .unwrap();
+    *observer.action.lock().unwrap() = Some(Box::new(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(storage.commit_history_lifecycle(change))
+            .unwrap();
+    }));
+    let result = inspect(
+        &fixture.context,
+        &fixture.admin,
+        HistoryLifecycleScan::new(key, 1).unwrap(),
+    )
+    .await;
+    assert!(matches!(result, Err(ApiError::Conflict(_))));
+}
+
+#[rstest::rstest]
+#[case::pristine(false)]
+#[case::unpublished_hold(true)]
+#[actix_web::test]
+async fn policy_listing_distinguishes_pristine_and_unpublished_authority(
+    #[case] unpublished: bool,
+) {
+    let fixture = Fixture::new().await;
+    if unpublished {
+        let storage = storage_handle(&fixture.context);
+        let snapshot = storage.capture_history_lifecycle().await.unwrap();
+        let hold = HistoryRetentionHold::new(
+            Uuid::new_v4(),
+            fixture.proposal().key(),
+            snapshot.observed_at(),
+            None,
+            PrincipalIdentity::generate(),
+        )
+        .unwrap();
+        storage
+            .commit_history_lifecycle(
+                snapshot
+                    .control()
+                    .create_hold(hold, snapshot.fence())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    let page = list(
+        &fixture.context,
+        &fixture.admin,
+        HistoryPolicyListRequest {
+            after_revision: HistoryPolicyRevision::new(0).unwrap(),
+            limit: 100,
+        },
+        &fixture.options,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        (unpublished, page.protection),
+        (false, HistoryAuthorityProtection::Protected)
+            | (true, HistoryAuthorityProtection::Pending)
+    ));
+    assert_eq!(page.protected_authority_revision, None);
+}
+
+#[actix_web::test]
 async fn policy_listing_serializes_capture_with_checkpoint_publication() {
     let observer = Arc::new(ApplyOnCapture::default());
     let storage = StorageHandle::from_registered_backend_with_observer(

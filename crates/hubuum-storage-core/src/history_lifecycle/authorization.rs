@@ -1,11 +1,12 @@
 //! Necessary stored policy inputs for an exact expired object version.
 //! These facts do not authorize a caller and contain no object data/description.
 
-use std::fmt;
+use std::{fmt, io};
 
 mod remapping;
 pub use remapping::*;
 
+use hubuum_budget::{ByteLimit, LimitedWriter};
 use hubuum_domain::{ClassId, CollectionId, ObjectId, ResourceRevision, VersionIdentity};
 
 use super::*;
@@ -19,13 +20,18 @@ use crate::{
 pub struct HistoryAuthorizationBytes(u32);
 impl HistoryAuthorizationBytes {
     pub const MAX_BYTES: usize = 64 * 1024;
-    fn measure(bytes: usize) -> Result<Self, StorageValidationError> {
-        if bytes == 0 || bytes > Self::MAX_BYTES {
-            return Err(invalid(
+    fn encode(
+        value: &impl Serialize,
+        destination: impl io::Write,
+    ) -> Result<Self, StorageValidationError> {
+        let mut writer = LimitedWriter::new(destination, ByteLimit::new(Self::MAX_BYTES));
+        match serde_json::to_writer(&mut writer, value) {
+            Ok(()) => Ok(Self(writer.budget().used() as u32)),
+            Err(_) if writer.budget().exceeded() => Err(StorageValidationError::too_large(
                 "Retained object authorization exceeds its 64 KiB bound",
-            ));
+            )),
+            Err(_) => Err(invalid("Cannot encode retained object authorization")),
         }
-        Ok(Self(bytes as u32))
     }
     pub const fn value(self) -> u32 {
         self.0
@@ -84,7 +90,12 @@ struct ObjectAuthorizationInput {
 impl TryFrom<ObjectAuthorizationInput> for HistoryObjectAuthorizationFacts {
     type Error = StorageValidationError;
     fn try_from(mut value: ObjectAuthorizationInput) -> Result<Self, Self::Error> {
-        if value.name.len() > HistoryAuthorizationBytes::MAX_BYTES || value.name.contains('\0') {
+        if value.name.len() > HistoryAuthorizationBytes::MAX_BYTES {
+            return Err(StorageValidationError::too_large(
+                "Retained object authorization exceeds its 64 KiB bound",
+            ));
+        }
+        if value.name.contains('\0') {
             return Err(invalid("Stored object authorization name is unsupported"));
         }
         if value.attribution.class().is_none()
@@ -123,11 +134,7 @@ impl TryFrom<ObjectAuthorizationInput> for HistoryObjectAuthorizationFacts {
                 "Stored object authorization differs from its original version state",
             ));
         }
-        let encoded_bytes = HistoryAuthorizationBytes::measure(
-            serde_json::to_vec(&value)
-                .map_err(|_| invalid("Cannot encode retained object authorization"))?
-                .len(),
-        )?;
+        let encoded_bytes = HistoryAuthorizationBytes::encode(&value, io::sink())?;
         Ok(Self {
             target: value.target,
             object_id: value.object_id,
@@ -155,6 +162,15 @@ impl fmt::Debug for HistoryObjectAuthorizationFacts {
 }
 
 impl HistoryObjectAuthorizationFacts {
+    /// Decode an adapter's exact native coordinates while preserving typed size errors.
+    pub fn from_native_coordinates(
+        value: serde_json::Value,
+    ) -> Result<Self, StorageValidationError> {
+        serde_json::from_value::<ObjectAuthorizationInput>(value)
+            .map_err(|_| invalid("Invalid native object authorization coordinates"))?
+            .try_into()
+    }
+
     /// Capture the original stored snapshot once. The adapter must bind this
     /// exact row to its claimed native version; these facts are not permission.
     pub fn capture(row: StorageObjectHistoryRecord) -> Result<Self, StorageValidationError> {
@@ -206,7 +222,7 @@ impl HistoryObjectAuthorizationFacts {
             ),
         };
         if record.name().len() > HistoryAuthorizationBytes::MAX_BYTES {
-            return Err(invalid(
+            return Err(StorageValidationError::too_large(
                 "Retained object authorization exceeds its 64 KiB bound",
             ));
         }

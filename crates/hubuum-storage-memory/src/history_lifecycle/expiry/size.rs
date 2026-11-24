@@ -8,7 +8,8 @@ pub(super) fn plan(
     request
         .selection(&snapshot)
         .map_err(invalid_contract_value)?;
-    let family = request.scan().key().family();
+    let scan = request.scan().clone();
+    let family = scan.key().family();
     let mut census =
         HistorySizeCensus::for_family(snapshot, family).map_err(invalid_contract_value)?;
     super::super::accounting::fold_on(state, family, &mut census)?;
@@ -23,19 +24,19 @@ pub(super) fn plan(
             ExpirySource::History(row) if row.family() != family => {}
             ExpirySource::History(row) => consider(
                 state,
-                family,
+                &scan,
                 &row.backup_history_row()?.1,
                 Some(row),
                 &mut selection,
             )?,
-            ExpirySource::Backup(row) => consider(state, family, row, None, &mut selection)?,
+            ExpirySource::Backup(row) => consider(state, &scan, row, None, &mut selection)?,
             ExpirySource::Computed(row) => {
                 let raw = serde_json::to_value(row).map_err(|_| {
                     StorageError::backend_failure("Cannot encode computed expiry metadata")
                 })?;
                 consider(
                     state,
-                    family,
+                    &scan,
                     &StorageBackupRow::try_from_value(raw).map_err(invalid_contract_value)?,
                     None,
                     &mut selection,
@@ -48,11 +49,12 @@ pub(super) fn plan(
 
 fn consider(
     state: &MemoryState,
-    family: StorageIdentityHistoryKind,
+    scan: &HistoryLifecycleScan,
     row: &StorageBackupRow,
     source: Option<&MemoryHistoryEntry>,
     selection: &mut HistoryExpirySizeSelection,
 ) -> Result<(), StorageError> {
+    let family = scan.key().family();
     let raw = row
         .get("logical_identity")
         .filter(|value| !value.is_null())
@@ -93,7 +95,9 @@ fn consider(
     )
     .map_err(invalid_contract_value)?
     .ok_or_else(|| StorageError::unavailable("Size selection ancestry is unresolved"))?;
-    if anchor.is_some() {
+    let visible = state.history_identity_visible(family, Some(&evidence));
+    let selected = visible && scan.includes(&candidate);
+    if selected && anchor.is_some() {
         candidate = candidate
             .with_native_interval(from, until)
             .map_err(invalid_contract_value)?;
@@ -102,27 +106,25 @@ fn consider(
         bounded_encoded_bytes(row, u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES))?
             .unwrap_or(u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES) + 1);
     if input_bytes <= u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES)
+        && selected
         && anchor.is_some()
         && let Some(source) = source
         && let MemoryHistoryValue::Object(value) = &source.value
     {
-        let facts = HistoryObjectAuthorizationFacts::capture(
-            StorageObjectHistoryRecord::try_new(value.clone(), source.metadata()?)
-                .map_err(invalid_contract_value)?,
-        )
-        .map_err(invalid_contract_value)?;
+        let Some(facts) = object_authorization(source, value)? else {
+            // Account for the authorization budget examined before detecting overflow.
+            metadata_bytes += HistoryAuthorizationBytes::MAX_BYTES as u64;
+            return selection
+                .observe(candidate, input_bytes, metadata_bytes, visible)
+                .map_err(invalid_contract_value);
+        };
         metadata_bytes += u64::from(facts.encoded_bytes().value());
         candidate = candidate
             .with_object_authorization(facts)
             .map_err(invalid_contract_value)?;
     }
     selection
-        .observe(
-            candidate,
-            input_bytes,
-            metadata_bytes,
-            state.history_identity_visible(family, Some(&evidence)),
-        )
+        .observe(candidate, input_bytes, metadata_bytes, visible)
         .map_err(invalid_contract_value)
 }
 

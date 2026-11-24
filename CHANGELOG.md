@@ -61,7 +61,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Production admission remains disabled pending restore and resource qualification.
 - Gated history expiry reports source rows exceeding its input or identity
   budgets as explicit task warnings, preserves those rows and advances the
-  bounded scan so later eligible versions can progress.
+  bounded scan so later eligible versions can progress. This also covers object
+  authorization facts that exceed their 64 KiB retention limit.
 
 - Gated history expiry tasks can remove retained exact closed versions in bounded
   transactions after independent membership protection and positive publication
@@ -157,6 +158,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   preserve original creation and expiry clocks. Maintenance settles natural hold
   expiry once and protects its original audit fact independently. Physical history-expiry execution remains under
   development; see [scoped history retention](docs/history_retention.md).
+  Inspection returns HTTP 409 when authority changes during its scan. An
+  initialized independent checkpoint reports pristine history as protected.
 
 - **Breaking storage SDK 0.19:** all ten SDK crates advance together. Complete
   adapters must implement `HistoryArchiveStorage` with persisted catalogs,

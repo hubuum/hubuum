@@ -29,29 +29,49 @@ pub(super) async fn plan_on(
         "op='D'"
     };
     let coordinates = if family == StorageIdentityHistoryKind::Object {
-        "jsonb_build_object('object_id',id,'name',name,'collection_id',collection_id,'class_id',hubuum_class_id,'revision',revision)"
+        format!(
+            "CASE WHEN (valid_to IS NOT NULL OR op='D') AND octet_length(name)<={} THEN jsonb_build_object('object_id',id,'name',name,'collection_id',collection_id,'class_id',hubuum_class_id,'revision',revision) END",
+            HistoryAuthorizationBytes::MAX_BYTES
+        )
     } else {
-        "NULL::jsonb"
+        "NULL::jsonb".into()
     };
     let query = format!(
-        "WITH native AS (SELECT {position}::bigint AS position,{from} AS valid_from,{until} AS valid_to,logical_identity,{deleted} AS deleted,octet_length(to_jsonb(h.*)::text)::bigint AS input_bytes,{coordinates} AS coordinates FROM public.{table} h ORDER BY {position} LIMIT 100001) SELECT position,valid_from,valid_to,CASE WHEN octet_length(logical_identity::text)<=1048576 THEN logical_identity END AS logical_identity,deleted,input_bytes,TRUE AS within_budget,TRUE AS row_within_budget,public.hubuum_history_version_visible($1,logical_identity) AS visible,public.hubuum_history_expiry_dependency($1,logical_identity) AS dependency,CASE WHEN octet_length(coordinates::text)<=1048576 THEN coordinates END AS coordinates,(coalesce(octet_length(logical_identity::text),0)::bigint+coalesce(octet_length(coordinates::text),0)::bigint) AS metadata_bytes FROM native ORDER BY position"
+        "WITH native AS (
+            SELECT {position}::bigint AS position, {from} AS valid_from, {until} AS valid_to,
+                   logical_identity, {deleted} AS deleted,
+                   octet_length(to_jsonb(h.*)::text)::bigint AS input_bytes, {coordinates} AS coordinates
+            FROM public.{table} h ORDER BY {position} LIMIT 100001
+         ), measured AS (
+            SELECT native.*, coalesce(octet_length(logical_identity::text), 0)::bigint
+                             + coalesce(octet_length(coordinates::text), 0)::bigint AS metadata_bytes
+            FROM native
+         )
+         SELECT position, valid_from, valid_to, deleted, input_bytes, metadata_bytes,
+                metadata_bytes <= $2 AS within_budget, metadata_bytes <= $2 AS row_within_budget,
+                CASE WHEN metadata_bytes <= $2 THEN logical_identity END AS logical_identity,
+                CASE WHEN metadata_bytes <= $2 THEN coordinates END AS coordinates,
+                CASE WHEN metadata_bytes <= $2 THEN public.hubuum_history_version_visible($1,logical_identity) ELSE FALSE END AS visible,
+                CASE WHEN metadata_bytes <= $2 THEN public.hubuum_history_expiry_dependency($1,logical_identity) ELSE TRUE END AS dependency
+         FROM measured ORDER BY position"
     );
     let family_name = serde_json::to_value(family)
         .map_err(|_| PostgresStorageError::invalid_input("Invalid size selection family"))?;
     {
         let mut rows = sql_query(query)
             .bind::<Text, _>(family_name.as_str().expect("family string"))
+            .bind::<BigInt, _>(HistoryLifecycleScan::MAX_INPUT_BYTES as i64)
             .load_stream::<SourceRow>(connection)
             .await?;
         while let Some(mut row) = rows.try_next().await? {
+            if !row.within_budget {
+                return Err(PostgresStorageError::unavailable(
+                    "Size selection exceeded its per-row metadata budget",
+                ));
+            }
             let candidate = decode_candidate(family, &mut row, &scan)?.ok_or_else(|| {
                 PostgresStorageError::unavailable("Size selection has unresolved native identity")
             })?;
-            let visible = row.visible
-                && !(family == StorageIdentityHistoryKind::Object
-                    && candidate.anchor().is_some()
-                    && candidate.object_authorization().is_none()
-                    && row.input_bytes <= i64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES));
             selection.observe(
                 candidate,
                 u64::try_from(row.input_bytes)
@@ -59,7 +79,7 @@ pub(super) async fn plan_on(
                 u64::try_from(row.metadata_bytes).map_err(|_| {
                     PostgresStorageError::unavailable("Invalid native size metadata")
                 })?,
-                visible,
+                row.visible,
             )?;
         }
     }

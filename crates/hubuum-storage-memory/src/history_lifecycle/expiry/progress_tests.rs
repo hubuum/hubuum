@@ -657,6 +657,32 @@ async fn oversized_first_row_does_not_starve_later_memory_work(
 }
 
 #[tokio::test]
+async fn age_expiry_advances_past_oversized_object_authorization() {
+    let storage = MemoryStorage::new();
+    let family = StorageIdentityHistoryKind::Object;
+    seed(
+        &storage,
+        family,
+        &"x".repeat(HistoryAuthorizationBytes::MAX_BYTES),
+        "",
+    )
+    .await;
+    let small = seed(&storage, family, "ordinary object", "").await;
+    let runtime = storage.register_history_runtime(None).await.unwrap();
+    let mut run = Run::new(&storage, &runtime, family, 1000).await;
+    assert_eq!(run.page().await.oversized_source_rows(), 1);
+    let members = run.pass().await;
+    storage.unregister_runtime(runtime).await.unwrap();
+    assert!(!members.is_empty());
+    assert!(members.iter().all(|member| {
+        member
+            .attributions()
+            .iter()
+            .any(|scope| scope.matches(small.scope()))
+    }));
+}
+
+#[tokio::test]
 async fn cumulative_byte_limit_defers_rows_to_a_fresh_page() {
     let storage = MemoryStorage::new();
     let first = seed(

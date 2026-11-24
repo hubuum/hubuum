@@ -855,6 +855,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Authority changed during the scan. Retry the inspection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [

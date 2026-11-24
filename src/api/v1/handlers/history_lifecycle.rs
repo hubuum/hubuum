@@ -39,7 +39,7 @@ pub async fn policies(
     ))
 }
 
-#[utoipa::path(post, path = "/api/v1/admin/history-lifecycle/inspect", tag = "admin", security(("bearer_auth" = [])), request_body = HistoryLifecycleInspectionRequest, responses((status = 200, description = "Bounded effective sources, original anchors, deadlines and blockers; samples contain no retained payloads", body = HistoryLifecycleInspection), (status = 400, description = "Invalid scope or limits", body = ApiErrorResponse), (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse), (status = 404, description = "Unknown history policy scope", body = ApiErrorResponse)))]
+#[utoipa::path(post, path = "/api/v1/admin/history-lifecycle/inspect", tag = "admin", security(("bearer_auth" = [])), request_body = HistoryLifecycleInspectionRequest, responses((status = 200, description = "Bounded effective sources, original anchors, deadlines and blockers; samples contain no retained payloads", body = HistoryLifecycleInspection), (status = 400, description = "Invalid scope or limits", body = ApiErrorResponse), (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse), (status = 404, description = "Unknown history policy scope", body = ApiErrorResponse), (status = 409, description = "Authority changed during the scan. Retry the inspection.", body = ApiErrorResponse)))]
 #[post("/inspect")]
 pub async fn inspect(
     context: AppContext,

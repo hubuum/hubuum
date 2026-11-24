@@ -156,7 +156,11 @@ pub(crate) async fn admit_on(
         if family == StorageIdentityHistoryKind::Object
             && candidate.object_authorization().is_none()
         {
-            window.advance();
+            if candidate.attributions().is_empty() {
+                window.advance();
+            } else {
+                window.advance_oversized()?;
+            }
             continue;
         }
         if matches!(
@@ -291,10 +295,18 @@ fn decode_candidate(
                 .collect::<Vec<_>>(),
         )
         .map_err(|_| PostgresStorageError::invalid_input("Cannot encode expiry ancestry"))?;
-        let facts: HistoryObjectAuthorizationFacts =
-            serde_json::from_value(coordinates).map_err(|error| {
-                PostgresStorageError::invalid_persisted_value("expiry object authorization", error)
-            })?;
+        let facts = match HistoryObjectAuthorizationFacts::from_native_coordinates(coordinates) {
+            Ok(facts) => facts,
+            Err(error) if error.kind() == StorageValidationErrorKind::ValueTooLarge => {
+                return Ok(Some(candidate));
+            }
+            Err(error) => {
+                return Err(PostgresStorageError::invalid_persisted_value(
+                    "expiry object authorization",
+                    error,
+                ));
+            }
+        };
         candidate = candidate.with_object_authorization(facts)?;
     }
     Ok(Some(candidate))
@@ -674,10 +686,17 @@ mod decode_tests {
     use std::collections::BTreeMap;
 
     #[rstest::rstest]
-    #[case::foreign(false)]
-    #[case::selected(true)]
+    #[case::malformed_foreign(false, None, false)]
+    #[case::malformed_selected(true, None, true)]
+    #[case::oversized_selected(true, Some(HistoryAuthorizationBytes::MAX_BYTES + 1), false)]
+    #[case::encoded_overflow(true, Some(HistoryAuthorizationBytes::MAX_BYTES), false)]
+    #[case::ordinary_selected(true, Some(6), false)]
     #[test]
-    fn authorization_decode_follows_scope_selection(#[case] selected: bool) {
+    fn authorization_decode_follows_scope_and_byte_limits(
+        #[case] selected: bool,
+        #[case] name_bytes: Option<usize>,
+        #[case] invalid: bool,
+    ) {
         let collection = ResourceIdentity::generate();
         let evidence = StorageIdentityEvidence::try_new(
             Some(StorageIdentitySubject::Resource {
@@ -720,7 +739,9 @@ mod decode_tests {
             row_within_budget: true,
             visible: true,
             dependency: false,
-            coordinates: Some(serde_json::json!({})),
+            coordinates: Some(name_bytes.map_or_else(|| serde_json::json!({}), |bytes| serde_json::json!({
+                "name": "x".repeat(bytes), "object_id": 1, "class_id": 2, "collection_id": 3, "revision": 1
+            }))),
         };
         let family = StorageIdentityHistoryKind::Object;
         let scan = HistoryLifecycleScan::new(
@@ -738,6 +759,13 @@ mod decode_tests {
             1,
         )
         .unwrap();
-        assert_eq!(decode_candidate(family, &mut row, &scan).is_err(), selected);
+        let decoded = decode_candidate(family, &mut row, &scan);
+        assert_eq!(decoded.is_err(), invalid);
+        if let Ok(candidate) = decoded {
+            assert_eq!(
+                candidate.unwrap().object_authorization().is_some(),
+                selected && name_bytes == Some(6)
+            );
+        }
     }
 }

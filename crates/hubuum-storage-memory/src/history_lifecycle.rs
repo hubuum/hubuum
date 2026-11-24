@@ -2212,7 +2212,7 @@ mod tests {
         let storage = MemoryStorage::new();
         let scan = HistoryLifecycleScan::new(
             HistoryPolicyKey::new(
-                StorageIdentityHistoryKind::Object,
+                StorageIdentityHistoryKind::ComputedDefinitions,
                 HistoryPolicyScope::Deployment,
             )
             .unwrap(),
@@ -2223,6 +2223,62 @@ mod tests {
         assert!(result.complete());
         assert_eq!(result.scanned(), 0);
         assert!(result.candidates().is_empty());
+    }
+
+    #[tokio::test]
+    async fn inspection_charges_interleaved_source_rows_to_the_limit() {
+        let (storage, _, _) =
+            crate::deletion_control::tests::fixture_on(MemoryStorage::new(), true).await;
+        let key = HistoryPolicyKey::new(
+            StorageIdentityHistoryKind::Object,
+            HistoryPolicyScope::Deployment,
+        )
+        .unwrap();
+        // The root collection occupies the first native history position.
+        let result = storage
+            .scan_history_lifecycle(HistoryLifecycleScan::new(key, 1).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(result.scanned(), 1);
+        assert!(!result.complete());
+        assert!(result.candidates().is_empty());
+    }
+
+    #[rstest::rstest]
+    #[case::outside_row_limit(false, 1)]
+    #[case::outside_byte_limit(true, 2)]
+    #[tokio::test]
+    async fn inspection_stops_before_decoding_out_of_budget_identity(
+        #[case] oversized: bool,
+        #[case] limit: u32,
+    ) {
+        let storage = MemoryStorage::new();
+        let mut state = storage.state.write_control().await;
+        let now = Utc::now();
+        let raw = if oversized {
+            "x".repeat(HistoryLifecycleScan::MAX_INPUT_BYTES)
+        } else {
+            "invalid".into()
+        };
+        for (id, identity) in [(1, Value::Null), (2, Value::String(raw))] {
+            state.schema_history.push(
+                StorageBackupRow::try_from_value(serde_json::json!({
+                    "id": id, "occurred_at": now, "logical_identity": identity
+                }))
+                .unwrap(),
+            );
+        }
+        let key = HistoryPolicyKey::new(
+            StorageIdentityHistoryKind::ClassSchema,
+            HistoryPolicyScope::Deployment,
+        )
+        .unwrap();
+        let result = state
+            .scan_history_policy(&HistoryLifecycleScan::new(key, limit).unwrap())
+            .unwrap();
+        assert_eq!(result.scanned(), 1);
+        assert_eq!(result.unresolved_identities(), 1);
+        assert!(!result.complete());
     }
 
     #[tokio::test]
@@ -2576,195 +2632,125 @@ impl MemoryState {
         &self,
         scan: &HistoryLifecycleScan,
     ) -> Result<HistoryLifecycleScanResult, StorageError> {
+        use expiry::ExpirySource;
+        use serde::Deserialize;
+        use std::borrow::Cow;
+
         let family = scan.key().family();
         let mut scanned = 0;
         let mut unresolved = 0;
-        let mut input_bytes = 0;
+        let mut remaining_bytes = HistoryLifecycleScan::MAX_INPUT_BYTES as u64;
         let mut candidates = Vec::new();
-        let mut exhausted = false;
-        let mut consider = |evidence: Option<&StorageIdentityEvidence>,
-                            anchor,
-                            from,
-                            until|
-         -> Result<bool, StorageError> {
-            if scanned == scan.limit() {
-                exhausted = true;
-                return Ok(false);
-            }
-            if let Some(evidence) = evidence {
-                input_bytes += serde_json::to_vec(evidence)
-                    .map_err(|_| StorageError::internal("Cannot size historical identity"))?
-                    .len();
-                if input_bytes > HistoryLifecycleScan::MAX_INPUT_BYTES {
-                    exhausted = true;
-                    return Ok(false);
+        let mut byte_limit_reached = false;
+        for (_, source) in expiry::sources(self, family, 0, u64::MAX).take(scan.limit() as usize) {
+            let (evidence, anchor, from, until) = match source {
+                ExpirySource::History(row) if row.family() != family => {
+                    scanned += 1;
+                    continue;
                 }
-                match HistoryExpiryCandidate::from_evidence(
-                    family,
-                    evidence,
-                    anchor,
-                    self.history_candidate_has_dependency(family, evidence),
-                )
-                .map_err(invalid_contract_value)?
-                {
-                    Some(candidate)
-                        if scan.includes(&candidate)
-                            && self.history_identity_visible(family, Some(evidence)) =>
-                    {
-                        candidates.push(
-                            candidate
-                                .with_native_interval(from, until)
-                                .map_err(invalid_contract_value)?,
-                        )
-                    }
-                    Some(_) => {}
-                    None => unresolved += 1,
-                }
-            } else {
-                unresolved += 1;
-            }
-            scanned += 1;
-            Ok(true)
-        };
-        match family {
-            StorageIdentityHistoryKind::ClassSchema => {
-                for row in &self.schema_history {
-                    let evidence = row
-                        .get("logical_identity")
-                        .filter(|value| !value.is_null())
-                        .cloned()
-                        .map(serde_json::from_value::<StorageIdentityEvidence>)
-                        .transpose()
-                        .map_err(|_| {
-                            StorageError::backend_failure("Invalid schema history identity")
-                        })?;
-                    let anchor = row
-                        .get("occurred_at")
-                        .cloned()
-                        .map(serde_json::from_value::<DateTime<Utc>>)
-                        .transpose()
-                        .map_err(|_| {
-                            StorageError::backend_failure("Invalid schema history anchor")
-                        })?
-                        .map(HistoryRetentionAnchor::SchemaEvent);
-                    let from = anchor.map(HistoryRetentionAnchor::at).ok_or_else(|| {
-                        StorageError::backend_failure("Missing schema history occurrence clock")
-                    })?;
-                    if !consider(evidence.as_ref(), anchor, from, None)? {
-                        break;
-                    }
-                }
-            }
-            StorageIdentityHistoryKind::ComputedDefinitions => {
-                for row in &self.computed_history {
-                    if !consider(
-                        row.logical_identity(),
-                        row.valid_to().map(HistoryRetentionAnchor::Closed),
-                        row.valid_from(),
-                        row.valid_to(),
-                    )? {
-                        break;
-                    }
-                }
-            }
-            StorageIdentityHistoryKind::ClassRelation
-            | StorageIdentityHistoryKind::ObjectRelation => {
-                let section = if family == StorageIdentityHistoryKind::ClassRelation {
-                    StorageBackupHistorySection::ClassRelationHistory
-                } else {
-                    StorageBackupHistorySection::ObjectRelationHistory
-                };
-                for row in self.relation_history.get(&section).into_iter().flatten() {
-                    let evidence = row
-                        .get("logical_identity")
-                        .filter(|value| !value.is_null())
-                        .cloned()
-                        .map(serde_json::from_value::<StorageIdentityEvidence>)
-                        .transpose()
-                        .map_err(|_| {
-                            StorageError::backend_failure("Invalid relation history identity")
-                        })?;
-                    let deleted = row
-                        .get("operation")
-                        .and_then(serde_json::Value::as_str)
-                        .is_some_and(|value| value.eq_ignore_ascii_case("delete"));
-                    let anchor = row
-                        .get(if deleted { "valid_from" } else { "valid_to" })
-                        .filter(|value| !value.is_null())
-                        .cloned()
-                        .map(serde_json::from_value::<DateTime<Utc>>)
-                        .transpose()
-                        .map_err(|_| {
-                            StorageError::backend_failure("Invalid relation history anchor")
-                        })?
-                        .map(|at| {
-                            if deleted {
-                                HistoryRetentionAnchor::Deleted(at)
-                            } else {
-                                HistoryRetentionAnchor::Closed(at)
-                            }
-                        });
-                    let from = row
-                        .get("valid_from")
-                        .cloned()
-                        .map(serde_json::from_value::<DateTime<Utc>>)
-                        .transpose()
-                        .map_err(|_| {
-                            StorageError::backend_failure("Invalid relation history start")
-                        })?
-                        .ok_or_else(|| {
-                            StorageError::backend_failure("Missing relation history start")
-                        })?;
-                    let until = row
-                        .get("valid_to")
-                        .filter(|value| !value.is_null())
-                        .cloned()
-                        .map(serde_json::from_value::<DateTime<Utc>>)
-                        .transpose()
-                        .map_err(|_| {
-                            StorageError::backend_failure("Invalid relation history end")
-                        })?;
-                    if !consider(evidence.as_ref(), anchor, from, until)? {
-                        break;
-                    }
-                }
-            }
-            _ => {
-                for row in &self.history {
-                    let row_family = match row.value {
-                        MemoryHistoryValue::Collection(_) => StorageIdentityHistoryKind::Collection,
-                        MemoryHistoryValue::Class(_) => StorageIdentityHistoryKind::Class,
-                        MemoryHistoryValue::Object(_) => StorageIdentityHistoryKind::Object,
-                        MemoryHistoryValue::ExportTemplate(_) => {
-                            StorageIdentityHistoryKind::ExportTemplate
-                        }
-                        MemoryHistoryValue::RemoteTarget(_) => {
-                            StorageIdentityHistoryKind::RemoteTarget
-                        }
-                    };
-                    if row_family != family {
-                        continue;
-                    }
+                ExpirySource::History(row) => {
                     let anchor = if row.operation == StorageHistoryOperation::Delete {
                         Some(HistoryRetentionAnchor::Deleted(row.valid_from))
                     } else {
                         row.valid_to.map(HistoryRetentionAnchor::Closed)
                     };
-                    if !consider(
-                        Some(&row.logical_identity),
+                    (
+                        Some(Cow::Borrowed(&row.logical_identity)),
                         anchor,
                         row.valid_from,
                         row.valid_to,
-                    )? {
-                        break;
-                    }
+                    )
                 }
+                ExpirySource::Computed(row) => (
+                    row.logical_identity().map(Cow::Borrowed),
+                    row.valid_to().map(HistoryRetentionAnchor::Closed),
+                    row.valid_from(),
+                    row.valid_to(),
+                ),
+                ExpirySource::Backup(row) => {
+                    let raw = row.get("logical_identity").filter(|value| !value.is_null());
+                    let evidence = if let Some(raw) = raw {
+                        let Some(bytes) = expiry::bounded_encoded_bytes(raw, remaining_bytes)?
+                        else {
+                            byte_limit_reached = true;
+                            break;
+                        };
+                        remaining_bytes -= bytes;
+                        Some(Cow::Owned(
+                            StorageIdentityEvidence::deserialize(raw).map_err(|_| {
+                                StorageError::backend_failure("Invalid historical identity")
+                            })?,
+                        ))
+                    } else {
+                        None
+                    };
+                    let time = |field| {
+                        row.get(field)
+                            .filter(|value| !value.is_null())
+                            .map(DateTime::<Utc>::deserialize)
+                            .transpose()
+                            .map_err(|_| {
+                                StorageError::backend_failure("Invalid history inspection clock")
+                            })
+                    };
+                    let schema = family == StorageIdentityHistoryKind::ClassSchema;
+                    let from = time(if schema { "occurred_at" } else { "valid_from" })?
+                        .ok_or_else(|| {
+                            StorageError::backend_failure("Missing history inspection clock")
+                        })?;
+                    let until = if schema { None } else { time("valid_to")? };
+                    let anchor = if schema {
+                        Some(HistoryRetentionAnchor::SchemaEvent(from))
+                    } else if row
+                        .get("operation")
+                        .and_then(Value::as_str)
+                        .is_some_and(|op| op.eq_ignore_ascii_case("delete"))
+                    {
+                        Some(HistoryRetentionAnchor::Deleted(from))
+                    } else {
+                        until.map(HistoryRetentionAnchor::Closed)
+                    };
+                    (evidence, anchor, from, until)
+                }
+            };
+            if let Some(Cow::Borrowed(evidence)) = evidence {
+                let Some(bytes) = expiry::bounded_encoded_bytes(evidence, remaining_bytes)? else {
+                    byte_limit_reached = true;
+                    break;
+                };
+                remaining_bytes -= bytes;
+            }
+            scanned += 1;
+            let Some(evidence) = evidence.as_deref() else {
+                unresolved += 1;
+                continue;
+            };
+            match HistoryExpiryCandidate::from_evidence(
+                family,
+                evidence,
+                anchor,
+                self.history_candidate_has_dependency(family, evidence),
+            )
+            .map_err(invalid_contract_value)?
+            {
+                Some(candidate)
+                    if scan.includes(&candidate)
+                        && self.history_identity_visible(family, Some(evidence)) =>
+                {
+                    candidates.push(
+                        candidate
+                            .with_native_interval(from, until)
+                            .map_err(invalid_contract_value)?,
+                    );
+                }
+                Some(_) => {}
+                None => unresolved += 1,
             }
         }
         HistoryLifecycleScanResult::new(
             candidates,
             scanned,
-            !exhausted && scanned < scan.limit(),
+            !byte_limit_reached && scanned < scan.limit(),
             unresolved,
         )
         .map_err(invalid_contract_value)

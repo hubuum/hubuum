@@ -266,6 +266,11 @@ impl HistoryExpirySizeSelection {
         visible: bool,
     ) -> Result<(), StorageValidationError> {
         self.remaining_time()?;
+        if metadata_bytes > HistoryLifecycleScan::MAX_INPUT_BYTES as u64 {
+            return Err(invalid(
+                "Size selection exceeded its per-row metadata budget",
+            ));
+        }
         if candidate.family() != self.request.scan().key().family() {
             return Err(invalid("Size selection changed its complete census family"));
         }
@@ -287,6 +292,12 @@ impl HistoryExpirySizeSelection {
             self.oversized += 1;
             return Ok(());
         };
+        if candidate.family() == StorageIdentityHistoryKind::Object
+            && candidate.object_authorization().is_none()
+        {
+            self.oversized += 1;
+            return Ok(());
+        }
         let decision = self.accounting.snapshot.control().authority().inspect(
             &candidate,
             self.accounting.snapshot.observed_at(),

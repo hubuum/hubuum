@@ -352,7 +352,9 @@ pub(crate) async fn list(
             let protected = checkpoint.history_lifecycle();
             let state = if !covers_checkpoint(&primary, checkpoint) {
                 HistoryAuthorityProtection::RecoveryRequired
-            } else if protected.is_some_and(|protected| protected.covers(&authority)) {
+            } else if protected
+                .map_or_else(|| authority.is_pristine(), |proof| proof.covers(&authority))
+            {
                 HistoryAuthorityProtection::Protected
             } else {
                 HistoryAuthorityProtection::Pending
@@ -409,6 +411,11 @@ pub(crate) async fn inspect(
     let storage = storage_handle(context);
     let snapshot = storage.capture_history_lifecycle().await?;
     let scanned = storage.scan_history_lifecycle(scan).await?;
+    if storage.capture_history_lifecycle().await?.fence() != snapshot.fence() {
+        return Err(ApiError::Conflict(
+            "History authority changed during inspection. Retry the inspection.".into(),
+        ));
+    }
     let now = snapshot.observed_at();
     let decisions = scanned
         .candidates()

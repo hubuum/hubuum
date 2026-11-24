@@ -62,8 +62,9 @@ impl HistoryLifecycleScanResult {
         unresolved_identities: u32,
     ) -> Result<Self, StorageValidationError> {
         if scanned > HistoryPreviewImpact::MAX_SCANNED
-            || candidates.len() > scanned as usize
+            || (complete && scanned == HistoryPreviewImpact::MAX_SCANNED)
             || unresolved_identities > scanned
+            || candidates.len() > (scanned - unresolved_identities) as usize
         {
             return Err(invalid("Invalid history scan coverage"));
         }
@@ -187,6 +188,28 @@ mod tests {
     };
     use rstest::rstest;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn one_source_row_cannot_be_both_a_candidate_and_unresolved() {
+        let resource = ResourceIdentity::generate();
+        let candidate = HistoryExpiryCandidate::new(
+            StorageIdentityHistoryKind::Collection,
+            crate::StorageRecordIdentity::new(resource, VersionIdentity::generate()),
+            None,
+            vec![HistoryScopeAttribution::new(resource, None)],
+            false,
+        )
+        .unwrap();
+        assert!(HistoryLifecycleScanResult::new(vec![candidate], 1, false, 1).is_err());
+    }
+
+    #[test]
+    fn a_full_source_budget_cannot_prove_complete_coverage() {
+        assert!(
+            HistoryLifecycleScanResult::new(Vec::new(), HistoryPreviewImpact::MAX_SCANNED, true, 0)
+                .is_err()
+        );
+    }
 
     #[rstest]
     #[case::unscoped(None)]

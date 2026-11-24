@@ -5,6 +5,7 @@ pub(super) use recovery::recover_task;
 mod size;
 
 use super::*;
+use hubuum_storage_core::StorageValidationErrorKind;
 
 pub(super) enum ExpirySource<'a> {
     History(&'a MemoryHistoryEntry),
@@ -628,11 +629,9 @@ fn admit_age_on(
             if candidate.attributions().is_empty() || evidence.has_unknown_restore_source() {
                 return Ok(ScanStep::Advance);
             }
-            let facts = HistoryObjectAuthorizationFacts::capture(
-                StorageObjectHistoryRecord::try_new(value.clone(), source.metadata()?)
-                    .map_err(invalid_contract_value)?,
-            )
-            .map_err(invalid_contract_value)?;
+            let Some(facts) = object_authorization(source, value)? else {
+                return Ok(ScanStep::Oversized);
+            };
             let bytes = u64::from(facts.encoded_bytes().value());
             if bytes > HistoryLifecycleScan::MAX_INPUT_BYTES as u64 - metadata_bytes {
                 return Ok(
@@ -723,6 +722,19 @@ fn admit_age_on(
     state.append_retained_lifecycle_events(pending)?;
     state.history_lifecycle = change.next().clone();
     Ok(result)
+}
+
+fn object_authorization(
+    source: &MemoryHistoryEntry,
+    object: &StorageObject,
+) -> Result<Option<HistoryObjectAuthorizationFacts>, StorageError> {
+    let record = StorageObjectHistoryRecord::try_new(object.clone(), source.metadata()?)
+        .map_err(invalid_contract_value)?;
+    match HistoryObjectAuthorizationFacts::capture(record) {
+        Ok(facts) => Ok(Some(facts)),
+        Err(error) if error.kind() == StorageValidationErrorKind::ValueTooLarge => Ok(None),
+        Err(error) => Err(invalid_contract_value(error)),
+    }
 }
 
 pub(super) fn bounded_encoded_bytes(

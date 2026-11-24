@@ -410,6 +410,21 @@ fn a_foreign_second_pass_row_invalidates_complete_selection() {
 }
 
 #[rstest]
+#[case::at_limit(HistoryLifecycleScan::MAX_INPUT_BYTES, true)]
+#[case::over_limit(HistoryLifecycleScan::MAX_INPUT_BYTES + 1, false)]
+fn second_pass_enforces_the_per_row_metadata_budget(#[case] bytes: usize, #[case] complete: bool) {
+    let (snapshot, rows) = fixture();
+    let mut selection = selection(&snapshot, &rows[..1]);
+    assert_eq!(
+        selection
+            .observe(rows[0].clone(), 100, bytes as u64, true)
+            .is_ok(),
+        complete
+    );
+    assert_eq!(selection.finish().is_ok(), complete);
+}
+
+#[rstest]
 #[case(32, true)]
 #[case(33, false)]
 fn two_passes_share_the_actual_metadata_budget(#[case] count: usize, #[case] complete: bool) {

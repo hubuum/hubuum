@@ -9,8 +9,28 @@ use uuid::Uuid;
 use super::*;
 use crate::{
     StorageHistoryMetadata, StorageIdentityEvidence, StorageIdentitySubject, StorageObject,
-    StorageRecordMetadata,
+    StorageRecordMetadata, StorageValidationErrorKind,
 };
+
+#[rstest]
+#[case::exact(0)]
+#[case::over(1)]
+fn authorization_writer_limits_encoded_bytes(#[case] extra: usize) {
+    let limit = HistoryAuthorizationBytes::MAX_BYTES;
+    let value = "x".repeat(limit - 2 + extra);
+    let mut written = Vec::new();
+    let result = HistoryAuthorizationBytes::encode(&value, &mut written);
+    if extra == 0 {
+        assert_eq!(result.unwrap().value() as usize, limit);
+        assert_eq!(written.len(), limit);
+    } else {
+        assert_eq!(
+            result.unwrap_err().kind(),
+            StorageValidationErrorKind::ValueTooLarge
+        );
+        assert!(written.len() <= limit);
+    }
+}
 
 fn at(seconds: i64) -> DateTime<Utc> {
     Utc.timestamp_opt(seconds, 0).single().unwrap()
