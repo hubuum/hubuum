@@ -6,7 +6,6 @@ use hubuum_storage_core::StorageExternalSyncFailure;
 use hubuum_storage_core::StorageTokenRevocations;
 use hubuum_storage_core::StorageUpstreamClaim;
 use hubuum_storage_core::StorageUpstreamClaimOutcome;
-use hubuum_storage_core::StorageUpstreamCleanup;
 use hubuum_storage_core::StorageUpstreamRenewal;
 use hubuum_storage_core::{
     CredentialActivityPolicy, ObservedSource, StorageActivityQuery, StorageCredentialActivity,
@@ -707,7 +706,7 @@ impl ExternalIdentityStorage for StorageHandle {
         &self,
         claim: StorageUpstreamClaim,
         failure: StorageUpstreamFailure,
-    ) -> Result<StorageUpstreamCleanup, StorageError> {
+    ) -> Result<(), StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::ExternalIdentity,

@@ -223,6 +223,7 @@ impl OidcAdapter {
     ) -> Result<Authentication, OidcError> {
         self.check_pending(&accepted.pending)?;
         let discovered = self.discover().await?;
+        let grant = GrantResponse::default();
         let response = discovered
             .client
             .exchange_code(AuthorizationCode::new(accepted.code))
@@ -230,9 +231,9 @@ impl OidcAdapter {
             .set_pkce_verifier(PkceCodeVerifier::new(
                 accepted.pending.code_state.verifier().to_owned(),
             ))
-            .request_async(&|request| self.transport.send(request))
-            .await
-            .map_err(token_error)?;
+            .request_async(&|request| grant.clone().inspect(self.transport.send(request)))
+            .await;
+        let response = grant.decode(response)?;
         self.verify(
             &discovered,
             response,
@@ -245,14 +246,11 @@ impl OidcAdapter {
 
     /// The application serializes rotation and destroys the previous credential
     /// on any ambiguous exchange. This method never retries a refresh token.
-    /// `received` supplies the grant available for cleanup as soon as the token
-    /// endpoint answers. Only a successful return provides verified identity.
     pub async fn refresh(
         &self,
         retained: RetainedCredentials,
         context: &ExternalAuthenticationContext,
         submitting: impl Fn() + Clone + Sync,
-        received: impl FnOnce(RetainedCredentials),
     ) -> Result<Authentication, OidcError> {
         if retained.issuer != self.definition.issuer().as_str()
             || retained.client_id != self.definition.client_id()
@@ -261,7 +259,7 @@ impl OidcAdapter {
         }
         let discovered = self.discover().await?;
         let transport = self.transport;
-        self.refresh_using(&discovered, retained, context, received, move |request| {
+        self.refresh_using(&discovered, retained, context, move |request| {
             transport.send_with_dispatch(request, submitting.clone())
         })
         .await
@@ -270,53 +268,21 @@ impl OidcAdapter {
     async fn refresh_using<F>(
         &self,
         discovered: &Discovered,
-        mut retained: RetainedCredentials,
+        retained: RetainedCredentials,
         context: &ExternalAuthenticationContext,
-        received: impl FnOnce(RetainedCredentials),
         send: impl Fn(HttpRequest) -> F,
     ) -> Result<Authentication, OidcError>
     where
         F: Future<Output = Result<HttpResponse, OidcError>>,
     {
-        // The SDK decodes the ID token as part of parsing the token response.
-        // A trusted endpoint may have already rotated an unambiguous refresh token.
-        let successful_reply = Arc::new(OnceLock::new());
+        let grant = GrantResponse::default();
         let response = discovered
             .client
             .exchange_refresh_token(&RefreshToken::new(retained.refresh.clone()))
             .map_err(|_| OidcError::Configuration)?
-            .request_async(&|request| {
-                let pending = send(request);
-                let successful_reply = Arc::clone(&successful_reply);
-                async move {
-                    let reply = pending.await?;
-                    if reply.status() == openidconnect::http::StatusCode::OK {
-                        let _ = successful_reply.set(cleanup_replacement(&reply));
-                    }
-                    Ok(reply)
-                }
-            })
+            .request_async(&|request| grant.clone().inspect(send(request)))
             .await;
-        let response = match response {
-            Ok(response) => response,
-            Err(error) => {
-                if let Some(replacement) = successful_reply.get() {
-                    if let Some(token) = replacement {
-                        retained.refresh.clone_from(token);
-                        received(retained);
-                    }
-                    if let openidconnect::RequestTokenError::Parse(_, body) = &error
-                        && is_grant_document(body)
-                    {
-                        // The endpoint answered with a grant, but its identity data
-                        // failed SDK decoding. Cached outage authority cannot apply.
-                        return Err(OidcError::InvalidResponse);
-                    }
-                }
-                return Err(token_error(error));
-            }
-        };
-        self.verify_refresh(discovered, response, retained, context, received)
+        self.verify_refresh(discovered, grant.decode(response)?, retained, context)
             .await
     }
 
@@ -324,16 +290,9 @@ impl OidcAdapter {
         &self,
         discovered: &Discovered,
         response: CoreTokenResponse,
-        mut retained: RetainedCredentials,
+        retained: RetainedCredentials,
         context: &ExternalAuthenticationContext,
-        received: impl FnOnce(RetainedCredentials),
     ) -> Result<Authentication, OidcError> {
-        // The token endpoint completed the exchange. Transfer a cleanup copy
-        // before any fallible identity checks or asynchronous UserInfo reads.
-        if let Some(replacement) = response.refresh_token() {
-            retained.refresh = replacement.secret().clone();
-        }
-        received(retained.clone());
         let mut authentication = self
             .verify(
                 discovered,
@@ -343,7 +302,7 @@ impl OidcAdapter {
                 Some((&retained.subject, retained.auth_time)),
             )
             .await?;
-        authentication.credentials = Some(retained);
+        authentication.credentials.get_or_insert(retained);
         Ok(authentication)
     }
 
@@ -622,7 +581,7 @@ pub struct AcceptedCallback {
     code: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RetainedCredentials {
     refresh: String,
@@ -775,40 +734,69 @@ fn discovery_error(error: OidcError) -> OidcError {
     }
 }
 
-// Used only to classify SDK parse failures. Token values used for cleanup
-// still come exclusively from the duplicate-rejecting parser below.
-fn is_grant_document(body: &[u8]) -> bool {
-    serde_json::from_slice::<Value>(body).is_ok_and(|document| {
-        document.get("id_token").is_some()
-            || document.get("access_token").is_some()
-            || (document.get("refresh_token").is_some() && document.get("error").is_none())
-    })
+type TokenError = openidconnect::RequestTokenError<
+    OidcError,
+    openidconnect::StandardErrorResponse<openidconnect::core::CoreErrorResponseType>,
+>;
+
+/// Check the wire envelope independently of the SDK, which accepts unknown
+/// members and decodes the ID token while deserializing the response.
+#[derive(Clone, Default)]
+struct GrantResponse {
+    envelope: Arc<OnceLock<Result<(), OidcError>>>,
 }
 
-/// This credential can only be offered for cleanup. The identity proof always
-/// comes from the SDK's complete token response and signature checks.
-fn cleanup_replacement(reply: &HttpResponse) -> Option<String> {
-    let mut document = profile::parse(reply.body()).ok()?;
-    let object = document.as_object_mut()?;
-    if object.contains_key("error") {
-        return None;
-    }
-    match object.remove("refresh_token")? {
-        Value::String(token)
-            if !token.is_empty() && token.bytes().all(|b| (0x20..=0x7e).contains(&b)) =>
-        {
-            Some(token)
+impl GrantResponse {
+    async fn inspect(
+        self,
+        pending: impl Future<Output = Result<HttpResponse, OidcError>>,
+    ) -> Result<HttpResponse, OidcError> {
+        let reply = pending.await?;
+        if reply.status() == openidconnect::http::StatusCode::OK {
+            self.envelope
+                .get_or_init(|| validate_grant_envelope(reply.body()))
+                .clone()?;
         }
-        _ => None,
+        Ok(reply)
+    }
+
+    fn decode(
+        self,
+        response: Result<CoreTokenResponse, TokenError>,
+    ) -> Result<CoreTokenResponse, OidcError> {
+        match self.envelope.get() {
+            Some(Ok(())) => response.map_err(|_| OidcError::InvalidResponse),
+            Some(Err(error)) => Err(error.clone()),
+            None => response.map_err(token_error),
+        }
     }
 }
 
-fn token_error(
-    error: openidconnect::RequestTokenError<
-        OidcError,
-        openidconnect::StandardErrorResponse<openidconnect::core::CoreErrorResponseType>,
-    >,
-) -> OidcError {
+fn validate_grant_envelope(body: &[u8]) -> Result<(), OidcError> {
+    let has_grant_field = |document: &Value| {
+        ["access_token", "id_token", "refresh_token"]
+            .iter()
+            .any(|key| document.get(key).is_some())
+    };
+    let document = profile::parse(body).map_err(|_| {
+        // An unreadable response provides no identity decision. Use the lenient
+        // parser only to distinguish a malformed grant from a gateway error.
+        if serde_json::from_slice::<Value>(body).is_ok_and(|doc| has_grant_field(&doc)) {
+            OidcError::InvalidResponse
+        } else {
+            OidcError::Unavailable
+        }
+    })?;
+    if !has_grant_field(&document) {
+        return Err(OidcError::Unavailable);
+    }
+    if document.get("error").is_some() {
+        return Err(OidcError::InvalidResponse);
+    }
+    Ok(())
+}
+
+fn token_error(error: TokenError) -> OidcError {
     use openidconnect::core::CoreErrorResponseType::*;
     match error {
         openidconnect::RequestTokenError::Request(OidcError::InvalidResponse) => {

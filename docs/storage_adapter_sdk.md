@@ -574,20 +574,9 @@ settings change, advance the effective revision only for unchanged enabled
 providers, clear superseded leases and keep the original login binding for
 decryption. An in-flight OIDC grant from the previous revision stays consumed.
 An unchanged OAuth provider can immediately claim the retained bearer at the
-new revision.
-
-External adapters must update `fail_upstream_renewal` to return
-`Result<StorageUpstreamCleanup, StorageError>`. Decide cleanup in the same
-transaction that records the failure, serialized with session issuance and
-revocation. Return `Revoke` only for a discarded OIDC grant when no other
-live session belongs to the principal. Return `Preserve` for a restored grant,
-an OAuth bearer, or a potentially shared upstream session. Count live siblings
-even when they have no retained credential.
-
-Return `StorageError::upstream_session_revoked(id)` from either renewal
-finalizer only when the claimed session was revoked, no later authentication
-superseded the claim, and no live sibling remains. Use plain
-`AuthenticationRequired` for other session or claim fences.
+new revision. Return `AuthenticationRequired` when a session or claim fence
+rejects renewal. Failed renewal finalizes local state. Dropping the uninstalled
+credential preserves shared upstream sessions across scopes and later logins.
 On `UnavailableBeforeSubmission`, restore the claimed grant with bounded backoff.
 Return the issued family's retained grant from `revoke_auth_interaction_session`
 in the local revocation transaction so the server can revoke it after commit.

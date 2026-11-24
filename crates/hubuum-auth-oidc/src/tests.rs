@@ -382,43 +382,40 @@ async fn initial_login_requires_nonce() {
 }
 
 #[rstest]
-#[case::malformed_id_token(200, r#"{"access_token":"access","token_type":"Bearer","refresh_token":"replacement","id_token":"malformed"}"#, Some("replacement"), OidcError::InvalidResponse)]
-#[case::contradictory_grant(200, r#"{"error":"invalid_grant","access_token":"access","token_type":"Bearer","refresh_token":"replacement","id_token":"malformed"}"#, None, OidcError::InvalidResponse)]
+#[case::malformed_id_token(200, r#"{"access_token":"access","token_type":"Bearer","refresh_token":"replacement","id_token":"malformed"}"#, OidcError::InvalidResponse)]
+#[case::contradictory_grant(200, r#"{"error":"invalid_grant","access_token":"access","token_type":"Bearer","refresh_token":"replacement","id_token":"malformed"}"#, OidcError::InvalidResponse)]
+#[case::missing_id_token(200, r#"{"error":"invalid_grant","access_token":"access","token_type":"Bearer","refresh_token":"replacement"}"#, OidcError::InvalidResponse)]
 #[case::non_rotating(
     200,
     r#"{"access_token":"access","token_type":"Bearer","id_token":"malformed"}"#,
-    None,
     OidcError::InvalidResponse
 )]
-#[case::duplicate_refresh_token(200, r#"{"access_token":"access","token_type":"Bearer","refresh_token":"one","refresh_token":"two","id_token":"malformed"}"#, None, OidcError::InvalidResponse)]
-#[case::error_document(
+#[case::duplicate_refresh_token(200, r#"{"access_token":"access","token_type":"Bearer","refresh_token":"one","refresh_token":"two"}"#, OidcError::InvalidResponse)]
+#[case::mixed_error_and_refresh(
     200,
     r#"{"error":"invalid_grant","refresh_token":"replacement"}"#,
-    None,
+    OidcError::InvalidResponse
+)]
+#[case::error_only(200, r#"{"error":"temporarily_unavailable"}"#, OidcError::Unavailable)]
+#[case::error_status(400, r#"{"error":"invalid_grant"}"#, OidcError::Denied)]
+#[case::ambiguous_outage(
+    200,
+    r#"{"error":"unavailable","error":"unavailable"}"#,
     OidcError::Unavailable
 )]
-#[case::error_status(
-    400,
-    r#"{"error":"invalid_grant","refresh_token":"replacement"}"#,
-    None,
-    OidcError::Denied
-)]
-#[case::unreadable_endpoint(200, "<html>unavailable", None, OidcError::Unavailable)]
+#[case::unreadable_endpoint(200, "<html>unavailable", OidcError::Unavailable)]
 #[tokio::test]
-async fn rejected_wire_response_exposes_only_an_unambiguous_replacement_for_cleanup(
+async fn refresh_classifies_wire_responses(
     #[case] status: u16,
     #[case] wire: &'static str,
-    #[case] expected: Option<&str>,
     #[case] failure: OidcError,
 ) {
     let (adapter, discovered, context) = fixture();
-    let mut cleanup = None;
     let result = adapter
         .refresh_using(
             &discovered,
             retained_credentials(&adapter, None),
             &context,
-            |grant| cleanup = Some(grant.refresh),
             |_| {
                 std::future::ready(Ok(openidconnect::http::Response::builder()
                     .status(status)
@@ -429,7 +426,42 @@ async fn rejected_wire_response_exposes_only_an_unambiguous_replacement_for_clea
         )
         .await;
     assert_eq!(result.err(), Some(failure));
-    assert_eq!(cleanup.as_deref(), expected);
+}
+
+#[rstest]
+#[case::grant(false)]
+#[case::contradictory_grant(true)]
+#[tokio::test]
+async fn decodable_refresh_requires_an_unambiguous_grant(#[case] error_member: bool) {
+    let (adapter, discovered, context) = fixture();
+    let claims = claims();
+    let retained = retained_credentials(
+        &adapter,
+        DateTime::from_timestamp(claims["auth_time"].as_i64().unwrap(), 0),
+    );
+    let mut wire = serde_json::to_value(response(
+        claims,
+        "current",
+        CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
+        false,
+    ))
+    .unwrap();
+    if error_member {
+        wire["error"] = json!("invalid_grant");
+    }
+    let result = adapter
+        .refresh_using(&discovered, retained, &context, |_| {
+            std::future::ready(Ok(openidconnect::http::Response::builder()
+                .status(200)
+                .header("content-type", "application/json")
+                .body(serde_json::to_vec(&wire).unwrap())
+                .unwrap()))
+        })
+        .await;
+    assert_eq!(
+        result.err(),
+        error_member.then_some(OidcError::InvalidResponse)
+    );
 }
 
 #[rstest]
@@ -456,7 +488,7 @@ async fn verified_refresh_retains_usable_token(
     );
     response.set_refresh_token(replacement.map(|token| RefreshToken::new(token.into())));
     let verified = adapter
-        .verify_refresh(&discovered, response, original, &context, |_| {})
+        .verify_refresh(&discovered, response, original, &context)
         .await
         .unwrap();
     let credential = verified.credentials.unwrap();
@@ -465,13 +497,10 @@ async fn verified_refresh_retains_usable_token(
 }
 
 #[rstest]
-#[case::rotated(Some("replacement"), "replacement")]
-#[case::non_rotating(None, "original")]
+#[case::rotating(Some("replacement"))]
+#[case::non_rotating(None)]
 #[tokio::test]
-async fn unavailable_userinfo_leaves_the_exchange_grant_available_for_cleanup(
-    #[case] replacement: Option<&str>,
-    #[case] expected: &str,
-) {
+async fn unavailable_userinfo_discards_the_renewal(#[case] replacement: Option<&str>) {
     let (mut adapter, mut discovered, context) = fixture();
     let mut config = serde_json::to_value(&adapter.definition).unwrap();
     config["membership"]["claim_source"] = json!("userinfo");
@@ -491,14 +520,10 @@ async fn unavailable_userinfo_leaves_the_exchange_grant_available_for_cleanup(
         false,
     );
     response.set_refresh_token(replacement.map(|token| RefreshToken::new(token.into())));
-    let mut cleanup = None;
     let result = adapter
-        .verify_refresh(&discovered, response, retained, &context, |grant| {
-            cleanup = Some(grant)
-        })
+        .verify_refresh(&discovered, response, retained, &context)
         .await;
-    assert!(matches!(result, Err(OidcError::Unavailable)));
-    assert_eq!(cleanup.unwrap().refresh, expected);
+    assert_eq!(result.err(), Some(OidcError::Unavailable));
 }
 
 #[rstest]

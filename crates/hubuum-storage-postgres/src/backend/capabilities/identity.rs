@@ -3,7 +3,6 @@ use hubuum_domain::ResourceRevision;
 use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
 use hubuum_storage_core::StorageExternalSyncFailure;
 use hubuum_storage_core::StorageTokenRevocations;
-use hubuum_storage_core::StorageUpstreamCleanup;
 use hubuum_storage_core::{
     CredentialActivityPolicy, ObservedSource, StorageActivityQuery, StorageCredentialActivity,
     StorageCredentialCreation,
@@ -444,7 +443,7 @@ impl ExternalIdentityStorage for PostgresStorage {
         &self,
         claim: hubuum_storage_core::StorageUpstreamClaim,
         failure: StorageUpstreamFailure,
-    ) -> Result<StorageUpstreamCleanup, StorageError> {
+    ) -> Result<(), StorageError> {
         crate::operations::upstream_authentication::fail(self.runtime(), claim, failure)
             .await
             .map_err(StorageError::from)

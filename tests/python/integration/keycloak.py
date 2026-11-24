@@ -504,6 +504,12 @@ class Fixture:
         self.api("/api/v1/auth/validate", token=self.pat)
         assert self.sql(f"SELECT count(*) FROM group_membership_sources WHERE principal_id={principal} AND source='external' AND source_key='/engineering'") == "0"
         self.passed("due refresh removes provider-owned memberships")
+        def client_sessions():
+            sessions = self.provider_api(f'/users/{user["id"]}/sessions')
+            return {session["id"] for session in sessions if client["id"] in session["clients"]}
+
+        upstream_sessions = client_sessions()
+        assert upstream_sessions, "Expected a live Keycloak client session before renewal"
         baseline = self.provider_api("/groups?search=authenticated&exact=true")[0]
         self.provider_api(f'/users/{user["id"]}/groups/{baseline["id"]}', method="DELETE")
         time.sleep(6)
@@ -514,6 +520,8 @@ class Fixture:
         recovered = self.begin()
         self.authorize(recovered, browser)
         self.session = self.complete(recovered)
+        assert upstream_sessions <= client_sessions(), "Rejected renewal removed a shared Keycloak client session"
+        self.passed("rejected renewal preserves upstream client sessions through fresh sign-in")
         user["enabled"] = False
         self.provider_api("/users/" + user["id"], user, method="PUT")
         time.sleep(6)

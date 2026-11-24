@@ -5,6 +5,8 @@ use std::{
 use tokio::task::JoinHandle;
 use tracing::Instrument;
 
+use crate::storage::{StorageHandle, with_storage_call_site_send};
+
 static ACTIVE_MAINTENANCE_WORK: AtomicUsize = AtomicUsize::new(0);
 
 /// Counts local request/worker activity across the maintenance state check and
@@ -29,15 +31,16 @@ impl MaintenanceActivityGuard {
     }
 
     /// Transfer an admitted operation to a worker before its caller can be cancelled.
-    pub(crate) fn spawn<F>(self, work: F) -> JoinHandle<F::Output>
+    pub(crate) fn spawn<F>(self, storage: StorageHandle, work: F) -> JoinHandle<F::Output>
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
+        let site = StorageHandle::current_call_site();
         tokio::spawn(
             async move {
                 let _activity = self;
-                work.await
+                with_storage_call_site_send(&storage, site, work).await
             }
             .in_current_span(),
         )
@@ -69,7 +72,7 @@ mod tests {
         static COUNT: AtomicUsize = AtomicUsize::new(1);
         let guard = MaintenanceActivityGuard { counter: &COUNT };
         let (release, wait) = tokio::sync::oneshot::channel::<()>();
-        let task = guard.spawn(async move { wait.await.unwrap() });
+        let task = guard.spawn(StorageHandle::memory(), async move { wait.await.unwrap() });
         let worker = task.abort_handle();
         drop(task);
         tokio::task::yield_now().await;
@@ -83,6 +86,31 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(COUNT.load(Ordering::Acquire), 0);
+    }
+
+    #[rstest::rstest]
+    #[case::request(crate::storage::StorageCallSite::HttpRequest)]
+    #[case::task_worker(crate::storage::StorageCallSite::TaskWorker)]
+    #[tokio::test]
+    async fn worker_inherits_its_originating_storage_call_site(
+        #[case] site: crate::storage::StorageCallSite,
+    ) {
+        use crate::storage::{with_mutation_provenance, with_storage_call_site};
+        let storage = StorageHandle::memory();
+        let observed = with_storage_call_site(
+            &storage,
+            site,
+            with_mutation_provenance(&storage, None, async {
+                super::MaintenanceActivityGuard::begin()
+                    .spawn(storage.clone(), async {
+                        StorageHandle::current_call_site()
+                    })
+                    .await
+                    .unwrap()
+            }),
+        )
+        .await;
+        assert_eq!(observed, site);
     }
 
     #[actix_web::test]

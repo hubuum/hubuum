@@ -5,7 +5,7 @@ use hubuum_storage_core::{
     StorageInteractionCommand, StorageInteractionComplete, StorageInteractionCompletion,
     StorageInteractionCreate, StorageInteractionIssuance, StorageInteractionOutcome,
 };
-use hubuum_storage_core::{StorageUpstreamCleanup, StorageUpstreamFailure};
+use hubuum_storage_core::{StorageErrorKind, StorageUpstreamFailure};
 use rstest::rstest;
 use serde_json::{Value, json};
 
@@ -717,13 +717,10 @@ impl Fixture {
 }
 
 #[rstest]
-#[case::only_family(false, StorageUpstreamCleanup::Revoke)]
-#[case::shared_upstream_session(true, StorageUpstreamCleanup::Preserve)]
+#[case::only_family(false)]
+#[case::shared_upstream_session(true)]
 #[tokio::test]
-async fn oidc_outage_cleanup_preserves_other_live_families(
-    #[case] sibling: bool,
-    #[case] expected: StorageUpstreamCleanup,
-) {
+async fn oidc_outage_consumes_only_the_claimed_credential(#[case] sibling: bool) {
     use hubuum_storage_core::StorageUpstreamClaimOutcome;
     let f = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
     let (_, principal) = f.retained_session().await;
@@ -738,12 +735,23 @@ async fn oidc_outage_cleanup_preserves_other_live_families(
     else {
         panic!("retained claim");
     };
-    let cleanup = f
-        .backend
+    let claimed_session = claim.session().session();
+    f.backend
         .fail_upstream_renewal(*claim, StorageUpstreamFailure::Unavailable)
         .await
         .unwrap();
-    assert_eq!(cleanup, expected);
+    let remaining = f
+        .backend
+        .claim_upstream_credential(ResourceRevision::INITIAL, principal)
+        .await
+        .unwrap();
+    match remaining {
+        StorageUpstreamClaimOutcome::Claim(other) if sibling => {
+            assert_ne!(other.session().session(), claimed_session)
+        }
+        StorageUpstreamClaimOutcome::Unavailable if !sibling => {}
+        _ => panic!("unexpected remaining credential after failed OIDC renewal"),
+    }
 }
 
 #[rstest]
@@ -776,10 +784,7 @@ async fn fresh_authentication_fences_old_memory_refresh(
     let command = f.fresh_retention_command(principal).await;
     f.backend.advance_auth_interaction(command).await.unwrap();
     let stale = if let Some(disposition) = failure {
-        f.backend
-            .fail_upstream_renewal(*old, disposition)
-            .await
-            .map(|_| ())
+        f.backend.fail_upstream_renewal(*old, disposition).await
     } else {
         f.backend
             .finish_upstream_renewal(
@@ -792,7 +797,10 @@ async fn fresh_authentication_fences_old_memory_refresh(
             )
             .await
     };
-    assert_eq!(stale.unwrap_err().revoked_upstream_session(), None);
+    assert_eq!(
+        stale.unwrap_err().kind(),
+        StorageErrorKind::AuthenticationRequired
+    );
     let StorageUpstreamClaimOutcome::Claim(new) = f
         .backend
         .claim_upstream_credential(ResourceRevision::INITIAL, principal)

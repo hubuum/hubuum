@@ -137,16 +137,15 @@ Local logout commits first and destroys the retained credential. Supported
 OIDC revocation is attempted afterward with a bounded deadline and cannot delay
 or undo local revocation. Local logout does not promise global Keycloak SSO
 logout. RP-initiated browser logout is not exposed by this profile. The current
-logout API performs local logout and best-effort token revocation. If renewal
-fails before sending the token request and logout prevents restoring the original
-grant, the worker attempts to revoke it. If the token endpoint succeeds and
-UserInfo verification fails, the worker discards the grant locally. It also
-attempts upstream revocation when storage confirms that no other live Hubuum
-session belongs to that principal. Keycloak can share one client session across
-those logins. An undecodable ID token in a grant response denies the request and
-invalidates cached authority. An unambiguous replacement remains eligible for
-cleanup. A superseding authentication or an uncertain storage commit suppresses
-revocation.
+logout API performs local logout and best-effort token revocation.
+
+An unsuccessful or superseded renewal discards any returned grant locally.
+Keycloak can share one upstream client session across Hubuum logins, including
+logins under different provider scopes. Revoking a discarded refresh token
+could end that session after a new login has completed. Only an explicit
+revocation operation sends credentials it captured to the provider. An invalid
+ID token or a contradictory grant response denies renewal and invalidates cached
+authority.
 Restore maintenance waits for active renewal workers even if their callers disconnect.
 
 Credential approval uses `max_age=0` and a signed `auth_time` at or after the

@@ -6,7 +6,6 @@ use hubuum_storage_core::StorageTokenRevocations;
 use hubuum_storage_core::StorageUpstreamClaim;
 use hubuum_storage_core::StorageUpstreamClaimOutcome;
 use hubuum_storage_core::StorageUpstreamRenewal;
-use hubuum_storage_core::{StorageAuthenticationProviderKind, StorageUpstreamCleanup};
 use hubuum_storage_core::{
     StorageInteractionAccess, StorageInteractionAction, StorageInteractionCommand,
     StorageInteractionComplete, StorageInteractionCompletion, StorageInteractionCreate,
@@ -600,36 +599,6 @@ impl ServiceAccountStorage for MemoryStorage {
     }
 }
 
-impl MemoryState {
-    fn has_live_sibling(&self, original: &StorageUpstreamSession, now: DateTime<Utc>) -> bool {
-        self.sessions.iter().any(|(id, session)| {
-            *id != original.session().value()
-                && session.principal_id() == original.principal()
-                && session.active(now)
-        })
-    }
-
-    fn ineligible_upstream_claim(&self, claim: &StorageUpstreamClaim) -> StorageError {
-        let original = claim.session();
-        let revoked = self
-            .sessions
-            .get(&original.session().value())
-            .is_some_and(|s| s.revoked && s.principal_id() == original.principal());
-        let last_success = self
-            .users
-            .get(&original.principal().id())
-            .and_then(|user| user.last_sync_success_at);
-        if revoked
-            && last_success.is_some_and(|at| at <= claim.started_at())
-            && !self.has_live_sibling(original, Utc::now())
-        {
-            StorageError::upstream_session_revoked(original.session())
-        } else {
-            StorageError::authentication_required("Upstream session changed")
-        }
-    }
-}
-
 #[async_trait]
 impl ExternalIdentityStorage for MemoryStorage {
     async fn upstream_approval_session(
@@ -661,14 +630,14 @@ impl ExternalIdentityStorage for MemoryStorage {
         &self,
         claim: StorageUpstreamClaim,
         failure: StorageUpstreamFailure,
-    ) -> Result<StorageUpstreamCleanup, StorageError> {
+    ) -> Result<(), StorageError> {
         let mut live = self.state.write().await;
         let mut state = live.clone();
         let original = claim.session();
         let record = state
             .upstream_sessions
             .get(&original.session().value())
-            .ok_or_else(|| state.ineligible_upstream_claim(&claim))?;
+            .ok_or_else(|| StorageError::authentication_required("Upstream session changed"))?;
         let now = Utc::now();
         if !state.upstream_eligible(record, now)
             || !record.accepts(&claim, now)
@@ -680,7 +649,9 @@ impl ExternalIdentityStorage for MemoryStorage {
                         .is_some_and(|at| at > claim.started_at())
                 })
         {
-            return Err(state.ineligible_upstream_claim(&claim));
+            return Err(StorageError::authentication_required(
+                "Upstream session changed",
+            ));
         }
         let provider = state
             .runtime_settings
@@ -690,21 +661,14 @@ impl ExternalIdentityStorage for MemoryStorage {
             .upstream_sessions
             .get_mut(&original.session().value())
             .expect("checked session");
-        let oidc = provider.kind() == StorageAuthenticationProviderKind::Oidc;
-        let restored = record.defer_credential_retry(&claim, provider, failure, now);
-        if !restored {
+        if !record.defer_credential_retry(&claim, provider, failure, now) {
             state.upstream_sessions.remove(&original.session().value());
         }
         if let Some(failure) = failure.sync_failure() {
             state.external_sync_failure(original.principal(), failure)?;
         }
-        let cleanup = if !restored && oidc && !state.has_live_sibling(original, now) {
-            StorageUpstreamCleanup::Revoke
-        } else {
-            StorageUpstreamCleanup::Preserve
-        };
         *live = state;
-        Ok(cleanup)
+        Ok(())
     }
     async fn claim_upstream_credential(
         &self,
@@ -753,9 +717,11 @@ impl ExternalIdentityStorage for MemoryStorage {
             .upstream_sessions
             .get(&original.session().value())
             .cloned()
-            .ok_or_else(|| state.ineligible_upstream_claim(request.claim()))?;
+            .ok_or_else(|| StorageError::authentication_required("Upstream session changed"))?;
         if !state.upstream_eligible(&record, Utc::now()) {
-            return Err(state.ineligible_upstream_claim(request.claim()));
+            return Err(StorageError::authentication_required(
+                "Upstream session changed",
+            ));
         }
         record
             .renewed(

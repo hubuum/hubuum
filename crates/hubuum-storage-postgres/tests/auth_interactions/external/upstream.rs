@@ -2,7 +2,6 @@ use super::*;
 use crate::{approval, candidate_for, context, digest};
 use hubuum_domain::VerifiedExternalAuthentication;
 use hubuum_domain::{FreshExternalAuthenticationRequest, InteractionActor};
-use hubuum_storage_core::StorageUpstreamCleanup;
 
 fn encrypted(value: &str) -> StorageEncryptedUpstreamCredential {
     StorageEncryptedUpstreamCredential::new(value.into()).unwrap()
@@ -284,10 +283,7 @@ async fn fresh_authentication_fences_old_refresh_completion(
     let command = f.fresh_retention_command(principal).await;
     f.backend.advance_auth_interaction(command).await.unwrap();
     let stale = if let Some(disposition) = failure {
-        f.backend
-            .fail_upstream_renewal(old, disposition)
-            .await
-            .map(|_| ())
+        f.backend.fail_upstream_renewal(old, disposition).await
     } else {
         f.backend
             .finish_upstream_renewal(
@@ -295,7 +291,10 @@ async fn fresh_authentication_fences_old_refresh_completion(
             )
             .await
     };
-    assert_eq!(stale.unwrap_err().revoked_upstream_session(), None);
+    assert_eq!(
+        stale.unwrap_err().kind(),
+        StorageErrorKind::AuthenticationRequired
+    );
     assert_eq!(
         f.upstream_claim(principal).await.credential().ciphertext(),
         "fresh-encrypted-token"
@@ -373,40 +372,29 @@ async fn renewal_atomically_rotates_credentials_and_removes_provider_membership(
 }
 
 #[rstest::rstest]
-#[case::logout(
-    "UPDATE auth_sessions SET revoked_at=now(),revocation_reason='fixture'",
-    true
-)]
+#[case::logout("UPDATE auth_sessions SET revoked_at=now(),revocation_reason='fixture'")]
 #[case::configuration(
-    "UPDATE runtime_settings SET revision=revision+1 WHERE setting_group='authentication'",
-    false
+    "UPDATE runtime_settings SET revision=revision+1 WHERE setting_group='authentication'"
 )]
 #[case::expired_session(
-    "UPDATE auth_sessions SET authenticated_at=now()-interval '2 hours',idle_expires_at=now()-interval '1 hour'",
-    false
+    "UPDATE auth_sessions SET authenticated_at=now()-interval '2 hours',idle_expires_at=now()-interval '1 hour'"
 )]
 #[tokio::test]
-async fn local_revocation_fences_an_inflight_renewal(
-    #[case] change: &str,
-    #[case] logged_out: bool,
-) {
+async fn local_revocation_fences_an_inflight_renewal(#[case] change: &str) {
     let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
     let principal = f.retained_login().await;
     let claim = f.upstream_claim(principal).await;
-    let session = claim.session().session();
     let proof = f.renewal_proof(&claim, "alice");
     f.database.owner(change).await.unwrap();
-    let failure = f
-        .backend
-        .finish_upstream_renewal(
-            StorageUpstreamRenewal::new(claim, proof, Some(encrypted("rotated"))).unwrap(),
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(failure.kind(), StorageErrorKind::AuthenticationRequired);
     assert_eq!(
-        failure.revoked_upstream_session(),
-        logged_out.then_some(session)
+        f.backend
+            .finish_upstream_renewal(
+                StorageUpstreamRenewal::new(claim, proof, Some(encrypted("rotated"))).unwrap()
+            )
+            .await
+            .unwrap_err()
+            .kind(),
+        StorageErrorKind::AuthenticationRequired
     );
     f.database.cleanup().await;
 }
@@ -444,33 +432,38 @@ async fn logout_fences_restoration_of_an_unsubmitted_oidc_grant(
         .fail_upstream_renewal(claim, StorageUpstreamFailure::UnavailableBeforeSubmission)
         .await
         .unwrap_err();
-    assert_eq!(
-        failure.revoked_upstream_session(),
-        (!reauthenticate && !sibling).then_some(session)
-    );
+    assert_eq!(failure.kind(), StorageErrorKind::AuthenticationRequired);
     f.database.cleanup().await;
 }
 
 #[rstest::rstest]
-#[case::only_family(false, StorageUpstreamCleanup::Revoke)]
-#[case::shared_upstream_session(true, StorageUpstreamCleanup::Preserve)]
+#[case::only_family(false)]
+#[case::shared_upstream_session(true)]
 #[tokio::test]
-async fn oidc_outage_cleanup_preserves_other_live_families(
-    #[case] sibling: bool,
-    #[case] expected: StorageUpstreamCleanup,
-) {
+async fn oidc_outage_consumes_only_the_claimed_credential(#[case] sibling: bool) {
     let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
     let principal = f.retained_login().await;
     if sibling {
         assert_eq!(f.retained_login().await, principal);
     }
     let claim = f.upstream_claim(principal).await;
-    let cleanup = f
-        .backend
+    let claimed_session = claim.session().session();
+    f.backend
         .fail_upstream_renewal(claim, StorageUpstreamFailure::Unavailable)
         .await
         .unwrap();
-    assert_eq!(cleanup, expected);
+    let remaining = f
+        .backend
+        .claim_upstream_credential(ResourceRevision::INITIAL, principal)
+        .await
+        .unwrap();
+    match remaining {
+        StorageUpstreamClaimOutcome::Claim(other) if sibling => {
+            assert_ne!(other.session().session(), claimed_session)
+        }
+        StorageUpstreamClaimOutcome::Unavailable if !sibling => {}
+        _ => panic!("unexpected remaining credential after failed OIDC renewal"),
+    }
     f.database.cleanup().await;
 }
 

@@ -9,10 +9,8 @@ use hubuum_domain::FreshExternalAuthentication;
 use hubuum_domain::PrincipalId;
 use hubuum_domain::ResourceRevision;
 use hubuum_storage_core::{
-    SessionRevocation, StorageAuthenticationProviderKind, StorageError,
-    StorageExternalInteractionAuthentication, StorageUpstreamApproval, StorageUpstreamClaim,
-    StorageUpstreamClaimOutcome, StorageUpstreamCleanup, StorageUpstreamRenewal,
-    StorageUpstreamSession,
+    SessionRevocation, StorageExternalInteractionAuthentication, StorageUpstreamApproval,
+    StorageUpstreamClaimOutcome, StorageUpstreamRenewal, StorageUpstreamSession,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -31,57 +29,6 @@ struct Revision {
 fn invalid() -> PostgresStorageError {
     PostgresStorageError::authentication_required("Upstream session changed")
 }
-// The caller owns the principal lock. An upstream client session can span
-// several local families, including families without a retained credential.
-async fn has_live_sibling(
-    connection: &mut PostgresConnection,
-    original: &StorageUpstreamSession,
-) -> Result<bool, PostgresStorageError> {
-    use crate::schema::auth_sessions::dsl as sessions;
-    use diesel::{ExpressionMethods, QueryDsl, dsl::exists, select};
-    let now =
-        diesel::dsl::sql::<diesel::sql_types::Timestamp>("clock_timestamp() AT TIME ZONE 'UTC'");
-    Ok(select(exists(
-        sessions::auth_sessions
-            .filter(sessions::principal_id.eq(original.principal().id()))
-            .filter(sessions::id.ne(original.session().value()))
-            .filter(sessions::revoked_at.is_null())
-            .filter(sessions::idle_expires_at.gt(now.clone()))
-            .filter(sessions::absolute_expires_at.gt(now)),
-    ))
-    .get_result(connection)
-    .await?)
-}
-
-async fn reject_ineligible_claim<T>(
-    connection: &mut PostgresConnection,
-    claim: &StorageUpstreamClaim,
-) -> Result<T, PostgresStorageError> {
-    use crate::schema::auth_sessions::dsl as sessions;
-    use diesel::{ExpressionMethods, QueryDsl, dsl::exists, select};
-
-    let original = claim.session();
-    let revoked = select(exists(
-        sessions::auth_sessions
-            .filter(sessions::id.eq(original.session().value()))
-            .filter(sessions::principal_id.eq(original.principal().id()))
-            .filter(sessions::revoked_at.is_not_null()),
-    ))
-    .get_result::<bool>(connection)
-    .await?;
-    if revoked {
-        let latest =
-            super::external_identity::sync_success_on_connection(connection, original.principal())
-                .await?;
-        if latest.is_some_and(|at| at <= claim.started_at())
-            && !has_live_sibling(connection, original).await?
-        {
-            return Err(StorageError::upstream_session_revoked(original.session()).into());
-        }
-    }
-    Err(invalid())
-}
-
 fn decode(row: Row) -> Result<StorageUpstreamSession, PostgresStorageError> {
     serde_json::from_value(row.document)
         .map_err(|_| PostgresStorageError::database("Invalid upstream session record"))
@@ -282,7 +229,7 @@ pub async fn finish(
             )
             .await?
             else {
-                return reject_ineligible_claim(connection, request.claim()).await;
+                return Err(invalid());
             };
             record
                 .renewed(
@@ -372,7 +319,7 @@ pub async fn fail(
     runtime: &PostgresRuntime,
     claim: hubuum_storage_core::StorageUpstreamClaim,
     failure: hubuum_storage_core::StorageUpstreamFailure,
-) -> Result<StorageUpstreamCleanup, PostgresStorageError> {
+) -> Result<(), PostgresStorageError> {
     runtime
         .with_transaction(async move |connection| {
             let revision = revision(connection).await?;
@@ -386,7 +333,7 @@ pub async fn fail(
             )
             .await?
             else {
-                return reject_ineligible_claim(connection, &claim).await;
+                return Err(invalid());
             };
             let now = Utc::now();
             if !record.accepts(&claim, now) {
@@ -404,8 +351,7 @@ pub async fn fail(
                 super::security_candidates::binding_on_connection(connection, original.scope())
                     .await?
                     .ok_or_else(invalid)?;
-            let restored = record.defer_credential_retry(&claim, &provider, failure, now);
-            if restored {
+            if record.defer_credential_retry(&claim, &provider, failure, now) {
                 save(connection, &record).await?;
             } else {
                 sql_query("DELETE FROM auth_upstream_credentials WHERE session_id=$1")
@@ -421,14 +367,7 @@ pub async fn fail(
                 )
                 .await?;
             }
-            if !restored
-                && provider.kind() == StorageAuthenticationProviderKind::Oidc
-                && !has_live_sibling(connection, original).await?
-            {
-                Ok(StorageUpstreamCleanup::Revoke)
-            } else {
-                Ok(StorageUpstreamCleanup::Preserve)
-            }
+            Ok(())
         })
         .await
 }
