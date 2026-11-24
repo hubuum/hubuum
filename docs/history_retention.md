@@ -23,7 +23,9 @@ authorization backend. Responses use `Cache-Control: no-store`.
 | `POST /holds/{hold_id}/release` | Release a hold without rewriting its creation or expiry clock. |
 | `GET /operations/{operation_id}` | Bounded policy, hold, pressure transition or review evidence referenced by an audit receipt. |
 
-Write/inspection JSON bodies are limited to 16 KiB.
+Write/inspection JSON bodies are limited to 16 KiB. Inspection returns HTTP 404
+for an unknown class or collection UUID. Preview issuance returns HTTP 429 when
+the unexpired previews fill the registry or its remaining byte budget.
 
 The policy request shapes follow the
 [review contract](lifecycle_task_policy_contract.md#proposed-history-policy-boundary-for-513).
@@ -137,7 +139,7 @@ reserved completion budgets. No historical payload enters that heap.
 Ordering uses the original closure/deletion/schema-event clock, then stable
 resource/version UUIDs. Holds, open versions, dependencies, unresolved identities
 and exclusions remain protected. Pending unreceipted exact copies reserve their
-fresh logical bytes against each applicable immutable source; a shared relation
+fresh logical bytes against each policy that counts the copy in the current census; a shared relation
 source is charged once. Selection stops adding size-dependent copies at or below
 the lower target. One indivisible version can cross that target. Independently
 due age work can continue. Individually oversized sources remain untouched.

@@ -155,3 +155,22 @@ fn maintenance_future_fits_the_worker_stack_budget() {
     let work = iteration(&context, &tasks, &artifacts);
     assert!(std::mem::size_of_val(&work) < 16 * 1024);
 }
+
+#[actix_web::test]
+async fn artifact_cleanup_runs_when_history_protection_is_unavailable() {
+    let storage = StorageHandle::memory();
+    let missing = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+    let options = serde_json::from_value(serde_json::json!({
+        "directory": missing.join("repository"), "key": missing.join("key")
+    }))
+    .unwrap();
+    let context = AppContext::new(
+        storage.clone(),
+        Arc::new(LocalPermissionBackend::new(storage, "admin".to_owned())),
+    )
+    .with_history_retention(options);
+    let tasks = Mutex::new(CleanupSchedule::default());
+    let artifacts = Mutex::new(CleanupSchedule::default());
+    iteration(&context, &tasks, &artifacts).await.unwrap();
+    assert!(artifacts.lock().unwrap().last_completed_at.is_some());
+}

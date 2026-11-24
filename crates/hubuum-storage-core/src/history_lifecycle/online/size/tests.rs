@@ -109,7 +109,12 @@ fn plan(
 ) -> (HistoryLifecycleControlChange, HistoryExpiryAdmissionResult) {
     let mut selection = selection(snapshot, rows);
     for row in rows.iter().rev() {
-        selection.observe(row.clone(), 100, 10, true).unwrap();
+        let visible = !snapshot
+            .control()
+            .authority()
+            .expiry()
+            .excludes(row.family(), row.target());
+        selection.observe(row.clone(), 100, 10, visible).unwrap();
     }
     selection.finish().unwrap().into_parts()
 }
@@ -160,6 +165,89 @@ fn pending_exact_membership_reserves_the_remaining_size_budget() {
     let (snapshot, _) = admitted(&snapshot, &rows);
     let (_, result) = plan(&snapshot, &rows);
     assert!(result.manifest().is_none());
+}
+
+#[test]
+fn absent_pending_copy_reserves_no_bytes_in_the_current_census() {
+    let (snapshot, mut rows) = fixture();
+    let (snapshot, manifest) = admitted(&snapshot, &rows);
+    rows.retain(|row| row.target() != manifest.members()[0].target());
+    rows.extend(fixture().1);
+    // Five present 100-byte copies require three removals to reach 240 bytes.
+    let (_, result) = plan(&snapshot, &rows);
+    assert_eq!(result.manifest().unwrap().members().len(), 3);
+}
+
+#[rstest]
+#[case::class_override(true)]
+#[case::replacement_deployment_revision(false)]
+fn pending_bytes_follow_the_current_policy(#[case] class_override: bool) {
+    let (snapshot, mut rows) = fixture();
+    let (snapshot, manifest) = admitted(&snapshot, &rows);
+    let member = &manifest.members()[0];
+    let policy = &snapshot.control().authority().policies().records()[0];
+    let (scope, binding) = if class_override {
+        (
+            HistoryPolicyScope::Class {
+                identity: member.target().resource(),
+            },
+            HistoryPolicyBinding::Indefinite,
+        )
+    } else {
+        (
+            HistoryPolicyScope::Deployment,
+            policy.proposal().binding().clone(),
+        )
+    };
+    let key = HistoryPolicyKey::new(member.family(), scope).unwrap();
+    let change = HistoryPolicyChange::new(
+        key,
+        snapshot
+            .control()
+            .authority()
+            .policies()
+            .current_revision(key),
+        binding,
+        HistoryPolicyApplication::Retrospective {
+            closed_through: at(100),
+        },
+    )
+    .unwrap();
+    let actor = PrincipalIdentity::generate();
+    let fence = snapshot.fence();
+    let preview = HistoryPolicyPreview::issue(
+        actor,
+        change.clone(),
+        fence,
+        at(101),
+        HistoryPreviewImpact::new(HistoryPreviewCoverage::Bounded, 0, 0, vec![]).unwrap(),
+    )
+    .unwrap();
+    let issued = snapshot
+        .control()
+        .issue_preview(preview.clone(), fence)
+        .unwrap();
+    let applied = issued
+        .next()
+        .apply(
+            HistoryPolicyApplyRequest::new(change, Some(preview.reference().clone())),
+            actor,
+            fence,
+            at(101),
+        )
+        .unwrap();
+    let updated = HistoryLifecycleSnapshot::new(
+        applied.next().clone(),
+        fence.incarnation(),
+        fence.deletion_revision(),
+        at(102),
+    )
+    .unwrap();
+    // Both cases have four copies. A class override removes one from the deployment
+    // census. A replacement revision counts all four but reserves the pending copy.
+    rows.push(fixture().1.pop().unwrap());
+    let (_, result) = plan(&updated, &rows);
+    assert_eq!(result.manifest().unwrap().members().len(), 1);
 }
 
 #[test]

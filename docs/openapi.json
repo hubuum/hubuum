@@ -845,6 +845,16 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Unknown history policy scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1083,8 +1093,28 @@
               }
             }
           },
+          "404": {
+            "description": "Unknown history policy scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Policy or protection authority changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "History policy preview capacity exhausted",
             "content": {
               "application/json": {
                 "schema": {

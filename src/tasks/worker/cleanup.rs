@@ -76,15 +76,19 @@ async fn iteration(
         .current_execution_scope()
         .with_application_access(permit);
     let work = Box::pin(async {
-        let history_changed =
+        let retry_history =
             crate::services::deletion_recovery::history_policy::settle_expired_hold(context)
-                .await?;
+                .await
+                .unwrap_or_else(|error| {
+                    error!(message = "History hold maintenance failed", %error);
+                    false
+                });
         let tasks_changed = crate::tasks::history::run(
             storage,
             maybe_cleanup_expired_task_outputs(context, tasks, artifacts),
         )
         .await?;
-        Ok(history_changed || tasks_changed)
+        Ok(retry_history || tasks_changed)
     });
     storage
         .run_in_scope(scope, track_application_completion(work))

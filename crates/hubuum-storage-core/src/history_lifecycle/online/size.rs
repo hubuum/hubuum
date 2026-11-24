@@ -198,39 +198,23 @@ impl HistoryExpirySizeSelection {
         let (mut accounting, pressure_change) = accounting.retain(actor)?;
         request.fence = accounting.snapshot.fence();
         let authority = accounting.snapshot.control().authority();
-        let mut measurements = accounting
+        let measurements = accounting
             .accounting
             .iter()
-            .map(|entry| entry.pressure().clone())
-            .collect::<Vec<_>>();
-        for intent in authority.expiry().intents() {
-            for member in intent.manifest().members().iter().filter(|member| {
-                member.family() == request.scan.key().family()
-                    && !intent
-                        .removals()
-                        .iter()
-                        .any(|receipt| receipt.target() == member.target())
-            }) {
-                for pressure in &mut measurements {
-                    if member.policies().contains(pressure.policy()) {
-                        let remaining = accounting
-                            .rows
-                            .get(&(member.target().resource(), member.target().version()))
-                            .map_or(0, |bytes| {
-                                pressure
-                                    .measured_bytes()
-                                    .value()
-                                    .saturating_sub(bytes.value())
-                            });
-                        *pressure = HistorySizePressure::measure(
-                            &authority.policies().exact(pressure.policy())?,
-                            HistoryLogicalBytes::new(remaining)?,
-                            Some(pressure),
-                        )?;
-                    }
-                }
-            }
-        }
+            .map(|entry| {
+                let pressure = entry.pressure();
+                let policy = pressure.policy();
+                let Some(reserved) = accounting.reserved.get(&(policy.key(), policy.revision()))
+                else {
+                    return Ok(pressure.clone());
+                };
+                HistorySizePressure::measure(
+                    &authority.policies().exact(policy)?,
+                    HistoryLogicalBytes::new(pressure.measured_bytes().value() - reserved)?,
+                    Some(pressure),
+                )
+            })
+            .collect::<Result<Vec<_>, StorageValidationError>>()?;
         let manifest_header_bytes = request.selection(&accounting.snapshot)?.retained_bytes;
         let scanned = accounting.rows.len() as u32;
         let remaining = std::mem::take(&mut accounting.rows);

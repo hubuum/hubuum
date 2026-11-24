@@ -11,6 +11,9 @@ preparing a transition does not freeze review or hold expiry. Preserve native
 point tombstones (`valid_to == valid_from`) in retained read spans and treat them
 as deletion gaps from that point onward. Unknown restore ancestry must remain
 unresolved in inspection and preview coverage, matching admission.
+Before scanning a class or collection, verify that its stable UUID is known
+from current or historical resources or retained lifecycle authority. Return
+`StorageErrorKind::NotFound` when all three sources lack the UUID.
 
 **Breaking:** upgrade exact dependencies for all ten SDK crates together.
 `OperationalStorage` now requires `HistoryLifecycleStorage`. Complete adapters

@@ -1,4 +1,3 @@
-DROP INDEX IF EXISTS public.tasks_history_expiry_scope_active;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
@@ -29,6 +28,8 @@ BEGIN
     END IF;
 END
 $rollback_guard$;
+
+DROP INDEX IF EXISTS public.tasks_history_expiry_scope_active;
 
 DO $open_dependencies$
 DECLARE source TEXT;

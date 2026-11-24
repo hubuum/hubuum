@@ -135,6 +135,8 @@ pub struct HistorySizeCensus {
     family: StorageIdentityHistoryKind,
     policies: Vec<(HistoryEffectivePolicy, u64, u64)>,
     policy_indices: BTreeMap<(HistoryPolicyKey, HistoryPolicyRevision), usize>,
+    pending: BTreeSet<(ResourceIdentity, VersionIdentity)>,
+    reserved: BTreeMap<(HistoryPolicyKey, HistoryPolicyRevision), u64>,
     seen: BTreeMap<(ResourceIdentity, VersionIdentity), HistoryLogicalBytes>,
     metadata_bytes: u64,
     failed: bool,
@@ -180,11 +182,22 @@ impl HistorySizeCensus {
                 ((source.key(), source.revision()), index)
             })
             .collect();
+        let mut pending = BTreeSet::new();
+        for intent in snapshot.control().authority().expiry().intents() {
+            for member in intent.manifest().members() {
+                let target = member.target();
+                if member.family() == family && intent.receipt(target).is_none() {
+                    pending.insert((target.resource(), target.version()));
+                }
+            }
+        }
         Self {
             snapshot,
             family,
             policies: policies.into_iter().map(|policy| (policy, 0, 0)).collect(),
             policy_indices,
+            pending,
+            reserved: Default::default(),
             seen: Default::default(),
             metadata_bytes: 0,
             failed: false,
@@ -228,14 +241,8 @@ impl HistorySizeCensus {
             .ok_or_else(|| {
                 invalid("Complete history accounting has unresolved historical attribution")
             })?;
-        if self
-            .seen
-            .insert(
-                (candidate.target().resource(), candidate.target().version()),
-                bytes,
-            )
-            .is_some()
-        {
+        let identity = (candidate.target().resource(), candidate.target().version());
+        if self.seen.insert(identity, bytes).is_some() {
             return Err(invalid(
                 "Complete history accounting has duplicate version identities",
             ));
@@ -260,11 +267,16 @@ impl HistorySizeCensus {
                     .map(|source| (source.key(), source.revision()))
             })
             .collect::<BTreeSet<_>>();
+        let pending = self.pending.remove(&identity);
         for source in sources {
             if let Some(index) = self.policy_indices.get(&source) {
                 let (_, governed_rows, total) = &mut self.policies[*index];
                 *governed_rows += 1;
                 *total = add(*total, bytes.value())?;
+                if pending {
+                    // Reserve exactly the bytes this census charged to this source.
+                    *self.reserved.entry(source).or_default() += bytes.value();
+                }
             }
         }
         Ok(())
@@ -312,6 +324,7 @@ impl HistorySizeCensus {
             family: self.family,
             snapshot: self.snapshot,
             accounting,
+            reserved: self.reserved,
             rows: self.seen,
             metadata_bytes: self.metadata_bytes,
             started: self.started,
@@ -325,6 +338,7 @@ pub struct HistoryFamilySizeAccounting {
     pub(super) family: StorageIdentityHistoryKind,
     pub(super) snapshot: HistoryLifecycleSnapshot,
     pub(super) accounting: Vec<HistorySizeAccounting>,
+    pub(super) reserved: BTreeMap<(HistoryPolicyKey, HistoryPolicyRevision), u64>,
     pub(super) rows: BTreeMap<(ResourceIdentity, VersionIdentity), HistoryLogicalBytes>,
     pub(super) metadata_bytes: u64,
     pub(super) started: std::time::Instant,

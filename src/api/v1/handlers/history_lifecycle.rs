@@ -36,7 +36,7 @@ pub async fn policies(
     ))
 }
 
-#[utoipa::path(post, path = "/api/v1/admin/history-lifecycle/inspect", tag = "admin", security(("bearer_auth" = [])), request_body = HistoryLifecycleInspectionRequest, responses((status = 200, description = "Bounded effective sources, original anchors, deadlines and blockers; samples contain no retained payloads", body = HistoryLifecycleInspection), (status = 400, description = "Invalid scope or limits", body = ApiErrorResponse), (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse)))]
+#[utoipa::path(post, path = "/api/v1/admin/history-lifecycle/inspect", tag = "admin", security(("bearer_auth" = [])), request_body = HistoryLifecycleInspectionRequest, responses((status = 200, description = "Bounded effective sources, original anchors, deadlines and blockers; samples contain no retained payloads", body = HistoryLifecycleInspection), (status = 400, description = "Invalid scope or limits", body = ApiErrorResponse), (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse), (status = 404, description = "Unknown history policy scope", body = ApiErrorResponse)))]
 #[post("/inspect")]
 pub async fn inspect(
     context: AppContext,
@@ -84,7 +84,7 @@ pub async fn run(
     Ok(ApiResponse::new_no_store(response, status))
 }
 
-#[utoipa::path(post, path = "/api/v1/admin/history-lifecycle/policy-previews", tag = "admin", security(("bearer_auth" = [])), request_body = HistoryPolicyPreviewRequest, responses((status = 200, description = "Issued principal/revision-bound review with fixed expiry and bounded impact coverage; reserves no execution capacity", body = HistoryPolicyPreview), (status = 400, description = "Invalid proposed policy", body = ApiErrorResponse), (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse), (status = 409, description = "Policy or protection authority changed", body = ApiErrorResponse)))]
+#[utoipa::path(post, path = "/api/v1/admin/history-lifecycle/policy-previews", tag = "admin", security(("bearer_auth" = [])), request_body = HistoryPolicyPreviewRequest, responses((status = 200, description = "Issued principal/revision-bound review with fixed expiry and bounded impact coverage; reserves no execution capacity", body = HistoryPolicyPreview), (status = 400, description = "Invalid proposed policy", body = ApiErrorResponse), (status = 403, description = "Unscoped human administrator required", body = ApiErrorResponse), (status = 404, description = "Unknown history policy scope", body = ApiErrorResponse), (status = 409, description = "Policy or protection authority changed", body = ApiErrorResponse), (status = 429, description = "History policy preview capacity exhausted", body = ApiErrorResponse)))]
 #[post("/policy-previews")]
 pub async fn preview(
     context: AppContext,

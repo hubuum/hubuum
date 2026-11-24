@@ -276,7 +276,13 @@ impl HistoryLifecycleStorage for MemoryStorage {
         &self,
         scan: HistoryLifecycleScan,
     ) -> Result<HistoryLifecycleScanResult, StorageError> {
-        self.state.read().await?.scan_history_policy(&scan)
+        let state = self.state.read().await?;
+        if !state.history_policy_scope_known(scan.key().scope())? {
+            return Err(StorageError::not_found(
+                "History policy scope was not found",
+            ));
+        }
+        state.scan_history_policy(&scan)
     }
     async fn recover_history_lifecycle(
         &self,

@@ -440,6 +440,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- History inspection returns HTTP 404 for unknown class and collection UUIDs.
+  Policy preview issuance reports HTTP 429 when review capacity is exhausted.
+- Pending history expiry reserves only the bytes currently charged to each
+  policy. Artifact cleanup continues while the history checkpoint writer is busy.
+- The history lifecycle migration gives each history dependency index its own
+  statement timeout and checks rollback eligibility before dropping the task index.
+
 - History-aware HTTP rejects queued follow-up requests on a connection that
   already started an owned response. The first response can drain and retire
   its publication without admitting another owner on the same connection.

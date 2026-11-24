@@ -744,6 +744,44 @@ async fn emitted_policy_metadata_matches_the_reviewed_audit_schema() {
 }
 
 #[actix_web::test]
+async fn hold_settlement_retries_a_busy_writer() {
+    let fixture = Fixture::new().await;
+    let _writer = session(&fixture.options).await.unwrap();
+    assert!(settle_expired_hold(&fixture.context).await.unwrap());
+}
+
+#[actix_web::test]
+async fn full_preview_registry_returns_too_many_requests() {
+    use actix_web::{App, http::StatusCode, test, web};
+    use hubuum_storage_core::HistoryLifecycleControl;
+    let fixture = Fixture::new().await;
+    let proposal = fixture.proposal();
+    for _ in 0..HistoryLifecycleControl::MAX_PREVIEWS {
+        preview(&fixture.context, &fixture.admin, proposal.clone())
+            .await
+            .unwrap();
+    }
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(fixture.context.clone()))
+            .configure(crate::api::config),
+    )
+    .await;
+    let request = test::TestRequest::post()
+        .uri("/api/v1/admin/history-lifecycle/policy-previews")
+        .insert_header((
+            "Authorization",
+            format!("Bearer {}", fixture.bearer(false).await),
+        ))
+        .set_json(serde_json::json!({"change": proposal}))
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, request).await.status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+#[actix_web::test]
 async fn authenticated_http_preview_apply_protects_the_reviewed_policy() {
     use actix_web::{App, http::StatusCode, test, web};
     let fixture = Fixture::new().await;

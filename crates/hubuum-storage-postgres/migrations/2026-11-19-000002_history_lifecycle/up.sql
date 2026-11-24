@@ -832,19 +832,22 @@ REVOKE ALL ON FUNCTION public.hubuum_history_expiry_dependency(TEXT,JSONB) FROM 
 -- Dependency checks must search open copies without walking every closed
 -- version for each member of a bounded admission page. Keep unknown subjects
 -- in this index as well: unresolved open copies remain conservative blockers.
-DO $open_dependencies$
-DECLARE source TEXT;
-BEGIN
-    FOREACH source IN ARRAY ARRAY[
-        'collections_history','hubuumclass_history','hubuumobject_history',
-        'hubuumclass_relation_history','hubuumobject_relation_history',
-        'export_templates_history','remote_targets_history','computed_field_history'
-    ] LOOP
-        EXECUTE format('CREATE INDEX %I ON public.%I ((logical_identity #>> ''{subject,identity,identity}'')) WHERE valid_to IS NULL',
-            source || '_open_dependency',source); -- hubuum-compat: bounded-transactional-index
-    END LOOP;
-END
-$open_dependencies$;
+CREATE INDEX collections_history_open_dependency ON public.collections_history
+    ((logical_identity #>> '{subject,identity,identity}')) WHERE valid_to IS NULL; -- hubuum-compat: bounded-transactional-index
+CREATE INDEX hubuumclass_history_open_dependency ON public.hubuumclass_history
+    ((logical_identity #>> '{subject,identity,identity}')) WHERE valid_to IS NULL; -- hubuum-compat: bounded-transactional-index
+CREATE INDEX hubuumobject_history_open_dependency ON public.hubuumobject_history
+    ((logical_identity #>> '{subject,identity,identity}')) WHERE valid_to IS NULL; -- hubuum-compat: bounded-transactional-index
+CREATE INDEX hubuumclass_relation_history_open_dependency ON public.hubuumclass_relation_history
+    ((logical_identity #>> '{subject,identity,identity}')) WHERE valid_to IS NULL; -- hubuum-compat: bounded-transactional-index
+CREATE INDEX hubuumobject_relation_history_open_dependency ON public.hubuumobject_relation_history
+    ((logical_identity #>> '{subject,identity,identity}')) WHERE valid_to IS NULL; -- hubuum-compat: bounded-transactional-index
+CREATE INDEX export_templates_history_open_dependency ON public.export_templates_history
+    ((logical_identity #>> '{subject,identity,identity}')) WHERE valid_to IS NULL; -- hubuum-compat: bounded-transactional-index
+CREATE INDEX remote_targets_history_open_dependency ON public.remote_targets_history
+    ((logical_identity #>> '{subject,identity,identity}')) WHERE valid_to IS NULL; -- hubuum-compat: bounded-transactional-index
+CREATE INDEX computed_field_history_open_dependency ON public.computed_field_history
+    ((logical_identity #>> '{subject,identity,identity}')) WHERE valid_to IS NULL; -- hubuum-compat: bounded-transactional-index
 
 -- Separate from policy/hold CAS: exact predecessor, one immutable new intent,
 -- native source correspondence and the fleet fence are required together.

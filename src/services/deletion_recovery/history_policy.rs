@@ -14,10 +14,10 @@ use hubuum_storage_core::{
     HistoryPolicyRecord, HistoryPolicyReference, HistoryPolicyReviewConflict,
     HistoryPreviewCoverage, HistoryPreviewImpact, HistoryRetentionHold, HistorySizeAccounting,
     HistorySizePressure, LogicalIdentityStorage, StorageIdentitySubject, StorageIdentityTarget,
-    TaskRetentionStorage,
+    StorageValidationErrorKind, TaskRetentionStorage,
 };
 
-use super::repository::{CheckpointRepository, CheckpointSession};
+use super::repository::{CheckpointRepository, CheckpointSession, repository_busy};
 use super::{covers_checkpoint, unavailable};
 use crate::config::ControlRecoveryOptions;
 use crate::errors::ApiError;
@@ -108,7 +108,14 @@ pub(crate) async fn preview(
     let change = snapshot
         .control()
         .issue_preview(preview.clone(), snapshot.fence())
-        .map_err(|_| ApiError::HistoryPolicyReview(HistoryPolicyReviewConflict::StalePreview))?;
+        .map_err(|error| match error.kind() {
+            StorageValidationErrorKind::ValueTooLarge => {
+                ApiError::TooManyRequests("History policy preview capacity is exhausted".into())
+            }
+            StorageValidationErrorKind::InvalidValue => {
+                ApiError::HistoryPolicyReview(HistoryPolicyReviewConflict::StalePreview)
+            }
+        })?;
     storage.commit_history_lifecycle(change).await?;
     Ok(preview)
 }
@@ -120,13 +127,21 @@ fn apply_error(error: HistoryPolicyApplyError) -> ApiError {
     }
 }
 async fn session(options: &ControlRecoveryOptions) -> Result<CheckpointSession, ApiError> {
+    try_session(options).await?.ok_or_else(repository_busy)
+}
+
+async fn try_session(
+    options: &ControlRecoveryOptions,
+) -> Result<Option<CheckpointSession>, ApiError> {
     let (directory, key) = options.paths()?.ok_or_else(|| {
-        unavailable("Policy application requires configured independent control recovery")
+        unavailable(
+            "History policy and expiry operations require configured independent control recovery",
+        )
     })?;
     let directory = directory.to_owned();
     let key = key.to_owned();
     tokio::task::spawn_blocking(move || {
-        CheckpointRepository::open(&directory, &key)?.into_session()
+        CheckpointRepository::open(&directory, &key)?.try_into_session()
     })
     .await
     .map_err(|_| unavailable("Policy checkpoint worker failed"))?
@@ -216,18 +231,9 @@ async fn expiry_session(
     options: &ControlRecoveryOptions,
     execution: &TaskExecutionContext,
 ) -> Result<CheckpointSession, ApiError> {
-    let (directory, key) = options.paths()?.ok_or_else(|| {
-        unavailable("History expiry requires configured independent control recovery")
-    })?;
     loop {
         execution.check()?;
-        let directory = directory.to_owned();
-        let key = key.to_owned();
-        let session = tokio::task::spawn_blocking(move || {
-            CheckpointRepository::open(&directory, &key)?.try_into_session()
-        })
-        .await
-        .map_err(|_| unavailable("History expiry checkpoint worker failed"))??;
+        let session = try_session(options).await?;
         execution.check()?;
         if let Some(session) = session {
             return Ok(session);
@@ -438,7 +444,18 @@ async fn protected_session(
     context: &AppContext,
     options: &ControlRecoveryOptions,
 ) -> Result<CheckpointSession, ApiError> {
-    let session = session(options).await?;
+    try_protected_session(context, options)
+        .await?
+        .ok_or_else(repository_busy)
+}
+
+async fn try_protected_session(
+    context: &AppContext,
+    options: &ControlRecoveryOptions,
+) -> Result<Option<CheckpointSession>, ApiError> {
+    let Some(session) = try_session(options).await? else {
+        return Ok(None);
+    };
     if !covers_checkpoint(
         &storage_handle(context).capture_control_checkpoint().await?,
         session.checkpoint(),
@@ -447,18 +464,21 @@ async fn protected_session(
             "Recover current control authority before changing retention protection",
         ));
     }
-    Ok(session)
+    Ok(Some(session))
 }
 
 /// Settle one natural hold expiry, preserving its original effective deadline.
 /// The independent writer session serializes replicas; the backend CAS still
-/// protects against changes made outside this service. No payload is removed.
+/// protects against changes made outside this service. Return true to retry
+/// soon after a transition or writer contention.
 pub(crate) async fn settle_expired_hold(context: &AppContext) -> Result<bool, ApiError> {
     let options = context.history_retention();
     if !options.configured() {
         return Ok(false);
     }
-    let mut session = protected_session(context, options).await?;
+    let Some(mut session) = try_protected_session(context, options).await? else {
+        return Ok(true);
+    };
     let storage = storage_handle(context);
     let snapshot = storage.capture_history_lifecycle().await?;
     let mut seen = BTreeSet::new();

@@ -829,6 +829,14 @@ impl HistoryLifecycleStorage for PostgresStorage {
         self.runtime()
             .with_connection(async move |connection| {
                 let family = scan.key().family();
+                let scope = scan.key().scope();
+                if !scope_known_on(connection, scope).await?
+                    && !capture_on(connection).await?.control().retains_scope(scope)
+                {
+                    return Err(PostgresStorageError::not_found(
+                        "History policy scope was not found",
+                    ));
+                }
                 let rows = history_scan_rows(connection, &scan).await?;
                 let mut candidates = Vec::new();
                 let mut scanned = 0;

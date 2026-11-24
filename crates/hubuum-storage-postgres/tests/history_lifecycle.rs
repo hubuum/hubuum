@@ -760,9 +760,18 @@ async fn publication_registry_rollback_preserves_revision_zero_obligations(
         .control()
         .issue_preview(preview, snapshot.fence())
         .unwrap();
-    let pool = integration_test_migration_pool(1);
+    let pool = integration_test_migration_pool(2);
+    let mut reader = pool.get().await.unwrap();
+    reader.batch_execute("BEGIN").await.unwrap();
+    owner(&mut reader).await.unwrap();
+    reader
+        .batch_execute("LOCK TABLE public.tasks IN ACCESS SHARE MODE")
+        .await
+        .unwrap();
     with_transaction(&pool, async |connection| {
         owner(connection).await?;
+        // An attempted index drop before the refusal would conflict with the reader.
+        connection.batch_execute("SET LOCAL lock_timeout = '500ms'").await?;
         connection.batch_execute("SAVEPOINT history_rollback_fixture").await?;
         if generation_only {
             sql_query("UPDATE hubuum_control.history_publication_control SET generation=generation+1 WHERE id=1")
@@ -778,6 +787,7 @@ async fn publication_registry_rollback_preserves_revision_zero_obligations(
         connection.batch_execute("ROLLBACK TO SAVEPOINT history_rollback_fixture").await?;
         Ok::<_, PostgresStorageError>(())
     }).await.unwrap();
+    reader.batch_execute("ROLLBACK").await.unwrap();
 }
 
 mod runtime_protocol {

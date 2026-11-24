@@ -81,7 +81,7 @@ impl HistoryLifecycleControl {
             + self.authority.expiry().completion_reserve_bytes()
             + self.authority.pending_size_completions() * Self::HOLD_COMPLETION_RESERVE_BYTES;
         if retained_json_len(&bytes) + completion_reserve > Self::MAX_BYTES {
-            return Err(invalid(
+            return Err(StorageValidationError::too_large(
                 "History control capacity must preserve reserved hold completion space",
             ));
         }
@@ -155,7 +155,9 @@ impl HistoryLifecycleControl {
         next.previews
             .retain(|old| old.expires_at() > preview.issued_at());
         if next.previews.len() == Self::MAX_PREVIEWS {
-            return Err(invalid("Policy preview capacity exhausted"));
+            return Err(StorageValidationError::too_large(
+                "Policy preview capacity exhausted",
+            ));
         }
         if next
             .previews
