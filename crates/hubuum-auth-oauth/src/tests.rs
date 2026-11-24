@@ -460,6 +460,7 @@ async fn renewal_distinguishes_github_rate_limits_from_rejection(
 #[rstest]
 #[case::error_response(400, "application/json", json!({"error":"invalid_grant"}))]
 #[case::wrong_type(200, "text/html", json!({"access_token":"access", "token_type":"bearer"}))]
+#[case::other_json_format(200, "application/json-seq", json!({"access_token":"access", "token_type":"bearer"}))]
 #[tokio::test]
 async fn exchange_rejects_provider_failures(
     #[case] status: u16,
@@ -472,7 +473,12 @@ async fn exchange_rejects_provider_failures(
     let accepted = adapter
         .accept(pending, &state, Some(GITHUB_ISSUER), Some("code"), None)
         .unwrap();
-    let client = |_: oauth2::HttpRequest| {
+    let client = |request: oauth2::HttpRequest| {
+        assert_eq!(
+            request.method(),
+            http::Method::POST,
+            "failed exchange reached the profile endpoint"
+        );
         std::future::ready(Ok(http::Response::builder()
             .status(status)
             .header("content-type", content_type)

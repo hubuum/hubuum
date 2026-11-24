@@ -429,13 +429,21 @@ async fn refresh_classifies_wire_responses(
 }
 
 #[rstest]
-#[case::grant(false, "application/json", None)]
-#[case::contradictory_grant(true, "application/json", Some(OidcError::InvalidResponse))]
-#[case::incorrect_media_type(false, "text/plain", Some(OidcError::Unavailable))]
+#[case::grant(false, &["application/json"], None)]
+#[case::parameters(false, &["Application/JSON; charset=UTF-8"], None)]
+#[case::parameter_whitespace(false, &["application/json ; charset=UTF-8"], None)]
+#[case::quoted_parameter(false, &[r#"application/json; note="a,b""#], None)]
+#[case::combined_types(false, &["application/json; charset=utf-8, text/plain"], Some(OidcError::Unavailable))]
+#[case::contradictory_grant(true, &["application/json"], Some(OidcError::InvalidResponse))]
+#[case::contradictory_wrong_type(true, &["text/plain"], Some(OidcError::InvalidResponse))]
+#[case::incorrect_media_type(false, &["text/plain"], Some(OidcError::Unavailable))]
+#[case::different_json_format(false, &["application/json-seq"], Some(OidcError::Unavailable))]
+#[case::missing_media_type(false, &[], Some(OidcError::Unavailable))]
+#[case::ambiguous_media_type(false, &["text/plain", "application/json"], Some(OidcError::Unavailable))]
 #[tokio::test]
 async fn classifies_decodable_refresh_grants(
     #[case] error_member: bool,
-    #[case] content_type: &str,
+    #[case] content_types: &[&str],
     #[case] expected: Option<OidcError>,
 ) {
     let (adapter, discovered, context) = fixture();
@@ -456,11 +464,11 @@ async fn classifies_decodable_refresh_grants(
     }
     let result = adapter
         .refresh_using(&discovered, retained, &context, |_| {
-            std::future::ready(Ok(openidconnect::http::Response::builder()
-                .status(200)
-                .header("content-type", content_type)
-                .body(serde_json::to_vec(&wire).unwrap())
-                .unwrap()))
+            let mut reply = openidconnect::http::Response::builder().status(200);
+            for value in content_types {
+                reply = reply.header("content-type", *value);
+            }
+            std::future::ready(Ok(reply.body(serde_json::to_vec(&wire).unwrap()).unwrap()))
         })
         .await;
     assert_eq!(result.err(), expected);

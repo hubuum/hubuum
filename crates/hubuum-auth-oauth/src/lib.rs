@@ -149,7 +149,15 @@ impl OAuthAdapter {
                 .set_pkce_verifier(PkceCodeVerifier::new(
                     accepted.pending.code_state.verifier().to_owned(),
                 ))
-                .request_async(client)
+                .request_async(&|request| async {
+                    let reply = client.call(request).await?;
+                    if reply.status() == http::StatusCode::OK
+                        && !profile::has_json_content_type(reply.headers())
+                    {
+                        return Err(OAuthError::InvalidResponse);
+                    }
+                    Ok(reply)
+                })
                 .await
                 .map_err(token_error)?;
             let credentials = self.credentials(response)?;
@@ -219,7 +227,7 @@ impl OAuthAdapter {
         credentials: RetainedCredentials,
         context: &ExternalAuthenticationContext,
     ) -> Result<Authentication, OAuthError> {
-        self.refresh_with_dispatch(credentials, context, || {})
+        self.refresh_with_dispatch(credentials, context, || true)
             .await
     }
 
@@ -227,7 +235,7 @@ impl OAuthAdapter {
         &self,
         credentials: RetainedCredentials,
         context: &ExternalAuthenticationContext,
-        submitting: impl Fn() + Clone + Sync,
+        submitting: impl Fn() -> bool + Clone + Sync,
     ) -> Result<Authentication, OAuthError> {
         self.authenticate_using(credentials, context, &|request| {
             self.transport
@@ -256,17 +264,7 @@ impl OAuthAdapter {
         if response.status() != http::StatusCode::OK {
             return Err(OAuthError::Denied);
         }
-        if !response
-            .headers()
-            .get(http::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| {
-                value
-                    .split(';')
-                    .next()
-                    .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"))
-            })
-        {
+        if !profile::has_json_content_type(response.headers()) {
             return Err(OAuthError::InvalidResponse);
         }
         let document = profile::parse(response.body())?;

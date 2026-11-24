@@ -96,6 +96,9 @@ It requires S256 PKCE and query callbacks. It does not infer identity from OAuth
 or follow provider links, pagination, distributed claims or additional endpoints.
 Providers requiring those features need a small explicit adapter.
 
+Successful token and user-profile responses require one `application/json`
+Content-Type header. Parameters such as `charset=utf-8` are accepted.
+
 Optional `profile_headers` permits at most eight bounded lowercase `accept`,
 `user-agent` or `x-*` headers. These headers select the identity namespace. Changing a
 header requires a new scope. Authentication, host, cookies, framing and

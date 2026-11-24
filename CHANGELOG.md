@@ -193,14 +193,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   is incomplete, and lets another session verify the same identity. Each request
   checks up to eight OAuth grants within one 25-second deadline. Exhausting the
   budget returns HTTP 503 and leaves the bearer eligible for immediate retry.
-  Only a recorded verification outage permits use of stale membership.
+  Only a recorded verification outage permits use of stale membership. OAuth
+  token and profile endpoints must return a single `application/json` media type
+  for successful responses.
 - OIDC renewal discards uninstalled grants locally so newer logins and other
   provider scopes keep their shared upstream client session. Malformed ID tokens
   and contradictory grant responses invalidate cached authority. Restore
   maintenance waits for renewal finalization after a client disconnects.
-  An incorrect media type on a valid OIDC grant follows the outage policy.
-  Cancelling a background task stops new renewal claims and lets submitted
-  exchanges finish.
+  A missing, ambiguous, or incorrect media type on a valid OIDC grant follows
+  the outage policy. Renewal counts database claim time against its deadline
+  and checks cancellation before sending the grant. Submitted exchanges finish
+  within their original deadline.
 - HTTP 408 responses during external identity verification preserve the last
   successful verification within its configured freshness window. OAuth profile
   reads retain their grant across unrelated provider edits. Logout uses the

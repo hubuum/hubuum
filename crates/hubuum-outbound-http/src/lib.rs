@@ -64,6 +64,7 @@ pub enum OutboundHttpError {
     EmptyDnsResolution { host: String },
     DisallowedAddress { host: String, address: IpAddr },
     ClientBuild,
+    DispatchCancelled,
     ResponseRead,
     InvalidResponseBody { status: u16 },
     Timeout,
@@ -101,6 +102,7 @@ impl fmt::Display for OutboundHttpError {
                 f,
                 "outbound host '{host}' resolves to a disallowed address ({address})"
             ),
+            Self::DispatchCancelled => write!(f, "outbound request cancelled before dispatch"),
             Self::ClientBuild => write!(f, "HTTP client initialization failed"),
             Self::InvalidResponseBody { .. } => write!(f, "invalid outbound response body"),
             Self::ResponseRead => write!(f, "failed reading outbound response"),
@@ -464,13 +466,13 @@ impl OutboundRequest {
     }
 
     pub async fn send(self) -> Result<OutboundResponse, OutboundHttpError> {
-        self.send_with_dispatch(|| {}).await
+        self.send_with_dispatch(|| true).await
     }
 
-    /// Called after destination screening, immediately before handing the request to the client.
+    /// After destination screening, send only if the caller still admits the request.
     pub async fn send_with_dispatch(
         self,
-        dispatch: impl FnOnce(),
+        dispatch: impl FnOnce() -> bool,
     ) -> Result<OutboundResponse, OutboundHttpError> {
         let span = info_span!(
             "http.client.request",
@@ -546,7 +548,7 @@ impl OutboundResponse {
 
 async fn execute(
     request: OutboundRequest,
-    dispatch: impl FnOnce(),
+    dispatch: impl FnOnce() -> bool,
 ) -> Result<OutboundResponse, OutboundHttpError> {
     execute_with_screen(
         request,
@@ -560,7 +562,7 @@ async fn execute(
 
 async fn execute_with_screen<Screen, Screening>(
     request: OutboundRequest,
-    dispatch: impl FnOnce(),
+    dispatch: impl FnOnce() -> bool,
     screen: Screen,
 ) -> Result<OutboundResponse, OutboundHttpError>
 where
@@ -599,7 +601,9 @@ where
             request_builder = request_builder.body(body);
         }
 
-        dispatch();
+        if !dispatch() {
+            return Err(OutboundHttpError::DispatchCancelled);
+        }
         let response = request_builder.send().await.map_err(map_reqwest_error)?;
         let status = response.status();
         Span::current().record("http.response.status_code", status.as_u16());
@@ -642,6 +646,7 @@ fn outbound_error_category(error: &OutboundHttpError) -> &'static str {
             "dns"
         }
         OutboundHttpError::DisallowedAddress { .. } => "address_policy",
+        OutboundHttpError::DispatchCancelled => "cancelled",
         OutboundHttpError::ClientBuild => "client",
         OutboundHttpError::InvalidResponseBody { .. } => "invalid_response_body",
         OutboundHttpError::ResponseRead => "response_read",
@@ -804,6 +809,17 @@ fn is_sensitive_response_header(name: &str) -> bool {
 fn headers_to_json(headers: &HeaderMap) -> serde_json::Value {
     let mut object = serde_json::Map::new();
     for (name, value) in headers {
+        // Content-Type is a singleton. Preserve ambiguity instead of letting the
+        // last value silently replace an earlier one in the protocol response.
+        if name == reqwest::header::CONTENT_TYPE {
+            let content_type = if object.contains_key(name.as_str()) {
+                "[multiple content-type values]"
+            } else {
+                value.to_str().unwrap_or("[invalid content-type]")
+            };
+            object.insert(name.to_string(), content_type.into());
+            continue;
+        }
         if name == reqwest::header::LINK {
             // Link is list-valued. A later header must not hide an earlier page.
             object.entry(name.to_string()).or_insert_with(|| {
@@ -935,7 +951,7 @@ mod tests {
                     ),
                     Duration::from_secs(2),
                 ),
-                || {},
+                || true,
                 |_, _, _, _| async move { Ok(vec![address]) },
             ));
             // Neither listener completes TLS; the deadline ends the request.
@@ -992,6 +1008,32 @@ mod tests {
             screened.accept().is_ok(),
             "outbound request did not connect to its screened address",
         );
+    }
+
+    #[test]
+    fn caller_can_cancel_after_destination_screening() {
+        let screened = std::cell::Cell::new(false);
+        let _test_guard = CLIENT_CACHE_TEST_LOCK.lock().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(execute_with_screen(
+            OutboundRequest::new(
+                OutboundMethod::Get,
+                "https://example.com/",
+                Duration::from_secs(5),
+            ),
+            || {
+                assert!(screened.get());
+                false
+            },
+            |_, _, _, _| {
+                screened.set(true);
+                std::future::ready(Ok(vec!["192.0.2.1:443".parse().unwrap()]))
+            },
+        ));
+        assert!(matches!(result, Err(OutboundHttpError::DispatchCancelled)));
     }
 
     #[tokio::test(start_paused = true)]
@@ -1081,6 +1123,17 @@ mod tests {
         assert_eq!(
             headers_to_json(&headers)["link"],
             "</second>; rel=next, </user>; rel=self"
+        );
+    }
+
+    #[test]
+    fn repeated_content_type_is_ambiguous() {
+        let mut headers = HeaderMap::new();
+        headers.append("content-type", HeaderValue::from_static("text/plain"));
+        headers.append("content-type", HeaderValue::from_static("application/json"));
+        assert_eq!(
+            headers_to_json(&headers)["content-type"],
+            "[multiple content-type values]"
         );
     }
 

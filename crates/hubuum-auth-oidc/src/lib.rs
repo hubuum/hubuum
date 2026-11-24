@@ -250,7 +250,7 @@ impl OidcAdapter {
         &self,
         retained: RetainedCredentials,
         context: &ExternalAuthenticationContext,
-        submitting: impl Fn() + Clone + Sync,
+        submitting: impl Fn() -> bool + Clone + Sync,
     ) -> Result<Authentication, OidcError> {
         if retained.issuer != self.definition.issuer().as_str()
             || retained.client_id != self.definition.client_id()
@@ -754,7 +754,12 @@ impl GrantResponse {
         let reply = pending.await?;
         if reply.status() == openidconnect::http::StatusCode::OK {
             self.envelope
-                .get_or_init(|| validate_grant_envelope(reply.body()))
+                .get_or_init(|| {
+                    validate_grant_envelope(reply.body())?;
+                    profile::has_json_content_type(reply.headers())
+                        .then_some(())
+                        .ok_or(OidcError::Unavailable)
+                })
                 .clone()?;
         }
         Ok(reply)

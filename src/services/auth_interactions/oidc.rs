@@ -25,7 +25,7 @@ pub(crate) use revocation::{revoke_best_effort, revoke_provider_best_effort};
 use sha2::{Digest, Sha256};
 use std::{
     future::Future,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 use tokio::time::{Instant, timeout_at};
@@ -497,6 +497,7 @@ fn oauth_budget_exhausted() -> ApiError {
     )
 }
 
+#[derive(Clone)]
 struct RenewalLimits {
     oauth_deadline: Option<Instant>,
     task: Option<TaskExecutionContext>,
@@ -529,23 +530,68 @@ impl RenewalLimits {
         }
     }
 
+    fn for_claim(&self, started_at: chrono::DateTime<chrono::Utc>) -> RenewalDispatch {
+        // The lease is already running while the database acknowledges the claim.
+        let age = (chrono::Utc::now() - started_at)
+            .to_std()
+            .unwrap_or_default();
+        let end = Instant::now() + RENEWAL_TIMEOUT.saturating_sub(age);
+        RenewalDispatch {
+            limits: self.clone(),
+            deadline: self.oauth_deadline.map_or(end, |budget| budget.min(end)),
+            decision: OnceLock::new(),
+        }
+    }
+}
+
+struct RenewalDispatch {
+    limits: RenewalLimits,
+    deadline: Instant,
+    decision: OnceLock<Result<(), ApiError>>,
+}
+
+impl RenewalDispatch {
+    fn deadline_error(&self) -> ApiError {
+        if self
+            .limits
+            .oauth_deadline
+            .is_some_and(|end| end <= self.deadline)
+        {
+            oauth_budget_exhausted()
+        } else {
+            ApiError::ServiceUnavailable("External identity refresh claim timed out; retry".into())
+        }
+    }
+
+    fn check(&self) -> Result<(), ApiError> {
+        self.limits.check()?;
+        if Instant::now() >= self.deadline {
+            return Err(self.deadline_error());
+        }
+        Ok(())
+    }
+
+    fn admit(&self) -> bool {
+        self.decision.get_or_init(|| self.check()).is_ok()
+    }
+
+    fn submitted(&self) -> bool {
+        matches!(self.decision.get(), Some(Ok(())))
+    }
+
     async fn run_claimed<T>(
         &self,
-        submitted: &AtomicBool,
         work: impl Future<Output = Result<T, RenewalFailure>>,
     ) -> Result<T, RenewalFailure> {
         self.check().map_err(RenewalFailure::Interrupted)?;
-        let deadline = self
-            .oauth_deadline
-            .unwrap_or_else(|| Instant::now() + RENEWAL_TIMEOUT);
-        let attempt = timeout_at(deadline, work);
+        let attempt = timeout_at(self.deadline, work);
         tokio::pin!(attempt);
-        let result = if let Some(task) = &self.task {
+        let result = if let Some(task) = &self.limits.task {
             tokio::select! {
                 biased;
                 result = &mut attempt => result,
                 reason = control::wait_for_stop(task) => {
-                    if !submitted.load(Ordering::Relaxed) {
+                    if !self.submitted() {
                         return Err(RenewalFailure::Interrupted(reason.into()));
                     }
                     // A submitted grant can rotate or yield a definitive rejection.
@@ -555,12 +601,17 @@ impl RenewalLimits {
         } else {
             attempt.await
         };
+        if let Some(Err(reason)) = self.decision.get() {
+            return Err(RenewalFailure::Interrupted(reason.clone()));
+        }
         result.unwrap_or_else(|_| {
-            Err(if self.oauth_deadline.is_some() {
-                RenewalFailure::Interrupted(oauth_budget_exhausted())
-            } else {
-                InteractionError::ProviderUnavailable.into()
-            })
+            Err(
+                if self.limits.oauth_deadline.is_some() || !self.submitted() {
+                    RenewalFailure::Interrupted(self.deadline_error())
+                } else {
+                    InteractionError::ProviderUnavailable.into()
+                },
+            )
         })
     }
 }
@@ -679,8 +730,8 @@ async fn attempt_renewal(
     limits: &RenewalLimits,
 ) -> Result<RenewalAttempt, ApiError> {
     use hubuum_storage_core::StorageUpstreamRenewal;
-    let submitted = std::sync::Arc::new(AtomicBool::new(false));
-    let dispatch = submitted.clone();
+    let dispatch = Arc::new(limits.for_claim(claim.started_at()));
+    let admission = dispatch.clone();
     let work = async {
         let original = claim.session();
         let purpose = format!("upstream:{}", original.subject());
@@ -706,11 +757,9 @@ async fn attempt_renewal(
         )
         .map_err(error)?;
         let adapter = configured_adapter(provider).await?;
-        limits.check().map_err(RenewalFailure::Interrupted)?;
+        dispatch.check().map_err(RenewalFailure::Interrupted)?;
         let authentication = match adapter
-            .refresh(credentials, &provider_context, move || {
-                dispatch.store(true, Ordering::Relaxed)
-            })
+            .refresh(credentials, &provider_context, move || admission.admit())
             .await
         {
             Ok(authentication) => authentication,
@@ -738,7 +787,7 @@ async fn attempt_renewal(
             .map(Some)
             .map_err(|_| RenewalFailure::from(InteractionError::Invalid))
     };
-    match limits.run_claimed(&submitted, work).await {
+    match dispatch.run_claimed(work).await {
         Ok(None) => {
             storage
                 .fail_upstream_renewal(claim, StorageUpstreamFailure::CredentialExpired)
@@ -750,7 +799,7 @@ async fn attempt_renewal(
             Ok(RenewalAttempt::Refreshed)
         }
         Err(failure) => {
-            let (disposition, result) = failure.disposition(submitted.load(Ordering::Relaxed));
+            let (disposition, result) = failure.disposition(dispatch.submitted());
             // OIDC revocation may invalidate a whole client session shared with
             // other scopes or a newer login. Renewal only finalizes local state.
             storage.fail_upstream_renewal(claim, disposition).await?;
@@ -773,7 +822,8 @@ fn retain_credentials(provider: &StorageAuthenticationProvider) -> bool {
 mod renewal_tests {
     use super::{ApiError, InteractionError, OidcError, RenewalFailure, StorageUpstreamFailure};
 
-    use super::{AtomicBool, Duration, Instant, RenewalLimits, TaskExecutionContext};
+    use super::{Duration, Instant, RenewalLimits, TaskExecutionContext};
+    use chrono::Utc;
     use hubuum_task_core::TaskStopReason;
 
     #[rstest::rstest]
@@ -787,8 +837,12 @@ mod renewal_tests {
             oauth_deadline: Some(Instant::now() + Duration::from_millis(20)),
             task: None,
         };
-        let error = limits
-            .run_claimed::<()>(&AtomicBool::new(dispatched), std::future::pending())
+        let claim = limits.for_claim(Utc::now());
+        if dispatched {
+            assert!(claim.admit());
+        }
+        let error = claim
+            .run_claimed::<()>(std::future::pending())
             .await
             .unwrap_err();
         let (disposition, result) = error.disposition(dispatched);
@@ -808,8 +862,12 @@ mod renewal_tests {
             oauth_deadline: None,
             task: Some(task),
         };
-        let outcome = limits
-            .run_claimed(&AtomicBool::new(submitted), async {
+        let claim = limits.for_claim(Utc::now());
+        if submitted {
+            assert!(claim.admit());
+        }
+        let outcome = claim
+            .run_claimed(async {
                 stop.request_stop(TaskStopReason::Cancelled);
                 if submitted {
                     tokio::task::yield_now().await;
@@ -832,6 +890,48 @@ mod renewal_tests {
         assert!(matches!(
             limits.check(),
             Err(ApiError::TaskStopped(TaskStopReason::Cancelled))
+        ));
+    }
+
+    #[tokio::test]
+    async fn stop_during_preparation_vetoes_dispatch_and_releases_the_claim() {
+        let (task, stop) = TaskExecutionContext::new(Duration::from_secs(60)).unwrap();
+        let claim = RenewalLimits {
+            oauth_deadline: None,
+            task: Some(task),
+        }
+        .for_claim(Utc::now());
+        let failure = claim
+            .run_claimed::<()>(async {
+                stop.request_stop(TaskStopReason::Cancelled);
+                assert!(!claim.admit());
+                Err(RenewalFailure::Provider(OidcError::Unavailable))
+            })
+            .await
+            .unwrap_err();
+        let (disposition, result) = failure.disposition(claim.submitted());
+        assert_eq!(disposition, StorageUpstreamFailure::Interrupted);
+        assert!(matches!(
+            result,
+            Err(ApiError::TaskStopped(TaskStopReason::Cancelled))
+        ));
+    }
+
+    #[tokio::test]
+    async fn delayed_claim_acknowledgement_cannot_start_expired_work() {
+        let started = Utc::now() - chrono::Duration::seconds(26);
+        let claim = RenewalLimits {
+            oauth_deadline: None,
+            task: None,
+        }
+        .for_claim(started);
+        let failure = claim
+            .run_claimed::<()>(async { panic!("expired work was polled") })
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            failure,
+            RenewalFailure::Interrupted(ApiError::ServiceUnavailable(_))
         ));
     }
 

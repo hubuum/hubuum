@@ -145,10 +145,12 @@ logins under different provider scopes. Revoking a discarded refresh token
 could end that session after a new login has completed. Only an explicit
 revocation operation sends credentials it captured to the provider. An invalid
 ID token or a contradictory grant response denies renewal and invalidates cached
-authority. A valid grant returned with an incorrect media type follows the
-temporary outage policy. Background tasks stop acquiring grants on cancellation
-or deadline expiry. An exchange that already submitted its grant finishes under
-its existing timeout. Restore maintenance waits for active renewal workers even
+authority. A valid grant requires a single `application/json` Content-Type.
+Missing, ambiguous, or incorrect media types follow the temporary outage policy.
+Hubuum counts time spent acknowledging the database claim against the renewal
+deadline. It checks the deadline and task cancellation again after DNS
+screening, immediately before sending the grant. An exchange that already
+submitted its grant finishes under its existing timeout. Restore maintenance waits for active renewal workers even
 if their callers disconnect.
 
 Credential approval uses `max_age=0` and a signed `auth_time` at or after the
