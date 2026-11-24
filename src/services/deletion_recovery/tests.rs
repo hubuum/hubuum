@@ -554,10 +554,12 @@ async fn offline_recovery_retires_only_publications_with_proven_process_isolatio
             .is_err()
     );
     drop(permit);
-    let result = recover(&fixture.storage, &fixture.directory, &fixture.key).await;
-    assert_eq!(result.is_ok(), known);
+    let result =
+        after_repository_release(|| recover(&fixture.storage, &fixture.directory, &fixture.key))
+            .await;
+    assert_eq!(result.is_ok(), known, "recovery error: {:?}", result.err());
     if known {
-        reapply(&fixture.storage, &fixture.directory, &fixture.key)
+        after_repository_release(|| reapply(&fixture.storage, &fixture.directory, &fixture.key))
             .await
             .unwrap();
         assert!(bound.admit_application_work().await.is_err());
