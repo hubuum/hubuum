@@ -190,11 +190,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Users can log out all of their interactive sessions during an identity-provider
   outage using a valid unscoped human bearer. A profile HTTP 401 retires the
   affected OAuth bearer as soon as the headers arrive, even if the response body
-  is incomplete, and lets another session verify the same identity.
+  is incomplete, and lets another session verify the same identity. Each request
+  checks up to eight OAuth grants within one 25-second deadline.
 - OIDC renewal can revoke a replacement grant when ID token decoding or UserInfo
   verification fails, and the original unsubmitted grant if logout prevents its
-  restoration. Superseded claims preserve the freshly authenticated upstream
-  session. Restore maintenance waits for renewals after client disconnects.
+  restoration. Renewal cleanup preserves upstream sessions shared by another live
+  Hubuum session. A malformed ID token in a grant response invalidates cached
+  authority. Superseded claims preserve the freshly authenticated upstream session. Restore maintenance waits for renewals after client disconnects.
 - HTTP 408 responses during external identity verification preserve the last
   successful verification within its configured freshness window. OAuth profile
   reads retain their grant across unrelated provider edits. Logout uses the
@@ -206,9 +208,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   adapters.** Stop API and worker replicas, back up the database, apply
   migration `2026-11-23-000001_verification_group_budget`, and restart matching
   binaries. Keep OAuth bearers recoverable during profile reads and return
-  `AuthenticationRequired` when a session or claim fence rejects renewal. Return
-  `StorageError::upstream_session_revoked(id)` for a confirmed logout of the
-  claimed session when no newer authentication superseded it.
+  `AuthenticationRequired` when a session or claim fence rejects renewal. Update
+  `fail_upstream_renewal` to return `StorageUpstreamCleanup` on success. Return
+  `Revoke` only for a discarded OIDC grant with no live sibling. A renewal
+  finalizer must return `StorageError::upstream_session_revoked(id)` for a
+  confirmed revocation only when no newer authentication or live sibling exists.
 
 - Hosted browser interactions use `cookie` 0.18.3 or later in the 0.18 series.
   This removes the older Actix cookie dependency flagged by RUSTSEC-2026-0594.

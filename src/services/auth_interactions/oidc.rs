@@ -12,7 +12,6 @@ use hubuum_domain::{PrincipalId, ResourceRevision};
 use hubuum_secrets::SecretValue;
 use hubuum_storage_core::StorageEncryptedUpstreamCredential;
 use hubuum_storage_core::StorageRuntimeSettingsValue;
-use hubuum_storage_core::StorageUpstreamFailure;
 use hubuum_storage_core::{AuthSessionId, ExternalIdentityStorage, StorageError};
 use hubuum_storage_core::{
     StorageAuthenticationProvider, StorageBrowserProviderDefinition,
@@ -20,9 +19,12 @@ use hubuum_storage_core::{
     StorageInteractionAuthorization, StorageInteractionOutcome,
     StorageProtectedAuthenticationState,
 };
+use hubuum_storage_core::{StorageUpstreamCleanup, StorageUpstreamFailure};
 pub(crate) use revocation::{revoke_best_effort, revoke_provider_best_effort};
 use revocation::{revoke_uninstalled_oidc, revoke_unsubmitted_oidc};
 use sha2::{Digest, Sha256};
+use std::{future::Future, time::Duration};
+use tokio::time::{Instant, timeout_at};
 use uuid::Uuid;
 
 use crate::{
@@ -433,51 +435,88 @@ pub(crate) async fn renew(
     let storage = storage.clone();
     let provider = provider.clone();
     MaintenanceActivityGuard::begin()
-        .spawn(async move { renew_claimed_grants(&storage, principal, revision, &provider).await })
+        .spawn(async move {
+            let attempt = || claim_and_renew(&storage, principal, revision, &provider);
+            if matches!(
+                provider.browser_definition(),
+                Some(StorageBrowserProviderDefinition::Oauth(_))
+            ) {
+                return renew_oauth_grants(Instant::now() + RENEWAL_TIMEOUT, attempt).await;
+            }
+            Ok(matches!(attempt().await?, RenewalAttempt::Refreshed))
+        })
         .await
         .map_err(|_| {
             ApiError::ServiceUnavailable("External identity refresh was interrupted".into())
         })?
 }
 
-async fn renew_claimed_grants(
+const RENEWAL_TIMEOUT: Duration = Duration::from_secs(25);
+const MAX_OAUTH_GRANTS_PER_REQUEST: usize = 8;
+
+async fn renew_oauth_grants<F>(
+    deadline: Instant,
+    mut attempt: impl FnMut() -> F,
+) -> Result<bool, ApiError>
+where
+    F: Future<Output = Result<RenewalAttempt, ApiError>>,
+{
+    let exhausted = || {
+        ApiError::ServiceUnavailable(
+            "OAuth credential checks exceeded the request budget; retry".into(),
+        )
+    };
+    // OAuth only reads bearer tokens. A cancelled claim keeps the encrypted bearer
+    // and its lease expires. A rotating OIDC exchange must run through finalization.
+    timeout_at(deadline, async {
+        for _ in 0..MAX_OAUTH_GRANTS_PER_REQUEST {
+            if Instant::now() >= deadline {
+                break;
+            }
+            match attempt().await? {
+                RenewalAttempt::Refreshed => return Ok(true),
+                RenewalAttempt::Unavailable => return Ok(false),
+                RenewalAttempt::ExpiredCredential => continue,
+            }
+        }
+        Err(exhausted())
+    })
+    .await
+    .map_err(|_| exhausted())?
+}
+
+async fn claim_and_renew(
     storage: &crate::storage::StorageHandle,
     principal: PrincipalId,
     revision: ResourceRevision,
     provider: &StorageAuthenticationProvider,
-) -> Result<bool, ApiError> {
+) -> Result<RenewalAttempt, ApiError> {
     use hubuum_storage_core::StorageUpstreamClaimOutcome;
-    loop {
-        let claim = match storage
-            .claim_upstream_credential(revision, principal)
-            .await?
+    let claim = match storage
+        .claim_upstream_credential(revision, principal)
+        .await?
+    {
+        StorageUpstreamClaimOutcome::Unavailable
+            if matches!(
+                provider.browser_definition(),
+                Some(StorageBrowserProviderDefinition::Oauth(_))
+            ) =>
         {
-            StorageUpstreamClaimOutcome::Unavailable
-                if matches!(
-                    provider.browser_definition(),
-                    Some(StorageBrowserProviderDefinition::Oauth(_))
-                ) =>
-            {
-                return Err(ApiError::Unauthorized(
-                    "External identity requires a new upstream sign-in".into(),
-                ));
-            }
-            StorageUpstreamClaimOutcome::Unavailable | StorageUpstreamClaimOutcome::RetryLater => {
-                return Ok(false);
-            }
-            StorageUpstreamClaimOutcome::Busy => {
-                return Err(ApiError::ServiceUnavailable(
-                    "External identity refresh is in progress".into(),
-                ));
-            }
-            StorageUpstreamClaimOutcome::Claim(claim) => *claim,
-        };
-        match attempt_renewal(storage, claim, provider).await? {
-            RenewalAttempt::Refreshed => return Ok(true),
-            RenewalAttempt::Unavailable => return Ok(false),
-            RenewalAttempt::ExpiredCredential => continue,
+            return Err(ApiError::Unauthorized(
+                "External identity requires a new upstream sign-in".into(),
+            ));
         }
-    }
+        StorageUpstreamClaimOutcome::Unavailable | StorageUpstreamClaimOutcome::RetryLater => {
+            return Ok(RenewalAttempt::Unavailable);
+        }
+        StorageUpstreamClaimOutcome::Busy => {
+            return Err(ApiError::ServiceUnavailable(
+                "External identity refresh is in progress".into(),
+            ));
+        }
+        StorageUpstreamClaimOutcome::Claim(claim) => *claim,
+    };
+    attempt_renewal(storage, claim, provider).await
 }
 
 enum RenewalAttempt {
@@ -555,7 +594,7 @@ async fn attempt_renewal(
     let dispatch = submitted.clone();
     let session = claim.session().session();
     let mut returned_grant = None;
-    let outcome = tokio::time::timeout(std::time::Duration::from_secs(25), async {
+    let outcome = tokio::time::timeout(RENEWAL_TIMEOUT, async {
         let original = claim.session();
         let purpose = format!("upstream:{}", original.subject());
         let scope =
@@ -626,8 +665,10 @@ async fn attempt_renewal(
         Ok(Some(renewal)) => {
             cleanup_after_storage(
                 session,
-                GrantOnCommit::Retained,
-                storage.finish_upstream_renewal(renewal).await,
+                storage
+                    .finish_upstream_renewal(renewal)
+                    .await
+                    .map(|()| StorageUpstreamCleanup::Preserve),
                 || revoke_uninstalled_oidc(provider, returned_grant),
             )?;
             Ok(RenewalAttempt::Refreshed)
@@ -643,7 +684,6 @@ async fn attempt_renewal(
             {
                 cleanup_after_storage(
                     session,
-                    GrantOnCommit::Retained,
                     storage
                         .fail_upstream_renewal(claim.clone(), disposition)
                         .await,
@@ -654,7 +694,6 @@ async fn attempt_renewal(
                 // upstream client session. Wait for storage before revoking anything.
                 cleanup_after_storage(
                     session,
-                    GrantOnCommit::Discarded,
                     storage.fail_upstream_renewal(claim, disposition).await,
                     || revoke_uninstalled_oidc(provider, returned_grant),
                 )?;
@@ -664,26 +703,19 @@ async fn attempt_renewal(
     }
 }
 
-#[derive(Clone, Copy)]
-enum GrantOnCommit {
-    Retained,
-    Discarded,
-}
-
 fn cleanup_after_storage(
     session: AuthSessionId,
-    on_commit: GrantOnCommit,
-    result: Result<(), StorageError>,
+    result: Result<StorageUpstreamCleanup, StorageError>,
     revoke: impl FnOnce(),
 ) -> Result<(), StorageError> {
     let safe_to_revoke = match &result {
-        Ok(()) => matches!(on_commit, GrantOnCommit::Discarded),
+        Ok(cleanup) => *cleanup == StorageUpstreamCleanup::Revoke,
         Err(error) => error.revoked_upstream_session() == Some(session),
     };
     if safe_to_revoke {
         revoke();
     }
-    result
+    result.map(|_| ())
 }
 
 fn retain_credentials(provider: &StorageAuthenticationProvider) -> bool {
@@ -699,11 +731,46 @@ fn retain_credentials(provider: &StorageAuthenticationProvider) -> bool {
 #[cfg(test)]
 mod renewal_tests {
     use super::{
-        ApiError, AuthSessionId, GrantOnCommit, InteractionError, OidcError, RenewalFailure,
-        StorageUpstreamFailure, cleanup_after_storage,
+        ApiError, AuthSessionId, InteractionError, OidcError, RenewalFailure,
+        StorageUpstreamCleanup, StorageUpstreamFailure, cleanup_after_storage,
     };
     use hubuum_storage_core::StorageError;
     use uuid::Uuid;
+
+    #[tokio::test]
+    async fn oauth_scan_stops_claiming_after_its_attempt_budget() {
+        let mut calls = 0;
+        let result =
+            super::renew_oauth_grants(super::Instant::now() + super::RENEWAL_TIMEOUT, || {
+                calls += 1;
+                std::future::ready(Ok(super::RenewalAttempt::ExpiredCredential))
+            })
+            .await;
+        assert!(matches!(result, Err(ApiError::ServiceUnavailable(_))));
+        assert_eq!(calls, super::MAX_OAUTH_GRANTS_PER_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn oauth_scan_shares_a_deadline_across_claims() {
+        let mut calls = 0;
+        let result = super::renew_oauth_grants(
+            super::Instant::now() + super::Duration::from_secs(1),
+            || {
+                calls += 1;
+                let first = calls == 1;
+                async move {
+                    if first {
+                        Ok(super::RenewalAttempt::ExpiredCredential)
+                    } else {
+                        std::future::pending().await
+                    }
+                }
+            },
+        )
+        .await;
+        assert!(matches!(result, Err(ApiError::ServiceUnavailable(_))));
+        assert_eq!(calls, 2);
+    }
 
     #[rstest::rstest]
     #[case::logout_won(
@@ -720,28 +787,26 @@ mod renewal_tests {
     )]
     #[case::unknown_commit(Err(StorageError::unavailable("lost acknowledgement")), false)]
     fn rejected_storage_write_only_revokes_after_confirmed_logout(
-        #[case] result: Result<(), StorageError>,
+        #[case] result: Result<StorageUpstreamCleanup, StorageError>,
         #[case] expected: bool,
-        #[values(GrantOnCommit::Retained, GrantOnCommit::Discarded)] grant: GrantOnCommit,
     ) {
         let mut revoked = false;
         assert!(
-            cleanup_after_storage(AuthSessionId::new(Uuid::nil()), grant, result, || revoked =
-                true)
-            .is_err()
+            cleanup_after_storage(AuthSessionId::new(Uuid::nil()), result, || revoked = true)
+                .is_err()
         );
         assert_eq!(revoked, expected);
     }
 
     #[rstest::rstest]
-    #[case::retained(GrantOnCommit::Retained, false)]
-    #[case::discarded(GrantOnCommit::Discarded, true)]
+    #[case::retained(StorageUpstreamCleanup::Preserve, false)]
+    #[case::discarded(StorageUpstreamCleanup::Revoke, true)]
     fn committed_storage_write_only_revokes_a_discarded_grant(
-        #[case] grant: GrantOnCommit,
+        #[case] decision: StorageUpstreamCleanup,
         #[case] expected: bool,
     ) {
         let mut revoked = false;
-        cleanup_after_storage(AuthSessionId::new(Uuid::nil()), grant, Ok(()), || {
+        cleanup_after_storage(AuthSessionId::new(Uuid::nil()), Ok(decision), || {
             revoked = true
         })
         .unwrap();
@@ -755,6 +820,11 @@ mod renewal_tests {
         RenewalFailure::Provider(OidcError::Denied),
         false,
         StorageUpstreamFailure::UnavailableBeforeSubmission
+    )]
+    #[case::malformed_id_token(
+        RenewalFailure::Provider(OidcError::InvalidResponse),
+        true,
+        StorageUpstreamFailure::Rejected
     )]
     #[case::upstream_rejection(
         RenewalFailure::Provider(OidcError::Denied),

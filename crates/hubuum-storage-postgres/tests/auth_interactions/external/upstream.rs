@@ -2,6 +2,7 @@ use super::*;
 use crate::{approval, candidate_for, context, digest};
 use hubuum_domain::VerifiedExternalAuthentication;
 use hubuum_domain::{FreshExternalAuthenticationRequest, InteractionActor};
+use hubuum_storage_core::StorageUpstreamCleanup;
 
 fn encrypted(value: &str) -> StorageEncryptedUpstreamCredential {
     StorageEncryptedUpstreamCredential::new(value.into()).unwrap()
@@ -283,7 +284,10 @@ async fn fresh_authentication_fences_old_refresh_completion(
     let command = f.fresh_retention_command(principal).await;
     f.backend.advance_auth_interaction(command).await.unwrap();
     let stale = if let Some(disposition) = failure {
-        f.backend.fail_upstream_renewal(old, disposition).await
+        f.backend
+            .fail_upstream_renewal(old, disposition)
+            .await
+            .map(|_| ())
     } else {
         f.backend
             .finish_upstream_renewal(
@@ -408,12 +412,19 @@ async fn local_revocation_fences_an_inflight_renewal(
 }
 
 #[rstest::rstest]
-#[case::claimed_grant(false)]
-#[case::superseded_grant(true)]
+#[case::claimed_grant(false, false)]
+#[case::superseded_grant(true, false)]
+#[case::live_sibling(false, true)]
 #[tokio::test]
-async fn logout_fences_restoration_of_an_unsubmitted_oidc_grant(#[case] reauthenticate: bool) {
+async fn logout_fences_restoration_of_an_unsubmitted_oidc_grant(
+    #[case] reauthenticate: bool,
+    #[case] sibling: bool,
+) {
     let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
     let principal = f.retained_login().await;
+    if sibling {
+        assert_eq!(f.retained_login().await, principal);
+    }
     let claim = f.upstream_claim(principal).await;
     let session = claim.session().session();
     if reauthenticate {
@@ -435,8 +446,31 @@ async fn logout_fences_restoration_of_an_unsubmitted_oidc_grant(#[case] reauthen
         .unwrap_err();
     assert_eq!(
         failure.revoked_upstream_session(),
-        (!reauthenticate).then_some(session)
+        (!reauthenticate && !sibling).then_some(session)
     );
+    f.database.cleanup().await;
+}
+
+#[rstest::rstest]
+#[case::only_family(false, StorageUpstreamCleanup::Revoke)]
+#[case::shared_upstream_session(true, StorageUpstreamCleanup::Preserve)]
+#[tokio::test]
+async fn oidc_outage_cleanup_preserves_other_live_families(
+    #[case] sibling: bool,
+    #[case] expected: StorageUpstreamCleanup,
+) {
+    let f = ExternalFixture::new(json!({"mode":"provision_without_grants"})).await;
+    let principal = f.retained_login().await;
+    if sibling {
+        assert_eq!(f.retained_login().await, principal);
+    }
+    let claim = f.upstream_claim(principal).await;
+    let cleanup = f
+        .backend
+        .fail_upstream_renewal(claim, StorageUpstreamFailure::Unavailable)
+        .await
+        .unwrap();
+    assert_eq!(cleanup, expected);
     f.database.cleanup().await;
 }
 

@@ -409,7 +409,7 @@ pub trait ExternalIdentityStorage: Send + Sync {
         &self,
         claim: crate::StorageUpstreamClaim,
         failure: crate::StorageUpstreamFailure,
-    ) -> Result<(), StorageError>;
+    ) -> Result<StorageUpstreamCleanup, StorageError>;
     /// Capture credentials for best-effort revocation, after the caller authorizes logout.
     /// Local session revocation must destroy the stored copies before outbound calls.
     async fn upstream_logout_credentials(

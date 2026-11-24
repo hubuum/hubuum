@@ -569,7 +569,7 @@ impl StorageError {
     }
 
     /// The adapter confirmed revocation of this local session while fencing its
-    /// renewal. A superseded claim or an unknown commit cannot establish this.
+    /// renewal and excluded both a superseding authentication and any live sibling.
     #[must_use]
     pub fn upstream_session_revoked(session: AuthSessionId) -> Self {
         Self {

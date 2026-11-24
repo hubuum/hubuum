@@ -10,6 +10,13 @@ use uuid::Uuid;
 
 use crate::{AuthSessionId, StorageValidationError};
 
+/// Whether a token returned by a failed renewal can be revoked after commit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageUpstreamCleanup {
+    Preserve,
+    Revoke,
+}
+
 /// Whether a failed attempt could have spent its rotating refresh token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StorageUpstreamFailure {

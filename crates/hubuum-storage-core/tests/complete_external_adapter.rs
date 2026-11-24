@@ -9,6 +9,7 @@
 use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
 use hubuum_storage_core::StorageSecurityCandidateActivationOutcome;
 use hubuum_storage_core::StorageTokenRevocations;
+use hubuum_storage_core::StorageUpstreamCleanup;
 use hubuum_storage_core::StorageUpstreamRevocation;
 use hubuum_storage_core::{
     StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
@@ -584,7 +585,7 @@ impl ExternalIdentityStorage for CompleteExternalAdapter {
         &self,
         claim: StorageUpstreamClaim,
         failure: hubuum_storage_core::StorageUpstreamFailure,
-    ) -> Result<(), StorageError> {
+    ) -> Result<StorageUpstreamCleanup, StorageError> {
         fixture_result()
     }
     async fn claim_upstream_credential(

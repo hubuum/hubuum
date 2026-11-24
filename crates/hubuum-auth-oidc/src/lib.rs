@@ -280,18 +280,18 @@ impl OidcAdapter {
     {
         // The SDK decodes the ID token as part of parsing the token response.
         // A trusted endpoint may have already rotated an unambiguous refresh token.
-        let replacement = Arc::new(OnceLock::new());
+        let successful_reply = Arc::new(OnceLock::new());
         let response = discovered
             .client
             .exchange_refresh_token(&RefreshToken::new(retained.refresh.clone()))
             .map_err(|_| OidcError::Configuration)?
             .request_async(&|request| {
                 let pending = send(request);
-                let replacement = Arc::clone(&replacement);
+                let successful_reply = Arc::clone(&successful_reply);
                 async move {
                     let reply = pending.await?;
-                    if let Some(token) = cleanup_replacement(&reply) {
-                        let _ = replacement.set(token);
+                    if reply.status() == openidconnect::http::StatusCode::OK {
+                        let _ = successful_reply.set(cleanup_replacement(&reply));
                     }
                     Ok(reply)
                 }
@@ -300,9 +300,18 @@ impl OidcAdapter {
         let response = match response {
             Ok(response) => response,
             Err(error) => {
-                if let Some(token) = replacement.get() {
-                    retained.refresh.clone_from(token);
-                    received(retained);
+                if let Some(replacement) = successful_reply.get() {
+                    if let Some(token) = replacement {
+                        retained.refresh.clone_from(token);
+                        received(retained);
+                    }
+                    if let openidconnect::RequestTokenError::Parse(_, body) = &error
+                        && is_grant_document(body)
+                    {
+                        // The endpoint answered with a grant, but its identity data
+                        // failed SDK decoding. Cached outage authority cannot apply.
+                        return Err(OidcError::InvalidResponse);
+                    }
                 }
                 return Err(token_error(error));
             }
@@ -766,12 +775,19 @@ fn discovery_error(error: OidcError) -> OidcError {
     }
 }
 
+// Used only to classify SDK parse failures. Token values used for cleanup
+// still come exclusively from the duplicate-rejecting parser below.
+fn is_grant_document(body: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(body).is_ok_and(|document| {
+        document.get("id_token").is_some()
+            || document.get("access_token").is_some()
+            || (document.get("refresh_token").is_some() && document.get("error").is_none())
+    })
+}
+
 /// This credential can only be offered for cleanup. The identity proof always
 /// comes from the SDK's complete token response and signature checks.
 fn cleanup_replacement(reply: &HttpResponse) -> Option<String> {
-    if reply.status() != openidconnect::http::StatusCode::OK {
-        return None;
-    }
     let mut document = profile::parse(reply.body()).ok()?;
     let object = document.as_object_mut()?;
     if object.contains_key("error") {

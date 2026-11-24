@@ -1,11 +1,11 @@
 use super::*;
-use hubuum_storage_core::StorageUpstreamFailure;
 use hubuum_storage_core::{
     SessionCredentials, SessionPolicy, StorageExternalInteractionAuthentication,
     StorageInteractionAccess, StorageInteractionAction, StorageInteractionAuthorization,
     StorageInteractionCommand, StorageInteractionComplete, StorageInteractionCompletion,
     StorageInteractionCreate, StorageInteractionIssuance, StorageInteractionOutcome,
 };
+use hubuum_storage_core::{StorageUpstreamCleanup, StorageUpstreamFailure};
 use rstest::rstest;
 use serde_json::{Value, json};
 
@@ -717,6 +717,36 @@ impl Fixture {
 }
 
 #[rstest]
+#[case::only_family(false, StorageUpstreamCleanup::Revoke)]
+#[case::shared_upstream_session(true, StorageUpstreamCleanup::Preserve)]
+#[tokio::test]
+async fn oidc_outage_cleanup_preserves_other_live_families(
+    #[case] sibling: bool,
+    #[case] expected: StorageUpstreamCleanup,
+) {
+    use hubuum_storage_core::StorageUpstreamClaimOutcome;
+    let f = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
+    let (_, principal) = f.retained_session().await;
+    if sibling {
+        assert_eq!(f.retained_session().await.1, principal);
+    }
+    let StorageUpstreamClaimOutcome::Claim(claim) = f
+        .backend
+        .claim_upstream_credential(ResourceRevision::INITIAL, principal)
+        .await
+        .unwrap()
+    else {
+        panic!("retained claim");
+    };
+    let cleanup = f
+        .backend
+        .fail_upstream_renewal(*claim, StorageUpstreamFailure::Unavailable)
+        .await
+        .unwrap();
+    assert_eq!(cleanup, expected);
+}
+
+#[rstest]
 #[case::rejected(Some(StorageUpstreamFailure::Rejected))]
 #[case::pre_dispatch(Some(StorageUpstreamFailure::UnavailableBeforeSubmission))]
 #[case::post_dispatch(Some(StorageUpstreamFailure::Unavailable))]
@@ -746,7 +776,10 @@ async fn fresh_authentication_fences_old_memory_refresh(
     let command = f.fresh_retention_command(principal).await;
     f.backend.advance_auth_interaction(command).await.unwrap();
     let stale = if let Some(disposition) = failure {
-        f.backend.fail_upstream_renewal(*old, disposition).await
+        f.backend
+            .fail_upstream_renewal(*old, disposition)
+            .await
+            .map(|_| ())
     } else {
         f.backend
             .finish_upstream_renewal(

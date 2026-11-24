@@ -382,23 +382,34 @@ async fn initial_login_requires_nonce() {
 }
 
 #[rstest]
-#[case::malformed_id_token(200, r#"{"access_token":"access","token_type":"Bearer","refresh_token":"replacement","id_token":"malformed"}"#, Some("replacement"))]
-#[case::duplicate_refresh_token(200, r#"{"access_token":"access","token_type":"Bearer","refresh_token":"one","refresh_token":"two","id_token":"malformed"}"#, None)]
+#[case::malformed_id_token(200, r#"{"access_token":"access","token_type":"Bearer","refresh_token":"replacement","id_token":"malformed"}"#, Some("replacement"), OidcError::InvalidResponse)]
+#[case::contradictory_grant(200, r#"{"error":"invalid_grant","access_token":"access","token_type":"Bearer","refresh_token":"replacement","id_token":"malformed"}"#, None, OidcError::InvalidResponse)]
+#[case::non_rotating(
+    200,
+    r#"{"access_token":"access","token_type":"Bearer","id_token":"malformed"}"#,
+    None,
+    OidcError::InvalidResponse
+)]
+#[case::duplicate_refresh_token(200, r#"{"access_token":"access","token_type":"Bearer","refresh_token":"one","refresh_token":"two","id_token":"malformed"}"#, None, OidcError::InvalidResponse)]
 #[case::error_document(
     200,
     r#"{"error":"invalid_grant","refresh_token":"replacement"}"#,
-    None
+    None,
+    OidcError::Unavailable
 )]
 #[case::error_status(
     400,
     r#"{"error":"invalid_grant","refresh_token":"replacement"}"#,
-    None
+    None,
+    OidcError::Denied
 )]
+#[case::unreadable_endpoint(200, "<html>unavailable", None, OidcError::Unavailable)]
 #[tokio::test]
 async fn rejected_wire_response_exposes_only_an_unambiguous_replacement_for_cleanup(
     #[case] status: u16,
     #[case] wire: &'static str,
     #[case] expected: Option<&str>,
+    #[case] failure: OidcError,
 ) {
     let (adapter, discovered, context) = fixture();
     let mut cleanup = None;
@@ -417,7 +428,7 @@ async fn rejected_wire_response_exposes_only_an_unambiguous_replacement_for_clea
             },
         )
         .await;
-    assert!(result.is_err());
+    assert_eq!(result.err(), Some(failure));
     assert_eq!(cleanup.as_deref(), expected);
 }
 

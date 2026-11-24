@@ -574,11 +574,20 @@ settings change, advance the effective revision only for unchanged enabled
 providers, clear superseded leases and keep the original login binding for
 decryption. An in-flight OIDC grant from the previous revision stays consumed.
 An unchanged OAuth provider can immediately claim the retained bearer at the
-new revision. Return `AuthenticationRequired` when a session or claim fence
-rejects a renewal. Use `StorageError::upstream_session_revoked(id)` only when
-the claimed session was revoked and no newer authentication superseded the
-claim. This distinction lets Hubuum clean up a logged-out session's OIDC grant
-while preserving a freshly authenticated upstream session.
+new revision.
+
+External adapters must update `fail_upstream_renewal` to return
+`Result<StorageUpstreamCleanup, StorageError>`. Decide cleanup in the same
+transaction that records the failure, serialized with session issuance and
+revocation. Return `Revoke` only for a discarded OIDC grant when no other
+live session belongs to the principal. Return `Preserve` for a restored grant,
+an OAuth bearer, or a potentially shared upstream session. Count live siblings
+even when they have no retained credential.
+
+Return `StorageError::upstream_session_revoked(id)` from either renewal
+finalizer only when the claimed session was revoked, no later authentication
+superseded the claim, and no live sibling remains. Use plain
+`AuthenticationRequired` for other session or claim fences.
 On `UnavailableBeforeSubmission`, restore the claimed grant with bounded backoff.
 Return the issued family's retained grant from `revoke_auth_interaction_session`
 in the local revocation transaction so the server can revoke it after commit.
