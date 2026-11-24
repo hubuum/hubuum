@@ -53,10 +53,93 @@ impl HistoryPolicyCatalog {
     ) -> Result<HistoryEffectivePolicy, StorageValidationError> {
         let record = self
             .0
-            .iter()
-            .find(|record| HistoryPolicyReference::from(*record) == *reference)
+            .binary_search_by_key(&reference.revision(), HistoryPolicyRecord::revision)
+            .ok()
+            .map(|index| &self.0[index])
+            .filter(|record| record.proposal().key() == reference.key())
             .ok_or_else(|| invalid("Unknown immutable history policy revision"))?;
         Ok(HistoryEffectivePolicy::from_record(record))
+    }
+    /// Reviewed changes retain their exact authority fence. Unreviewed policies
+    /// retain their catalog order only. All endpoints in a batch must agree on
+    /// one possible catalog prefix at the original selection fence.
+    pub(super) fn validate_selection(
+        &self,
+        manifest: &HistoryExpiryManifest,
+        possible_nonpolicy_decisions: usize,
+    ) -> Result<(), StorageValidationError> {
+        let fence = manifest.fence().authority_revision().value();
+        let mut first = fence
+            .saturating_sub(possible_nonpolicy_decisions as u64)
+            .max(1);
+        let mut last = fence.min(self.0.len() as u64);
+        for (index, record) in self.0.iter().enumerate() {
+            if let Some(review) = record.review() {
+                let before_review = review.fence().authority_revision().value();
+                let preceding_policies = index as u64;
+                // Each intervening policy consumes one authority revision.
+                if before_review < fence {
+                    first = first.max(preceding_policies + 1);
+                    last = last.min(preceding_policies + (fence - before_review));
+                } else {
+                    first = first.max(preceding_policies.saturating_sub(before_review - fence));
+                    last = last.min(preceding_policies);
+                }
+            }
+        }
+        if first > last {
+            return Err(invalid(
+                "Retained expiry has no possible policy catalog at selection",
+            ));
+        }
+        // Changes to other families cannot alter any endpoint in this manifest.
+        // Keep only the distinct family catalog states in the possible range.
+        let records: Vec<_> = self.0[..last as usize]
+            .iter()
+            .enumerate()
+            .filter(|(_, record)| record.proposal().key().family() == manifest.key().family())
+            .collect();
+        let first = records
+            .partition_point(|(index, _)| *index < first as usize)
+            .max(1);
+        if first > records.len() {
+            return Err(invalid(
+                "Retained expiry references an absent policy family",
+            ));
+        }
+        let mut possible = vec![true; records.len() - first + 1];
+        for member in manifest.members() {
+            for (attribution, source) in member.attributions().iter().zip(member.policies()) {
+                // Latest non-inherited binding at each priority, as each policy
+                // becomes visible. An explicit Inherit clears just its scope.
+                let mut bindings = [None; 3];
+                for (index, &(_, record)) in records.iter().enumerate() {
+                    let key = record.proposal().key();
+                    if record.governs(member.anchor())
+                        && let Some(priority) =
+                            attribution.scopes().position(|scope| scope == key.scope())
+                    {
+                        bindings[priority] = (*record.proposal().binding()
+                            != HistoryPolicyBinding::Inherit)
+                            .then_some(record);
+                    }
+                    if index + 1 >= first {
+                        possible[index + 1 - first] &=
+                            bindings.iter().flatten().next().is_some_and(|effective| {
+                                effective.revision() == source.revision()
+                                    && effective.proposal().key() == source.key()
+                                    && effective.applied_at() <= manifest.selected_at()
+                            });
+                    }
+                }
+                if !possible.contains(&true) {
+                    return Err(invalid(
+                        "Retained expiry policy did not govern its endpoint at selection",
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
     pub fn current_revision(&self, key: HistoryPolicyKey) -> HistoryPolicyRevision {
         self.0
@@ -131,18 +214,8 @@ impl HistoryPolicyCatalog {
         attribution: HistoryScopeAttribution,
         at: DateTime<Utc>,
     ) -> HistoryEffectivePolicy {
-        let scopes = attribution
-            .class()
-            .map(|identity| HistoryPolicyScope::Class { identity })
-            .into_iter()
-            .chain([
-                HistoryPolicyScope::Collection {
-                    identity: attribution.collection(),
-                },
-                HistoryPolicyScope::Deployment,
-            ]);
         let mut inherited = Vec::new();
-        for scope in scopes {
+        for scope in attribution.scopes() {
             let record = self.0.iter().rev().find(|record| {
                 record.proposal().key().family() == family
                     && record.proposal().key().scope() == scope

@@ -356,6 +356,37 @@ fn preview_fixture() -> (HistoryPolicyPreview, PrincipalIdentity, HistoryReviewF
     )
 }
 #[rstest]
+#[case::same_review(false, true)]
+#[case::policy_operation(true, false)]
+fn issued_preview_keeps_one_operation_identity(#[case] collide: bool, #[case] valid: bool) {
+    let (preview, principal, fence) = preview_fixture();
+    let issued = HistoryLifecycleControl::empty()
+        .issue_preview(preview.clone(), fence)
+        .unwrap();
+    let applied = issued
+        .next()
+        .apply(
+            HistoryPolicyApplyRequest::new(
+                preview.proposal().clone(),
+                Some(preview.reference().clone()),
+            ),
+            principal,
+            fence,
+            at(100),
+        )
+        .unwrap();
+    let mut encoded = serde_json::to_value(applied.next()).unwrap();
+    if collide {
+        encoded["previews"][0]["reference"]["preview_id"] =
+            serde_json::json!(applied.next().authority().policies().records()[0].operation());
+    }
+    assert_eq!(
+        serde_json::from_value::<HistoryLifecycleControl>(encoded).is_ok(),
+        valid
+    );
+}
+
+#[rstest]
 #[case(399, true)]
 #[case(400, false)]
 #[case(401, false)]

@@ -444,8 +444,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Fixed
 
 - History recovery keeps the database quarantined when a restored checkpoint and
-  local history disagree on whether size pressure still authorized an expiry
-  selection. Selections made before pressure ended remain recoverable.
+  local history disagree on whether policies, holds or size pressure authorized
+  an expiry selection. Recovery checks each endpoint at the original selection
+  revision and time, and rejects expiry IDs that reuse an applied review ID.
 - History size accounting returns a validation error when a JSON number's
   expanded decimal representation exceeds the supported byte count.
 - In-memory expiry scans check ordinary history row sizes without copying their

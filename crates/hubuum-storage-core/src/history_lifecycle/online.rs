@@ -1377,6 +1377,193 @@ mod tests {
         }
         selection.finish().unwrap()
     }
+
+    fn after_change(
+        snapshot: &HistoryLifecycleSnapshot,
+        change: HistoryLifecycleControlChange,
+    ) -> HistoryLifecycleSnapshot {
+        HistoryLifecycleSnapshot::new(
+            change.next().clone(),
+            snapshot.fence().incarnation(),
+            snapshot.fence().deletion_revision(),
+            snapshot.observed_at(),
+        )
+        .unwrap()
+    }
+
+    #[rstest]
+    #[case::before_creation(1, true, None, false, true)]
+    #[case::active_hold(2, true, None, false, false)]
+    #[case::unrelated_collection(2, false, None, false, true)]
+    #[case::naturally_expired(2, true, Some(200), false, true)]
+    #[case::released_after_selection(2, true, None, true, false)]
+    #[case::released_before_selection(3, true, None, true, true)]
+    fn recovery_checks_the_hold_at_the_original_selection_fence(
+        #[case] selections: usize,
+        #[case] matching_collection: bool,
+        #[case] expires_at: Option<i64>,
+        #[case] release: bool,
+        #[case] compatible: bool,
+        #[values(false, true)] local_has_hold: bool,
+    ) {
+        let common = snapshot();
+        let mut selecting = common.clone();
+        for _ in 1..selections {
+            selecting = after_change(
+                &common,
+                selecting
+                    .control()
+                    .admit_expiry(manifest(&selecting), selecting.fence())
+                    .unwrap(),
+            );
+        }
+        let last = manifest(&selecting);
+        let collection = if matching_collection {
+            last.members()[0].attributions()[0].collection()
+        } else {
+            ResourceIdentity::generate()
+        };
+        let selected = after_change(
+            &common,
+            selecting
+                .control()
+                .admit_expiry(last, selecting.fence())
+                .unwrap(),
+        );
+        let principal = PrincipalIdentity::generate();
+        let id = Uuid::new_v4();
+        let hold = HistoryRetentionHold::new(
+            id,
+            HistoryPolicyKey::new(
+                key().family(),
+                HistoryPolicyScope::Collection {
+                    identity: collection,
+                },
+            )
+            .unwrap(),
+            at(150),
+            expires_at.map(at),
+            principal,
+        )
+        .unwrap();
+        let mut held = after_change(
+            &common,
+            common.control().create_hold(hold, common.fence()).unwrap(),
+        );
+        if release {
+            held = after_change(
+                &common,
+                held.control()
+                    .release_hold(id, principal, held.fence(), at(200))
+                    .unwrap(),
+            );
+        }
+        let (local, signed) = if local_has_hold {
+            (held, selected)
+        } else {
+            (selected, held)
+        };
+        let result = HistoryLifecycleRecovery::new(local, signed.control().authority().clone());
+        assert_eq!(result.is_ok(), compatible);
+    }
+    #[rstest]
+    #[case::before_policy(false, false, 150, false, true)]
+    #[case::replacement(true, false, 150, false, false)]
+    #[case::collection_override(true, true, 150, false, false)]
+    #[case::unaffected_anchors(true, true, 105, false, true)]
+    #[case::preview_identity_collision(false, false, 105, true, false)]
+    fn recovery_checks_the_reviewed_policy_at_selection(
+        #[case] advance_selection: bool,
+        #[case] collection_override: bool,
+        #[case] through: i64,
+        #[case] reuse_preview_id: bool,
+        #[case] compatible: bool,
+        #[values(false, true)] local_has_policy: bool,
+    ) {
+        let common = snapshot();
+        let selecting = if advance_selection {
+            after_change(
+                &common,
+                common
+                    .control()
+                    .admit_expiry(manifest(&common), common.fence())
+                    .unwrap(),
+            )
+        } else {
+            common.clone()
+        };
+        let mut last = manifest(&selecting);
+        let policy_key = if collection_override {
+            HistoryPolicyKey::new(
+                key().family(),
+                HistoryPolicyScope::Collection {
+                    identity: last.members()[0].attributions()[0].collection(),
+                },
+            )
+            .unwrap()
+        } else {
+            key()
+        };
+        let principal = PrincipalIdentity::generate();
+        let proposal = HistoryPolicyChange::new(
+            policy_key,
+            common
+                .control()
+                .authority()
+                .policies()
+                .current_revision(policy_key),
+            HistoryPolicyBinding::Indefinite,
+            HistoryPolicyApplication::Retrospective {
+                closed_through: at(through),
+            },
+        )
+        .unwrap();
+        let preview = HistoryPolicyPreview::issue(
+            principal,
+            proposal.clone(),
+            common.fence(),
+            at(190),
+            HistoryPreviewImpact::new(HistoryPreviewCoverage::Bounded, 0, 0, Vec::new()).unwrap(),
+        )
+        .unwrap();
+        if reuse_preview_id {
+            last.identity = preview.reference().preview_id();
+        }
+        let selected = after_change(
+            &common,
+            selecting
+                .control()
+                .admit_expiry(last, selecting.fence())
+                .unwrap(),
+        );
+        let reference = preview.reference().clone();
+        let issued = common
+            .control()
+            .issue_preview(preview, common.fence())
+            .unwrap();
+        let applied = after_change(
+            &common,
+            issued
+                .next()
+                .apply(
+                    HistoryPolicyApplyRequest::new(proposal, Some(reference)),
+                    principal,
+                    common.fence(),
+                    at(190),
+                )
+                .unwrap(),
+        );
+        let (local, signed) = if local_has_policy {
+            (applied, selected)
+        } else {
+            (selected, applied)
+        };
+        assert_eq!(
+            HistoryLifecycleRecovery::new(local, signed.control().authority().clone()).is_ok(),
+            compatible
+        );
+    }
+
     #[rstest]
     #[case::original("original", true)]
     #[case::known_alias("alias", true)]
@@ -2196,6 +2383,67 @@ mod tests {
         ));
         assert!(decoded.contains(at(200)));
     }
+    #[rstest]
+    #[case::deadline_reached(80, true)]
+    #[case::last_member_too_young(81, false)]
+    fn retained_age_selection_checks_each_original_deadline(#[case] age: u64, #[case] valid: bool) {
+        let snapshot = snapshot();
+        let admitted = snapshot
+            .control()
+            .admit_expiry(manifest(&snapshot), snapshot.fence())
+            .unwrap();
+        let mut encoded = serde_json::to_value(admitted.next()).unwrap();
+        encoded["authority"]["policies"][0]["proposal"]["binding"]["trigger"]["age_seconds"] =
+            serde_json::to_value(HistoryRetentionSeconds::new(age).unwrap()).unwrap();
+        assert_eq!(
+            serde_json::from_value::<HistoryLifecycleControl>(encoded).is_ok(),
+            valid
+        );
+    }
+
+    #[rstest]
+    #[case::one_catalog(false, true)]
+    #[case::incompatible_members(true, false)]
+    fn retained_members_must_share_one_policy_catalog(
+        #[case] change_first: bool,
+        #[case] valid: bool,
+    ) {
+        let before = snapshot();
+        let original = &before.control().authority().policies().records()[0];
+        let proposal = HistoryPolicyChange::new(
+            key(),
+            original.revision(),
+            original.proposal().binding().clone(),
+            HistoryPolicyApplication::Prospective,
+        )
+        .unwrap();
+        let updated = after_change(
+            &before,
+            before
+                .control()
+                .apply(
+                    HistoryPolicyApplyRequest::new(proposal, None),
+                    PrincipalIdentity::generate(),
+                    before.fence(),
+                    at(105),
+                )
+                .unwrap(),
+        );
+        let admitted = updated
+            .control()
+            .admit_expiry(manifest(&updated), updated.fence())
+            .unwrap();
+        let mut encoded = serde_json::to_value(admitted.next()).unwrap();
+        if change_first {
+            encoded["authority"]["expiry"][0]["manifest"]["members"][0]["policies"][0] =
+                serde_json::to_value(HistoryPolicyReference::from(original)).unwrap();
+        }
+        assert_eq!(
+            serde_json::from_value::<HistoryLifecycleControl>(encoded).is_ok(),
+            valid
+        );
+    }
+
     #[test]
     fn recovered_expiry_cannot_reference_a_policy_absent_from_retained_catalog() {
         let snapshot = snapshot();

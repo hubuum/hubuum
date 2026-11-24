@@ -152,6 +152,9 @@ impl HistoryExpiryIntent {
     pub const fn manifest(&self) -> &HistoryExpiryManifest {
         &self.manifest
     }
+    pub(super) fn decision_count(&self) -> usize {
+        1 + usize::from(self.cancellation().is_some()) + self.removals().len()
+    }
     pub const fn cancellation(&self) -> Option<&HistoryExpiryCancellation> {
         self.cancellation.as_ref()
     }

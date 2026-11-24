@@ -493,6 +493,9 @@ impl HistoryLifecycleAuthority {
                 || entry.revision > self.revision()
                 || self.policies().records().iter().any(|record| {
                     record.operation() == entry.operation
+                        || record.review().is_some_and(|review| {
+                            review.reference().preview_id() == entry.operation
+                        })
                         || (HistoryPolicyReference::from(record) == *entry.pressure.policy()
                             && record.applied_at() > entry.observed_at)
                 })

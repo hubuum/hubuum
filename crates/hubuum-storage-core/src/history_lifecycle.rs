@@ -198,6 +198,17 @@ impl HistoryScopeAttribution {
     pub const fn class(self) -> Option<ResourceIdentity> {
         self.class
     }
+    fn scopes(self) -> impl Iterator<Item = HistoryPolicyScope> {
+        self.class
+            .map(|identity| HistoryPolicyScope::Class { identity })
+            .into_iter()
+            .chain([
+                HistoryPolicyScope::Collection {
+                    identity: self.collection,
+                },
+                HistoryPolicyScope::Deployment,
+            ])
+    }
     pub fn matches(self, scope: HistoryPolicyScope) -> bool {
         match scope {
             HistoryPolicyScope::Deployment => true,

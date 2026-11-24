@@ -160,11 +160,10 @@ impl HistoryLifecycleControl {
             ));
         }
         if next
-            .previews
-            .iter()
-            .any(|old| old.reference().preview_id() == preview.reference().preview_id())
+            .operation_evidence(preview.reference().preview_id())
+            .is_some()
         {
-            return Err(invalid("Preview identity is already issued"));
+            return Err(invalid("Preview identity is already in use"));
         }
         next.previews.push(preview);
         self.change(next, fence)
@@ -306,12 +305,18 @@ impl TryFrom<ControlInput> for HistoryLifecycleControl {
             return Err(invalid("Policy preview capacity exceeded"));
         }
         let mut ids = std::collections::BTreeSet::new();
-        if value
-            .previews
-            .iter()
-            .any(|preview| !ids.insert(preview.reference().preview_id()))
-        {
-            return Err(invalid("Duplicate issued preview identity"));
+        for preview in &value.previews {
+            let identity = preview.reference().preview_id();
+            if !ids.insert(identity) {
+                return Err(invalid("Duplicate issued preview identity"));
+            }
+            if let Some(retained) = value.authority.operation_evidence(identity)
+                && !matches!(retained, HistoryLifecycleOperationEvidence::Review { proposal, review } if &proposal == preview.proposal() && review == preview.evidence())
+            {
+                return Err(invalid(
+                    "Issued preview conflicts with retained history evidence",
+                ));
+            }
         }
         let control = Self {
             authority: value.authority,
@@ -840,8 +845,21 @@ pub enum HistoryLifecycleOperationEvidence {
 }
 impl HistoryLifecycleControl {
     pub fn operation_evidence(&self, identity: Uuid) -> Option<HistoryLifecycleOperationEvidence> {
+        self.authority.operation_evidence(identity).or_else(|| {
+            self.previews
+                .iter()
+                .find(|preview| preview.reference().preview_id() == identity)
+                .map(|preview| HistoryLifecycleOperationEvidence::Review {
+                    proposal: preview.proposal().clone(),
+                    review: preview.evidence(),
+                })
+        })
+    }
+}
+
+impl HistoryLifecycleAuthority {
+    fn operation_evidence(&self, identity: Uuid) -> Option<HistoryLifecycleOperationEvidence> {
         if let Some(record) = self
-            .authority
             .policies()
             .records()
             .iter()
@@ -850,7 +868,6 @@ impl HistoryLifecycleControl {
             return Some(HistoryLifecycleOperationEvidence::Policy(record.clone()));
         }
         if let Some(record) = self
-            .authority
             .hold_revisions()
             .iter()
             .find(|record| record.operation() == identity)
@@ -858,7 +875,6 @@ impl HistoryLifecycleControl {
             return Some(HistoryLifecycleOperationEvidence::Hold(record.clone()));
         }
         if let Some(record) = self
-            .authority
             .size_transitions()
             .iter()
             .find(|record| record.operation() == identity)
@@ -867,34 +883,20 @@ impl HistoryLifecycleControl {
                 record.clone(),
             ));
         }
-        if let Some(intent) = self.authority.expiry().intent(identity) {
+        if let Some(intent) = self.expiry().intent(identity) {
             return Some(HistoryLifecycleOperationEvidence::ExpiryIntent(
                 intent.clone(),
             ));
         }
-        if let Some(preview) = self
-            .previews
-            .iter()
-            .find(|preview| preview.reference().preview_id() == identity)
-        {
-            return Some(HistoryLifecycleOperationEvidence::Review {
-                proposal: preview.proposal().clone(),
-                review: preview.evidence(),
-            });
-        }
-        self.authority
-            .policies()
-            .records()
-            .iter()
-            .find_map(|record| {
-                record
-                    .review()
-                    .filter(|review| review.reference().preview_id() == identity)
-                    .map(|review| HistoryLifecycleOperationEvidence::Review {
-                        proposal: record.proposal().clone(),
-                        review: review.clone(),
-                    })
-            })
+        self.policies().records().iter().find_map(|record| {
+            record
+                .review()
+                .filter(|review| review.reference().preview_id() == identity)
+                .map(|review| HistoryLifecycleOperationEvidence::Review {
+                    proposal: record.proposal().clone(),
+                    review: review.clone(),
+                })
+        })
     }
 }
 

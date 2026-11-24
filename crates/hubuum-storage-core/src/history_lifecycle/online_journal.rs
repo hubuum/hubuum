@@ -145,9 +145,7 @@ impl HistoryExpiryJournal {
         let decisions = self
             .0
             .iter()
-            .map(|intent| {
-                1 + usize::from(intent.cancellation().is_some()) + intent.removals().len()
-            })
+            .map(HistoryExpiryIntent::decision_count)
             .sum::<usize>();
         HistoryAuthorityRevision::new(decisions as u64)
             .expect("bounded intent decisions fit authority revision")

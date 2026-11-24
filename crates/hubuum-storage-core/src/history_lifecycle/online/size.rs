@@ -77,12 +77,12 @@ impl HistoryExpirySizeAuthorization {
         }
         Ok(pressure)
     }
-    fn validate_at(
+    fn measurement_at(
         &self,
         authority: &HistoryLifecycleAuthority,
         fence: HistoryReviewFence,
         selected_at: DateTime<Utc>,
-    ) -> Result<(), StorageValidationError> {
+    ) -> Result<HistorySizePressure, StorageValidationError> {
         let original = authority.size_transitions().iter().rev().find(|entry| {
             entry.pressure().policy() == &self.policy
                 && entry.revision() <= fence.authority_revision()
@@ -94,10 +94,22 @@ impl HistoryExpirySizeAuthorization {
                 "Size membership does not retain its selection-time episode",
             ));
         }
-        self.measurement(authority).map(|_| ())
+        self.measurement(authority)
     }
 }
 impl HistoryExpiryMember {
+    pub(in crate::history_lifecycle) fn selection_measurements(
+        &self,
+        authority: &HistoryLifecycleAuthority,
+        manifest: &HistoryExpiryManifest,
+    ) -> Result<Vec<HistorySizePressure>, StorageValidationError> {
+        self.size_authorizations
+            .iter()
+            .map(|authorization| {
+                authorization.measurement_at(authority, manifest.fence(), manifest.selected_at())
+            })
+            .collect()
+    }
     pub(crate) fn size_measurements(
         &self,
         authority: &HistoryLifecycleAuthority,
@@ -108,41 +120,29 @@ impl HistoryExpiryMember {
             .collect()
     }
 }
-impl HistoryLifecycleAuthority {
-    pub(crate) fn validate_size_membership(&self) -> Result<(), StorageValidationError> {
-        let size_sources = self.policies().records().iter().filter(|record| matches!(record.proposal().binding(), HistoryPolicyBinding::Expire { trigger, .. } if trigger.size().is_some())).map(|record| (record.proposal().key(), record.revision())).collect::<BTreeSet<_>>();
-        for intent in self.expiry().intents() {
-            let manifest = intent.manifest();
-            for member in manifest.members() {
-                if member.size_authorizations.is_empty()
-                    && !member
-                        .policies()
-                        .iter()
-                        .any(|source| size_sources.contains(&(source.key(), source.revision())))
+impl HistoryExpiryManifest {
+    pub(in crate::history_lifecycle) fn validate_triggers(
+        &self,
+        authority: &HistoryLifecycleAuthority,
+    ) -> Result<(), StorageValidationError> {
+        for member in self.members() {
+            let measurements = member.selection_measurements(authority, self)?;
+            for source in member.policies() {
+                let policy = authority.policies().exact(source)?;
+                if policy
+                    .inspect(
+                        member.anchor(),
+                        self.selected_at(),
+                        measurements
+                            .iter()
+                            .find(|pressure| pressure.policy() == source),
+                    )?
+                    .blocker()
+                    .is_some()
                 {
-                    continue;
-                }
-                for authorization in &member.size_authorizations {
-                    authorization.validate_at(self, manifest.fence(), manifest.selected_at())?;
-                }
-                let measurements = member.size_measurements(self)?;
-                for source in member.policies() {
-                    let policy = self.policies().exact(source)?;
-                    if policy
-                        .inspect(
-                            member.anchor(),
-                            manifest.selected_at(),
-                            measurements
-                                .iter()
-                                .find(|pressure| pressure.policy() == source),
-                        )?
-                        .blocker()
-                        .is_some()
-                    {
-                        return Err(invalid(
-                            "Retained expiry lost its original trigger authorization",
-                        ));
-                    }
+                    return Err(invalid(
+                        "Retained expiry lost its original trigger authorization",
+                    ));
                 }
             }
         }

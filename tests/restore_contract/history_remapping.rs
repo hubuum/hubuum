@@ -1,7 +1,7 @@
 //! Supported logical restore, protected replay and configured authorization.
 //! Retained authority is a signed logical fixture, not H4 or transport qualification.
 use futures_util::FutureExt;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
@@ -438,11 +438,13 @@ async fn remapped_original_history_requires_configured_authorization(
     let mut fixture_intent = None;
     let mut retired_permit = None;
     let mut repair_snapshot = None;
+    let directory =
+        std::env::temp_dir().join(format!("hubuum-513-read-recovery-{}", Uuid::new_v4()));
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&directory)
+        .unwrap();
     let result = AssertUnwindSafe(async {
-        let directory =
-            std::env::temp_dir().join(format!("hubuum-513-read-recovery-{}", Uuid::new_v4()));
-        std::fs::create_dir(&directory).unwrap();
-        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
         let repository = directory.join("authority_repository");
         std::fs::create_dir(&repository).unwrap();
         std::fs::set_permissions(&repository, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -968,6 +970,14 @@ async fn remapped_original_history_requires_configured_authorization(
             .is_none_or(|error| error.kind() != StorageErrorKind::Unavailable)
     {
         cleanup_errors.push("Retired fixture permit became productive after teardown".into());
+    }
+    if cleanup_errors.is_empty()
+        && let Err(error) = std::fs::remove_dir_all(&directory)
+    {
+        cleanup_errors.push(format!("remove fixture directory {directory:?}: {error}"));
+    }
+    if !cleanup_errors.is_empty() {
+        eprintln!("fixture recovery files: {directory:?}");
     }
     let (stage, _error) = match result {
         Err(primary) => {

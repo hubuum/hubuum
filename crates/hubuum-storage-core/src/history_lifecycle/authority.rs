@@ -1,5 +1,6 @@
 use chrono::Duration;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use super::*;
@@ -251,7 +252,7 @@ impl HistoryLifecycleAuthority {
                 member.attributions().to_vec(),
                 false,
             )?;
-            let measurements = member.size_measurements(self)?;
+            let measurements = member.selection_measurements(self, &manifest)?;
             let decision = self.inspect(&candidate, manifest.selected_at(), &measurements)?;
             let policies = decision
                 .endpoints()
@@ -270,9 +271,7 @@ impl HistoryLifecycleAuthority {
                 ));
             }
         }
-        let next = self.with_expiry(self.expiry.admit(manifest)?)?;
-        next.validate_size_membership()?;
-        Ok(next)
+        self.with_expiry(self.expiry.admit(manifest)?)
     }
     pub(super) fn cancel_expiry(
         &self,
@@ -350,18 +349,25 @@ impl HistoryLifecycleAuthority {
     pub fn hold_revisions(&self) -> &[HistoryHoldRevision] {
         &self.holds
     }
-    fn current_hold_revisions(&self) -> impl Iterator<Item = &HistoryHoldRevision> {
-        let mut seen = std::collections::BTreeSet::new();
-        self.holds
+    fn hold_revisions_at(
+        &self,
+        revision: HistoryAuthorityRevision,
+    ) -> impl Iterator<Item = &HistoryHoldRevision> {
+        let end = self
+            .holds
+            .partition_point(|entry| entry.revision <= revision);
+        let mut seen = BTreeSet::new();
+        self.holds[..end]
             .iter()
             .rev()
             .filter(move |entry| seen.insert(entry.hold.identity()))
     }
     pub fn current_holds(&self) -> impl Iterator<Item = &HistoryRetentionHold> {
-        self.current_hold_revisions().map(|entry| &entry.hold)
+        self.hold_revisions_at(self.revision)
+            .map(|entry| &entry.hold)
     }
     pub fn pending_hold_completions(&self) -> usize {
-        self.current_hold_revisions()
+        self.hold_revisions_at(self.revision)
             .filter(|entry| entry.transition == HistoryHoldTransition::Created)
             .count()
     }
@@ -567,7 +573,17 @@ impl HistoryLifecycleAuthority {
             .records()
             .iter()
             .map(HistoryPolicyRecord::operation)
-            .collect::<std::collections::BTreeSet<_>>();
+            .collect::<BTreeSet<_>>();
+        for review in self
+            .policies
+            .records()
+            .iter()
+            .filter_map(HistoryPolicyRecord::review)
+        {
+            if !operations.insert(review.reference().preview_id()) {
+                return Err(invalid("Duplicate retained history review identity"));
+            }
+        }
         let mut last = 0;
         let mut known = std::collections::BTreeMap::<Uuid, &HistoryHoldRevision>::new();
         for entry in &self.holds {
@@ -624,33 +640,53 @@ impl HistoryLifecycleAuthority {
         {
             return Err(invalid("Duplicate retained history operation identity"));
         }
+        self.validate_size_transitions()?;
         for intent in self.expiry.intents() {
             let manifest = intent.manifest();
-            if manifest.fence().authority_revision() >= self.revision
-                || manifest
+            let fence = manifest.fence().authority_revision();
+            if fence >= self.revision {
+                return Err(invalid("Retained expiry references future authority"));
+            }
+            let held_scopes: BTreeSet<_> = self
+                .hold_revisions_at(fence)
+                .map(|entry| &entry.hold)
+                .filter(|hold| {
+                    hold.family == manifest.key().family() && hold.is_active(manifest.selected_at())
+                })
+                .map(|hold| hold.scope)
+                .collect();
+            if !held_scopes.is_empty()
+                && manifest
                     .members()
                     .iter()
-                    .flat_map(HistoryExpiryMember::policies)
-                    .any(|source| {
-                        !self.policies.records().iter().any(|record| {
-                            record.revision() == source.revision()
-                                && record.proposal().key() == source.key()
-                                && record.applied_at() <= manifest.selected_at()
-                        })
-                    })
+                    .flat_map(HistoryExpiryMember::attributions)
+                    .flat_map(|attribution| attribution.scopes())
+                    .any(|scope| held_scopes.contains(&scope))
             {
                 return Err(invalid(
-                    "Retained expiry references unknown or future policy authority",
+                    "Retained expiry was selected under an active history hold",
                 ));
             }
+            let other_decisions = self.holds.partition_point(|entry| entry.revision <= fence)
+                + self
+                    .size_transitions
+                    .partition_point(|entry| entry.revision() <= fence)
+                + self
+                    .expiry
+                    .intents()
+                    .iter()
+                    .filter(|other| other.manifest().fence().authority_revision() < fence)
+                    .map(HistoryExpiryIntent::decision_count)
+                    .sum::<usize>();
+            self.policies
+                .validate_selection(manifest, other_decisions)?;
+            manifest.validate_triggers(self)?;
         }
         if self.holds.len() + self.pending_hold_completions() > Self::MAX_HOLD_REVISIONS {
             return Err(invalid(
                 "History authority must reserve terminal hold revisions",
             ));
         }
-        self.validate_size_transitions()?;
-        self.validate_size_membership()?;
         Ok(())
     }
 }

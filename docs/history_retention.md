@@ -422,9 +422,11 @@ into the immutable catalog, re-evaluates eligibility against captured authority,
 membership. Retained intent modeling preserves exclusions on cancellation and
 completion, retains first removal clocks/checkpoint identities, and merges
 compatible recovery descendants without losing local outcomes. Recovery checks
-each retained selection against the combined size-pressure history before saving
-the checkpoint. If either branch ended pressure before the other branch selected
-a version under that pressure, recovery keeps the database quarantined.
+each retained selection against the policies, holds and size pressure at its
+original authority revision and selection time. A matching active hold, a
+superseding governing policy, or a pressure episode that had already ended
+keeps the database quarantined. Later policy and hold changes preserve valid
+earlier selections.
 The journal permits
 at most 256 retained intents within 4 MiB and reserves 512 encoded bytes per pending removal plus 256 bytes per unrecorded
 cancellation. These are bounded source contracts, not measured resource
