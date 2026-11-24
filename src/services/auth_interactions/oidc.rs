@@ -434,21 +434,29 @@ pub(crate) async fn renew(
     // disconnects, including while storage is acknowledging the claim.
     let storage = storage.clone();
     let provider = provider.clone();
-    MaintenanceActivityGuard::begin()
-        .spawn(async move {
-            let attempt = || claim_and_renew(&storage, principal, revision, &provider);
-            if matches!(
-                provider.browser_definition(),
-                Some(StorageBrowserProviderDefinition::Oauth(_))
-            ) {
-                return renew_oauth_grants(Instant::now() + RENEWAL_TIMEOUT, attempt).await;
-            }
-            Ok(matches!(attempt().await?, RenewalAttempt::Refreshed))
-        })
-        .await
-        .map_err(|_| {
-            ApiError::ServiceUnavailable("External identity refresh was interrupted".into())
-        })?
+    let oauth_deadline = matches!(
+        provider.browser_definition(),
+        Some(StorageBrowserProviderDefinition::Oauth(_))
+    )
+    .then(|| Instant::now() + RENEWAL_TIMEOUT);
+    let worker = MaintenanceActivityGuard::begin().spawn(async move {
+        let attempt = || claim_and_renew(&storage, principal, revision, &provider, oauth_deadline);
+        if let Some(deadline) = oauth_deadline {
+            return renew_oauth_grants(deadline, attempt).await;
+        }
+        Ok(matches!(attempt().await?, RenewalAttempt::Refreshed))
+    });
+    // The caller can time out while the worker is acknowledging a known
+    // rejection. The worker keeps its drain guard through that final write.
+    let joined = match oauth_deadline {
+        Some(deadline) => timeout_at(deadline, worker)
+            .await
+            .map_err(|_| oauth_budget_exhausted())?,
+        None => worker.await,
+    };
+    joined.map_err(|_| {
+        ApiError::ServiceUnavailable("External identity refresh was interrupted".into())
+    })?
 }
 
 const RENEWAL_TIMEOUT: Duration = Duration::from_secs(25);
@@ -461,28 +469,23 @@ async fn renew_oauth_grants<F>(
 where
     F: Future<Output = Result<RenewalAttempt, ApiError>>,
 {
-    let exhausted = || {
-        ApiError::ServiceUnavailable(
-            "OAuth credential checks exceeded the request budget; retry".into(),
-        )
-    };
-    // OAuth only reads bearer tokens. A cancelled claim keeps the encrypted bearer
-    // and its lease expires. A rotating OIDC exchange must run through finalization.
-    timeout_at(deadline, async {
-        for _ in 0..MAX_OAUTH_GRANTS_PER_REQUEST {
-            if Instant::now() >= deadline {
-                break;
-            }
-            match attempt().await? {
-                RenewalAttempt::Refreshed => return Ok(true),
-                RenewalAttempt::Unavailable => return Ok(false),
-                RenewalAttempt::ExpiredCredential => continue,
-            }
+    for _ in 0..MAX_OAUTH_GRANTS_PER_REQUEST {
+        if Instant::now() >= deadline {
+            break;
         }
-        Err(exhausted())
-    })
-    .await
-    .map_err(|_| exhausted())?
+        match attempt().await? {
+            RenewalAttempt::Refreshed => return Ok(true),
+            RenewalAttempt::Unavailable => return Ok(false),
+            RenewalAttempt::ExpiredCredential => continue,
+        }
+    }
+    Err(oauth_budget_exhausted())
+}
+
+fn oauth_budget_exhausted() -> ApiError {
+    ApiError::ServiceUnavailable(
+        "OAuth credential checks exceeded the request budget; retry".into(),
+    )
 }
 
 async fn claim_and_renew(
@@ -490,12 +493,19 @@ async fn claim_and_renew(
     principal: PrincipalId,
     revision: ResourceRevision,
     provider: &StorageAuthenticationProvider,
+    oauth_deadline: Option<Instant>,
 ) -> Result<RenewalAttempt, ApiError> {
     use hubuum_storage_core::StorageUpstreamClaimOutcome;
-    let claim = match storage
-        .claim_upstream_credential(revision, principal)
-        .await?
-    {
+    let acquire = storage.claim_upstream_credential(revision, principal);
+    // A cancelled OAuth claim leaves its read-only bearer recoverable when the lease
+    // expires. Always await OIDC ownership and any subsequent finalization.
+    let outcome = match oauth_deadline {
+        Some(deadline) => timeout_at(deadline, acquire)
+            .await
+            .map_err(|_| oauth_budget_exhausted())??,
+        None => acquire.await?,
+    };
+    let claim = match outcome {
         StorageUpstreamClaimOutcome::Unavailable
             if matches!(
                 provider.browser_definition(),
@@ -516,7 +526,13 @@ async fn claim_and_renew(
         }
         StorageUpstreamClaimOutcome::Claim(claim) => *claim,
     };
-    attempt_renewal(storage, claim, provider).await
+    attempt_renewal(
+        storage,
+        claim,
+        provider,
+        oauth_deadline.unwrap_or_else(|| Instant::now() + RENEWAL_TIMEOUT),
+    )
+    .await
 }
 
 enum RenewalAttempt {
@@ -587,6 +603,7 @@ async fn attempt_renewal(
     storage: &crate::storage::StorageHandle,
     claim: hubuum_storage_core::StorageUpstreamClaim,
     provider: &StorageAuthenticationProvider,
+    deadline: Instant,
 ) -> Result<RenewalAttempt, ApiError> {
     use hubuum_storage_core::StorageUpstreamRenewal;
     // Bound the complete attempt, including secret resolution, to the claim lease.
@@ -594,7 +611,7 @@ async fn attempt_renewal(
     let dispatch = submitted.clone();
     let session = claim.session().session();
     let mut returned_grant = None;
-    let outcome = tokio::time::timeout(RENEWAL_TIMEOUT, async {
+    let outcome = timeout_at(deadline, async {
         let original = claim.session();
         let purpose = format!("upstream:{}", original.subject());
         let scope =
@@ -751,25 +768,19 @@ mod renewal_tests {
     }
 
     #[tokio::test]
-    async fn oauth_scan_shares_a_deadline_across_claims() {
+    async fn oauth_scan_finishes_an_admitted_result_and_skips_the_next_claim_after_deadline() {
         let mut calls = 0;
-        let result = super::renew_oauth_grants(
-            super::Instant::now() + super::Duration::from_secs(1),
-            || {
-                calls += 1;
-                let first = calls == 1;
-                async move {
-                    if first {
-                        Ok(super::RenewalAttempt::ExpiredCredential)
-                    } else {
-                        std::future::pending().await
-                    }
-                }
-            },
-        )
+        let deadline = super::Instant::now() + super::Duration::from_secs(1);
+        let result = super::renew_oauth_grants(deadline, || {
+            calls += 1;
+            async move {
+                tokio::time::sleep_until(deadline).await;
+                Ok(super::RenewalAttempt::ExpiredCredential)
+            }
+        })
         .await;
         assert!(matches!(result, Err(ApiError::ServiceUnavailable(_))));
-        assert_eq!(calls, 2);
+        assert_eq!(calls, 1);
     }
 
     #[rstest::rstest]

@@ -127,8 +127,10 @@ that bearer as soon as the response headers arrive, even if the body is incomple
 A due eligibility check tries another retained
 grant for the same principal when available. One request checks at most eight
 grants with a shared 25-second deadline. If the budget runs out, Hubuum returns
-HTTP 503 and a later request can continue checking eligible grants. Once all access tokens have
-expired, the user must sign in again. Existing Hubuum sessions and personal
+HTTP 503 and a later request can continue checking eligible grants. The worker
+finishes recording any provider response it already received before releasing
+its restore guard. Once all access tokens have expired, the user must sign in
+again. Existing Hubuum sessions and personal
 access tokens remain subject to the same identity freshness check. The adapter
 does not retain a returned refresh token.
 Do not request `offline_access` expecting automatic renewal.
