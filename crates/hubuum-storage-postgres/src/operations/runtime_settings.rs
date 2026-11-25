@@ -124,6 +124,30 @@ pub async fn load_runtime_settings(
         .await
 }
 
+pub(super) async fn load_runtime_settings_group(
+    runtime: &PostgresRuntime,
+    group: StorageRuntimeSettingsGroup,
+) -> Result<StorageRuntimeSettingsRecord, PostgresStorageError> {
+    use crate::schema::runtime_settings::dsl as settings;
+    runtime
+        .with_read_connection(async move |connection| {
+            settings::runtime_settings
+                .find(group.as_str())
+                .select(RuntimeSettingsRow::as_select())
+                .first::<RuntimeSettingsRow>(connection)
+                .await
+                .optional()?
+                .ok_or_else(|| {
+                    PostgresStorageError::invalid_persisted_value(
+                        "runtime settings snapshot",
+                        group,
+                    )
+                })?
+                .record()
+        })
+        .await
+}
+
 pub async fn update_runtime_settings(
     runtime: &PostgresRuntime,
     request: StorageRuntimeSettingsUpdate,

@@ -15,8 +15,12 @@ mod backend;
 mod backup_snapshot;
 pub mod capabilities;
 mod catalog;
+mod query_observation_settings;
 mod query_usage;
 mod query_usage_analysis;
+pub use query_observation_settings::{
+    StorageQueryObservationCeilings, StorageQueryObservationPolicy, StorageQueryObservationSettings,
+};
 pub use query_usage::*;
 pub use query_usage_analysis::*;
 mod collection_authorization;

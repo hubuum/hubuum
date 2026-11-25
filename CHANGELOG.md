@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- PostgreSQL computed-field rebuild and read-repair workers now read only the
+  task settings row when selecting the size of each batch.
+
 ### Security
 
 - Remove the unused Actix Web cookie feature and its dependency on
