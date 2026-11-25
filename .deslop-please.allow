@@ -17,13 +17,6 @@ field-leak hubuum_query::QueryOptions::include_total
 field-leak hubuum_query::QueryOptions::sort
 field-leak hubuum_query::QueryOptions::structured_filter
 
-# Resolved targets expose borrowed domain views and forward the original resolved storage value across the application boundary.
-field-leak hubuum::models::class::ResolvedClassTarget::class
-field-leak hubuum::models::class::ResolvedClassTarget::storage
-field-leak hubuum::models::object::ResolvedObjectTarget::class
-field-leak hubuum::models::object::ResolvedObjectTarget::object
-field-leak hubuum::models::object::ResolvedObjectTarget::storage
-
 # Relation services pass the validated storage value by reference to create or delete the relation.
 field-leak hubuum::models::relation::PreparedClassRelation::storage
 field-leak hubuum::models::relation::PreparedObjectRelation::storage
@@ -90,7 +83,7 @@ field-leak hubuum_query::ParsedQueryParam::field
 field-leak hubuum_query::ParsedQueryParam::operator
 
 # Session and provenance builders consume the authenticated login subject through the SDK accessor.
-field-leak hubuum_storage_core::identity_tokens::StorageLogin::subject
+field-leak hubuum_storage_core::identity_users::StorageLogin::subject
 
 # Issuance transfers the approval claim once through take_credential_claim. Both storage implementations must consume that proof.
 field-leak hubuum_storage_core::identity_tokens::StorageTokenCreate::credential_claim
@@ -337,9 +330,6 @@ shallow-module hubuum_event_sinks_common
 # Independent adapters construct typed sink, subscription, permission and audit requests through the storage SDK contract.
 shallow-module hubuum_storage_core::event_administration
 
-# The task-control methods are the permitted transitions on private state, including deadline admission, stop requests and acknowledgement.
-shallow-module hubuum_storage_core::task_control
-
 # Backends implement the revision, staged work and impact contracts, using the public constructors to validate stored and requested state.
 shallow-module hubuum_storage_core::schema_evolution
 
@@ -420,9 +410,6 @@ field-leak hubuum_storage_memory::MemoryState::principal_ids
 field-leak hubuum_storage_memory::MemoryState::authorization_grant_ids
 field-leak hubuum_storage_memory::MemoryState::query_usage_ids
 
-# Credential approval creation allocates from a checked sequence. Restoring application data preserves the sequence alongside the live approval records.
-field-leak hubuum_storage_memory::MemoryState::credential_approval_ids
-
 # The retention worker reserves the selected event IDs by batch and removes that same batch when committing its deletion.
 field-leak hubuum_storage_memory::MemoryState::event_retention_batches
 
@@ -479,3 +466,123 @@ tangle hubuum_storage_core::schema_evolution::SchemaWorkSnapshot,hubuum_storage_
 
 # A memory transaction runs the existing adapter capabilities on its private state copy. The transaction owner publishes the copy only after its callback succeeds.
 tangle hubuum_storage_memory::MemoryStorage,hubuum_storage_memory::execution::MemoryTransaction
+
+# The domain crate owns independently validated identifiers, budgets, schemas and value types. Their public root exports form the common vocabulary used by both adapters.
+wide-directory crates/hubuum-domain/src/
+
+# Contract implementations live next to the aggregate or operation they describe. External adapters reach them through the explicit capabilities facade and the stable root exports.
+wide-directory crates/hubuum-storage-core/src/
+
+# Each capability operates on the same in-memory state under one writer lock. Keeping distinct identity, workflow, history and event implementations discoverable mirrors the selectable backend contract.
+wide-directory crates/hubuum-storage-memory/src/
+
+# Pool configuration, TLS, generated Diesel schema, migrations, queries and transaction primitives each have separate owners inside the PostgreSQL crate.
+wide-directory crates/hubuum-storage-postgres/src/
+
+# PostgreSQL adapters expose operation families under their documented module names. Class, event, task and identity helpers already have private submodules for locking, row conversion and query construction.
+wide-directory crates/hubuum-storage-postgres/src/operations/
+
+# The internal application crate composes the API, models, traits, services, storage, auth and worker entry points at the repository-prescribed paths. Grouping those independent boundaries under another facade would add a layer to their imports.
+wide-directory src/
+
+# AppConfig is the application composition interface. Its typed settings projections provide independently configured workers with only the validated limits and policy each one needs.
+shallow-module hubuum::config
+
+# Startup must apply the configured warning or strict failure policy to the privilege report after opening the selected PostgreSQL backend.
+field-leak hubuum::config::AppConfig::database_privilege_mode
+
+# Inventory sorting uses the discovered path as its stable key. The builder also needs that same structured path to emit the public field entry.
+field-leak hubuum::models::class_fields::DiscoveredField::path
+
+# The versioned update handler must require fresh credential approval precisely when the submitted patch contains a password change.
+field-leak hubuum::models::user::UpdateUser::password
+
+# Delivery selection, retries and administrative sink removal share a per-sink deadline. Snapshot restore clears these process-local scheduling deadlines.
+field-leak hubuum_storage_memory::MemoryState::event_sink_schedule
+
+# A fenced import records each item ordinal under the same state lock as its mutations so replay can distinguish applied items from new work.
+field-leak hubuum_storage_memory::MemoryState::import_execution_receipts
+
+# Identity deactivation and credential rotation revoke sessions in the same locked state as the identity change.
+field-leak hubuum_storage_memory::MemoryState::sessions
+
+# Login issuance, credential changes and revocation need the same token records under a single write lock. Token validation reads the resulting state.
+field-leak hubuum_storage_memory::MemoryState::tokens
+
+# A group exposes its principals and a membership resolves both endpoints. Both navigation directions return their native domain types and delegate persistence to the identity capabilities.
+module-cycle hubuum::models::group,hubuum::models::principal,hubuum::models::principal_group
+
+# The public request delegates token issuance to the identity service, which accepts that validated request as its input.
+tangle hubuum::models::token::PrincipalTokenCreateRequest,hubuum::services::identity::create_token
+
+# The token model delegates bearer authentication to the authentication service. The service accepts the opaque token value without extracting it in the caller.
+tangle hubuum::models::token::Token,hubuum::services::authentication::authenticate_bearer_token
+
+# Login construction checks that the active human and authenticated subject identify the same user. The subsequent fenced login checks the stored row is still active and belongs to that user.
+field-leak hubuum_storage_core::identity_users::StorageUser::id
+field-leak hubuum_storage_core::identity_users::StorageUser::anonymized_at
+
+# Both import and interactive writes allocate computed definition IDs. Restore observes the greatest retained definition ID before either writer runs.
+field-leak hubuum_storage_memory::MemoryState::computed_field_ids
+
+# Manual replay and event fanout allocate delivery IDs. Fanout reserves the whole batch before publishing, and restore observes the retained delivery high-water mark.
+field-leak hubuum_storage_memory::MemoryState::delivery_ids
+
+# Resource writes preflight audit and history capacity while holding the writer lock. Snapshot replay observes retained high-water marks before another writer can publish.
+field-leak hubuum_storage_memory::MemoryState::event_sequences
+field-leak hubuum_storage_memory::MemoryState::history_ids
+
+# Administrative creation and import allocate sink and subscription IDs. Snapshot replay observes the greatest surviving ID for each independent sequence.
+field-leak hubuum_storage_memory::MemoryState::event_sink_ids
+field-leak hubuum_storage_memory::MemoryState::event_subscription_ids
+
+# Restore job creation and snapshot restoration share the checked ID sequence with the durable job receipts.
+field-leak hubuum_storage_memory::MemoryState::restore_job_ids
+
+# Interactive task creation, schema validation and computed rebuilds share the task ID space. History replay observes previous task IDs before the queue can accept new work.
+field-leak hubuum_storage_memory::MemoryState::task_ids
+
+# The credential capability owns the indexed approval records. Restore invalidates those records as a unit and reads consumed approval metadata for its audit event.
+field-leak hubuum_storage_memory::MemoryState::credential_approvals
+
+# Token metadata lookup delegates to the identity service. Both single and batch lookups return the same typed metadata with the stored expiry policy.
+tangle hubuum::models::token::PrincipalTokenMetadata,hubuum::services::identity::get_token_metadata,hubuum::services::identity::load_token_metadata_by_ids
+
+# The application composes backend-neutral storage, authorization, HTTP errors and long-running workflows. Workers invoke backup and restore operations, which call back into the same cancellation checkpoint. The HTTP error path records bounded metrics and the admin API reports the active configuration.
+module-cycle hubuum::administration,hubuum::auth,hubuum::backups,hubuum::config,hubuum::errors,hubuum::events,hubuum::extractors,hubuum::logger,hubuum::middlewares,hubuum::models,hubuum::observability,hubuum::operational_contracts,hubuum::pagination,hubuum::permissions,hubuum::restores,hubuum::secrets,hubuum::services,hubuum::storage,hubuum::tasks,hubuum::traits,hubuum::utilities
+
+# Collections and objects expose typed navigation through the model traits. Expanded and computed responses contain the same domain models, and export and import resolve those resources through the shared traits.
+module-cycle hubuum::models::collection,hubuum::models::computed_field,hubuum::models::export_template,hubuum::models::import,hubuum::models::object,hubuum::models::output,hubuum::models::relation,hubuum::models::task,hubuum::models::traits
+
+# Class and object writes update schema evidence, query usage and computed state inside the original PostgreSQL transaction. Task cancellation and failure update the locked schema work or rebuild record, and schema batch execution checks the same fenced task.
+module-cycle hubuum_storage_postgres::operations::class,hubuum_storage_postgres::operations::computed_fields,hubuum_storage_postgres::operations::object,hubuum_storage_postgres::operations::query_usage,hubuum_storage_postgres::operations::schema_evolution,hubuum_storage_postgres::operations::task_control,hubuum_storage_postgres::operations::task_execution
+
+# The task-local configuration, registered bounds and administrator report must agree on effective values. Secret resolution and the configured storage observers report through the shared registry. Its allowed label values come from the same operational contract exposed by the application.
+tangle hubuum::config::AppConfig,hubuum::config::environment::CONFIGURATION_BOUNDS,hubuum::config::environment::ConfigurationBound,hubuum::config::environment::validate_configuration_bounds,hubuum::config::get_config,hubuum::config::query_observations::Environment,hubuum::config::query_observations::QueryObservationOptions,hubuum::config::running::RunningConfig,hubuum::config::runtime::ACTIVE_CONFIG,hubuum::config::runtime::resolve,hubuum::config::runtime::scoped,hubuum::config::schema_validation::Environment,hubuum::config::schema_validation::SchemaValidationOptions,hubuum::config::token_hash::TOKEN_HASH_KEY_RING,hubuum::config::token_hash::TokenHashKeyRing,hubuum::config::token_hash::token_hash_key_ring,hubuum::errors::ApiError,hubuum::models::export::ExportScopeKind,hubuum::models::remote_target::RemoteHttpMethod,hubuum::models::runtime_settings::RuntimeSettingsDeployment,hubuum::models::runtime_settings::RuntimeSettingsReport,hubuum::observability::metrics::CheckedCounter,hubuum::observability::metrics::CheckedF64Gauge,hubuum::observability::metrics::CheckedHistogram,hubuum::observability::metrics::CheckedI64Gauge,hubuum::observability::metrics::CheckedMetric,hubuum::observability::metrics::CheckedU64Gauge,hubuum::observability::metrics::CheckedUpDownCounter,hubuum::observability::metrics::METRICS,hubuum::observability::metrics::Metrics,hubuum::observability::metrics::computed_field::computed_evaluation_summary,hubuum::observability::metrics::computed_field::computed_live_fallback,hubuum::observability::metrics::computed_field::computed_read_repair,hubuum::observability::metrics::computed_field::computed_rebuild_batch,hubuum::observability::metrics::computed_field::computed_rebuild_finished,hubuum::observability::metrics::current,hubuum::observability::metrics::db::db_connection_acquire_failed,hubuum::observability::metrics::db::db_connection_acquired,hubuum::observability::metrics::db::db_operation_finished,hubuum::observability::metrics::http::api_error,hubuum::observability::metrics::secret::secret_resolution_finished,hubuum::observability::metrics::secret::secret_source_identity,hubuum::observability::metrics::security::revision_condition,hubuum::observability::metrics::storage::storage_operation_finished,hubuum::observability::metrics::task::task_completed,hubuum::observability::tracing::TracingSettings,hubuum::operational_contracts::metric_label_contract,hubuum::operational_contracts::metric_label_value_is_allowed,hubuum::pagination::PageLimits,hubuum::secrets::APPLICATION_SECRETS,hubuum::secrets::ApplicationSecrets,hubuum::secrets::ConsumerSecrets,hubuum::secrets::configured,hubuum::secrets::consumer_resolver,hubuum::secrets::resolve_database_url,hubuum::secrets::resolve_token_hash_key,hubuum::secrets::resolve_token_hash_key_group,hubuum::secrets::token_hash_secrets_are_text,hubuum::storage::context::StorageHandle,hubuum::storage::factory::ApplicationPostgresObserver,hubuum::storage::factory::PostgresAdapterFactory,hubuum::storage::factory::compose_postgres,hubuum::storage::observed::ApplicationStorageObserver
+
+# Class updates and expanded reads project the same class record. The resolved target preserves the authoritative storage proof and supplies the class to the authorization boundary. OpenAPI derives its example from the update type.
+tangle hubuum::models::class::HubuumClass,hubuum::models::class::ResolvedClassTarget,hubuum::models::class::UpdateHubuumClass,hubuum::models::class::update_hubuum_class_example,hubuum::models::output::HubuumClassExpanded
+
+# The collection exposes its update operation, and that operation consumes the versioned patch. The typed OpenAPI example must continue to compile against the same patch type.
+tangle hubuum::models::collection::<StorageCollectionUpdate as From>::from,hubuum::models::collection::Collection,hubuum::models::collection::UpdateCollection,hubuum::models::collection::update_collection_example
+
+# A group returns its public and point-in-time representations plus typed membership rows. Membership navigation returns the referenced group. These methods share the same revisioned identity.
+tangle hubuum::models::group::Group,hubuum::models::group::GroupPointResponse,hubuum::models::group::GroupResponse,hubuum::models::principal_group::PrincipalGroup
+
+# Object patching returns the current object projection. Resolved-object authorization retains the storage proof, and the focused in-memory contract fixture constructs records from checked model fields.
+tangle hubuum::models::object::HubuumObject,hubuum::models::object::ResolvedObjectTarget,hubuum::models::object::UpdateHubuumObject,hubuum::models::object::update_hubuum_object_example,hubuum::services::storage_boundary::object_to_storage
+
+# Class-relation navigation delegates to the resolution trait and returns the resolved edge with both authorized classes. The focused contract fixture reconstructs a storage relation to exercise the same proof checks.
+tangle hubuum::models::relation::HubuumClassRelation,hubuum::models::relation::ResolvedClassRelationTarget,hubuum::models::traits::class_relation::resolve_class_relation,hubuum::services::storage_boundary::class_relation_to_storage
+
+# Relation creation prepares a validated command and both endpoint classes. The model method and its resolving trait return that proof to the caller. The versioned schema example uses the request type.
+tangle hubuum::models::relation::NewHubuumClassRelation,hubuum::models::relation::PreparedClassRelation,hubuum::models::relation::new_hubuum_class_relation_example,hubuum::models::traits::class_relation::prepare_class_relation
+
+# The service-account model delegates its revisioned point read to the identity service. The service returns the typed response from one storage snapshot.
+tangle hubuum::models::service_account::ServiceAccount,hubuum::models::service_account::ServiceAccountPointResponse,hubuum::services::identity::get_service_account_point
+
+# The user model delegates its revisioned point read to the identity service, which returns the public point projection from one snapshot without exposing credentials.
+tangle hubuum::models::user::User,hubuum::models::user::UserPointResponse,hubuum::services::identity::get_user_point
+
+# An explicit relation command and an endpoint pair must resolve to the same authorized relation proof. The model methods delegate preparation and lookup to that contract. The focused adapter exercises membership validation and storage reconstruction for both routes.
+tangle hubuum::models::relation::HubuumObjectRelation,hubuum::models::relation::NewHubuumObjectRelation,hubuum::models::relation::ObjectRelationCreateSelector,hubuum::models::relation::ObjectRelationCreateSelectorKind,hubuum::models::relation::PreparedObjectRelation,hubuum::models::relation::ResolvedObjectRelationTarget,hubuum::models::relation::new_hubuum_object_relation_example,hubuum::models::relation::validate_object_relation_membership,hubuum::models::traits::class_relation::prepare_object_relation,hubuum::models::traits::class_relation::resolve_object_relation,hubuum::services::storage_boundary::object_relation_to_storage
