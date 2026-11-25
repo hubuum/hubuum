@@ -534,7 +534,7 @@ impl StorageBackupReplay {
                         }
                         row.canonicalize_history(section);
                         if section == History::TerminalTasks {
-                            crate::task_control::validate_control_snapshot(&row)
+                            super::task_control::validate_control_snapshot(&row)
                                 .map_err(|e| e.into_request_error())?;
                             if let Some(value) = row.get("discovery_metadata") {
                                 let kind = row
