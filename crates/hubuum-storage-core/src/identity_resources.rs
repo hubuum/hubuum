@@ -1,16 +1,11 @@
 use std::fmt;
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId, PrincipalKind, ResourceRevision};
-use hubuum_events_core::EventContext;
+use hubuum_domain::{IdentityScopeId, PrincipalId, PrincipalKind, ResourceRevision};
 use serde_json::Value;
 
 use crate::validation::validate_sync_timestamps;
-use crate::{
-    StorageError, StorageGroupListQuery, StorageIdentityGroup, StoragePage, StoragePrincipalGroup,
-    StorageRecordMetadata, StorageValidationError,
-};
+use crate::{StoragePrincipalGroup, StorageRecordMetadata, StorageValidationError};
 
 /// Portable principal record returned by identity-resource operations.
 #[derive(Clone, PartialEq)]
@@ -325,64 +320,6 @@ impl StorageGroupMember {
     pub fn into_parts(self) -> (StoragePrincipalGroup, StoragePrincipal) {
         (self.membership, self.principal)
     }
-}
-
-/// Complete group lifecycle behavior required from a backend.
-#[async_trait]
-pub trait GroupStorage: Send + Sync {
-    /// List groups with stable filtering, cursor pagination, and an optional
-    /// exact total.
-    async fn list_groups(
-        &self,
-        query: StorageGroupListQuery,
-    ) -> Result<StoragePage<StorageIdentityGroup>, StorageError>;
-
-    async fn get_group(&self, group_id: GroupId) -> Result<StorageIdentityGroup, StorageError>;
-
-    async fn resolve_group_identity_scope_name(
-        &self,
-        group_id: GroupId,
-    ) -> Result<String, StorageError>;
-
-    async fn create_group(
-        &self,
-        command: StorageGroupCreate,
-        context: &EventContext,
-    ) -> Result<crate::StorageMutationOutcome<StorageIdentityGroup>, StorageError>;
-
-    async fn update_group(
-        &self,
-        group_id: GroupId,
-        update: StorageGroupUpdate,
-        context: &EventContext,
-    ) -> Result<crate::StorageMutationOutcome<StorageIdentityGroup>, StorageError>;
-
-    async fn delete_group(
-        &self,
-        group_id: GroupId,
-        context: &EventContext,
-    ) -> Result<crate::StorageMutationOutcome<usize>, StorageError>;
-}
-
-/// Principal point and settings behavior required from every backend.
-#[async_trait]
-pub trait PrincipalStorage: Send + Sync {
-    async fn get_principal(
-        &self,
-        principal_id: PrincipalId,
-    ) -> Result<StoragePrincipal, StorageError>;
-
-    async fn get_principal_settings(
-        &self,
-        principal_id: PrincipalId,
-    ) -> Result<StoragePrincipalSettings, StorageError>;
-
-    async fn update_principal_settings(
-        &self,
-        principal_id: PrincipalId,
-        mutation: StoragePrincipalSettingsMutation,
-        context: &EventContext,
-    ) -> Result<crate::StorageMutationOutcome<StoragePrincipalSettings>, StorageError>;
 }
 
 #[cfg(test)]
