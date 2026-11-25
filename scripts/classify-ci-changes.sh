@@ -68,7 +68,7 @@ for path in "$@"; do
   done <<< "$declared_policy_documents"
 
   case "$path" in
-    src/api/openapi.rs | src/api/response.rs | \
+    src/api/openapi.rs | src/api/openapi/* | src/api/response.rs | \
       src/models/class_fields.rs | src/models/class_fields/* | src/api/v1/handlers/classes/field_discovery.rs | \
       src/api/v1/handlers/auth.rs | src/models/auth_session.rs | src/models/credential_activity.rs | \
       src/models/history/computed.rs | src/api/v1/handlers/classes/history_computed.rs | src/api/v1/handlers/classes/history_population.rs | src/api/v1/handlers/classes/history_relations.rs | \
