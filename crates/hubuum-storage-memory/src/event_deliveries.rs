@@ -90,35 +90,32 @@ impl EventDeliveries {
         before - self.entries.len()
     }
 
-    pub(super) fn reschedule_deferred(
-        &mut self,
+    pub(super) fn rescheduled_deferred(
+        &self,
         subscriptions: &HashSet<EventSubscriptionId>,
         eligible: DateTime<Utc>,
         reason: Option<&str>,
-    ) -> Result<(), StorageError> {
-        for delivery in self
-            .entries
-            .values_mut()
-            .map(|entry| &mut entry.delivery)
+    ) -> Result<Vec<StorageEventDelivery>, StorageError> {
+        self.values()
             .filter(|delivery| {
                 subscriptions.contains(&delivery.subscription_id())
                     && delivery.status() == EventDeliveryStatus::Pending
                     && delivery.deferred_reason().is_some()
             })
-        {
-            *delivery = with_deferred_reason(
-                &rebuild_event_delivery(
-                    delivery,
-                    delivery.status(),
-                    delivery.attempts(),
-                    eligible,
-                    delivery.last_error().map(str::to_owned),
-                    delivery.locked_until(),
-                )?,
-                reason.map(str::to_owned),
-            )?;
-        }
-        Ok(())
+            .map(|delivery| {
+                with_deferred_reason(
+                    &rebuild_event_delivery(
+                        delivery,
+                        delivery.status(),
+                        delivery.attempts(),
+                        eligible,
+                        delivery.last_error().map(str::to_owned),
+                        delivery.locked_until(),
+                    )?,
+                    reason.map(str::to_owned),
+                )
+            })
+            .collect()
     }
 }
 
