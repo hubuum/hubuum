@@ -1539,23 +1539,20 @@ where
         })?;
 
     let identity_scope = input.group_key.resolve_identity_scope_name();
-    let group_exists = storage_handle(pool)
-        .has_import_group(identity_scope, &input.group_key.groupname)
-        .await
-        .map_err(|err| PlanningFailure {
-            kind: FailureKind::Runtime,
-            item: planned_result(
-                "collection_permission",
-                "lookup",
-                input.ref_.clone(),
-                Some(input.group_key.groupname.clone()),
-            ),
-            message: sanitize_error_for_storage(&err.into()),
-        })?
-        || state.planned_group_keys.contains(&(
-            identity_scope.to_string(),
-            input.group_key.groupname.clone(),
-        ));
+    let group_exists = state.has_planned_group(&input.group_key)
+        || storage_handle(pool)
+            .has_import_group(identity_scope, &input.group_key.groupname)
+            .await
+            .map_err(|err| PlanningFailure {
+                kind: FailureKind::Runtime,
+                item: planned_result(
+                    "collection_permission",
+                    "lookup",
+                    input.ref_.clone(),
+                    Some(input.group_key.groupname.clone()),
+                ),
+                message: sanitize_error_for_storage(&err.into()),
+            })?;
     if !group_exists {
         return Err(PlanningFailure {
             kind: FailureKind::Resolution,

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::import_authorization::ImportAuthorization;
-use crate::models::{TaskResultCounts, TaskStatus};
+use crate::models::{GroupKey, TaskResultCounts, TaskStatus};
 use crate::storage::StorageImportResult;
 
 pub(super) use crate::storage::ApplicationImportOperation as PlannedExecution;
@@ -132,7 +132,7 @@ pub(super) struct PlanningState {
     last_virtual_id: i32,
     pub(super) authorization: ImportAuthorization,
     planned_collection_keys: HashSet<(i32, String)>,
-    pub(super) planned_group_keys: HashSet<(String, String)>,
+    planned_groups: HashMap<String, HashSet<String>>,
     collections_by_ref: HashMap<String, CollectionResolution>,
     collections_by_name: HashMap<String, Vec<CollectionResolution>>,
     collections_by_parent_name: HashMap<(Option<i32>, String), CollectionResolution>,
@@ -149,6 +149,19 @@ impl PlanningState {
             authorization,
             ..Self::default()
         }
+    }
+
+    pub(super) fn record_planned_group(&mut self, scope: &str, name: &str) {
+        self.planned_groups
+            .entry(scope.to_owned())
+            .or_default()
+            .insert(name.to_owned());
+    }
+
+    pub(super) fn has_planned_group(&self, key: &GroupKey) -> bool {
+        self.planned_groups
+            .get(key.resolve_identity_scope_name())
+            .is_some_and(|groups| groups.contains(&key.groupname))
     }
 
     pub(super) fn reserve_collection_name(&mut self, parent_id: i32, name: &str) -> bool {
