@@ -609,13 +609,17 @@ impl AuthProviderRegistry {
         Ok(registry)
     }
 
+    fn all_providers_available(&self) -> bool {
+        self.unavailable.is_empty()
+    }
+
     async fn preflight(&self) -> Result<(), ApiError> {
         if self.unavailable.values().any(|unavailable| *unavailable) {
             return Err(ApiError::ServiceUnavailable(
                 "A runtime authentication secret is unavailable".to_string(),
             ));
         }
-        if !self.unavailable.is_empty() {
+        if !self.all_providers_available() {
             return Err(ApiError::BadRequest(
                 "One or more authentication providers are invalid".to_string(),
             ));
@@ -1031,7 +1035,7 @@ pub(crate) async fn apply_runtime_authentication_settings(
             return Err(error);
         }
     };
-    let complete = registry.unavailable.is_empty();
+    let complete = registry.all_providers_available();
     *AUTH_PROVIDER_REGISTRY
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(registry));
