@@ -342,3 +342,140 @@ shallow-module hubuum_storage_core::task_control
 
 # Backends implement the revision, staged work and impact contracts, using the public constructors to validate stored and requested state.
 shallow-module hubuum_storage_core::schema_evolution
+
+# Network settings approval and HTTP admission both evaluate the configured client and proxy networks. Keeping the same parsed rules preserves origin checks on both paths.
+field-leak hubuum::config::AppConfig::client_allowlist
+field-leak hubuum::config::AppConfig::trusted_proxies
+
+# The discovery schema disables archive activation when the deployment has no configured archive path.
+field-leak hubuum::config::AppConfig::event_retention_archive_path
+
+# Startup selects the configured login limiter and the admin status endpoint describes that same selection.
+field-leak hubuum::config::AppConfig::login_rate_limit_backend
+
+# Maintenance admission, request tracing, configuration validation and the scrape listener must agree on the configured metrics route.
+field-leak hubuum::config::AppConfig::metrics_path
+
+# HTTP startup and each background worker inspect the same typed role to decide which work the process may run.
+field-leak hubuum::config::AppConfig::runtime_role
+
+# Startup initializes the configured secret provider and telemetry projects only its provider label.
+field-leak hubuum::config::AppConfig::secrets
+
+# Tracing initialization and the runtime metrics descriptor use the same sampling mode.
+field-leak hubuum::config::AppConfig::tracing_sampling_mode
+
+# Readiness, admin counts and client discovery use the configured opaque storage handle. The handle preserves adapter selection and exposes backend-neutral operations.
+field-leak hubuum::permissions::context::AppContext::backend
+
+# Each resolver selects its dedicated secret namespace. The caller supplies only an alias and cannot choose a different namespace.
+field-leak hubuum::secrets::ApplicationSecrets::event_sink
+field-leak hubuum::secrets::ApplicationSecrets::ldap
+field-leak hubuum::secrets::ApplicationSecrets::remote
+field-leak hubuum::secrets::ApplicationSecrets::runtime_settings
+
+# The ordinary and streaming search handlers dispatch by validated target and pass the request filter to the typed search operation.
+field-leak hubuum::models::structured_search::StructuredSearchRequest::filter
+field-leak hubuum::models::structured_search::StructuredSearchRequest::target
+
+# Validation, persistence and the remote renderer consume the same bounded header templates through the typed accessor.
+field-leak hubuum::models::remote_target::RemoteTemplateSources::headers
+
+# Graph traversal uses the ordered class endpoints, and permission checks bind the relation ID and its endpoints to the resource being authorized.
+field-leak hubuum::models::relation::HubuumClassRelation::id
+field-leak hubuum::models::relation::HubuumClassRelation::from_hubuum_class_id
+field-leak hubuum::models::relation::HubuumClassRelation::to_hubuum_class_id
+
+# Import phases share one authorization capability carrying the submitting scope, administrator decision and collection permission cache.
+field-leak hubuum::tasks::types::PlanningState::authorization
+
+# Preloading, reservation and resolution operate on the same request-local typed cache for each resource. The caches own name misses, references and reservations.
+field-leak hubuum::tasks::types::PlanningState::classes
+field-leak hubuum::tasks::types::PlanningState::objects
+
+# Each relation planner uses its own endpoint-pair cache. Recording a creation replaces a stored absence for subsequent items.
+field-leak hubuum::tasks::types::PlanningState::class_relations
+field-leak hubuum::tasks::types::PlanningState::object_relations
+
+# Both adapters resume schema work with its validated impact, and the report builder reads the same baseline and counts when projecting findings.
+field-leak hubuum_storage_core::schema_evolution::StorageSchemaWork::impact
+
+# Live writes allocate checked IDs. Replay observes retained IDs, including historical rows for deleted resources, before further allocation.
+field-leak hubuum_storage_memory::MemoryState::class_ids
+field-leak hubuum_storage_memory::MemoryState::collection_ids
+field-leak hubuum_storage_memory::MemoryState::object_ids
+field-leak hubuum_storage_memory::MemoryState::class_relation_ids
+field-leak hubuum_storage_memory::MemoryState::object_relation_ids
+
+# Ordinary writes and imports share each checked sequence. Restore also observes IDs of deleted templates and targets retained in history.
+field-leak hubuum_storage_memory::MemoryState::export_template_ids
+field-leak hubuum_storage_memory::MemoryState::remote_target_ids
+
+# Creation, external identity synchronization and import share each checked identity sequence. Replay observes persisted IDs before accepting writes.
+field-leak hubuum_storage_memory::MemoryState::identity_scope_ids
+field-leak hubuum_storage_memory::MemoryState::group_ids
+field-leak hubuum_storage_memory::MemoryState::principal_ids
+
+# Grant writes and query declarations allocate through their own checked sequences. Replay restores the high-water mark from retained rows.
+field-leak hubuum_storage_memory::MemoryState::authorization_grant_ids
+field-leak hubuum_storage_memory::MemoryState::query_usage_ids
+
+# Credential approval creation allocates from a checked sequence. Restoring application data preserves the sequence alongside the live approval records.
+field-leak hubuum_storage_memory::MemoryState::credential_approval_ids
+
+# The retention worker reserves the selected event IDs by batch and removes that same batch when committing its deletion.
+field-leak hubuum_storage_memory::MemoryState::event_retention_batches
+
+# Fanout advances the cursor only after processing its batch. Replay initializes it from restored audit history, so historical events are not redelivered.
+field-leak hubuum_storage_memory::MemoryState::fanout_event_cursor
+
+# Shared definition changes and restore enqueue the same class rebuild. The class state and task-to-class index are read during settlement.
+field-leak hubuum_storage_memory::MemoryState::computation_states
+field-leak hubuum_storage_memory::MemoryState::computed_rebuild_tasks
+
+# The operational and restore capabilities share one checked generation and drain owner. Task and worker admission use that coordinator while a restore is active.
+field-leak hubuum_storage_memory::MemoryState::restore_coordinator
+
+# Queue telemetry reports the presence of an idempotency key on the committed insert.
+field-leak hubuum_storage_postgres::operations::task_rows::TaskRow::idempotency_key
+
+# Claim acquisition returns the fencing token from the locked claim row to the worker as its typed lease.
+field-leak hubuum_storage_postgres::operations::task_rows::TaskRow::lease_token
+
+# Admission and stop settlement read the persisted deadline and side-effect markers under lock. Those facts determine whether dispatch or cancellation can still proceed.
+field-leak hubuum_storage_postgres::operations::task_rows::TaskRow::execution_deadline_at
+field-leak hubuum_storage_postgres::operations::task_rows::TaskRow::remote_dispatched_at
+field-leak hubuum_storage_postgres::operations::task_rows::TaskRow::import_effects_committed_at
+
+# Task and schema audit writes preserve the initiating principal from the stored task across worker execution.
+field-leak hubuum_storage_postgres::operations::task_rows::TaskRow::initiator_user_id
+
+# The repair queue identifies its persisted payload format, and failed rebuild settlement recovers the target from that payload.
+field-leak hubuum_storage_postgres::operations::task_rows::TaskRow::request_payload
+
+# Repair, rebuild and task-control transitions preserve the first start time for deadline and terminal accounting.
+field-leak hubuum_storage_postgres::operations::task_rows::TaskRow::started_at
+
+# The computed-field patch compares its operation against the stored definition. Query evaluation decodes the same operation under its evaluation budget.
+field-leak hubuum_storage_postgres::operations::computed_definition::ComputedDefinitionRow::operation
+
+# The versioned settings requests each validate and convert a distinct update or project the effective setting in its response.
+shallow-module hubuum::models::runtime_settings
+
+# Callers require independent schema validation, instance validation and impact inspection with explicit deployment limits. They share the budgeted validator cache.
+shallow-module hubuum_domain::json_schema
+
+# The adapter implements separate historical lookup, list and as-of queries for the storage contract, sharing temporal predicates and decoding internally.
+shallow-module hubuum_storage_postgres::operations::history
+
+# Compiled validators carry the budget checked during instance validation. The shared cache is keyed by the schema digest and deployment limits, including when the same document is compiled for different budgets.
+tangle hubuum_domain::json_schema::BudgetedSchema,hubuum_domain::json_schema::JSON_SCHEMA_CACHE,hubuum_domain::json_schema::SchemaCacheKey,hubuum_domain::json_schema::budget::Inspector,hubuum_domain::json_schema::budget::JsonSize,hubuum_domain::json_schema::budget::SchemaBudget,hubuum_domain::json_schema::budget::checked_work,hubuum_domain::json_schema::budget::validate_document_size,hubuum_domain::json_schema::compile_json_schema,hubuum_domain::json_schema::limits::JsonSchemaLimits,hubuum_domain::json_schema::limits::JsonSchemaLimitsBuilder,hubuum_domain::json_schema::schema_cache
+
+# The replay reader and serializer implement the same versioned snapshot format. Materializing a replay needs the validated snapshot constructor, and exporting a snapshot creates a bounded replay.
+tangle hubuum_storage_core::backup_snapshot::StorageBackupSnapshot,hubuum_storage_core::backup_snapshot::replay::HistorySerialization,hubuum_storage_core::backup_snapshot::replay::RowSerialization,hubuum_storage_core::backup_snapshot::replay::StateSerialization,hubuum_storage_core::backup_snapshot::replay::StorageBackupReplay,hubuum_storage_core::backup_snapshot::replay::StorageBackupReplayBuilder
+
+# Decoding persisted schema work validates impact counters against the work cursor and target. The validated work carries that same impact into the next batch.
+tangle hubuum_storage_core::schema_evolution::SchemaWorkSnapshot,hubuum_storage_core::schema_evolution::StorageSchemaWork,hubuum_storage_core::schema_evolution::impact::StorageSchemaImpact
+
+# A memory transaction runs the existing adapter capabilities on its private state copy. The transaction owner publishes the copy only after its callback succeeds.
+tangle hubuum_storage_memory::MemoryStorage,hubuum_storage_memory::execution::MemoryTransaction

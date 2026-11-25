@@ -95,9 +95,7 @@ impl<C: AuthorizationContext, S: AuthzSubject> ImportPlanner<'_, C, S> {
                     })
                 });
             if let Some(scope) = &scope {
-                state
-                    .planned_group_keys
-                    .insert((scope.clone(), input.groupname.clone()));
+                state.record_planned_group(scope, &input.groupname);
             }
             let identifier = scope
                 .as_deref()

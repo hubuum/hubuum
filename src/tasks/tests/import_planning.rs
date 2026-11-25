@@ -1,6 +1,22 @@
 use super::*;
 use crate::tasks::execution::execute_import_task;
 
+#[rstest]
+#[case::same_scope(None, true)]
+#[case::other_scope(Some("external"), false)]
+fn planned_group_resolution_respects_identity_scope(
+    #[case] scope: Option<&str>,
+    #[case] expected: bool,
+) {
+    let mut state = PlanningState::default();
+    state.record_planned_group(crate::models::identity::LOCAL_IDENTITY_SCOPE, "operators");
+    let key = GroupKey {
+        identity_scope: scope.map(str::to_owned),
+        groupname: "operators".into(),
+    };
+    assert_eq!(state.has_planned_group(&key), expected);
+}
+
 #[test]
 fn test_remember_collection_populates_collection_id_index() {
     let mut state = PlanningState::default();
