@@ -6,7 +6,7 @@ use crate::events::EventContext;
 use crate::models::{
     ClassSelector, HubuumClass, NewHubuumClass, ResolvedClassTarget, UpdateHubuumClass,
 };
-use crate::services::storage_boundary::{class_record_from_storage, class_selector_to_storage};
+use crate::services::storage_boundary::class_record_from_storage;
 use crate::storage::ClassStorage;
 
 /// Application-facing class resolution and lifecycle use cases.
@@ -22,7 +22,7 @@ impl ClassService {
 
     pub async fn resolve(&self, selector: ClassSelector) -> Result<ResolvedClassTarget, ApiError> {
         self.storage
-            .resolve_class(class_selector_to_storage(selector))
+            .resolve_class(selector.into())
             .await
             .map_err(ApiError::from)
             .and_then(ResolvedClassTarget::from_storage)

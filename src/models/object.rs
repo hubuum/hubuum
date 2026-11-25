@@ -1,8 +1,6 @@
 use crate::permissions::ClassResourceEndpoint;
-use crate::services::storage_boundary::{
-    class_record_from_storage, object_from_storage, object_selector_from_storage,
-};
-use crate::storage::StorageResolvedObject;
+use crate::services::storage_boundary::{class_record_from_storage, object_from_storage};
+use crate::storage::{StorageObjectSelector, StorageResolvedObject};
 use async_trait::async_trait;
 use hubuum_domain::{ClassId, CollectionId};
 use hubuum_storage_core::StorageObjectCreate;
@@ -263,37 +261,27 @@ pub use hubuum_domain::ObjectId as HubuumObjectID;
 /// Callers choose the constructor from the route shape. In particular, [`Self::by_name`] never
 /// attempts to parse numeric-looking names as IDs.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ObjectSelector(ObjectSelectorKind);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ObjectSelectorKind {
-    ById {
-        class_id: HubuumClassID,
-        object_id: HubuumObjectID,
-    },
-    ByName {
-        class_name: String,
-        object_name: String,
-    },
-}
+pub struct ObjectSelector(StorageObjectSelector);
 
 impl ObjectSelector {
     pub fn by_id(class_id: HubuumClassID, object_id: HubuumObjectID) -> Self {
-        Self(ObjectSelectorKind::ById {
+        Self(StorageObjectSelector::Ids {
             class_id,
             object_id,
         })
     }
 
     pub fn by_name(class_name: impl Into<String>, object_name: impl Into<String>) -> Self {
-        Self(ObjectSelectorKind::ByName {
+        Self(StorageObjectSelector::Names {
             class_name: class_name.into(),
             object_name: object_name.into(),
         })
     }
+}
 
-    pub(crate) fn kind(&self) -> &ObjectSelectorKind {
-        &self.0
+impl From<ObjectSelector> for StorageObjectSelector {
+    fn from(selector: ObjectSelector) -> Self {
+        selector.0
     }
 }
 
@@ -302,7 +290,6 @@ impl ObjectSelector {
 #[derive(Clone)]
 pub struct ResolvedObjectTarget {
     storage: StorageResolvedObject,
-    selector: ObjectSelector,
     class: HubuumClass,
     object: HubuumObject,
 }
@@ -311,7 +298,6 @@ impl ResolvedObjectTarget {
     /// Preserve the validated aggregate; private views serve domain and HTTP callers.
     pub(crate) fn from_storage(storage: StorageResolvedObject) -> Result<Self, ApiError> {
         Ok(Self {
-            selector: object_selector_from_storage(storage.selector().clone())?,
             class: class_record_from_storage(storage.class().clone())?,
             object: object_from_storage(storage.object().clone())?,
             storage,
@@ -328,11 +314,6 @@ impl ResolvedObjectTarget {
 
     pub fn class(&self) -> &HubuumClass {
         &self.class
-    }
-
-    #[cfg(test)]
-    pub(crate) fn selector(&self) -> &ObjectSelector {
-        &self.selector
     }
 }
 
@@ -481,7 +462,7 @@ impl AuthzTarget for HubuumObjectID {
 impl fmt::Debug for ResolvedObjectTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ResolvedObjectTarget")
-            .field("selector", &self.selector)
+            .field("selector", self.storage.selector())
             .field("class", &self.class)
             .field("object", &self.object)
             .finish()

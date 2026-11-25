@@ -12,13 +12,12 @@ use tokio::sync::RwLock;
 
 use crate::events::{Action, EntityType, EventContext};
 use crate::models::{
-    ClassSelector, ClassSelectorKind, Collection, CollectionID, HubuumClass, HubuumClassRelation,
-    HubuumClassRelationID, HubuumObject, HubuumObjectRelation, HubuumObjectRelationID,
-    NewHubuumClass, NewHubuumObject, NewHubuumObjectRelation, ObjectRelationCreateSelectorKind,
-    ObjectRelationSelectorKind, ObjectSelector, ObjectSelectorKind, PreparedClassRelation,
-    PreparedObjectRelation, ResolvedClassRelationTarget, ResolvedClassTarget,
-    ResolvedObjectRelationTarget, ResolvedObjectTarget, ResourceRevision, UpdateCollection,
-    UpdateHubuumClass, UpdateHubuumObject,
+    Collection, CollectionID, HubuumClass, HubuumClassRelation, HubuumClassRelationID,
+    HubuumObject, HubuumObjectRelation, HubuumObjectRelationID, NewHubuumClass, NewHubuumObject,
+    NewHubuumObjectRelation, ObjectRelationCreateSelectorKind, ObjectRelationSelectorKind,
+    PreparedClassRelation, PreparedObjectRelation, ResolvedClassRelationTarget,
+    ResolvedClassTarget, ResolvedObjectRelationTarget, ResolvedObjectTarget, ResourceRevision,
+    UpdateCollection, UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::services::storage_boundary::{
     class_record_to_storage, class_relation_create_from_storage, collection_to_storage,
@@ -174,10 +173,13 @@ impl MemoryState {
             .any(|class| class.name == name && Some(class.id) != except_id)
     }
 
-    fn class_for_selector(&self, selector: &ClassSelector) -> Result<&HubuumClass, StorageError> {
-        match selector.kind() {
-            ClassSelectorKind::ById(class_id) => self.classes.get(&class_id.id()),
-            ClassSelectorKind::ByName(class_name) => self
+    fn class_for_selector(
+        &self,
+        selector: &StorageClassSelector,
+    ) -> Result<&HubuumClass, StorageError> {
+        match selector {
+            StorageClassSelector::Id(class_id) => self.classes.get(&class_id.id()),
+            StorageClassSelector::Name(class_name) => self
                 .classes
                 .values()
                 .find(|class| class.name == *class_name),
@@ -186,7 +188,7 @@ impl MemoryState {
     }
 
     fn class_target(&self, target: &ResolvedClassTarget) -> Result<&HubuumClass, StorageError> {
-        let current = self.class_for_selector(target.selector())?;
+        let current = self.class_for_selector(target.as_storage().selector())?;
         let resolved = target.class();
         if current.id != resolved.id
             || current.name != resolved.name
@@ -201,10 +203,10 @@ impl MemoryState {
 
     fn object_for_selector(
         &self,
-        selector: &ObjectSelector,
+        selector: &StorageObjectSelector,
     ) -> Result<(&HubuumClass, &HubuumObject), StorageError> {
-        let (class, object) = match selector.kind() {
-            ObjectSelectorKind::ById {
+        let (class, object) = match selector {
+            StorageObjectSelector::Ids {
                 class_id,
                 object_id,
             } => {
@@ -215,7 +217,7 @@ impl MemoryState {
                     .filter(|object| object.hubuum_class_id == class_id.id());
                 (class, object)
             }
-            ObjectSelectorKind::ByName {
+            StorageObjectSelector::Names {
                 class_name,
                 object_name,
             } => {
@@ -243,7 +245,7 @@ impl MemoryState {
         &self,
         target: &ResolvedObjectTarget,
     ) -> Result<(&HubuumClass, &HubuumObject), StorageError> {
-        let (class, object) = self.object_for_selector(target.selector())?;
+        let (class, object) = self.object_for_selector(target.as_storage().selector())?;
         let resolved_class = target.class();
         let resolved_object = target.object();
         if class.id != resolved_class.id
@@ -905,21 +907,10 @@ impl ClassStorage for MemoryStorageModel {
         &self,
         selector: StorageClassSelector,
     ) -> Result<StorageResolvedClass, StorageError> {
-        let selector = match selector {
-            StorageClassSelector::Id(id) => ClassSelector::by_id(
-                crate::models::HubuumClassID::new(id.id()).map_err(map_memory_error)?,
-            ),
-            StorageClassSelector::Name(name) => ClassSelector::by_name(name),
-        };
         let state = self.state.read().await;
         let class = state.class_for_selector(&selector)?.clone();
         StorageResolvedClass::try_new(
-            match selector.kind() {
-                ClassSelectorKind::ById(id) => StorageClassSelector::Id(
-                    ClassId::new(id.id()).expect("internal class id must be positive"),
-                ),
-                ClassSelectorKind::ByName(name) => StorageClassSelector::Name(name.clone()),
-            },
+            selector,
             class_record_to_storage(class).map_err(map_memory_error)?,
         )
         .map_err(|error| {
@@ -1537,38 +1528,8 @@ impl ObjectStorage for MemoryStorageModel {
         &self,
         selector: StorageObjectSelector,
     ) -> Result<StorageResolvedObject, StorageError> {
-        let selector = match selector {
-            StorageObjectSelector::Ids {
-                class_id,
-                object_id,
-            } => ObjectSelector::by_id(
-                crate::models::HubuumClassID::new(class_id.id()).map_err(map_memory_error)?,
-                crate::models::HubuumObjectID::new(object_id.id()).map_err(map_memory_error)?,
-            ),
-            StorageObjectSelector::Names {
-                class_name,
-                object_name,
-            } => ObjectSelector::by_name(class_name, object_name),
-        };
         let state = self.state.read().await;
         let (class, object) = state.object_for_selector(&selector)?;
-        let selector = match selector.kind() {
-            ObjectSelectorKind::ById {
-                class_id,
-                object_id,
-            } => StorageObjectSelector::Ids {
-                class_id: ClassId::new(class_id.id()).expect("internal class id must be positive"),
-                object_id: ObjectId::new(object_id.id())
-                    .expect("internal object id must be positive"),
-            },
-            ObjectSelectorKind::ByName {
-                class_name,
-                object_name,
-            } => StorageObjectSelector::Names {
-                class_name: class_name.clone(),
-                object_name: object_name.clone(),
-            },
-        };
         StorageResolvedObject::try_new(
             selector,
             class_record_to_storage(class.clone()).map_err(map_memory_error)?,

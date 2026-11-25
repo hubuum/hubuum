@@ -1,5 +1,5 @@
-use crate::services::storage_boundary::{class_record_from_storage, class_selector_from_storage};
-use crate::storage::StorageResolvedClass;
+use crate::services::storage_boundary::class_record_from_storage;
+use crate::storage::{StorageClassSelector, StorageResolvedClass};
 use async_trait::async_trait;
 use hubuum_domain::CollectionId;
 use hubuum_storage_core::StorageClassCreate;
@@ -162,25 +162,21 @@ pub use hubuum_domain::ClassId as HubuumClassID;
 /// The route chooses the constructor, so [`Self::by_name`] never interprets a numeric-looking
 /// class name as an ID.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ClassSelector(ClassSelectorKind);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ClassSelectorKind {
-    ById(HubuumClassID),
-    ByName(String),
-}
+pub struct ClassSelector(StorageClassSelector);
 
 impl ClassSelector {
     pub fn by_id(class_id: HubuumClassID) -> Self {
-        Self(ClassSelectorKind::ById(class_id))
+        Self(StorageClassSelector::Id(class_id))
     }
 
     pub fn by_name(class_name: impl Into<String>) -> Self {
-        Self(ClassSelectorKind::ByName(class_name.into()))
+        Self(StorageClassSelector::Name(class_name.into()))
     }
+}
 
-    pub(crate) fn kind(&self) -> &ClassSelectorKind {
-        &self.0
+impl From<ClassSelector> for StorageClassSelector {
+    fn from(selector: ClassSelector) -> Self {
+        selector.0
     }
 }
 
@@ -189,7 +185,6 @@ impl ClassSelector {
 #[derive(Clone)]
 pub struct ResolvedClassTarget {
     storage: StorageResolvedClass,
-    selector: ClassSelector,
     class: HubuumClass,
 }
 
@@ -197,7 +192,6 @@ impl ResolvedClassTarget {
     /// Preserve the validated aggregate; private views serve domain and HTTP callers.
     pub(crate) fn from_storage(storage: StorageResolvedClass) -> Result<Self, ApiError> {
         Ok(Self {
-            selector: class_selector_from_storage(storage.selector().clone())?,
             class: class_record_from_storage(storage.class().clone())?,
             storage,
         })
@@ -209,11 +203,6 @@ impl ResolvedClassTarget {
 
     pub fn class(&self) -> &HubuumClass {
         &self.class
-    }
-
-    #[cfg(test)]
-    pub(crate) fn selector(&self) -> &ClassSelector {
-        &self.selector
     }
 }
 
@@ -354,7 +343,7 @@ impl AuthzTarget for HubuumClassID {
 impl fmt::Debug for ResolvedClassTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ResolvedClassTarget")
-            .field("selector", &self.selector)
+            .field("selector", self.storage.selector())
             .field("class", &self.class)
             .finish()
     }

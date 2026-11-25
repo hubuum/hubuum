@@ -1,24 +1,23 @@
 use crate::errors::ApiError;
 use crate::models::{
-    ClassSelector, ClassSelectorKind, Collection, Group, HubuumClass, HubuumClassExpanded,
-    HubuumClassRelation, HubuumObject, HubuumObjectRelation, NewHubuumClassRelation,
-    NewHubuumObjectRelation, ObjectRelationCreateSelector, ObjectRelationCreateSelectorKind,
-    ObjectRelationEndpoint, ObjectRelationSelector, ObjectRelationSelectorKind, ObjectSelector,
-    ObjectSelectorKind, Principal, PrincipalGroup, PrincipalSettings, PrincipalSettingsPatch,
-    PrincipalSettingsResponse, TokenResourceScope, TokenScope,
+    Collection, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
+    HubuumObjectRelation, NewHubuumClassRelation, NewHubuumObjectRelation,
+    ObjectRelationCreateSelector, ObjectRelationCreateSelectorKind, ObjectRelationEndpoint,
+    ObjectRelationSelector, ObjectRelationSelectorKind, Principal, PrincipalGroup,
+    PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsResponse, TokenResourceScope,
+    TokenScope,
 };
 use crate::permissions::permission_to_storage;
-#[cfg(test)]
-use crate::storage::StorageClassSchemaPolicy;
 use crate::storage::{
-    StorageClass, StorageClassRelation, StorageClassRelationCreate, StorageClassSelector,
-    StorageClassWithCollection, StorageCollection, StorageIdentityGroup, StorageObject,
-    StorageObjectRelation, StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
-    StorageObjectRelationEndpoint, StorageObjectRelationSelector, StorageObjectSelector,
-    StoragePrincipal, StoragePrincipalGroup, StoragePrincipalSettings,
-    StoragePrincipalSettingsMutation, StorageRecordMetadata, StorageResourceScope,
-    StorageVisibility,
+    StorageClass, StorageClassRelation, StorageClassRelationCreate, StorageClassWithCollection,
+    StorageCollection, StorageIdentityGroup, StorageObject, StorageObjectRelation,
+    StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
+    StorageObjectRelationEndpoint, StorageObjectRelationSelector, StoragePrincipal,
+    StoragePrincipalGroup, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
+    StorageRecordMetadata, StorageResourceScope, StorageVisibility,
 };
+#[cfg(test)]
+use crate::storage::{StorageClassSchemaPolicy, StorageClassSelector, StorageObjectSelector};
 use hubuum_domain::{ClassId, ClassRelationId, CollectionId, ObjectId, PrincipalId, ResourceId};
 
 pub(super) fn visibility(
@@ -246,22 +245,6 @@ pub(crate) fn class_record_to_storage(class: HubuumClass) -> Result<StorageClass
     .build())
 }
 
-pub(crate) fn class_selector_to_storage(selector: ClassSelector) -> StorageClassSelector {
-    match selector.kind() {
-        ClassSelectorKind::ById(id) => StorageClassSelector::Id(*id),
-        ClassSelectorKind::ByName(name) => StorageClassSelector::Name(name.clone()),
-    }
-}
-
-pub(crate) fn class_selector_from_storage(
-    selector: StorageClassSelector,
-) -> Result<ClassSelector, ApiError> {
-    Ok(match selector {
-        StorageClassSelector::Id(id) => ClassSelector::by_id(id),
-        StorageClassSelector::Name(name) => ClassSelector::by_name(name),
-    })
-}
-
 pub(crate) fn object_from_storage(row: StorageObject) -> Result<HubuumObject, ApiError> {
     let (
         id,
@@ -302,40 +285,6 @@ pub(crate) fn object_to_storage(object: HubuumObject) -> Result<StorageObject, A
         object.data,
         object.description,
     ))
-}
-
-pub(crate) fn object_selector_to_storage(selector: ObjectSelector) -> StorageObjectSelector {
-    match selector.kind() {
-        ObjectSelectorKind::ById {
-            class_id,
-            object_id,
-        } => StorageObjectSelector::Ids {
-            class_id: *class_id,
-            object_id: *object_id,
-        },
-        ObjectSelectorKind::ByName {
-            class_name,
-            object_name,
-        } => StorageObjectSelector::Names {
-            class_name: class_name.clone(),
-            object_name: object_name.clone(),
-        },
-    }
-}
-
-pub(crate) fn object_selector_from_storage(
-    selector: StorageObjectSelector,
-) -> Result<ObjectSelector, ApiError> {
-    Ok(match selector {
-        StorageObjectSelector::Ids {
-            class_id,
-            object_id,
-        } => ObjectSelector::by_id(class_id, object_id),
-        StorageObjectSelector::Names {
-            class_name,
-            object_name,
-        } => ObjectSelector::by_name(class_name, object_name),
-    })
 }
 
 #[cfg(test)]
