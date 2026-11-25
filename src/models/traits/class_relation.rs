@@ -11,9 +11,8 @@ use crate::models::{
     PreparedClassRelation, PreparedObjectRelation, RelatedObjectGraphRow,
     ResolvedClassRelationTarget, ResolvedObjectRelationTarget,
 };
-use crate::services::storage_boundary::collection_from_storage;
+
 use crate::services::storage_boundary::{
-    class_relation_create_to_storage, class_relation_from_storage,
     object_relation_create_selector_to_storage, object_relation_selector_to_storage,
 };
 use crate::services::{prepare_and_create_class_relation, resolve_and_delete_class_relation};
@@ -33,10 +32,10 @@ async fn prepare_class_relation(
 ) -> Result<PreparedClassRelation, ApiError> {
     storage_handle(backend)
         .class_relation_store()
-        .prepare_class_relation(class_relation_create_to_storage(command.clone())?)
+        .prepare_class_relation(command.clone().into())
         .await
         .map_err(ApiError::from)
-        .and_then(PreparedClassRelation::from_storage)
+        .map(PreparedClassRelation::from)
 }
 
 async fn resolve_class_relation(
@@ -48,7 +47,7 @@ async fn resolve_class_relation(
         .resolve_class_relation(id)
         .await
         .map_err(ApiError::from)
-        .and_then(ResolvedClassRelationTarget::from_storage)
+        .map(ResolvedClassRelationTarget::from)
 }
 
 async fn prepare_object_relation(
@@ -62,7 +61,7 @@ async fn prepare_object_relation(
         )?)
         .await
         .map_err(ApiError::from)
-        .and_then(PreparedObjectRelation::from_storage)
+        .map(PreparedObjectRelation::from)
 }
 
 async fn resolve_object_relation(
@@ -76,7 +75,7 @@ async fn resolve_object_relation(
         ))
         .await
         .map_err(ApiError::from)
-        .and_then(ResolvedObjectRelationTarget::from_storage)
+        .map(ResolvedObjectRelationTarget::from)
 }
 
 async fn relation_collections(
@@ -91,14 +90,14 @@ async fn relation_collections(
         )?)
         .await
         .map_err(ApiError::from)
-        .and_then(collection_from_storage)?;
+        .map(Collection::from)?;
     let to_collection = storage
         .get_collection(CollectionId::new(
             CollectionID::new(to_collection_id)?.id(),
         )?)
         .await
         .map_err(ApiError::from)
-        .and_then(collection_from_storage)?;
+        .map(Collection::from)?;
     Ok((from_collection, to_collection))
 }
 
@@ -172,13 +171,13 @@ impl SaveAdapter for NewHubuumClassRelation {
         let storage = storage_handle(pool).class_relation_store();
         prepare_and_create_class_relation(
             storage.as_ref(),
-            class_relation_create_to_storage(self.clone())?,
+            self.clone().into(),
             &EventContext::system(),
         )
         .await
         .map_err(ApiError::from)
         .map(|outcome| outcome.into_value())
-        .and_then(class_relation_from_storage)
+        .map(HubuumClassRelation::from)
     }
 
     async fn save_adapter(
@@ -187,15 +186,11 @@ impl SaveAdapter for NewHubuumClassRelation {
         context: &EventContext,
     ) -> Result<HubuumClassRelation, ApiError> {
         let storage = storage_handle(pool).class_relation_store();
-        prepare_and_create_class_relation(
-            storage.as_ref(),
-            class_relation_create_to_storage(self.clone())?,
-            context,
-        )
-        .await
-        .map_err(ApiError::from)
-        .map(|outcome| outcome.into_value())
-        .and_then(class_relation_from_storage)
+        prepare_and_create_class_relation(storage.as_ref(), self.clone().into(), context)
+            .await
+            .map_err(ApiError::from)
+            .map(|outcome| outcome.into_value())
+            .map(HubuumClassRelation::from)
     }
 }
 

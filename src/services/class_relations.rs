@@ -7,7 +7,7 @@ use crate::models::{
     HubuumClassRelationID, NewHubuumClassRelation, PreparedClassRelation,
     ResolvedClassRelationTarget,
 };
-use crate::services::storage_boundary::class_relation_create_to_storage;
+
 use crate::storage::{
     ClassRelationStorage, StorageClassRelation, StorageClassRelationCreate,
     StorageClassRelationLabelsUpdate, StorageError, StorageMutationOutcome,
@@ -53,10 +53,10 @@ impl ClassRelationService {
         command: NewHubuumClassRelation,
     ) -> Result<PreparedClassRelation, ApiError> {
         self.storage
-            .prepare_class_relation(class_relation_create_to_storage(command)?)
+            .prepare_class_relation(command.into())
             .await
             .map_err(ApiError::from)
-            .and_then(PreparedClassRelation::from_storage)
+            .map(PreparedClassRelation::from)
     }
 
     pub async fn resolve(
@@ -67,7 +67,7 @@ impl ClassRelationService {
             .resolve_class_relation(id)
             .await
             .map_err(ApiError::from)
-            .and_then(ResolvedClassRelationTarget::from_storage)
+            .map(ResolvedClassRelationTarget::from)
     }
 
     pub async fn create(
@@ -81,7 +81,7 @@ impl ClassRelationService {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(ResolvedClassRelationTarget::from_storage)
+            .map(ResolvedClassRelationTarget::from)
     }
 
     pub async fn update_labels(
@@ -95,7 +95,7 @@ impl ClassRelationService {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(ResolvedClassRelationTarget::from_storage)
+            .map(ResolvedClassRelationTarget::from)
     }
 
     pub async fn delete(
@@ -377,10 +377,7 @@ mod tests {
         let lifecycle = &harness.services.class_relations().storage;
         let created = prepare_and_create_class_relation(
             lifecycle.as_ref(),
-            crate::services::storage_boundary::class_relation_create_to_storage(
-                harness.command(&from_class, &to_class),
-            )
-            .expect("valid fixture command"),
+            harness.command(&from_class, &to_class).into(),
             &EventContext::system(),
         )
         .await

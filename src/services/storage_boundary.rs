@@ -1,23 +1,24 @@
 use crate::errors::ApiError;
 use crate::models::{
-    Collection, Group, HubuumClass, HubuumClassExpanded, HubuumClassRelation, HubuumObject,
-    HubuumObjectRelation, NewHubuumClassRelation, NewHubuumObjectRelation,
+    Collection, HubuumClassExpanded, HubuumObject, NewHubuumObjectRelation,
     ObjectRelationCreateSelector, ObjectRelationCreateSelectorKind, ObjectRelationEndpoint,
-    ObjectRelationSelector, ObjectRelationSelectorKind, Principal, PrincipalGroup,
-    PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsResponse, TokenResourceScope,
-    TokenScope,
-};
-use crate::permissions::permission_to_storage;
-use crate::storage::{
-    StorageClass, StorageClassRelation, StorageClassRelationCreate, StorageClassWithCollection,
-    StorageCollection, StorageIdentityGroup, StorageObject, StorageObjectRelation,
-    StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
-    StorageObjectRelationEndpoint, StorageObjectRelationSelector, StoragePrincipal,
-    StoragePrincipalGroup, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
-    StorageRecordMetadata, StorageResourceScope, StorageVisibility,
+    ObjectRelationSelector, ObjectRelationSelectorKind, PrincipalSettings, PrincipalSettingsPatch,
+    PrincipalSettingsResponse, TokenResourceScope, TokenScope,
 };
 #[cfg(test)]
-use crate::storage::{StorageClassSchemaPolicy, StorageClassSelector, StorageObjectSelector};
+use crate::models::{HubuumClass, HubuumClassRelation, HubuumObjectRelation};
+use crate::permissions::permission_to_storage;
+#[cfg(test)]
+use crate::storage::{
+    StorageClass, StorageClassRelation, StorageClassRelationCreate, StorageClassSchemaPolicy,
+    StorageClassSelector, StorageCollection, StorageObjectRelation, StorageObjectSelector,
+};
+use crate::storage::{
+    StorageClassWithCollection, StorageObject, StorageObjectRelationCreate,
+    StorageObjectRelationCreateSelector, StorageObjectRelationEndpoint,
+    StorageObjectRelationSelector, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
+    StorageRecordMetadata, StorageResourceScope, StorageVisibility,
+};
 use hubuum_domain::{ClassId, ClassRelationId, CollectionId, ObjectId, PrincipalId, ResourceId};
 
 pub(super) fn visibility(
@@ -60,73 +61,6 @@ fn resource_scope(scope: &TokenScope) -> Result<Option<StorageResourceScope>, Ap
         class_ids,
         object_ids,
     )))
-}
-
-pub(crate) fn collection_from_storage(row: StorageCollection) -> Result<Collection, ApiError> {
-    let (id, name, description, created_at, updated_at, parent_collection_id, revision) =
-        row.into_parts();
-    Ok(Collection {
-        id: id.id(),
-        name,
-        description,
-        created_at: created_at.naive_utc(),
-        updated_at: updated_at.naive_utc(),
-        parent_collection_id: parent_collection_id.map(CollectionId::id),
-        revision,
-    })
-}
-
-pub(crate) fn group_from_storage(row: StorageIdentityGroup) -> Result<Group, ApiError> {
-    Ok(Group {
-        id: row.id().id(),
-        groupname: row.name().to_string(),
-        description: row.description().to_string(),
-        created_at: row.created_at().naive_utc(),
-        updated_at: row.updated_at().naive_utc(),
-        identity_scope_id: row.identity_scope_id().id(),
-        managed_by: row.managed_by().to_string(),
-        external_key: row.external_key().map(ToString::to_string),
-        last_sync_attempted_at: row
-            .last_sync_attempted_at()
-            .map(|timestamp| timestamp.naive_utc()),
-        last_sync_success_at: row
-            .last_sync_success_at()
-            .map(|timestamp| timestamp.naive_utc()),
-        revision: row.revision(),
-    })
-}
-
-pub(crate) fn principal_from_storage(row: StoragePrincipal) -> Result<Principal, ApiError> {
-    Ok(Principal {
-        id: row.id().id(),
-        kind: row.kind(),
-        name: row.name().to_owned(),
-        created_at: row.created_at().naive_utc(),
-        updated_at: row.updated_at().naive_utc(),
-        identity_scope_id: row.identity_scope_id().id(),
-        provider_managed: row.provider_managed(),
-        settings: row.settings().clone(),
-        external_subject: row.external_subject().map(ToOwned::to_owned),
-        last_sync_attempted_at: row
-            .last_sync_attempted_at()
-            .map(|timestamp| timestamp.naive_utc()),
-        last_sync_success_at: row
-            .last_sync_success_at()
-            .map(|timestamp| timestamp.naive_utc()),
-        revision: row.revision(),
-    })
-}
-
-pub(crate) fn principal_group_from_storage(
-    row: StoragePrincipalGroup,
-) -> Result<PrincipalGroup, ApiError> {
-    Ok(PrincipalGroup {
-        principal_id: row.principal_id().id(),
-        group_id: row.group_id().id(),
-        created_at: row.created_at().naive_utc(),
-        updated_at: row.updated_at().naive_utc(),
-        revision: row.revision(),
-    })
 }
 
 pub(crate) fn principal_settings_from_storage(
@@ -189,32 +123,7 @@ pub(super) fn class_from_storage(
     Ok(HubuumClassExpanded {
         id: id.id(),
         name,
-        collection: collection_from_storage(collection)?,
-        json_schema,
-        validate_schema,
-        description,
-        created_at: created_at.naive_utc(),
-        updated_at: updated_at.naive_utc(),
-        revision,
-    })
-}
-
-pub(crate) fn class_record_from_storage(row: StorageClass) -> Result<HubuumClass, ApiError> {
-    let (
-        id,
-        name,
-        collection_id,
-        json_schema,
-        validate_schema,
-        description,
-        created_at,
-        updated_at,
-        revision,
-    ) = row.into_parts();
-    Ok(HubuumClass {
-        id: id.id(),
-        name,
-        collection_id: collection_id.id(),
+        collection: Collection::from(collection),
         json_schema,
         validate_schema,
         description,
@@ -243,31 +152,6 @@ pub(crate) fn class_record_to_storage(class: HubuumClass) -> Result<StorageClass
     )
     .schema_policy(schema_policy)
     .build())
-}
-
-pub(crate) fn object_from_storage(row: StorageObject) -> Result<HubuumObject, ApiError> {
-    let (
-        id,
-        name,
-        collection_id,
-        hubuum_class_id,
-        data,
-        description,
-        created_at,
-        updated_at,
-        revision,
-    ) = row.into_parts();
-    Ok(HubuumObject {
-        id: id.id(),
-        name,
-        collection_id: collection_id.id(),
-        hubuum_class_id: hubuum_class_id.id(),
-        data,
-        description,
-        created_at: created_at.naive_utc(),
-        updated_at: updated_at.naive_utc(),
-        revision,
-    })
 }
 
 pub(crate) fn object_to_storage(object: HubuumObject) -> Result<StorageObject, ApiError> {
@@ -312,58 +196,6 @@ pub(crate) fn class_relation_to_storage(
     ))
 }
 
-pub(crate) fn class_relation_from_storage(
-    relation: StorageClassRelation,
-) -> Result<HubuumClassRelation, ApiError> {
-    let parts = relation.into_parts();
-    let metadata = parts.metadata();
-    Ok(HubuumClassRelation {
-        id: parts.id(),
-        from_hubuum_class_id: parts.from_class_id(),
-        to_hubuum_class_id: parts.to_class_id(),
-        forward_label: parts.forward_label().cloned(),
-        reverse_label: parts.reverse_label().cloned(),
-        forward_template_alias: parts.forward_alias().cloned(),
-        reverse_template_alias: parts.reverse_alias().cloned(),
-        created_at: metadata.created_at().naive_utc(),
-        updated_at: metadata.updated_at().naive_utc(),
-        from_max_relations: parts.from_limit(),
-        to_max_relations: parts.to_limit(),
-        revision: metadata.revision(),
-    })
-}
-
-pub(crate) fn class_relation_create_to_storage(
-    command: NewHubuumClassRelation,
-) -> Result<StorageClassRelationCreate, ApiError> {
-    Ok(StorageClassRelationCreate::builder(
-        command.from_hubuum_class_id,
-        command.to_hubuum_class_id,
-    )
-    .labels(command.forward_label, command.reverse_label)
-    .template_aliases(
-        command.forward_template_alias,
-        command.reverse_template_alias,
-    )
-    .relation_limits(command.from_max_relations, command.to_max_relations)
-    .build())
-}
-
-pub(crate) fn class_relation_create_from_storage(
-    command: &StorageClassRelationCreate,
-) -> Result<NewHubuumClassRelation, ApiError> {
-    Ok(NewHubuumClassRelation {
-        from_hubuum_class_id: command.from_class_id(),
-        to_hubuum_class_id: command.to_class_id(),
-        forward_label: command.forward_label().cloned(),
-        reverse_label: command.reverse_label().cloned(),
-        forward_template_alias: command.forward_template_alias().cloned(),
-        reverse_template_alias: command.reverse_template_alias().cloned(),
-        from_max_relations: command.from_max_relations(),
-        to_max_relations: command.to_max_relations(),
-    })
-}
-
 #[cfg(test)]
 pub(crate) fn object_relation_to_storage(
     relation: HubuumObjectRelation,
@@ -381,29 +213,6 @@ pub(crate) fn object_relation_to_storage(
         ClassRelationId::new(relation.class_relation_id)?,
     )
     .map_err(|error| ApiError::InternalServerError(error.to_string()))
-}
-
-pub(crate) fn object_relation_from_storage(
-    relation: StorageObjectRelation,
-) -> Result<HubuumObjectRelation, ApiError> {
-    let (
-        id,
-        from_hubuum_object_id,
-        to_hubuum_object_id,
-        class_relation_id,
-        created_at,
-        updated_at,
-        revision,
-    ) = relation.into_parts();
-    Ok(HubuumObjectRelation {
-        id: id.id(),
-        from_hubuum_object_id: from_hubuum_object_id.id(),
-        to_hubuum_object_id: to_hubuum_object_id.id(),
-        class_relation_id: class_relation_id.id(),
-        created_at: created_at.naive_utc(),
-        updated_at: updated_at.naive_utc(),
-        revision,
-    })
 }
 
 fn relation_endpoint_to_storage(endpoint: ObjectRelationEndpoint) -> StorageObjectRelationEndpoint {
@@ -430,16 +239,6 @@ pub(crate) fn object_relation_create_to_storage(
     ))
 }
 
-pub(crate) fn object_relation_create_from_storage(
-    command: StorageObjectRelationCreate,
-) -> NewHubuumObjectRelation {
-    NewHubuumObjectRelation {
-        from_hubuum_object_id: command.from_object_id().id(),
-        to_hubuum_object_id: command.to_object_id().id(),
-        class_relation_id: command.class_relation_id().id(),
-    }
-}
-
 pub(crate) fn object_relation_create_selector_to_storage(
     selector: ObjectRelationCreateSelector,
 ) -> Result<StorageObjectRelationCreateSelector, ApiError> {
@@ -464,7 +263,7 @@ pub(crate) fn object_relation_create_selector_from_storage(
 ) -> Result<ObjectRelationCreateSelector, ApiError> {
     Ok(match selector {
         StorageObjectRelationCreateSelector::Explicit(command) => {
-            ObjectRelationCreateSelector::explicit(object_relation_create_from_storage(command))
+            ObjectRelationCreateSelector::explicit(command.into())
         }
         StorageObjectRelationCreateSelector::Between { from, to } => {
             ObjectRelationCreateSelector::between(
@@ -625,7 +424,7 @@ mod tests {
                     from_class,
                 )
                 .unwrap();
-                let target = ResolvedClassTarget::from_storage(stored).unwrap();
+                let target = ResolvedClassTarget::from(stored);
                 assert_eq!(target.as_storage().class().name().as_ptr(), original_name);
             }
             Aggregate::Object => {
@@ -638,7 +437,7 @@ mod tests {
                     stored_object(1),
                 )
                 .unwrap();
-                let target = ResolvedObjectTarget::from_storage(stored).unwrap();
+                let target = ResolvedObjectTarget::from(stored);
                 assert_eq!(target.as_storage().class().name().as_ptr(), original_name);
             }
             Aggregate::PreparedClassRelation => {
@@ -652,7 +451,7 @@ mod tests {
                     to_class,
                 )
                 .unwrap();
-                let target = PreparedClassRelation::from_storage(stored).unwrap();
+                let target = PreparedClassRelation::from(stored);
                 assert_eq!(
                     target.as_storage().from_class().name().as_ptr(),
                     original_name
@@ -662,7 +461,7 @@ mod tests {
                 let stored =
                     StorageResolvedClassRelation::try_new(relation(), from_class, to_class)
                         .unwrap();
-                let target = ResolvedClassRelationTarget::from_storage(stored).unwrap();
+                let target = ResolvedClassRelationTarget::from(stored);
                 assert_eq!(
                     target.as_storage().from_class().name().as_ptr(),
                     original_name
@@ -683,7 +482,7 @@ mod tests {
                     class_relation,
                 )
                 .unwrap();
-                let target = PreparedObjectRelation::from_storage(stored).unwrap();
+                let target = PreparedObjectRelation::from(stored);
                 assert_eq!(
                     target
                         .as_storage()
@@ -711,7 +510,7 @@ mod tests {
                     class_relation,
                 )
                 .unwrap();
-                let target = ResolvedObjectRelationTarget::from_storage(stored).unwrap();
+                let target = ResolvedObjectRelationTarget::from(stored);
                 assert_eq!(
                     target
                         .as_storage()

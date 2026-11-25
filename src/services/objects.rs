@@ -7,7 +7,7 @@ use crate::models::{
     HubuumObject, NewHubuumObject, ObjectDataPatchDocument, ObjectSelector, ResolvedClassTarget,
     ResolvedObjectTarget, UpdateHubuumObject,
 };
-use crate::services::storage_boundary::object_from_storage;
+
 use crate::storage::ObjectStorage;
 
 /// Application-facing object resolution and lifecycle use cases.
@@ -29,7 +29,7 @@ impl ObjectService {
             .resolve_object(selector.into())
             .await
             .map_err(ApiError::from)
-            .and_then(ResolvedObjectTarget::from_storage)
+            .map(ResolvedObjectTarget::from)
     }
 
     pub async fn create(
@@ -44,7 +44,7 @@ impl ObjectService {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(object_from_storage)
+            .map(HubuumObject::from)
     }
 
     pub async fn update(
@@ -59,7 +59,7 @@ impl ObjectService {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(object_from_storage)
+            .map(HubuumObject::from)
     }
 
     pub async fn patch_data(
@@ -74,7 +74,7 @@ impl ObjectService {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(object_from_storage)
+            .map(HubuumObject::from)
     }
 
     pub async fn delete(

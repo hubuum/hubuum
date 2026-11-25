@@ -1,6 +1,8 @@
+use crate::models::PrincipalGroup;
 use hubuum_domain::GroupId;
 use hubuum_storage_core::StorageGroupCreate;
 use hubuum_storage_core::StorageGroupUpdate;
+use hubuum_storage_core::StorageIdentityGroup;
 // src/models/group.rs
 
 use crate::errors::ApiError;
@@ -8,9 +10,7 @@ use crate::events::EventContext;
 use crate::models::principal::Principal;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{LOCAL_PROVIDER_KIND, ResourceRevision};
-use crate::services::storage_boundary::{
-    group_from_storage, principal_from_storage, principal_group_from_storage,
-};
+
 use crate::storage::{GroupMembershipStorage, GroupStorage, StorageContext, storage_handle};
 use crate::traits::PrincipalIdAccessor;
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,7 @@ impl GroupIdApplicationExt for GroupID {
             .get_group(*self)
             .await
             .map_err(ApiError::from)
-            .and_then(group_from_storage)
+            .map(Group::from)
     }
 
     /// Delete this group with system audit attribution.
@@ -103,6 +103,28 @@ pub struct Group {
     pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
     pub last_sync_success_at: Option<chrono::NaiveDateTime>,
     pub revision: ResourceRevision,
+}
+
+impl From<StorageIdentityGroup> for Group {
+    fn from(row: StorageIdentityGroup) -> Self {
+        Self {
+            id: row.id().id(),
+            groupname: row.name().to_string(),
+            description: row.description().to_string(),
+            created_at: row.created_at().naive_utc(),
+            updated_at: row.updated_at().naive_utc(),
+            identity_scope_id: row.identity_scope_id().id(),
+            managed_by: row.managed_by().to_string(),
+            external_key: row.external_key().map(ToString::to_string),
+            last_sync_attempted_at: row
+                .last_sync_attempted_at()
+                .map(|timestamp| timestamp.naive_utc()),
+            last_sync_success_at: row
+                .last_sync_success_at()
+                .map(|timestamp| timestamp.naive_utc()),
+            revision: row.revision(),
+        }
+    }
 }
 
 impl Group {
@@ -285,7 +307,7 @@ impl Group {
             .load_group_member_principals(GroupId::new(self.id)?)
             .await
             .map_err(ApiError::from)
-            .and_then(|members| members.into_iter().map(principal_from_storage).collect())
+            .map(|members| members.into_iter().map(Principal::from).collect())
     }
 
     pub async fn members_paginated<C>(
@@ -300,19 +322,16 @@ impl Group {
             .list_group_members(GroupId::new(self.id)?, query_options.clone())
             .await
             .map_err(ApiError::from)
-            .and_then(|page| {
+            .map(|page| {
                 let (members, total) = page.into_parts();
                 let members = members
                     .into_iter()
                     .map(|member| {
                         let (membership, principal) = member.into_parts();
-                        Ok((
-                            principal_group_from_storage(membership)?,
-                            principal_from_storage(principal)?,
-                        ))
+                        (PrincipalGroup::from(membership), Principal::from(principal))
                     })
-                    .collect::<Result<Vec<_>, ApiError>>()?;
-                Ok((members, total))
+                    .collect();
+                (members, total)
             })
     }
 
@@ -370,7 +389,7 @@ impl Group {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(principal_group_from_storage)
+            .map(PrincipalGroup::from)
     }
 
     /// Remove a member with system audit attribution.
@@ -466,7 +485,7 @@ impl NewGroup {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(group_from_storage)
+            .map(Group::from)
     }
 
     pub async fn save<C>(&self, backend: &C, context: &EventContext) -> Result<Group, ApiError>
@@ -478,7 +497,7 @@ impl NewGroup {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(group_from_storage)
+            .map(Group::from)
     }
 }
 
@@ -512,7 +531,7 @@ impl UpdateGroup {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(group_from_storage)
+            .map(Group::from)
     }
 
     pub async fn save<C>(
@@ -529,7 +548,7 @@ impl UpdateGroup {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(group_from_storage)
+            .map(Group::from)
     }
 }
 

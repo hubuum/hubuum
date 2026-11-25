@@ -1,4 +1,5 @@
-use crate::services::storage_boundary::class_record_from_storage;
+use hubuum_storage_core::StorageClass;
+
 use crate::storage::{StorageClassSelector, StorageResolvedClass};
 use async_trait::async_trait;
 use hubuum_domain::CollectionId;
@@ -25,6 +26,33 @@ pub struct HubuumClass {
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
     pub revision: ResourceRevision,
+}
+
+impl From<StorageClass> for HubuumClass {
+    fn from(row: StorageClass) -> Self {
+        let (
+            id,
+            name,
+            collection_id,
+            json_schema,
+            validate_schema,
+            description,
+            created_at,
+            updated_at,
+            revision,
+        ) = row.into_parts();
+        Self {
+            id: id.id(),
+            name,
+            collection_id: collection_id.id(),
+            json_schema,
+            validate_schema,
+            description,
+            created_at: created_at.naive_utc(),
+            updated_at: updated_at.naive_utc(),
+            revision,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
@@ -188,15 +216,17 @@ pub struct ResolvedClassTarget {
     class: HubuumClass,
 }
 
-impl ResolvedClassTarget {
+impl From<StorageResolvedClass> for ResolvedClassTarget {
     /// Preserve the validated aggregate; private views serve domain and HTTP callers.
-    pub(crate) fn from_storage(storage: StorageResolvedClass) -> Result<Self, ApiError> {
-        Ok(Self {
-            class: class_record_from_storage(storage.class().clone())?,
+    fn from(storage: StorageResolvedClass) -> Self {
+        Self {
+            class: HubuumClass::from(storage.class().clone()),
             storage,
-        })
+        }
     }
+}
 
+impl ResolvedClassTarget {
     pub(crate) fn as_storage(&self) -> &StorageResolvedClass {
         &self.storage
     }

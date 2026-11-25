@@ -1,20 +1,20 @@
 use crate::permissions::ClassResourceEndpoint;
 use crate::permissions::ObjectResourceEndpoint;
-use crate::services::storage_boundary::{
-    class_record_from_storage, class_relation_create_from_storage, class_relation_from_storage,
-    object_from_storage, object_relation_create_from_storage, object_relation_from_storage,
-};
 #[cfg(test)]
 use crate::services::storage_boundary::{
-    class_record_to_storage, class_relation_create_to_storage, class_relation_to_storage,
-    object_relation_create_to_storage, object_relation_to_storage, object_to_storage,
+    class_record_to_storage, class_relation_to_storage, object_relation_create_to_storage,
+    object_relation_to_storage, object_to_storage,
 };
+use hubuum_storage_core::{StorageClassRelationCreate, StorageObjectRelationCreate};
+
 use crate::storage::{
     StoragePreparedClassRelation, StoragePreparedObjectRelation, StorageResolvedClassRelation,
     StorageResolvedObjectRelation,
 };
 use async_trait::async_trait;
 use hubuum_domain::{RelationLabel, TemplateAlias};
+use hubuum_storage_core::StorageClassRelation;
+use hubuum_storage_core::StorageObjectRelation;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use utoipa::ToSchema;
@@ -56,6 +56,27 @@ pub struct HubuumClassRelation {
     pub revision: ResourceRevision,
 }
 
+impl From<StorageClassRelation> for HubuumClassRelation {
+    fn from(relation: StorageClassRelation) -> Self {
+        let parts = relation.into_parts();
+        let metadata = parts.metadata();
+        Self {
+            id: parts.id(),
+            from_hubuum_class_id: parts.from_class_id(),
+            to_hubuum_class_id: parts.to_class_id(),
+            forward_label: parts.forward_label().cloned(),
+            reverse_label: parts.reverse_label().cloned(),
+            forward_template_alias: parts.forward_alias().cloned(),
+            reverse_template_alias: parts.reverse_alias().cloned(),
+            created_at: metadata.created_at().naive_utc(),
+            updated_at: metadata.updated_at().naive_utc(),
+            from_max_relations: parts.from_limit(),
+            to_max_relations: parts.to_limit(),
+            revision: metadata.revision(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = new_hubuum_class_relation_example)]
 pub struct NewHubuumClassRelation {
@@ -76,6 +97,34 @@ pub struct NewHubuumClassRelation {
     /// Maximum relations allowed for each object in `to_hubuum_class_id`.
     /// Omit or set to `null` for unlimited.
     pub to_max_relations: Option<ObjectRelationLimit>,
+}
+
+impl From<&StorageClassRelationCreate> for NewHubuumClassRelation {
+    fn from(command: &StorageClassRelationCreate) -> Self {
+        Self {
+            from_hubuum_class_id: command.from_class_id(),
+            to_hubuum_class_id: command.to_class_id(),
+            forward_label: command.forward_label().cloned(),
+            reverse_label: command.reverse_label().cloned(),
+            forward_template_alias: command.forward_template_alias().cloned(),
+            reverse_template_alias: command.reverse_template_alias().cloned(),
+            from_max_relations: command.from_max_relations(),
+            to_max_relations: command.to_max_relations(),
+        }
+    }
+}
+
+impl From<NewHubuumClassRelation> for StorageClassRelationCreate {
+    fn from(command: NewHubuumClassRelation) -> Self {
+        Self::builder(command.from_hubuum_class_id, command.to_hubuum_class_id)
+            .labels(command.forward_label, command.reverse_label)
+            .template_aliases(
+                command.forward_template_alias,
+                command.reverse_template_alias,
+            )
+            .relation_limits(command.from_max_relations, command.to_max_relations)
+            .build()
+    }
 }
 
 /// To create new relations between classes from within a class
@@ -169,17 +218,19 @@ pub struct PreparedClassRelation {
     to_class: HubuumClass,
 }
 
-impl PreparedClassRelation {
+impl From<StoragePreparedClassRelation> for PreparedClassRelation {
     /// Preserve the validated aggregate; private views serve domain and HTTP callers.
-    pub(crate) fn from_storage(storage: StoragePreparedClassRelation) -> Result<Self, ApiError> {
-        Ok(Self {
-            command: class_relation_create_from_storage(storage.command())?,
-            from_class: class_record_from_storage(storage.from_class().clone())?,
-            to_class: class_record_from_storage(storage.to_class().clone())?,
+    fn from(storage: StoragePreparedClassRelation) -> Self {
+        Self {
+            command: storage.command().into(),
+            from_class: HubuumClass::from(storage.from_class().clone()),
+            to_class: HubuumClass::from(storage.to_class().clone()),
             storage,
-        })
+        }
     }
+}
 
+impl PreparedClassRelation {
     pub(crate) fn as_storage(&self) -> &StoragePreparedClassRelation {
         &self.storage
     }
@@ -199,7 +250,7 @@ impl PreparedClassRelation {
             ));
         }
         let storage = StoragePreparedClassRelation::try_new(
-            class_relation_create_to_storage(command.clone())?,
+            command.clone().into(),
             class_record_to_storage(from_class.clone())?,
             class_record_to_storage(to_class.clone())?,
         )
@@ -239,17 +290,19 @@ pub struct ResolvedClassRelationTarget {
     to_class: HubuumClass,
 }
 
-impl ResolvedClassRelationTarget {
+impl From<StorageResolvedClassRelation> for ResolvedClassRelationTarget {
     /// Preserve the validated aggregate; private views serve domain and HTTP callers.
-    pub(crate) fn from_storage(storage: StorageResolvedClassRelation) -> Result<Self, ApiError> {
-        Ok(Self {
-            relation: class_relation_from_storage(storage.relation().clone())?,
-            from_class: class_record_from_storage(storage.from_class().clone())?,
-            to_class: class_record_from_storage(storage.to_class().clone())?,
+    fn from(storage: StorageResolvedClassRelation) -> Self {
+        Self {
+            relation: HubuumClassRelation::from(storage.relation().clone()),
+            from_class: HubuumClass::from(storage.from_class().clone()),
+            to_class: HubuumClass::from(storage.to_class().clone()),
             storage,
-        })
+        }
     }
+}
 
+impl ResolvedClassRelationTarget {
     pub(crate) fn as_storage(&self) -> &StorageResolvedClassRelation {
         &self.storage
     }
@@ -320,12 +373,45 @@ pub struct HubuumObjectRelation {
     pub revision: ResourceRevision,
 }
 
+impl From<StorageObjectRelation> for HubuumObjectRelation {
+    fn from(relation: StorageObjectRelation) -> Self {
+        let (
+            id,
+            from_hubuum_object_id,
+            to_hubuum_object_id,
+            class_relation_id,
+            created_at,
+            updated_at,
+            revision,
+        ) = relation.into_parts();
+        Self {
+            id: id.id(),
+            from_hubuum_object_id: from_hubuum_object_id.id(),
+            to_hubuum_object_id: to_hubuum_object_id.id(),
+            class_relation_id: class_relation_id.id(),
+            created_at: created_at.naive_utc(),
+            updated_at: updated_at.naive_utc(),
+            revision,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = new_hubuum_object_relation_example)]
 pub struct NewHubuumObjectRelation {
     pub from_hubuum_object_id: i32,
     pub to_hubuum_object_id: i32,
     pub class_relation_id: i32,
+}
+
+impl From<StorageObjectRelationCreate> for NewHubuumObjectRelation {
+    fn from(command: StorageObjectRelationCreate) -> Self {
+        Self {
+            from_hubuum_object_id: command.from_object_id().id(),
+            to_hubuum_object_id: command.to_object_id().id(),
+            class_relation_id: command.class_relation_id().id(),
+        }
+    }
 }
 
 impl NewHubuumObjectRelation {
@@ -490,20 +576,20 @@ pub struct PreparedObjectRelation {
     class_relation: ResolvedClassRelationTarget,
 }
 
-impl PreparedObjectRelation {
+impl From<StoragePreparedObjectRelation> for PreparedObjectRelation {
     /// Preserve the validated aggregate; private views serve domain and HTTP callers.
-    pub(crate) fn from_storage(storage: StoragePreparedObjectRelation) -> Result<Self, ApiError> {
-        Ok(Self {
-            command: object_relation_create_from_storage(*storage.command()),
-            from_object: object_from_storage(storage.from_object().clone())?,
-            to_object: object_from_storage(storage.to_object().clone())?,
-            class_relation: ResolvedClassRelationTarget::from_storage(
-                storage.class_relation().clone(),
-            )?,
+    fn from(storage: StoragePreparedObjectRelation) -> Self {
+        Self {
+            command: (*storage.command()).into(),
+            from_object: HubuumObject::from(storage.from_object().clone()),
+            to_object: HubuumObject::from(storage.to_object().clone()),
+            class_relation: storage.class_relation().clone().into(),
             storage,
-        })
+        }
     }
+}
 
+impl PreparedObjectRelation {
     pub(crate) fn as_storage(&self) -> &StoragePreparedObjectRelation {
         &self.storage
     }
@@ -570,20 +656,20 @@ pub struct ResolvedObjectRelationTarget {
     class_relation: ResolvedClassRelationTarget,
 }
 
-impl ResolvedObjectRelationTarget {
+impl From<StorageResolvedObjectRelation> for ResolvedObjectRelationTarget {
     /// Preserve the validated aggregate; private views serve domain and HTTP callers.
-    pub(crate) fn from_storage(storage: StorageResolvedObjectRelation) -> Result<Self, ApiError> {
-        Ok(Self {
-            relation: object_relation_from_storage(storage.relation().clone())?,
-            from_object: object_from_storage(storage.from_object().clone())?,
-            to_object: object_from_storage(storage.to_object().clone())?,
-            class_relation: ResolvedClassRelationTarget::from_storage(
-                storage.class_relation().clone(),
-            )?,
+    fn from(storage: StorageResolvedObjectRelation) -> Self {
+        Self {
+            relation: HubuumObjectRelation::from(storage.relation().clone()),
+            from_object: HubuumObject::from(storage.from_object().clone()),
+            to_object: HubuumObject::from(storage.to_object().clone()),
+            class_relation: storage.class_relation().clone().into(),
             storage,
-        })
+        }
     }
+}
 
+impl ResolvedObjectRelationTarget {
     pub(crate) fn as_storage(&self) -> &StorageResolvedObjectRelation {
         &self.storage
     }
