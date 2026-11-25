@@ -24,6 +24,11 @@ field-leak hubuum::models::object::ResolvedObjectTarget::class
 field-leak hubuum::models::object::ResolvedObjectTarget::object
 field-leak hubuum::models::object::ResolvedObjectTarget::storage
 
+# Relation services pass the validated storage value by reference to create or delete the relation.
+field-leak hubuum::models::relation::PreparedClassRelation::storage
+field-leak hubuum::models::relation::PreparedObjectRelation::storage
+field-leak hubuum::models::relation::ResolvedObjectRelationTarget::storage
+
 # Each export schema points to a typed documentation example which constructs that same schema.
 tangle hubuum::models::export::ExportJsonResponse,hubuum::models::export::openapi_examples::export_json_response_example
 tangle hubuum::models::export::ExportLimits,hubuum::models::export::openapi_examples::export_limits_example
