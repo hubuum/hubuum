@@ -2,8 +2,6 @@ mod identity;
 mod integrations;
 mod relations;
 mod resources;
-mod results;
-pub(crate) use results::ImportResults;
 mod workflow;
 
 use super::*;
