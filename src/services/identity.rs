@@ -1,5 +1,5 @@
 use hubuum_domain::PlaintextPassword;
-use hubuum_domain::{GroupId, PrincipalId};
+use hubuum_domain::{GroupId, PrincipalId, TokenId};
 use hubuum_storage_core::StorageExternalSyncFailure;
 use std::collections::HashMap;
 
@@ -13,8 +13,8 @@ use crate::models::search::QueryOptions;
 use crate::models::{
     Group, IdentityScope, NewServiceAccount, PrincipalGroup, PrincipalToken,
     PrincipalTokenCreateRequest, PrincipalTokenMetadata, ServiceAccount, ServiceAccountWithName,
-    TokenListState, TokenResourceScope, TokenScope, TokenScopeDetails, UpdateServiceAccount,
-    UpdateUser, User, UserPointResponse, UserWithName, configured_token_lifetime,
+    TokenListState, TokenScope, UpdateServiceAccount, UpdateUser, User, UserPointResponse,
+    UserWithName, configured_token_lifetime,
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 
@@ -28,7 +28,7 @@ use crate::storage::{
     StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountDetails,
     StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
     StorageServiceAccountUpdate, StorageTokenCreate, StorageTokenHashRevoke,
-    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
+    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState,
     StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUser,
     StorageUserAnonymize, StorageUserDelete, StorageUserDetails, StorageUserListItem,
     StorageUserListQuery, StorageUserPasswordUpdate, StorageUserUpdate, TokenStorage, UserStorage,
@@ -129,54 +129,6 @@ fn token_state(state: TokenListState) -> StorageTokenListState {
         TokenListState::Revoked => StorageTokenListState::Revoked,
         TokenListState::All => StorageTokenListState::All,
     }
-}
-
-fn token_scope_from_storage(
-    scope: StorageAuthenticationTokenScope,
-) -> Result<TokenScopeDetails, ApiError> {
-    let (permissions, resources) = scope.into_parts();
-    let permissions = permissions.map(|permissions| {
-        permissions
-            .into_iter()
-            .map(crate::permissions::permission_from_storage)
-            .collect::<Vec<_>>()
-    });
-    let resources = resources.map(|resources| {
-        let (collections, classes, objects) = resources.into_parts();
-        collections
-            .into_iter()
-            .map(TokenResourceScope::Collection)
-            .chain(classes.into_iter().map(TokenResourceScope::Class))
-            .chain(objects.into_iter().map(TokenResourceScope::Object))
-            .collect()
-    });
-    TokenScopeDetails::from_scope(TokenScope::from_stored_parts(permissions, resources)?)
-}
-
-fn token_metadata_from_storage(
-    metadata: StorageTokenMetadata,
-) -> Result<PrincipalTokenMetadata, ApiError> {
-    let scope = metadata
-        .scope()
-        .cloned()
-        .map(token_scope_from_storage)
-        .transpose()?;
-    Ok(PrincipalTokenMetadata {
-        id: metadata.id(),
-        principal_id: metadata.principal_id(),
-        name: metadata.name().map(str::to_string),
-        description: metadata.description().map(str::to_string),
-        issued: metadata.issued().naive_utc(),
-        expires_at: metadata.expires_at().map(|timestamp| timestamp.naive_utc()),
-        last_used_at: metadata
-            .last_used_at()
-            .map(|timestamp| timestamp.naive_utc()),
-        revoked_at: metadata.revoked_at().map(|timestamp| timestamp.naive_utc()),
-        active: metadata.is_active(),
-        expired: metadata.is_expired(),
-        scope,
-        revision: metadata.revision(),
-    })
 }
 
 pub(crate) fn user_from_storage(user: StorageUser) -> User {
@@ -417,64 +369,49 @@ pub async fn create_token(
     .description(parts.description)
     .expires_at(parts.expires_at.map(|timestamp| timestamp.and_utc()))
     .scope(parts.scope.as_ref().map(token_scope_to_storage));
-    let metadata = token_metadata_from_storage(
+    let metadata = PrincipalTokenMetadata::try_from(
         storage_handle(context)
             .create_token(storage_request)
             .await?
             .into_value(),
     )?;
-    let expires_at = metadata.expires_at.ok_or_else(|| {
-        ApiError::InternalServerError(
-            "newly issued token is missing its persisted expiry".to_string(),
-        )
-    })?;
-    Ok(crate::models::IssuedToken::new(raw, expires_at))
+    metadata.into_issued_token(raw)
 }
 
 pub async fn renew_token(
     context: &impl StorageContext,
-    source_token_id: i32,
-    principal_id: i32,
+    source_token_id: TokenId,
+    principal_id: PrincipalId,
     expires_at: Option<chrono::NaiveDateTime>,
     issuance_policy: crate::models::TokenIssuancePolicy,
     event_context: &EventContext,
 ) -> Result<crate::models::IssuedToken, ApiError> {
     let raw = crate::utilities::auth::generate_token();
     let request = StorageTokenRenew::new(
-        hubuum_domain::TokenId::new(source_token_id)
-            .expect("validated source token id must be positive"),
-        PrincipalId::new(principal_id)?,
+        source_token_id,
+        principal_id,
         raw.storage_digest()?,
         expires_at.map(|timestamp| timestamp.and_utc()),
         token_policy(issuance_policy),
         event_context.clone(),
     );
-    let metadata = token_metadata_from_storage(
+    let metadata = PrincipalTokenMetadata::try_from(
         storage_handle(context)
             .renew_token(request)
             .await?
             .into_value(),
     )?;
-    let expires_at = metadata.expires_at.ok_or_else(|| {
-        ApiError::InternalServerError(
-            "newly renewed token is missing its persisted expiry".to_string(),
-        )
-    })?;
-    Ok(crate::models::IssuedToken::new(raw, expires_at))
+    metadata.into_issued_token(raw)
 }
 
 pub async fn get_token_metadata(
     context: &impl StorageContext,
-    principal_id: i32,
-    token_id: i32,
+    principal_id: PrincipalId,
+    token_id: TokenId,
 ) -> Result<PrincipalTokenMetadata, ApiError> {
-    token_metadata_from_storage(
+    PrincipalTokenMetadata::try_from(
         storage_handle(context)
-            .get_token_metadata(
-                PrincipalId::new(principal_id)?,
-                hubuum_domain::TokenId::new(token_id).expect("validated token id must be positive"),
-                token_observation()?,
-            )
+            .get_token_metadata(principal_id, token_id, token_observation()?)
             .await?,
     )
 }
@@ -496,20 +433,20 @@ pub async fn load_token_metadata_by_ids(
         )
         .await?
         .into_iter()
-        .map(token_metadata_from_storage)
+        .map(PrincipalTokenMetadata::try_from)
         .collect()
 }
 
 pub async fn revoke_token(
     context: &impl StorageContext,
-    token_id: i32,
-    principal_id: i32,
+    token_id: TokenId,
+    principal_id: PrincipalId,
     event_context: &EventContext,
 ) -> Result<usize, ApiError> {
     Ok(storage_handle(context)
         .revoke_token(StorageTokenRevoke::new(
-            hubuum_domain::TokenId::new(token_id).expect("validated token id must be positive"),
-            PrincipalId::new(principal_id)?,
+            token_id,
+            principal_id,
             event_context.clone(),
         ))
         .await?
@@ -644,7 +581,7 @@ pub async fn list_retained_tokens(
         .into_parts();
     Ok((
         rows.into_iter()
-            .map(token_metadata_from_storage)
+            .map(PrincipalTokenMetadata::try_from)
             .collect::<Result<Vec<_>, _>>()?,
         total.unwrap_or(SKIPPED_TOTAL_COUNT),
     ))
