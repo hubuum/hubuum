@@ -2,12 +2,11 @@ use crate::models::ResourceRevision;
 use crate::models::group::Group;
 use crate::models::principal::Principal;
 use hubuum_domain::{GroupId, PrincipalId};
+use hubuum_storage_core::StoragePrincipalGroup;
 
 use crate::errors::ApiError;
 use crate::events::EventContext;
-use crate::services::storage_boundary::{
-    group_from_storage, principal_from_storage, principal_group_from_storage,
-};
+
 use crate::storage::{
     GroupMembershipStorage, GroupStorage, PrincipalStorage, StorageContext, storage_handle,
 };
@@ -24,6 +23,18 @@ pub struct PrincipalGroup {
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
     pub revision: ResourceRevision,
+}
+
+impl From<StoragePrincipalGroup> for PrincipalGroup {
+    fn from(row: StoragePrincipalGroup) -> Self {
+        Self {
+            principal_id: row.principal_id().id(),
+            group_id: row.group_id().id(),
+            created_at: row.created_at().naive_utc(),
+            updated_at: row.updated_at().naive_utc(),
+            revision: row.revision(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -48,7 +59,7 @@ impl SaveAdapter for NewPrincipalGroup {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(principal_group_from_storage)
+            .map(PrincipalGroup::from)
     }
 
     async fn save_adapter(
@@ -65,7 +76,7 @@ impl SaveAdapter for NewPrincipalGroup {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(principal_group_from_storage)
+            .map(PrincipalGroup::from)
     }
 }
 
@@ -78,7 +89,7 @@ impl PrincipalGroup {
             .get_principal(PrincipalId::new(self.principal_id)?)
             .await
             .map_err(ApiError::from)
-            .and_then(principal_from_storage)
+            .map(Principal::from)
     }
 
     pub async fn group<C>(&self, backend: &C) -> Result<Group, ApiError>
@@ -89,7 +100,7 @@ impl PrincipalGroup {
             .get_group(GroupId::new(self.group_id)?)
             .await
             .map_err(ApiError::from)
-            .and_then(group_from_storage)
+            .map(Group::from)
     }
 
     pub async fn save<C>(&self, backend: &C) -> Result<PrincipalGroup, ApiError>
@@ -105,7 +116,7 @@ impl PrincipalGroup {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(principal_group_from_storage)
+            .map(PrincipalGroup::from)
     }
 
     pub async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>

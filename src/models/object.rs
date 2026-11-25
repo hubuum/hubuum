@@ -1,5 +1,6 @@
 use crate::permissions::ClassResourceEndpoint;
-use crate::services::storage_boundary::{class_record_from_storage, object_from_storage};
+use hubuum_storage_core::StorageObject;
+
 use crate::storage::{StorageObjectSelector, StorageResolvedObject};
 use async_trait::async_trait;
 use hubuum_domain::{ClassId, CollectionId};
@@ -28,6 +29,33 @@ pub struct HubuumObject {
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
     pub revision: ResourceRevision,
+}
+
+impl From<StorageObject> for HubuumObject {
+    fn from(row: StorageObject) -> Self {
+        let (
+            id,
+            name,
+            collection_id,
+            hubuum_class_id,
+            data,
+            description,
+            created_at,
+            updated_at,
+            revision,
+        ) = row.into_parts();
+        Self {
+            id: id.id(),
+            name,
+            collection_id: collection_id.id(),
+            hubuum_class_id: hubuum_class_id.id(),
+            data,
+            description,
+            created_at: created_at.naive_utc(),
+            updated_at: updated_at.naive_utc(),
+            revision,
+        }
+    }
 }
 
 impl HubuumObject {
@@ -294,16 +322,18 @@ pub struct ResolvedObjectTarget {
     object: HubuumObject,
 }
 
-impl ResolvedObjectTarget {
+impl From<StorageResolvedObject> for ResolvedObjectTarget {
     /// Preserve the validated aggregate; private views serve domain and HTTP callers.
-    pub(crate) fn from_storage(storage: StorageResolvedObject) -> Result<Self, ApiError> {
-        Ok(Self {
-            class: class_record_from_storage(storage.class().clone())?,
-            object: object_from_storage(storage.object().clone())?,
+    fn from(storage: StorageResolvedObject) -> Self {
+        Self {
+            class: HubuumClass::from(storage.class().clone()),
+            object: HubuumObject::from(storage.object().clone()),
             storage,
-        })
+        }
     }
+}
 
+impl ResolvedObjectTarget {
     pub(crate) fn as_storage(&self) -> &StorageResolvedObject {
         &self.storage
     }

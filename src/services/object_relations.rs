@@ -63,7 +63,7 @@ impl ObjectRelationService {
             .prepare_object_relation(object_relation_create_selector_to_storage(selector)?)
             .await
             .map_err(ApiError::from)
-            .and_then(PreparedObjectRelation::from_storage)
+            .map(PreparedObjectRelation::from)
     }
 
     pub async fn resolve(
@@ -74,7 +74,7 @@ impl ObjectRelationService {
             .resolve_object_relation(object_relation_selector_to_storage(selector))
             .await
             .map_err(ApiError::from)
-            .and_then(ResolvedObjectRelationTarget::from_storage)
+            .map(ResolvedObjectRelationTarget::from)
     }
 
     pub async fn create(
@@ -88,7 +88,7 @@ impl ObjectRelationService {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(ResolvedObjectRelationTarget::from_storage)
+            .map(ResolvedObjectRelationTarget::from)
     }
 
     pub async fn delete(

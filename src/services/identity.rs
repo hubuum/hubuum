@@ -1,3 +1,4 @@
+use crate::models::ServiceAccountPointResponse;
 use hubuum_domain::PlaintextPassword;
 use hubuum_domain::{GroupId, PrincipalId, TokenId};
 use hubuum_storage_core::StorageExternalSyncFailure;
@@ -22,15 +23,13 @@ use crate::storage::{
     ExternalIdentityStorage, GroupMembershipStorage, IdentityScopeStorage,
     LocalIdentityCredentialStorage, ServiceAccountStorage, StorageAuthenticationResourceScope,
     StorageAuthenticationTokenScope, StorageContext, StorageExternalGroup,
-    StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentityGroup,
-    StorageIdentityScope, StorageIdentityScopeEnsure, StorageLocalPasswordReset,
-    StoragePrincipalGroup, StoragePrincipalGroupListQuery, StoragePrincipalTokensRevoke,
-    StorageServiceAccount, StorageServiceAccountCreate, StorageServiceAccountDetails,
-    StorageServiceAccountListItem, StorageServiceAccountListQuery, StorageServiceAccountMutation,
-    StorageServiceAccountUpdate, StorageTokenCreate, StorageTokenHashRevoke,
-    StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState,
-    StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUser,
-    StorageUserAnonymize, StorageUserDelete, StorageUserDetails, StorageUserListItem,
+    StorageExternalPrincipalState, StorageExternalUserSync, StorageIdentityScope,
+    StorageIdentityScopeEnsure, StorageLocalPasswordReset, StoragePrincipalGroupListQuery,
+    StoragePrincipalTokensRevoke, StorageServiceAccountCreate, StorageServiceAccountListItem,
+    StorageServiceAccountListQuery, StorageServiceAccountMutation, StorageServiceAccountUpdate,
+    StorageTokenCreate, StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenListQuery,
+    StorageTokenListState, StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke,
+    StorageUser, StorageUserAnonymize, StorageUserDelete, StorageUserListItem,
     StorageUserListQuery, StorageUserPasswordUpdate, StorageUserUpdate, TokenStorage, UserStorage,
     storage_handle,
 };
@@ -67,55 +66,12 @@ fn identity_scope_from_storage(scope: StorageIdentityScope) -> Result<IdentitySc
     })
 }
 
-fn principal_group_from_storage(group: StoragePrincipalGroup) -> Result<PrincipalGroup, ApiError> {
-    Ok(PrincipalGroup {
-        principal_id: group.principal_id().id(),
-        group_id: group.group_id().id(),
-        created_at: group.created_at().naive_utc(),
-        updated_at: group.updated_at().naive_utc(),
-        revision: group.revision(),
-    })
-}
-
-pub(super) fn identity_group_from_storage(group: StorageIdentityGroup) -> Result<Group, ApiError> {
-    Ok(Group {
-        id: group.id().id(),
-        groupname: group.name().to_string(),
-        description: group.description().to_string(),
-        created_at: group.created_at().naive_utc(),
-        updated_at: group.updated_at().naive_utc(),
-        identity_scope_id: group.identity_scope_id().id(),
-        managed_by: group.managed_by().to_string(),
-        external_key: group.external_key().map(ToString::to_string),
-        last_sync_attempted_at: group
-            .last_sync_attempted_at()
-            .map(|timestamp| timestamp.naive_utc()),
-        last_sync_success_at: group
-            .last_sync_success_at()
-            .map(|timestamp| timestamp.naive_utc()),
-        revision: group.revision(),
-    })
-}
-
-fn service_account_from_storage(account: StorageServiceAccount) -> ServiceAccount {
-    ServiceAccount {
-        id: account.id().id(),
-        kind: crate::models::PrincipalKind::ServiceAccount,
-        description: account.description().to_string(),
-        owner_group_id: account.owner_group_id().id(),
-        created_by: account.created_by().map(|id| id.id()),
-        disabled_at: account.disabled_at().map(|timestamp| timestamp.naive_utc()),
-        created_at: account.created_at().naive_utc(),
-        updated_at: account.updated_at().naive_utc(),
-    }
-}
-
 fn service_account_list_item_from_storage(
     item: StorageServiceAccountListItem,
 ) -> Result<ServiceAccountWithName, ApiError> {
     let (account, identity_scope, name, item_revision) = item.into_parts();
     Ok(ServiceAccountWithName {
-        service_account: service_account_from_storage(account),
+        service_account: ServiceAccount::from(account),
         identity_scope,
         name,
         revision: item_revision,
@@ -159,21 +115,6 @@ fn user_list_item_from_storage(item: StorageUserListItem) -> Result<UserWithName
             .map(|timestamp| timestamp.naive_utc()),
         item.revision(),
     )))
-}
-
-fn user_point_from_storage(point: StorageUserDetails) -> Result<UserPointResponse, ApiError> {
-    let point = point.into_parts();
-    Ok(UserPointResponse {
-        id: point.id().id(),
-        identity_scope_id: point.identity_scope_id().id(),
-        provider_managed: point.provider_managed(),
-        name: point.name().to_string(),
-        proper_name: point.proper_name().map(str::to_string),
-        email: point.email().map(str::to_string),
-        created_at: point.created_at().naive_utc(),
-        updated_at: point.updated_at().naive_utc(),
-        revision: point.revision(),
-    })
 }
 
 pub(crate) fn token_scope_to_storage(scope: &TokenScope) -> StorageAuthenticationTokenScope {
@@ -235,13 +176,13 @@ pub async fn get_user_point(
     context: &impl StorageContext,
     id: i32,
 ) -> Result<UserPointResponse, ApiError> {
-    user_point_from_storage(
+    Ok(UserPointResponse::from(
         storage_handle(context)
             .get_user_details(
                 hubuum_domain::UserId::new(id).expect("validated user id must be positive"),
             )
             .await?,
-    )
+    ))
 }
 
 pub async fn list_users(
@@ -536,11 +477,11 @@ pub async fn get_principal_group(
     principal_id: i32,
     group_id: i32,
 ) -> Result<PrincipalGroup, ApiError> {
-    principal_group_from_storage(
+    Ok(PrincipalGroup::from(
         storage_handle(context)
             .get_principal_group(PrincipalId::new(principal_id)?, GroupId::new(group_id)?)
             .await?,
-    )
+    ))
 }
 
 pub async fn list_principal_groups(
@@ -556,9 +497,7 @@ pub async fn list_principal_groups(
         .await?
         .into_parts();
     Ok((
-        rows.into_iter()
-            .map(identity_group_from_storage)
-            .collect::<Result<Vec<_>, _>>()?,
+        rows.into_iter().map(Group::from).collect(),
         total.unwrap_or(SKIPPED_TOTAL_COUNT),
     ))
 }
@@ -613,7 +552,7 @@ pub async fn get_service_account(
     context: &impl StorageContext,
     service_account_id: i32,
 ) -> Result<ServiceAccount, ApiError> {
-    Ok(service_account_from_storage(
+    Ok(ServiceAccount::from(
         storage_handle(context)
             .get_service_account(
                 hubuum_domain::ServiceAccountId::new(service_account_id)
@@ -623,30 +562,18 @@ pub async fn get_service_account(
     ))
 }
 
-fn service_account_point_from_storage(
-    point: StorageServiceAccountDetails,
-) -> Result<crate::models::ServiceAccountPointResponse, ApiError> {
-    let (account, identity_scope_id, name, point_revision) = point.into_parts();
-    Ok(crate::models::ServiceAccountPointResponse::from_parts(
-        service_account_from_storage(account),
-        identity_scope_id.id(),
-        name,
-        point_revision,
-    ))
-}
-
 pub async fn get_service_account_point(
     context: &impl StorageContext,
     service_account_id: i32,
 ) -> Result<crate::models::ServiceAccountPointResponse, ApiError> {
-    service_account_point_from_storage(
+    Ok(ServiceAccountPointResponse::from(
         storage_handle(context)
             .get_service_account_details(
                 hubuum_domain::ServiceAccountId::new(service_account_id)
                     .expect("validated service account id must be positive"),
             )
             .await?,
-    )
+    ))
 }
 
 pub async fn list_manageable_service_accounts(
@@ -695,7 +622,7 @@ pub async fn create_service_account(
         created_by.map(PrincipalId::new).transpose()?,
         event_context.clone(),
     );
-    Ok(service_account_from_storage(
+    Ok(ServiceAccount::from(
         storage_handle(context)
             .create_service_account(request)
             .await?
@@ -716,7 +643,7 @@ pub async fn update_service_account(
         update.owner_group_id.map(GroupId::new).transpose()?,
         event_context.clone(),
     );
-    Ok(service_account_from_storage(
+    Ok(ServiceAccount::from(
         storage_handle(context)
             .update_service_account(request)
             .await?
@@ -745,7 +672,7 @@ pub async fn disable_service_account(
             None,
         );
     }
-    Ok(service_account_from_storage(account))
+    Ok(ServiceAccount::from(account))
 }
 
 pub async fn delete_service_account(

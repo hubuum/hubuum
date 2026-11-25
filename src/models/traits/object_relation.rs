@@ -1,8 +1,7 @@
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::services::storage_boundary::{
-    object_relation_create_to_storage, object_relation_from_storage,
-    object_relation_selector_to_storage,
+    object_relation_create_to_storage, object_relation_selector_to_storage,
 };
 use crate::services::{prepare_and_create_object_relation, resolve_and_delete_object_relation};
 
@@ -26,7 +25,7 @@ async fn resolve_object_relation(
         ))
         .await
         .map_err(ApiError::from)
-        .and_then(ResolvedObjectRelationTarget::from_storage)
+        .map(ResolvedObjectRelationTarget::from)
 }
 
 impl IdAccessor for HubuumObjectRelationID {
@@ -135,7 +134,7 @@ impl SaveAdapter for NewHubuumObjectRelation {
         .await
         .map_err(ApiError::from)
         .map(|outcome| outcome.into_value())
-        .and_then(object_relation_from_storage)
+        .map(HubuumObjectRelation::from)
     }
 
     async fn save_adapter(
@@ -152,7 +151,7 @@ impl SaveAdapter for NewHubuumObjectRelation {
         .await
         .map_err(ApiError::from)
         .map(|outcome| outcome.into_value())
-        .and_then(object_relation_from_storage)
+        .map(HubuumObjectRelation::from)
     }
 }
 

@@ -1,4 +1,5 @@
 use hubuum_domain::PlaintextPassword;
+use hubuum_storage_core::StorageUserDetails;
 use std::fmt;
 
 use crate::events::EventContext;
@@ -88,6 +89,23 @@ pub struct UserPointResponse {
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
     pub revision: ResourceRevision,
+}
+
+impl From<StorageUserDetails> for UserPointResponse {
+    fn from(point: StorageUserDetails) -> Self {
+        let point = point.into_parts();
+        Self {
+            id: point.id().id(),
+            identity_scope_id: point.identity_scope_id().id(),
+            provider_managed: point.provider_managed(),
+            name: point.name().to_string(),
+            proper_name: point.proper_name().map(str::to_string),
+            email: point.email().map(str::to_string),
+            created_at: point.created_at().naive_utc(),
+            updated_at: point.updated_at().naive_utc(),
+            revision: point.revision(),
+        }
+    }
 }
 
 impl UserPointResponse {

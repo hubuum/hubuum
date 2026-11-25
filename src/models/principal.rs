@@ -1,4 +1,5 @@
 use hubuum_domain::PrincipalId;
+use hubuum_storage_core::StoragePrincipal;
 use serde::{Deserialize, Serialize};
 use utoipa::openapi::{RefOr, schema::Schema};
 use utoipa::{PartialSchema, ToSchema};
@@ -15,7 +16,7 @@ use crate::models::json_patch::{
 };
 use crate::models::search::{FilterField, SortParam};
 use crate::services::storage_boundary::{
-    principal_from_storage, principal_settings_from_storage, principal_settings_mutation_to_storage,
+    principal_settings_from_storage, principal_settings_mutation_to_storage,
 };
 use crate::storage::{
     PrincipalStorage, StorageContext, StoragePrincipalSettingsMutation, storage_handle,
@@ -42,6 +43,29 @@ pub struct Principal {
     pub last_sync_attempted_at: Option<chrono::NaiveDateTime>,
     pub last_sync_success_at: Option<chrono::NaiveDateTime>,
     pub revision: ResourceRevision,
+}
+
+impl From<StoragePrincipal> for Principal {
+    fn from(row: StoragePrincipal) -> Self {
+        Self {
+            id: row.id().id(),
+            kind: row.kind(),
+            name: row.name().to_owned(),
+            created_at: row.created_at().naive_utc(),
+            updated_at: row.updated_at().naive_utc(),
+            identity_scope_id: row.identity_scope_id().id(),
+            provider_managed: row.provider_managed(),
+            settings: row.settings().clone(),
+            external_subject: row.external_subject().map(ToOwned::to_owned),
+            last_sync_attempted_at: row
+                .last_sync_attempted_at()
+                .map(|timestamp| timestamp.naive_utc()),
+            last_sync_success_at: row
+                .last_sync_success_at()
+                .map(|timestamp| timestamp.naive_utc()),
+            revision: row.revision(),
+        }
+    }
 }
 
 /// An object-only JSON document containing a principal's local preferences.
@@ -538,7 +562,7 @@ pub async fn load_principal_by_id(
         .get_principal(PrincipalId::new(principal_id)?)
         .await
         .map_err(ApiError::from)
-        .and_then(principal_from_storage)
+        .map(Principal::from)
 }
 
 impl CursorPaginated for Principal {

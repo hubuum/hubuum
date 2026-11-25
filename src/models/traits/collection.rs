@@ -5,7 +5,7 @@ use crate::models::collection::{
 };
 use crate::models::group::GroupID;
 use crate::models::search::{FilterField, SortParam};
-use crate::services::storage_boundary::collection_from_storage;
+
 use crate::storage::{StorageContext, storage_handle};
 use crate::traits::accessors::{CollectionAdapter, IdAccessor, InstanceAdapter};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
@@ -34,7 +34,7 @@ impl SaveAdapter for Collection {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 
     async fn save_adapter(
@@ -56,7 +56,7 @@ impl SaveAdapter for Collection {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 }
 
@@ -133,7 +133,7 @@ impl UpdateAdapter for UpdateCollection {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 
     async fn update_adapter(
@@ -148,7 +148,7 @@ impl UpdateAdapter for UpdateCollection {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 }
 
@@ -165,7 +165,7 @@ impl SaveAdapter for NewCollectionWithAssignee {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 
     async fn save_adapter(
@@ -179,7 +179,7 @@ impl SaveAdapter for NewCollectionWithAssignee {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 }
 
@@ -249,7 +249,7 @@ impl CollectionAdapter for CollectionID {
             .get_collection(*self)
             .await
             .map_err(ApiError::from)
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 }
 
@@ -281,7 +281,7 @@ impl NewCollection {
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(collection_from_storage)
+            .map(Collection::from)
     }
 }
 
