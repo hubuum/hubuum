@@ -186,19 +186,15 @@ impl MemoryState {
         })?;
         let kind = task.kind;
         let counts = if kind == StorageTaskKind::Import {
-            let results = self.import_task_results.get(&id.id());
-            let processed = results.map_or(0, |results| {
-                results
-                    .iter()
-                    .filter(|result| result.outcome() != "unattempted")
-                    .count()
-            });
-            let failed = results.map_or(0, |results| {
-                results
-                    .iter()
-                    .filter(|result| matches!(result.outcome(), "failed" | "stale_revision"))
-                    .count()
-            });
+            let results = self.import_task_results.for_task(id);
+            let processed = results
+                .iter()
+                .filter(|result| result.outcome() != "unattempted")
+                .count();
+            let failed = results
+                .iter()
+                .filter(|result| matches!(result.outcome(), "failed" | "stale_revision"))
+                .count();
             StorageTaskResultCounts::try_new(
                 i32::try_from(processed)
                     .map_err(|_| StorageError::internal("Import result count overflow"))?,
@@ -262,6 +258,24 @@ impl MemoryState {
         } else {
             format!("Task stopped: {}", reason.as_str())
         };
+        let unattempted_result = if kind == StorageTaskKind::Import && unattempted > 0 {
+            let result_id = self.import_task_results.id_cursor().allocate()?;
+            let result = StorageImportTaskResult::builder(
+                result_id,
+                id,
+                "task",
+                "not_attempted",
+                "unattempted",
+                now,
+            )
+            .details(Some(
+                serde_json::json!({"count": unattempted, "reason": reason.as_str()}),
+            ))
+            .build();
+            Some(result)
+        } else {
+            None
+        };
         if status == StorageTaskStatus::Cancelled {
             self.schema_profile_outputs.remove(&id.id());
             self.export_outputs.remove(&id.id());
@@ -291,26 +305,8 @@ impl MemoryState {
                 work.finish(StorageSchemaWorkStatus::Cancelled, epoch);
             }
         }
-        if kind == StorageTaskKind::Import && unattempted > 0 {
-            let result_id = ImportTaskResultId::new(self.next_import_result_id)
-                .map_err(|error| StorageError::internal(error.to_string()))?;
-            self.next_import_result_id += 1;
-            let result = StorageImportTaskResult::builder(
-                result_id,
-                id,
-                "task",
-                "not_attempted",
-                "unattempted",
-                now,
-            )
-            .details(Some(
-                serde_json::json!({"count": unattempted, "reason": reason.as_str()}),
-            ))
-            .build();
-            self.import_task_results
-                .entry(id.id())
-                .or_default()
-                .push(result);
+        if let Some(result) = unattempted_result {
+            self.import_task_results.insert(result);
         }
         if remote_possible {
             for row in &mut self.remote_call_results {

@@ -323,8 +323,12 @@ impl ImportStorage for MemoryStorage {
         results: Vec<StorageImportResult>,
     ) -> Result<(), StorageError> {
         let mut state = self.state.write().await;
-        for result in &results {
-            let task_id = result.clone().into_parts().0;
+        let mut staged = Vec::with_capacity(results.len());
+        let mut ids = state.import_task_results.id_cursor();
+        for result in results {
+            crate::execution::task_execution_checkpoint()?;
+            let (task_id, item_ref, entity_kind, action, identifier, outcome, error, details) =
+                result.into_parts();
             let task = state.tasks.get(&task_id.id()).ok_or_else(|| {
                 StorageError::not_found(format!("Task {} was not found", task_id.id()))
             })?;
@@ -334,16 +338,8 @@ impl ImportStorage for MemoryStorage {
                     task_id.id()
                 )));
             }
-        }
-        for result in results {
-            crate::execution::task_execution_checkpoint()?;
-            let (task_id, item_ref, entity_kind, action, identifier, outcome, error, details) =
-                result.into_parts();
-            let id = ImportTaskResultId::new(state.next_import_result_id)
-                .map_err(|value| StorageError::internal(value.to_string()))?;
-            state.next_import_result_id += 1;
             let stored = StorageImportTaskResult::builder(
-                id,
+                ids.allocate()?,
                 task_id,
                 entity_kind,
                 action,
@@ -355,11 +351,10 @@ impl ImportStorage for MemoryStorage {
             .error(error)
             .details(details)
             .build();
-            state
-                .import_task_results
-                .entry(task_id.id())
-                .or_default()
-                .push(stored);
+            staged.push(stored);
+        }
+        for result in staged {
+            state.import_task_results.insert(result);
         }
         Ok(())
     }
