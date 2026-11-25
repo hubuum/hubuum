@@ -14,6 +14,7 @@ use crate::invalid_contract_value;
 #[derive(Clone, Copy)]
 struct Heartbeat {
     at: DateTime<Utc>,
+    generation: i64,
     drained: bool,
 }
 
@@ -48,7 +49,6 @@ impl RestoreCoordinator {
             .checked_add(1)
             .ok_or_else(|| StorageError::internal("Restore maintenance generation exhausted"))?;
         self.owner = Some(job);
-        self.instances.clear();
         Ok(())
     }
 
@@ -59,7 +59,6 @@ impl RestoreCoordinator {
     pub(super) fn resume(&mut self, owner: Option<RestoreJobId>) {
         if self.owner == owner {
             self.owner = None;
-            self.instances.clear();
         }
     }
 
@@ -77,7 +76,14 @@ impl RestoreCoordinator {
         is_idle: &(dyn Fn() -> bool + Send + Sync),
     ) {
         let drained = self.owner.is_some() && is_idle();
-        self.instances.insert(id, Heartbeat { at: now, drained });
+        self.instances.insert(
+            id,
+            Heartbeat {
+                at: now,
+                generation: self.generation,
+                drained,
+            },
+        );
     }
 
     pub(super) fn drain_state(
@@ -87,9 +93,9 @@ impl RestoreCoordinator {
         let instances = self
             .instances
             .iter()
-            .filter(|(_, heartbeat)| heartbeat.at >= cutoff)
+            .filter(|(_, heartbeat)| heartbeat.at > cutoff)
             .map(|(id, heartbeat)| {
-                StorageRestoreInstance::try_new(*id, self.generation, heartbeat.drained)
+                StorageRestoreInstance::try_new(*id, heartbeat.generation, heartbeat.drained)
                     .map_err(invalid_contract_value)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -105,6 +111,32 @@ impl RestoreCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::normal_operation(false)]
+    #[case::previous_drain(true)]
+    fn starting_a_drain_preserves_the_last_live_acknowledgement(#[case] previously_drained: bool) {
+        let mut coordinator = RestoreCoordinator::default();
+        let first_job = RestoreJobId::new(1).unwrap();
+        if previously_drained {
+            coordinator.start(first_job).unwrap();
+        }
+        let now = Utc::now();
+        let cutoff = now - Duration::seconds(10);
+        let id = Uuid::nil();
+        coordinator.heartbeat(id, now, &|| true);
+        let (previous_generation, previous_instances) =
+            coordinator.drain_state(cutoff).unwrap().into_parts();
+        assert_eq!(previous_instances.len(), 1);
+        coordinator.resume(previously_drained.then_some(first_job));
+        coordinator.start(RestoreJobId::new(2).unwrap()).unwrap();
+
+        let (generation, instances) = coordinator.drain_state(cutoff).unwrap().into_parts();
+        assert_ne!(generation, previous_generation);
+        assert_eq!(instances, previous_instances);
+    }
 
     #[test]
     fn exhausting_the_generation_preserves_existing_heartbeats_and_ownership() {
@@ -116,10 +148,14 @@ mod tests {
         coordinator.heartbeat(Uuid::nil(), now, &|| {
             panic!("normal operation does not drain")
         });
-        let before = coordinator.drain_state(now).unwrap().into_parts();
+        let cutoff = now - Duration::seconds(10);
+        let before = coordinator.drain_state(cutoff).unwrap().into_parts();
         assert!(coordinator.start(RestoreJobId::new(1).unwrap()).is_err());
         assert_eq!(coordinator.snapshot(now).restore_job_id(), None);
-        assert_eq!(coordinator.drain_state(now).unwrap().into_parts(), before);
+        assert_eq!(
+            coordinator.drain_state(cutoff).unwrap().into_parts(),
+            before
+        );
     }
 
     #[test]
