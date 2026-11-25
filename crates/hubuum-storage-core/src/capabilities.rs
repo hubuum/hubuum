@@ -50,25 +50,7 @@ pub mod queries {
 }
 
 /// Long-running and application workflow capabilities.
-pub mod workflows {
-    pub use crate::backup_snapshot::*;
-    pub use crate::computed_fields::*;
-    pub use crate::export_query::*;
-    pub use crate::export_template_lifecycle::*;
-    pub use crate::import_workflow::*;
-    pub use crate::query_usage::*;
-    pub use crate::remote_target::*;
-    pub use crate::restore::*;
-    pub use crate::schema_evolution::*;
-    pub use crate::task_control::*;
-    pub use crate::task_execution::*;
-    pub use crate::task_queue::*;
-    pub use crate::{
-        StorageAuthorizationPermission, StorageClass, StorageCollection, StorageObject,
-        WorkflowStorage,
-    };
-    pub use crate::{StorageRestoreArtifactSummary, StorageRestoreArtifactSummaryParts};
-}
+pub mod workflows;
 
 /// Audit, fan-out, delivery, administration, and retention capabilities.
 pub mod events {

@@ -1,6 +1,5 @@
 use std::fmt;
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hubuum_domain::{GroupId, ImportTaskResultId, PrincipalId, TaskId, TokenId};
 use hubuum_events_core::{EventSequence, TraceLink};
@@ -9,79 +8,9 @@ use hubuum_task_core::IdempotencyKey;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::{StorageError, StoragePage, StorageTaskControl, StorageValidationError};
+use crate::{StorageError, StorageTaskControl, StorageValidationError};
 
-pub use hubuum_domain::TaskKind as StorageTaskKind;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum StorageTaskStatus {
-    Queued,
-    Validating,
-    Running,
-    Succeeded,
-    Failed,
-    PartiallySucceeded,
-    Cancelled,
-}
-
-impl StorageTaskStatus {
-    pub const ALL: [Self; 7] = [
-        Self::Queued,
-        Self::Validating,
-        Self::Running,
-        Self::Succeeded,
-        Self::Failed,
-        Self::PartiallySucceeded,
-        Self::Cancelled,
-    ];
-    pub const ACTIVE: [Self; 2] = [Self::Validating, Self::Running];
-    pub const TERMINAL: [Self; 4] = [
-        Self::Succeeded,
-        Self::Failed,
-        Self::PartiallySucceeded,
-        Self::Cancelled,
-    ];
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Queued => "queued",
-            Self::Validating => "validating",
-            Self::Running => "running",
-            Self::Succeeded => "succeeded",
-            Self::Failed => "failed",
-            Self::PartiallySucceeded => "partially_succeeded",
-            Self::Cancelled => "cancelled",
-        }
-    }
-
-    #[must_use]
-    pub fn from_persisted(value: &str) -> Option<Self> {
-        match value {
-            "queued" => Some(Self::Queued),
-            "validating" => Some(Self::Validating),
-            "running" => Some(Self::Running),
-            "succeeded" => Some(Self::Succeeded),
-            "failed" => Some(Self::Failed),
-            "partially_succeeded" => Some(Self::PartiallySucceeded),
-            "cancelled" => Some(Self::Cancelled),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub const fn is_active(self) -> bool {
-        matches!(self, Self::Validating | Self::Running)
-    }
-
-    #[must_use]
-    pub const fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Succeeded | Self::Failed | Self::PartiallySucceeded | Self::Cancelled
-        )
-    }
-}
+use crate::{StorageTaskKind, StorageTaskStatus};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StorageTaskProgress {
@@ -872,87 +801,6 @@ impl StorageTaskAccess {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct StorageTaskListQuery {
-    search: Option<crate::StorageTaskSearch>,
-    submitted_by: Option<PrincipalId>,
-    kind: Option<StorageTaskKind>,
-    excluded_kind: Option<StorageTaskKind>,
-    status: Option<StorageTaskStatus>,
-    options: QueryOptions,
-}
-
-impl StorageTaskListQuery {
-    #[must_use]
-    pub const fn new(
-        submitted_by: Option<PrincipalId>,
-        kind: Option<StorageTaskKind>,
-        status: Option<StorageTaskStatus>,
-        options: QueryOptions,
-    ) -> Self {
-        Self {
-            submitted_by,
-            kind,
-            excluded_kind: None,
-            search: None,
-            status,
-            options,
-        }
-    }
-
-    #[must_use]
-    pub fn searching(mut self, search: crate::StorageTaskSearch) -> Self {
-        self.search = Some(search);
-        self
-    }
-
-    #[must_use]
-    pub fn search(&self) -> Option<&crate::StorageTaskSearch> {
-        self.search.as_ref()
-    }
-
-    /// Exclude a restricted kind before counting or applying pagination.
-    #[must_use]
-    pub const fn excluding_kind(mut self, kind: Option<StorageTaskKind>) -> Self {
-        self.excluded_kind = kind;
-        self
-    }
-
-    #[must_use]
-    pub const fn excluded_kind(&self) -> Option<StorageTaskKind> {
-        self.excluded_kind
-    }
-
-    #[must_use]
-    pub fn into_parts(
-        self,
-    ) -> (
-        Option<PrincipalId>,
-        Option<StorageTaskKind>,
-        Option<StorageTaskStatus>,
-        QueryOptions,
-    ) {
-        (self.submitted_by, self.kind, self.status, self.options)
-    }
-}
-
-impl fmt::Debug for StorageTaskListQuery {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("StorageTaskListQuery")
-            .field("excluded_kind", &self.excluded_kind)
-            .field("has_submitter", &self.submitted_by.is_some())
-            .field("kind", &self.kind)
-            .field("status", &self.status)
-            .field("filter_count", &self.options.filters().len())
-            .field("sort_count", &self.options.sort().len())
-            .field("limit", &self.options.limit())
-            .field("has_cursor", &self.options.has_cursor())
-            .field("include_total", &self.options.include_total())
-            .finish_non_exhaustive()
-    }
-}
-
-#[derive(Clone, PartialEq)]
 pub struct StorageTaskChildListQuery {
     task_id: TaskId,
     options: QueryOptions,
@@ -1612,61 +1460,6 @@ pub enum StorageTaskOutputLookup<T> {
     Available(T),
     Expired { expires_at: DateTime<Utc> },
     Missing,
-}
-
-#[async_trait]
-pub trait TaskQueueStorage: Send + Sync {
-    async fn create_task(
-        &self,
-        request: StorageTaskCreateRequest,
-    ) -> Result<StorageTask, StorageError>;
-
-    async fn get_task_access(&self, task_id: TaskId) -> Result<StorageTaskAccess, StorageError>;
-
-    async fn list_tasks(
-        &self,
-        query: StorageTaskListQuery,
-    ) -> Result<StoragePage<StorageTask>, StorageError>;
-
-    async fn list_task_events(
-        &self,
-        query: StorageTaskChildListQuery,
-    ) -> Result<StoragePage<StorageTaskEvent>, StorageError>;
-
-    async fn list_import_task_results(
-        &self,
-        query: StorageTaskChildListQuery,
-    ) -> Result<StoragePage<StorageImportTaskResult>, StorageError>;
-
-    async fn list_export_output_summaries(
-        &self,
-        task_ids: Vec<TaskId>,
-    ) -> Result<Vec<StorageExportOutputSummary>, StorageError>;
-
-    async fn list_backup_output_summaries(
-        &self,
-        task_ids: Vec<TaskId>,
-    ) -> Result<Vec<StorageBackupOutputSummary>, StorageError>;
-
-    async fn get_export_output_summary(
-        &self,
-        task_id: TaskId,
-    ) -> Result<StorageTaskOutputLookup<StorageExportOutputSummary>, StorageError>;
-
-    async fn get_backup_output_summary(
-        &self,
-        task_id: TaskId,
-    ) -> Result<StorageTaskOutputLookup<StorageBackupOutputSummary>, StorageError>;
-
-    async fn get_export_output(
-        &self,
-        task_id: TaskId,
-    ) -> Result<StorageTaskOutputLookup<StorageExportOutput>, StorageError>;
-
-    async fn get_backup_output(
-        &self,
-        task_id: TaskId,
-    ) -> Result<StorageTaskOutputLookup<StorageBackupOutput>, StorageError>;
 }
 
 #[cfg(test)]

@@ -98,6 +98,7 @@ pub use capabilities::identity::{
     IdentityScopeStorage, LocalIdentityCredentialStorage, PrincipalStorage, ServiceAccountStorage,
     TokenStorage, UserStorage,
 };
+pub use capabilities::workflows::{SchemaEvolutionStorage, TaskExecutionStorage, TaskQueueStorage};
 pub use catalog::{CatalogStorage, StorageCatalogListQuery};
 pub use collection_authorization::{
     CollectionAuthorizationQueryStorage, StorageAuthorizationCollectionGroupsPageQuery,
@@ -305,6 +306,7 @@ pub use restore::{
     StorageRestoreReplayApply, StorageRestoreStageArtifact, StorageRestoreStatus,
     StorageRestoreTimestamps, StorageRestoreTimestampsParts,
 };
+pub use task_control::{StorageTaskKind, StorageTaskStatus};
 pub use task_execution::{
     StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageExportTaskArtifactBuilder,
     StorageExportTaskArtifactContent, StorageExportTaskArtifactIdentity,
@@ -315,17 +317,21 @@ pub use task_execution::{
     StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion, StorageTaskCompletionPayload,
     StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskLease,
     StorageTaskLeaseDuration, StorageTaskResultCounts, StorageTaskTerminalStatus,
-    StorageTaskTerminalUpdate, TaskExecutionStorage,
+    StorageTaskTerminalUpdate,
+};
+pub use task_execution::{
+    StorageTaskCancellationChange, StorageTaskCancellationOutcome, StorageTaskCancellationRequest,
+    StorageTaskExecutionAdmission, StorageTaskRemoteDispatch,
 };
 pub use task_queue::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,
     StorageExportOutputBuilder, StorageExportOutputSummary, StorageImportTaskResult,
     StorageImportTaskResultBuilder, StorageTask, StorageTaskAccess, StorageTaskBuilder,
     StorageTaskChildListQuery, StorageTaskCreateRequest, StorageTaskCreateRequestBuilder,
-    StorageTaskDurations, StorageTaskEvent, StorageTaskEventBuilder, StorageTaskKind,
-    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskProgress, StorageTaskScopeSnapshot,
-    StorageTaskStatus, TaskQueueStorage,
+    StorageTaskDurations, StorageTaskEvent, StorageTaskEventBuilder, StorageTaskOutputLookup,
+    StorageTaskProgress, StorageTaskScopeSnapshot,
 };
+pub use task_search::StorageTaskListQuery;
 pub use task_search::{StorageTaskSearch, TaskTimeRange};
 pub use telemetry::{StorageCapability, StorageObservation, StorageObserver};
 pub use token_credentials::{
@@ -351,9 +357,8 @@ pub use worker_notifications::{
 use hubuum_domain::ResourceRevision;
 use std::fmt;
 pub use task_control::{
-    StorageTaskCancellation, StorageTaskCancellationChange, StorageTaskCancellationOutcome,
-    StorageTaskCancellationRequest, StorageTaskControl, StorageTaskExecutionAdmission,
-    StorageTaskExecutionObservation, StorageTaskExecutionPhase, StorageTaskRemoteDispatch,
+    StorageTaskCancellation, StorageTaskControl, StorageTaskExecutionObservation,
+    StorageTaskExecutionPhase,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
