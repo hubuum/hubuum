@@ -23,12 +23,7 @@ use crate::models::{
 use crate::services::storage_boundary::{
     class_record_to_storage, class_relation_create_from_storage, collection_to_storage,
     object_from_storage, object_relation_create_selector_from_storage,
-    object_relation_selector_from_storage, object_to_storage, prepared_class_relation_from_storage,
-    prepared_class_relation_to_storage, prepared_object_relation_from_storage,
-    prepared_object_relation_to_storage, resolved_class_from_storage,
-    resolved_class_relation_from_storage, resolved_class_relation_to_storage,
-    resolved_object_from_storage, resolved_object_relation_from_storage,
-    resolved_object_relation_to_storage,
+    object_relation_selector_from_storage, object_to_storage,
 };
 
 use super::{
@@ -999,7 +994,7 @@ impl ClassStorage for MemoryStorageModel {
         changes: StorageClassUpdate,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
-        let target = resolved_class_from_storage(target.clone()).map_err(map_memory_error)?;
+        let target = ResolvedClassTarget::from_storage(target.clone()).map_err(map_memory_error)?;
         let changes = UpdateHubuumClass {
             name: changes.name().map(str::to_string),
             collection_id: changes.collection_id().map(CollectionId::id),
@@ -1073,7 +1068,7 @@ impl ClassStorage for MemoryStorageModel {
         target: &StorageResolvedClass,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let target = resolved_class_from_storage(target.clone()).map_err(map_memory_error)?;
+        let target = ResolvedClassTarget::from_storage(target.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         let class = state.class_target(&target)?.clone();
         state.classes.remove(&class.id);
@@ -1148,7 +1143,7 @@ impl ClassRelationStorage for MemoryStorageModel {
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
         let prepared =
             PreparedClassRelation::new(command, from_class, to_class).map_err(map_memory_error)?;
-        Ok(prepared_class_relation_to_storage(&prepared).clone())
+        Ok(prepared.as_storage().clone())
     }
 
     async fn resolve_class_relation(
@@ -1170,7 +1165,7 @@ impl ClassRelationStorage for MemoryStorageModel {
             .ok_or_else(|| StorageError::not_found("To class was not found"))?;
         let target = ResolvedClassRelationTarget::new(relation, from_class, to_class)
             .map_err(map_memory_error)?;
-        Ok(resolved_class_relation_to_storage(&target).clone())
+        Ok(target.as_storage().clone())
     }
 
     async fn create_class_relation(
@@ -1179,7 +1174,7 @@ impl ClassRelationStorage for MemoryStorageModel {
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
         let prepared =
-            prepared_class_relation_from_storage(prepared.clone()).map_err(map_memory_error)?;
+            PreparedClassRelation::from_storage(prepared.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         state.prepared_class_relation_endpoints(&prepared)?;
         let command = prepared.command();
@@ -1217,7 +1212,7 @@ impl ClassRelationStorage for MemoryStorageModel {
             prepared.to_class().clone(),
         )
         .map_err(map_memory_error)
-        .map(|target| resolved_class_relation_to_storage(&target).clone())?;
+        .map(|target| target.as_storage().clone())?;
         Ok(StorageMutationOutcome::committed(
             resolved,
             memory_audit_receipt(
@@ -1236,7 +1231,7 @@ impl ClassRelationStorage for MemoryStorageModel {
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
         let domain =
-            resolved_class_relation_from_storage(target.clone()).map_err(map_memory_error)?;
+            ResolvedClassRelationTarget::from_storage(target.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         let current = state.class_relation_target(&domain)?.clone();
         let changed = labels.apply(target.relation().clone());
@@ -1263,7 +1258,7 @@ impl ClassRelationStorage for MemoryStorageModel {
         )
         .map_err(map_memory_error)?;
         Ok(StorageMutationOutcome::committed(
-            resolved_class_relation_to_storage(&resolved).clone(),
+            resolved.as_storage().clone(),
             memory_audit_receipt(
                 EntityType::ClassRelation,
                 Action::Updated,
@@ -1279,7 +1274,7 @@ impl ClassRelationStorage for MemoryStorageModel {
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let target =
-            resolved_class_relation_from_storage(target.clone()).map_err(map_memory_error)?;
+            ResolvedClassRelationTarget::from_storage(target.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         let relation_id = state.class_relation_target(&target)?.id;
         state.class_relations.remove(&relation_id.id());
@@ -1360,7 +1355,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
                     .map_err(map_memory_error)?
             }
         };
-        Ok(prepared_object_relation_to_storage(&prepared).clone())
+        Ok(prepared.as_storage().clone())
     }
 
     async fn resolve_object_relation(
@@ -1411,7 +1406,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
             class_relation,
         )
         .map_err(map_memory_error)?;
-        Ok(resolved_object_relation_to_storage(&target).clone())
+        Ok(target.as_storage().clone())
     }
 
     async fn create_object_relation(
@@ -1420,7 +1415,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageResolvedObjectRelation>, StorageError> {
         let prepared =
-            prepared_object_relation_from_storage(prepared.clone()).map_err(map_memory_error)?;
+            PreparedObjectRelation::from_storage(prepared.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         state.validate_prepared_object_relation(&prepared)?;
         let command = prepared.command();
@@ -1475,7 +1470,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
             prepared.class_relation().clone(),
         )
         .map_err(map_memory_error)
-        .map(|target| resolved_object_relation_to_storage(&target).clone())?;
+        .map(|target| target.as_storage().clone())?;
         Ok(StorageMutationOutcome::committed(
             resolved,
             memory_audit_receipt(
@@ -1493,7 +1488,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let target =
-            resolved_object_relation_from_storage(target.clone()).map_err(map_memory_error)?;
+            ResolvedObjectRelationTarget::from_storage(target.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         state.validate_resolved_object_relation(&target)?;
         let relation_id = target.relation().id;
@@ -1590,7 +1585,7 @@ impl ObjectStorage for MemoryStorageModel {
         command: StorageObjectCreate,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
-        let class = resolved_class_from_storage(class.clone()).map_err(map_memory_error)?;
+        let class = ResolvedClassTarget::from_storage(class.clone()).map_err(map_memory_error)?;
         let command = NewHubuumObject {
             name: command.name().to_string(),
             collection_id: command.collection_id().id(),
@@ -1643,7 +1638,8 @@ impl ObjectStorage for MemoryStorageModel {
         changes: StorageObjectUpdate,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
-        let target = resolved_object_from_storage(target.clone()).map_err(map_memory_error)?;
+        let target =
+            ResolvedObjectTarget::from_storage(target.clone()).map_err(map_memory_error)?;
         let changes = UpdateHubuumObject {
             name: changes.name().map(str::to_string),
             collection_id: changes.collection_id().map(CollectionId::id),
@@ -1698,7 +1694,8 @@ impl ObjectStorage for MemoryStorageModel {
         patch: StorageObjectDataPatch,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
-        let target = resolved_object_from_storage(target.clone()).map_err(map_memory_error)?;
+        let target =
+            ResolvedObjectTarget::from_storage(target.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         let (class, current) = state.object_target(&target)?;
         let class = class.clone();
@@ -1741,7 +1738,8 @@ impl ObjectStorage for MemoryStorageModel {
         target: &StorageResolvedObject,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let target = resolved_object_from_storage(target.clone()).map_err(map_memory_error)?;
+        let target =
+            ResolvedObjectTarget::from_storage(target.clone()).map_err(map_memory_error)?;
         let mut state = self.state.write().await;
         let (_, object) = state.object_target(&target)?;
         let object_id = object.id;

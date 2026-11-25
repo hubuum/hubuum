@@ -9,8 +9,6 @@ use crate::models::{
 };
 use crate::services::storage_boundary::{
     object_relation_create_selector_to_storage, object_relation_selector_to_storage,
-    prepared_object_relation_from_storage, prepared_object_relation_to_storage,
-    resolved_object_relation_from_storage, resolved_object_relation_to_storage,
 };
 use crate::storage::{
     ObjectRelationStorage, StorageError, StorageMutationOutcome, StorageObjectRelation,
@@ -65,7 +63,7 @@ impl ObjectRelationService {
             .prepare_object_relation(object_relation_create_selector_to_storage(selector)?)
             .await
             .map_err(ApiError::from)
-            .and_then(prepared_object_relation_from_storage)
+            .and_then(PreparedObjectRelation::from_storage)
     }
 
     pub async fn resolve(
@@ -76,7 +74,7 @@ impl ObjectRelationService {
             .resolve_object_relation(object_relation_selector_to_storage(selector))
             .await
             .map_err(ApiError::from)
-            .and_then(resolved_object_relation_from_storage)
+            .and_then(ResolvedObjectRelationTarget::from_storage)
     }
 
     pub async fn create(
@@ -84,13 +82,13 @@ impl ObjectRelationService {
         prepared: &PreparedObjectRelation,
         context: &EventContext,
     ) -> Result<ResolvedObjectRelationTarget, ApiError> {
-        let prepared = prepared_object_relation_to_storage(prepared);
+        let prepared = prepared.as_storage();
         self.storage
             .create_object_relation(prepared, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(resolved_object_relation_from_storage)
+            .and_then(ResolvedObjectRelationTarget::from_storage)
     }
 
     pub async fn delete(
@@ -98,7 +96,7 @@ impl ObjectRelationService {
         target: &ResolvedObjectRelationTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        let target = resolved_object_relation_to_storage(target);
+        let target = target.as_storage();
         self.storage
             .delete_object_relation(target, context)
             .await

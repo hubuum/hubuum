@@ -5,9 +5,7 @@ use hubuum_domain::{ClassId, CollectionId};
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::services::storage_boundary::{
-    class_create_to_storage, class_record_from_storage, class_selector_to_storage,
-    class_update_to_storage, collection_from_storage, resolved_class_from_storage,
-    resolved_class_to_storage,
+    class_record_from_storage, class_selector_to_storage, collection_from_storage,
 };
 use crate::storage::{StorageClassSelector, storage_handle};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
@@ -33,7 +31,7 @@ impl ResolveClassTarget for ClassSelector {
             .resolve_class(class_selector_to_storage(self.clone()))
             .await
             .map_err(ApiError::from)
-            .and_then(resolved_class_from_storage)
+            .and_then(ResolvedClassTarget::from_storage)
     }
 }
 
@@ -58,8 +56,8 @@ impl UpdateResolvedClass for UpdateHubuumClass {
     where
         C: crate::storage::StorageContext,
     {
-        let target = resolved_class_to_storage(target);
-        let changes = class_update_to_storage(self.clone())?;
+        let target = target.as_storage();
+        let changes = self.clone().try_into()?;
         storage_handle(backend)
             .class_store()
             .update_class(target, changes, context)
@@ -89,7 +87,7 @@ impl DeleteResolvedClass for ResolvedClassTarget {
     where
         C: crate::storage::StorageContext,
     {
-        let target = resolved_class_to_storage(self);
+        let target = self.as_storage();
         storage_handle(backend)
             .class_store()
             .delete_class(target, context)
@@ -119,7 +117,7 @@ impl SaveAdapter for HubuumClass {
             .resolve_class(StorageClassSelector::Id(ClassId::new(self.id)?))
             .await
             .map_err(ApiError::from)?;
-        let update = class_update_to_storage(update)?;
+        let update = update.try_into()?;
         storage_handle(pool)
             .class_store()
             .update_class(&target, update, &EventContext::system())
@@ -147,7 +145,7 @@ impl SaveAdapter for HubuumClass {
             .resolve_class(StorageClassSelector::Id(ClassId::new(self.id)?))
             .await
             .map_err(ApiError::from)?;
-        let update = class_update_to_storage(update)?;
+        let update = update.try_into()?;
         storage_handle(pool)
             .class_store()
             .update_class(&target, update, context)
@@ -202,7 +200,7 @@ impl SaveAdapter for NewHubuumClass {
         &self,
         pool: &impl crate::storage::StorageContext,
     ) -> Result<HubuumClass, ApiError> {
-        let command = class_create_to_storage(self.clone())?;
+        let command = self.clone().try_into()?;
         storage_handle(pool)
             .class_store()
             .create_class(command, &EventContext::system())
@@ -217,7 +215,7 @@ impl SaveAdapter for NewHubuumClass {
         pool: &impl crate::storage::StorageContext,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
-        let command = class_create_to_storage(self.clone())?;
+        let command = self.clone().try_into()?;
         storage_handle(pool)
             .class_store()
             .create_class(command, context)
@@ -242,7 +240,7 @@ impl UpdateAdapter for UpdateHubuumClass {
             .resolve_class(StorageClassSelector::Id(class_id))
             .await
             .map_err(ApiError::from)?;
-        let changes = class_update_to_storage(self.clone())?;
+        let changes = self.clone().try_into()?;
         storage_handle(pool)
             .class_store()
             .update_class(&target, changes, &EventContext::system())
@@ -263,7 +261,7 @@ impl UpdateAdapter for UpdateHubuumClass {
             .resolve_class(StorageClassSelector::Id(class_id))
             .await
             .map_err(ApiError::from)?;
-        let changes = class_update_to_storage(self.clone())?;
+        let changes = self.clone().try_into()?;
         storage_handle(pool)
             .class_store()
             .update_class(&target, changes, context)
@@ -361,7 +359,7 @@ impl ClassAdapter for HubuumClassID {
             .resolve_class(StorageClassSelector::Id(*self))
             .await
             .map_err(ApiError::from)
-            .and_then(resolved_class_from_storage)
+            .and_then(ResolvedClassTarget::from_storage)
             .map(|target| target.class().clone())
     }
 }

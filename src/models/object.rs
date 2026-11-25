@@ -4,6 +4,9 @@ use crate::services::storage_boundary::{
 };
 use crate::storage::StorageResolvedObject;
 use async_trait::async_trait;
+use hubuum_domain::{ClassId, CollectionId};
+use hubuum_storage_core::StorageObjectCreate;
+use hubuum_storage_core::StorageObjectUpdate;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use utoipa::ToSchema;
@@ -49,6 +52,20 @@ pub struct NewHubuumObject {
     pub description: String,
 }
 
+impl TryFrom<NewHubuumObject> for StorageObjectCreate {
+    type Error = ApiError;
+
+    fn try_from(command: NewHubuumObject) -> Result<Self, Self::Error> {
+        Ok(StorageObjectCreate::new(
+            command.name,
+            CollectionId::new(command.collection_id)?,
+            ClassId::new(command.hubuum_class_id)?,
+            command.data,
+            command.description,
+        ))
+    }
+}
+
 #[cfg(test)]
 impl NewHubuumObject {
     pub(crate) fn validate_for_class(&self, class: &HubuumClass) -> Result<(), ApiError> {
@@ -81,6 +98,20 @@ pub struct UpdateHubuumObject {
     pub hubuum_class_id: Option<i32>,
     pub data: Option<serde_json::Value>,
     pub description: Option<String>,
+}
+
+impl TryFrom<UpdateHubuumObject> for StorageObjectUpdate {
+    type Error = ApiError;
+
+    fn try_from(update: UpdateHubuumObject) -> Result<Self, Self::Error> {
+        Ok(StorageObjectUpdate::builder()
+            .name(update.name)
+            .collection_id(update.collection_id.map(CollectionId::new).transpose()?)
+            .class_id(update.hubuum_class_id.map(ClassId::new).transpose()?)
+            .data(update.data)
+            .description(update.description)
+            .build())
+    }
 }
 
 #[cfg(test)]

@@ -336,8 +336,7 @@ impl UpdateUser {
     where
         C: StorageContext,
     {
-        crate::services::identity::update_user(backend, user_id.id(), self, &EventContext::system())
-            .await
+        self.save(user_id, backend, &EventContext::system()).await
     }
 
     pub async fn save<C>(
@@ -349,7 +348,11 @@ impl UpdateUser {
     where
         C: StorageContext,
     {
-        crate::services::identity::update_user(backend, user_id.id(), self, context).await
+        let request = self
+            .hash_password()
+            .await?
+            .into_storage(user_id, context.clone());
+        crate::services::identity::persist_user_update(backend, request).await
     }
 }
 
@@ -389,14 +392,19 @@ impl NewUser {
     where
         C: StorageContext,
     {
-        crate::services::identity::create_user(backend, self, &EventContext::system()).await
+        self.save(backend, &EventContext::system()).await
     }
 
     pub async fn save<C>(self, backend: &C, context: &EventContext) -> Result<User, ApiError>
     where
         C: StorageContext,
     {
-        crate::services::identity::create_user(backend, self, context).await
+        crate::services::identity::create_user_with_password_hash(
+            backend,
+            self.hash_password().await?,
+            context,
+        )
+        .await
     }
 
     pub async fn hash_password(self) -> Result<HashedNewUser, ApiError> {
