@@ -28,7 +28,6 @@ mod computed_fields;
 mod computed_objects;
 mod credential_approval;
 mod event_administration;
-mod event_sink_access;
 mod events;
 mod execution;
 mod export_query;
@@ -55,7 +54,10 @@ mod resource_lifecycle;
 mod restore;
 mod restore_artifact;
 mod runtime_settings;
-pub use restore_artifact::{StorageRestoreArtifact, StorageRestoreArtifactBuilder};
+pub use restore_artifact::{
+    StorageRestoreArtifact, StorageRestoreArtifactBuilder, StorageRestoreArtifactSummary,
+    StorageRestoreArtifactSummaryParts,
+};
 pub use runtime_settings::*;
 mod task_control;
 mod task_execution;
@@ -70,7 +72,7 @@ mod validation;
 mod worker_notifications;
 
 pub use authorization::{
-    AuthorizationDataStorage, StorageAuthorizationClassResource, StorageAuthorizationCollection,
+    AuthorizationDataStorage, StorageAuthorizationCollection,
     StorageAuthorizationCollectionAccessQuery, StorageAuthorizationCollectionCandidateQuery,
     StorageAuthorizationCollectionGrantListQuery, StorageAuthorizationCollectionsAccessQuery,
     StorageAuthorizationCollectionsQuery, StorageAuthorizationGrant,
@@ -79,12 +81,12 @@ pub use authorization::{
     StorageAuthorizationGroupCandidateQuery, StorageAuthorizationGroupGrant,
     StorageAuthorizationGroupIdentity, StorageAuthorizationGroupMembershipQuery,
     StorageAuthorizationGroupProfile, StorageAuthorizationGroupSyncState,
-    StorageAuthorizationObjectResource, StorageAuthorizationPermission,
-    StorageAuthorizationPermissionSet, StorageAuthorizationPermissionSetQuery,
-    StorageAuthorizationPolicySnapshotRow, StorageAuthorizationPrincipal,
-    StorageAuthorizationResourceIds,
+    StorageAuthorizationPermission, StorageAuthorizationPermissionSet,
+    StorageAuthorizationPermissionSetQuery, StorageAuthorizationPolicySnapshotRow,
+    StorageAuthorizationPrincipal, StorageAuthorizationResourceIds,
 };
 pub use authorization_resources::{
+    StorageAuthorizationClassResource, StorageAuthorizationObjectResource,
     StorageAuthorizationResource, StorageAuthorizationResourceKey,
     StorageAuthorizationResourcesQuery,
 };
@@ -120,19 +122,19 @@ pub use computed_objects::{
     StorageComputedObjectVisibility, StorageComputedScope, StorageSharedComputedScope,
 };
 pub use credential_approval::*;
+pub use event_administration::sink::{
+    EventSinkGrantAction, StorageAuthorizedEventSink, StorageEventSink, StorageEventSinkBuilder,
+    StorageEventSinkCreate, StorageEventSinkCreateBuilder, StorageEventSinkDelete,
+    StorageEventSinkGrantChange, StorageEventSinkListQuery, StorageEventSinkUpdate,
+};
 pub use event_administration::{
     AuditEventStorage, EventConfigurationStorage, EventDeliveryAdministrationStorage,
     StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StorageAuditSubject,
     StorageEventDelivery, StorageEventDeliveryBuilder, StorageEventDeliveryListQuery,
-    StorageEventNotificationInput, StorageEventNotificationSelection, StorageEventSink,
-    StorageEventSinkBuilder, StorageEventSinkCreate, StorageEventSinkCreateBuilder,
-    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
-    StorageEventSubscription, StorageEventSubscriptionBuilder, StorageEventSubscriptionCreate,
+    StorageEventNotificationInput, StorageEventNotificationSelection, StorageEventSubscription,
+    StorageEventSubscriptionBuilder, StorageEventSubscriptionCreate,
     StorageEventSubscriptionCreateBuilder, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate,
-};
-pub use event_sink_access::{
-    EventSinkGrantAction, StorageAuthorizedEventSink, StorageEventSinkGrantChange,
 };
 pub use events::{
     EventArchiveSink, EventDeliveryWorkerStorage, EventFanoutStorage, EventRetentionStorage,
@@ -267,7 +269,7 @@ pub use page::{
     MAX_STORAGE_CANDIDATE_PAGE_SIZE, StorageCandidatePage, StorageCandidatePageLimit, StoragePage,
     StoragePageParts,
 };
-pub use record::StorageRecordMetadata;
+pub use record::{StorageCollection, StorageObject, StorageRecordMetadata};
 pub use relation_lifecycle::{
     ClassRelationStorage, ObjectRelationStorage, StorageClassRelationCreate,
     StorageClassRelationCreateBuilder, StorageClassRelationLabelsUpdate,
@@ -299,8 +301,7 @@ pub use resource_lifecycle::{
     StorageObjectUpdate, StorageObjectUpdateBuilder, StorageResolvedClass, StorageResolvedObject,
 };
 pub use restore::{
-    RestoreStorage, StorageRestoreArtifactJob, StorageRestoreArtifactSummary,
-    StorageRestoreArtifactSummaryParts, StorageRestoreCompletion,
+    RestoreStorage, StorageRestoreArtifactJob, StorageRestoreCompletion,
     StorageRestoreCoordinatorSnapshot, StorageRestoreDocumentMetadata, StorageRestoreDrainState,
     StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreInitiatorParts,
     StorageRestoreInstance, StorageRestoreJobStatus, StorageRestoreJobSummary,
@@ -340,9 +341,9 @@ pub use transaction::{
     TransactionalObjects,
 };
 pub use unified_search::{
-    StorageClassWithCollection, StorageClassWithCollectionBuilder, StorageCollection,
-    StorageObject, StorageResourceScope, StorageUnifiedSearchCandidate, StorageUnifiedSearchCursor,
-    StorageUnifiedSearchQuery, StorageVisibility, UnifiedSearchStorage,
+    StorageClassWithCollection, StorageClassWithCollectionBuilder, StorageResourceScope,
+    StorageUnifiedSearchCandidate, StorageUnifiedSearchCursor, StorageUnifiedSearchQuery,
+    StorageVisibility, UnifiedSearchStorage,
 };
 pub use validation::{StorageValidationError, StorageValidationErrorKind};
 pub use worker_notifications::{

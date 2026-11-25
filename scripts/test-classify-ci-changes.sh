@@ -938,6 +938,14 @@ for extracted_input in src/services/exports/execution.rs src/services/exports/hy
   assert_flag "$extracted_output" container true
 done
 
+for shared_record in crates/hubuum-storage-core/src/record.rs \
+  crates/hubuum-storage-core/src/restore_artifact.rs \
+  crates/hubuum-storage-core/src/event_administration/sink.rs; do
+  record_output="$(bash "$classifier" "$shared_record")"
+  assert_flag "$record_output" rust true
+  assert_flag "$record_output" container true
+done
+
 hash_benchmark_output="$(bash "$classifier" benches/computed_hash_criterion.rs)"
 assert_flag "$hash_benchmark_output" code true
 assert_flag "$hash_benchmark_output" benchmarks true

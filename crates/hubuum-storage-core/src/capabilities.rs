@@ -8,9 +8,9 @@
 
 /// Common errors, pages, records, and mutation outcomes.
 pub mod common {
+    pub use crate::StorageRecordMetadata;
     pub use crate::mutation::*;
     pub use crate::page::*;
-    pub use crate::record::*;
     pub use crate::{StorageError, StorageErrorKind};
 }
 
@@ -59,6 +59,7 @@ pub mod queries {
         QueryStorage, StorageAuthorizationPermission, StorageClass, StorageComputationRevision,
         StorageExportTemplate, StorageRemoteTarget,
     };
+    pub use crate::{StorageCollection, StorageObject};
 }
 
 /// Long-running and application workflow capabilities.
@@ -79,10 +80,12 @@ pub mod workflows {
         StorageAuthorizationPermission, StorageClass, StorageCollection, StorageObject,
         WorkflowStorage,
     };
+    pub use crate::{StorageRestoreArtifactSummary, StorageRestoreArtifactSummaryParts};
 }
 
 /// Audit, fan-out, delivery, administration, and retention capabilities.
 pub mod events {
+    pub use crate::event_administration::sink::*;
     pub use crate::event_administration::*;
     pub use crate::events::*;
     pub use crate::{
@@ -90,9 +93,6 @@ pub mod events {
         StorageEventDeliveryStatusSnapshot, StorageEventFanoutSnapshot, StorageEventQueueSnapshot,
         StorageEventSinkHealthSnapshot, StorageEventSinkSnapshot,
         StorageEventSubscriptionHealthSnapshot,
-    };
-    pub use crate::{
-        EventSinkGrantAction, StorageAuthorizedEventSink, StorageEventSinkGrantChange,
     };
 }
 
