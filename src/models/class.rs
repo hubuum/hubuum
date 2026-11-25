@@ -1,6 +1,10 @@
 use crate::services::storage_boundary::{class_record_from_storage, class_selector_from_storage};
 use crate::storage::StorageResolvedClass;
 use async_trait::async_trait;
+use hubuum_domain::CollectionId;
+use hubuum_storage_core::StorageClassCreate;
+use hubuum_storage_core::StorageClassSchemaPolicy;
+use hubuum_storage_core::StorageClassUpdate;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use utoipa::ToSchema;
@@ -33,6 +37,25 @@ pub struct NewHubuumClass {
     pub description: String,
 }
 
+impl TryFrom<NewHubuumClass> for StorageClassCreate {
+    type Error = ApiError;
+
+    fn try_from(command: NewHubuumClass) -> Result<Self, Self::Error> {
+        let schema_policy = StorageClassSchemaPolicy::try_from_parts(
+            command.json_schema,
+            command.validate_schema.unwrap_or(false),
+        )
+        .map_err(|error| ApiError::from(error.into_request_error()))?;
+        Ok(StorageClassCreate::builder(
+            command.name,
+            CollectionId::new(command.collection_id)?,
+            command.description,
+        )
+        .schema_policy(schema_policy)
+        .build())
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, ToSchema)]
 #[schema(example = update_hubuum_class_example)]
 pub struct UpdateHubuumClass {
@@ -41,6 +64,20 @@ pub struct UpdateHubuumClass {
     pub json_schema: Option<serde_json::Value>,
     pub validate_schema: Option<bool>,
     pub description: Option<String>,
+}
+
+impl TryFrom<UpdateHubuumClass> for StorageClassUpdate {
+    type Error = ApiError;
+
+    fn try_from(update: UpdateHubuumClass) -> Result<Self, Self::Error> {
+        Ok(StorageClassUpdate::builder()
+            .name(update.name)
+            .collection_id(update.collection_id.map(CollectionId::new).transpose()?)
+            .json_schema(update.json_schema)
+            .validate_schema(update.validate_schema)
+            .description(update.description)
+            .build())
+    }
 }
 
 impl UpdateHubuumClass {

@@ -31,7 +31,8 @@ use crate::storage::{
     StorageTokenIssuancePolicy, StorageTokenListQuery, StorageTokenListState, StorageTokenMetadata,
     StorageTokenObservation, StorageTokenRenew, StorageTokenRevoke, StorageUser,
     StorageUserAnonymize, StorageUserDelete, StorageUserDetails, StorageUserListItem,
-    StorageUserListQuery, StorageUserPasswordUpdate, TokenStorage, UserStorage, storage_handle,
+    StorageUserListQuery, StorageUserPasswordUpdate, StorageUserUpdate, TokenStorage, UserStorage,
+    storage_handle,
 };
 
 pub(crate) async fn reset_local_password(
@@ -312,8 +313,7 @@ pub async fn create_user(
     request: crate::models::NewUser,
     event_context: &EventContext,
 ) -> Result<User, ApiError> {
-    let request = request.hash_password().await?;
-    create_user_with_password_hash(context, request, event_context).await
+    request.save(context, event_context).await
 }
 
 pub(crate) async fn create_user_with_password_hash(
@@ -339,6 +339,13 @@ pub async fn update_user(
     let request = request.hash_password().await?;
     let storage_request =
         request.into_storage(hubuum_domain::UserId::new(id)?, event_context.clone());
+    persist_user_update(context, storage_request).await
+}
+
+pub(crate) async fn persist_user_update(
+    context: &impl StorageContext,
+    storage_request: StorageUserUpdate,
+) -> Result<User, ApiError> {
     Ok(user_from_storage(
         storage_handle(context)
             .update_user(storage_request)

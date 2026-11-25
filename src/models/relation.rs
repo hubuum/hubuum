@@ -3,13 +3,11 @@ use crate::permissions::ObjectResourceEndpoint;
 use crate::services::storage_boundary::{
     class_record_from_storage, class_relation_create_from_storage, class_relation_from_storage,
     object_from_storage, object_relation_create_from_storage, object_relation_from_storage,
-    resolved_class_relation_from_storage,
 };
 #[cfg(test)]
 use crate::services::storage_boundary::{
     class_record_to_storage, class_relation_create_to_storage, class_relation_to_storage,
     object_relation_create_to_storage, object_relation_to_storage, object_to_storage,
-    resolved_class_relation_to_storage,
 };
 use crate::storage::{
     StoragePreparedClassRelation, StoragePreparedObjectRelation, StorageResolvedClassRelation,
@@ -499,7 +497,9 @@ impl PreparedObjectRelation {
             command: object_relation_create_from_storage(*storage.command()),
             from_object: object_from_storage(storage.from_object().clone())?,
             to_object: object_from_storage(storage.to_object().clone())?,
-            class_relation: resolved_class_relation_from_storage(storage.class_relation().clone())?,
+            class_relation: ResolvedClassRelationTarget::from_storage(
+                storage.class_relation().clone(),
+            )?,
             storage,
         })
     }
@@ -521,7 +521,7 @@ impl PreparedObjectRelation {
             object_relation_create_to_storage(command.clone())?,
             object_to_storage(from_object.clone())?,
             object_to_storage(to_object.clone())?,
-            resolved_class_relation_to_storage(&class_relation).clone(),
+            class_relation.as_storage().clone(),
         )
         .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
         Ok(Self {
@@ -577,7 +577,9 @@ impl ResolvedObjectRelationTarget {
             relation: object_relation_from_storage(storage.relation().clone())?,
             from_object: object_from_storage(storage.from_object().clone())?,
             to_object: object_from_storage(storage.to_object().clone())?,
-            class_relation: resolved_class_relation_from_storage(storage.class_relation().clone())?,
+            class_relation: ResolvedClassRelationTarget::from_storage(
+                storage.class_relation().clone(),
+            )?,
             storage,
         })
     }
@@ -607,7 +609,7 @@ impl ResolvedObjectRelationTarget {
             object_relation_to_storage(relation)?,
             object_to_storage(from_object.clone())?,
             object_to_storage(to_object.clone())?,
-            resolved_class_relation_to_storage(&class_relation).clone(),
+            class_relation.as_storage().clone(),
         )
         .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
         Ok(Self {
@@ -1006,6 +1008,25 @@ where
 }
 
 impl HubuumClassRelation {
+    /// The explicit export alias when traversing this relation between two classes.
+    pub(crate) fn template_alias_between(
+        &self,
+        viewer: i32,
+        adjacent: i32,
+    ) -> Option<&TemplateAlias> {
+        let from = self.from_hubuum_class_id.id();
+        let to = self.to_hubuum_class_id.id();
+        if (viewer, adjacent) == (from, to)
+            && let Some(alias) = &self.forward_template_alias
+        {
+            return Some(alias);
+        }
+        if (viewer, adjacent) == (to, from) {
+            return self.reverse_template_alias.as_ref();
+        }
+        None
+    }
+
     /// Wording viewed from one of this relation's class endpoints.
     pub fn label_from(&self, class_id: i32) -> Result<&str, ApiError> {
         if class_id == self.from_hubuum_class_id.id() {

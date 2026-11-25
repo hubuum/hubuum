@@ -15,8 +15,6 @@ use crate::services::storage_boundary::collection_from_storage;
 use crate::services::storage_boundary::{
     class_relation_create_to_storage, class_relation_from_storage,
     object_relation_create_selector_to_storage, object_relation_selector_to_storage,
-    prepared_class_relation_from_storage, prepared_object_relation_from_storage,
-    resolved_class_relation_from_storage, resolved_object_relation_from_storage,
 };
 use crate::services::{prepare_and_create_class_relation, resolve_and_delete_class_relation};
 use crate::storage::{StorageContext, storage_handle};
@@ -38,7 +36,7 @@ async fn prepare_class_relation(
         .prepare_class_relation(class_relation_create_to_storage(command.clone())?)
         .await
         .map_err(ApiError::from)
-        .and_then(prepared_class_relation_from_storage)
+        .and_then(PreparedClassRelation::from_storage)
 }
 
 async fn resolve_class_relation(
@@ -50,7 +48,7 @@ async fn resolve_class_relation(
         .resolve_class_relation(id)
         .await
         .map_err(ApiError::from)
-        .and_then(resolved_class_relation_from_storage)
+        .and_then(ResolvedClassRelationTarget::from_storage)
 }
 
 async fn prepare_object_relation(
@@ -64,7 +62,7 @@ async fn prepare_object_relation(
         )?)
         .await
         .map_err(ApiError::from)
-        .and_then(prepared_object_relation_from_storage)
+        .and_then(PreparedObjectRelation::from_storage)
 }
 
 async fn resolve_object_relation(
@@ -78,7 +76,7 @@ async fn resolve_object_relation(
         ))
         .await
         .map_err(ApiError::from)
-        .and_then(resolved_object_relation_from_storage)
+        .and_then(ResolvedObjectRelationTarget::from_storage)
 }
 
 async fn relation_collections(

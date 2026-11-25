@@ -1,3 +1,4 @@
+use hubuum_storage_core::StorageClassUpdate;
 use std::sync::Arc;
 
 use crate::errors::ApiError;
@@ -5,10 +6,7 @@ use crate::events::EventContext;
 use crate::models::{
     ClassSelector, HubuumClass, NewHubuumClass, ResolvedClassTarget, UpdateHubuumClass,
 };
-use crate::services::storage_boundary::{
-    class_create_to_storage, class_record_from_storage, class_selector_to_storage,
-    class_update_to_storage, resolved_class_from_storage, resolved_class_to_storage,
-};
+use crate::services::storage_boundary::{class_record_from_storage, class_selector_to_storage};
 use crate::storage::ClassStorage;
 
 /// Application-facing class resolution and lifecycle use cases.
@@ -27,7 +25,7 @@ impl ClassService {
             .resolve_class(class_selector_to_storage(selector))
             .await
             .map_err(ApiError::from)
-            .and_then(resolved_class_from_storage)
+            .and_then(ResolvedClassTarget::from_storage)
     }
 
     pub async fn create(
@@ -35,7 +33,7 @@ impl ClassService {
         command: NewHubuumClass,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
-        let command = class_create_to_storage(command)?;
+        let command = command.try_into()?;
         self.storage
             .create_class(command, context)
             .await
@@ -50,8 +48,8 @@ impl ClassService {
         changes: UpdateHubuumClass,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
-        let target = resolved_class_to_storage(target);
-        let changes = class_update_to_storage(changes)?;
+        let target = target.as_storage();
+        let changes = StorageClassUpdate::try_from(changes)?;
         self.storage
             .update_class(target, changes, context)
             .await
@@ -65,7 +63,7 @@ impl ClassService {
         target: &ResolvedClassTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        let target = resolved_class_to_storage(target);
+        let target = target.as_storage();
         self.storage
             .delete_class(target, context)
             .await

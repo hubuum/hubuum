@@ -4,6 +4,7 @@
 //! authentication and routing should not hide an extra pool checkout or an
 //! N+1 introduced while storage capabilities are extracted.
 use hubuum_domain::{ClassId, TemplateAlias};
+use hubuum_storage_core::StorageObjectCreate;
 
 use diesel::sql_types::{Integer, Json, Text};
 use hubuum_domain::PrincipalId;
@@ -27,7 +28,7 @@ use crate::services::Services;
 use crate::services::history::{
     HistoryCollectionFilter, collection_history_paginated_with_total_count, resolve_principal_names,
 };
-use crate::services::storage_boundary::{object_create_to_storage, resolved_class_to_storage};
+
 use crate::storage::{StorageHandle, TransactionStorage, with_mutation_provenance};
 use crate::tests::{CollectionFixture, TestScope, ensure_admin_user};
 use crate::traits::{CanDelete, CanSave, CanUpdate};
@@ -885,8 +886,8 @@ async fn object_transaction_reuses_the_direct_create_round_trip_budget() {
         ))
         .await
         .expect("class fixture should resolve");
-    let storage_class = resolved_class_to_storage(&class_target).clone();
-    let command = object_create_to_storage(NewHubuumObject {
+    let storage_class = class_target.as_storage().clone();
+    let command = StorageObjectCreate::try_from(NewHubuumObject {
         name: scope.scoped_name("query_budget_object_transaction_create"),
         collection_id: fixture.collection.id,
         hubuum_class_id: class.id,

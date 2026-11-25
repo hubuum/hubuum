@@ -1,4 +1,6 @@
 use hubuum_domain::GroupId;
+use hubuum_storage_core::StorageGroupCreate;
+use hubuum_storage_core::StorageGroupUpdate;
 // src/models/group.rs
 
 use crate::errors::ApiError;
@@ -7,8 +9,7 @@ use crate::models::principal::Principal;
 use crate::models::search::{FilterField, QueryOptions, SortParam};
 use crate::models::{LOCAL_PROVIDER_KIND, ResourceRevision};
 use crate::services::storage_boundary::{
-    group_create_to_storage, group_from_storage, group_update_to_storage, principal_from_storage,
-    principal_group_from_storage,
+    group_from_storage, principal_from_storage, principal_group_from_storage,
 };
 use crate::storage::{GroupMembershipStorage, GroupStorage, StorageContext, storage_handle};
 use crate::traits::PrincipalIdAccessor;
@@ -441,6 +442,16 @@ pub struct NewGroup {
     pub description: Option<String>,
 }
 
+impl From<&NewGroup> for StorageGroupCreate {
+    fn from(command: &NewGroup) -> Self {
+        StorageGroupCreate::new(
+            command.identity_scope.clone(),
+            command.groupname.clone(),
+            command.description.clone(),
+        )
+    }
+}
+
 impl NewGroup {
     /// Persist with system audit attribution.
     ///
@@ -451,7 +462,7 @@ impl NewGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .create_group(group_create_to_storage(self), &EventContext::system())
+            .create_group(self.into(), &EventContext::system())
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -463,7 +474,7 @@ impl NewGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .create_group(group_create_to_storage(self), context)
+            .create_group(self.into(), context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -475,6 +486,12 @@ impl NewGroup {
 #[schema(example = update_group_example)]
 pub struct UpdateGroup {
     pub groupname: Option<String>,
+}
+
+impl From<&UpdateGroup> for StorageGroupUpdate {
+    fn from(update: &UpdateGroup) -> Self {
+        StorageGroupUpdate::new(update.groupname.clone())
+    }
 }
 
 impl UpdateGroup {
@@ -491,11 +508,7 @@ impl UpdateGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .update_group(
-                group_id,
-                group_update_to_storage(self),
-                &EventContext::system(),
-            )
+            .update_group(group_id, self.into(), &EventContext::system())
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -512,7 +525,7 @@ impl UpdateGroup {
         C: StorageContext,
     {
         storage_handle(backend)
-            .update_group(group_id, group_update_to_storage(self), context)
+            .update_group(group_id, self.into(), context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())

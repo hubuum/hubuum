@@ -1,11 +1,10 @@
+use hubuum_storage_core::StorageCollectionUpdate;
 use std::sync::Arc;
 
 use crate::errors::ApiError;
 use crate::events::EventContext;
 use crate::models::{Collection, CollectionID, NewCollectionWithAssignee, UpdateCollection};
-use crate::services::storage_boundary::{
-    collection_create_to_storage, collection_from_storage, collection_update_to_storage,
-};
+use crate::services::storage_boundary::collection_from_storage;
 use crate::storage::CollectionStorage;
 
 /// Application-facing collection use cases.
@@ -37,7 +36,7 @@ impl CollectionService {
         context: &EventContext,
     ) -> Result<Collection, ApiError> {
         self.storage
-            .create_collection(collection_create_to_storage(command), context)
+            .create_collection(command.into(), context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
@@ -51,7 +50,7 @@ impl CollectionService {
         context: &EventContext,
     ) -> Result<Collection, ApiError> {
         self.storage
-            .update_collection(id, collection_update_to_storage(changes), context)
+            .update_collection(id, StorageCollectionUpdate::from(changes), context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())

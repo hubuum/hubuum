@@ -1,5 +1,7 @@
 use crate::models::token_scope::TokenScope;
 use hubuum_domain::{CollectionId, GroupId};
+use hubuum_storage_core::StorageCollectionCreate;
+use hubuum_storage_core::StorageCollectionUpdate;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -50,6 +52,12 @@ pub struct UpdateCollection {
     pub description: Option<String>,
 }
 
+impl From<UpdateCollection> for StorageCollectionUpdate {
+    fn from(update: UpdateCollection) -> Self {
+        StorageCollectionUpdate::new(update.name, update.description)
+    }
+}
+
 #[cfg(test)]
 impl UpdateCollection {
     pub(crate) fn has_changes(&self, current: &Collection) -> bool {
@@ -76,6 +84,17 @@ pub struct NewCollectionWithAssignee {
     #[schema(value_type = i32, minimum = 1)]
     pub group_id: GroupID,
     pub parent_collection_id: Option<CollectionID>,
+}
+
+impl From<NewCollectionWithAssignee> for StorageCollectionCreate {
+    fn from(command: NewCollectionWithAssignee) -> Self {
+        StorageCollectionCreate::new(
+            command.name,
+            command.description,
+            command.group_id,
+            command.parent_collection_id,
+        )
+    }
 }
 
 /// A new collection, without an assignee. Used for creating new collection entries
