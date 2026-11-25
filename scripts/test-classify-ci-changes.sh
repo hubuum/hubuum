@@ -958,6 +958,10 @@ for module_path in \
   }
 done
 
+for openapi_source in src/api/openapi.rs src/api/openapi/tests.rs; do
+  assert_flag "$(bash "$classifier" "$openapi_source")" openapi true
+done
+
 for discovery_path in src/models/class_fields.rs src/models/class_fields/tests.rs src/api/v1/handlers/classes/field_discovery.rs; do
   discovery_output="$(bash "$classifier" "$discovery_path")"
   assert_flag "$discovery_output" rust true
