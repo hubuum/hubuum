@@ -97,6 +97,11 @@ pub use backup_snapshot::{
     StorageBackupReplayBuilder, StorageBackupReplayRows, StorageBackupRow, StorageBackupSnapshot,
     StorageBackupStateSection, StorageBackupStateSections,
 };
+pub use capabilities::identity::{
+    AuthenticationStorage, ExternalIdentityStorage, GroupMembershipStorage, GroupStorage,
+    IdentityScopeStorage, LocalIdentityCredentialStorage, PrincipalStorage, ServiceAccountStorage,
+    TokenStorage, UserStorage,
+};
 pub use catalog::{CatalogStorage, StorageCatalogListQuery};
 pub use collection_authorization::{
     CollectionAuthorizationQueryStorage, StorageAuthorizationCollectionGroupsPageQuery,
@@ -177,18 +182,15 @@ pub use history::{
 pub use hubuum_domain::PrincipalKind;
 pub use hubuum_events_core::AuditDocument;
 pub use identity::{
-    AuthenticationStorage, StorageAuthenticatedToken, StorageAuthenticatedTokenBuilder,
-    StorageAuthenticationAttempt, StorageAuthenticationHuman, StorageAuthenticationIdentity,
-    StorageAuthenticationPrincipal, StorageAuthenticationResourceScope,
-    StorageAuthenticationTokenScope, StorageAuthenticationTokenScopeQuery,
-    StorageTokenMigrationOutcome,
+    StorageAuthenticatedToken, StorageAuthenticatedTokenBuilder, StorageAuthenticationAttempt,
+    StorageAuthenticationHuman, StorageAuthenticationIdentity, StorageAuthenticationPrincipal,
+    StorageAuthenticationResourceScope, StorageAuthenticationTokenScope,
+    StorageAuthenticationTokenScopeQuery, StorageTokenMigrationOutcome,
 };
 pub use identity_operations::{
-    ExternalIdentityStorage, GroupMembershipStorage, IdentityScopeStorage,
-    LocalIdentityCredentialStorage, ServiceAccountStorage, StorageDefaultAdminBootstrap,
-    StorageExternalGroup, StorageExternalPrincipalState, StorageExternalSyncFailure,
-    StorageExternalUserSync, StorageExternalUserSyncBuilder, StorageGroupListQuery,
-    StorageIdentityGroup, StorageIdentityGroupBuilder, StorageIdentityScope,
+    StorageDefaultAdminBootstrap, StorageExternalGroup, StorageExternalPrincipalState,
+    StorageExternalSyncFailure, StorageExternalUserSync, StorageExternalUserSyncBuilder,
+    StorageGroupListQuery, StorageIdentityGroup, StorageIdentityGroupBuilder, StorageIdentityScope,
     StorageIdentityScopeEnsure, StorageLocalPasswordReset, StoragePrincipalGroup,
     StoragePrincipalGroupListQuery, StorageServiceAccount, StorageServiceAccountCreate,
     StorageServiceAccountDetails, StorageServiceAccountDisableOutcome,
@@ -197,20 +199,19 @@ pub use identity_operations::{
     StorageTokenMetadata, StorageTokenMetadataBuilder, StorageTokenObservation,
 };
 pub use identity_resources::{
-    GroupStorage, PrincipalStorage, StorageGroupCreate, StorageGroupMember, StorageGroupUpdate,
-    StoragePrincipal, StoragePrincipalBuilder, StoragePrincipalSettings,
-    StoragePrincipalSettingsMutation,
+    StorageGroupCreate, StorageGroupMember, StorageGroupUpdate, StoragePrincipal,
+    StoragePrincipalBuilder, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
 };
 pub use identity_tokens::{
-    StorageLogin, StoragePrincipalTokensRevoke, StorageTokenCreate, StorageTokenCreateParts,
+    StoragePrincipalTokensRevoke, StorageTokenCreate, StorageTokenCreateParts,
     StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenIssuancePolicyError,
-    StorageTokenKeyUsage, StorageTokenRenew, StorageTokenRevoke, TokenStorage,
+    StorageTokenKeyUsage, StorageTokenRenew, StorageTokenRevoke,
 };
 pub use identity_users::{
-    StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserDetails,
-    StorageUserDetailsParts, StorageUserListItem, StorageUserListItemBuilder,
+    StorageLogin, StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete,
+    StorageUserDetails, StorageUserDetailsParts, StorageUserListItem, StorageUserListItemBuilder,
     StorageUserListItemParts, StorageUserListQuery, StorageUserParts, StorageUserPasswordUpdate,
-    StorageUserUpdate, UserStorage,
+    StorageUserUpdate,
 };
 pub use import_workflow::{
     FencedImportItem, FencedImportPlan, FencedImportResults, ImportStorage, StorageImportApply,
