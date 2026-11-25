@@ -764,6 +764,7 @@ for observation_test in src/storage/context/runtime_settings.rs \
   src/middlewares/runtime_settings.rs \
   src/tests/storage_contract/runtime_settings.rs \
   crates/hubuum-storage-core/src/runtime_settings.rs \
+  crates/hubuum-storage-core/src/query_observation_settings.rs \
   crates/hubuum-storage-postgres/tests/runtime_settings.rs \
   crates/hubuum-storage-postgres/migrations/2026-10-19-000001_query_observation_control/up.sql \
   crates/hubuum-storage-postgres/migrations/2026-11-06-000001_runtime_settings/up.sql \

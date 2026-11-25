@@ -325,6 +325,13 @@ async fn read_repair_bounds_transactions_and_loads_definitions_once_per_batch(
         capture_queries(storage.execute_computed_field_rebuild(task.lease().clone())).await;
     result.unwrap();
     let batches = object_count.div_ceil(batch_size);
+    // The final empty batch also checks the task policy before completing the queue.
+    assert_eq!(
+        queries.queries_matching(
+            "FROM \"runtime_settings\" WHERE (\"runtime_settings\".\"setting_group\" ="
+        ),
+        batches + 1
+    );
     assert_eq!(
         queries.queries_matching("FROM \"computed_field_definitions\""),
         batches
