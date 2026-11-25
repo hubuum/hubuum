@@ -774,6 +774,7 @@ pub(crate) async fn reconcile_query_usage_resources(
 
 #[cfg(test)]
 mod tests {
+    use hubuum_storage_conformance::RecordingStorageObserver;
     use rstest::rstest;
 
     use super::*;
@@ -818,6 +819,30 @@ mod tests {
             .acquire_timeout_ms(1_000)
             .build()
             .expect("settings should be valid")
+    }
+
+    #[rstest]
+    #[case::production(false)]
+    #[case::custom_observer(true)]
+    #[actix_web::test]
+    async fn postgres_handles_supply_operational_providers(#[case] custom_observer: bool) {
+        let url = "postgres://localhost/hubuum";
+        let handle = if custom_observer {
+            let pool_settings = PostgresPoolSettings::builder(url)
+                .max_size(1)
+                .statement_timeout_ms(500)
+                .acquire_timeout_ms(1_000)
+                .build()
+                .unwrap();
+            let backend = compose_postgres(build_postgres_pool(&pool_settings).unwrap());
+            StorageHandle::from_postgres_backend_with_storage_observer(
+                backend,
+                Arc::new(RecordingStorageObserver::default()),
+            )
+        } else {
+            initialize_storage(&postgres_settings(url)).unwrap()
+        };
+        handle.assert_postgres_providers_attached();
     }
 
     #[rstest]

@@ -382,6 +382,22 @@ impl StorageHandle {
         .await
     }
 
+    #[cfg(test)]
+    pub(super) fn assert_postgres_providers_attached(&self) {
+        assert!(
+            self.database_pool_state().is_some(),
+            "missing database diagnostics"
+        );
+        assert!(
+            self.has_worker_notification_provider(),
+            "missing worker notifications"
+        );
+        assert!(
+            self.inner.query_usage_analysis.is_some(),
+            "missing query-usage analysis"
+        );
+    }
+
     /// Return adapter-projected pool diagnostics for the legacy database endpoint.
     pub(crate) fn database_pool_state(&self) -> Option<DatabasePoolState> {
         self.inner
