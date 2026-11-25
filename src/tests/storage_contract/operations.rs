@@ -63,7 +63,8 @@ async fn every_available_storage_backend_supplies_complete_event_administration(
         .expect("compatibility fan-out settings should be valid");
     let event_admin_collection_id = collection_id(1);
 
-    for backend in available_backends() {
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
         let event_context = EventContext::system();
         let sink_name = prefix("event_admin_sink");
         let sink = backend
@@ -208,28 +209,37 @@ async fn every_available_storage_backend_supplies_complete_event_administration(
         assert!(audit_events.len() >= 2);
         assert!(audit_total.is_some_and(|total| total >= 2));
 
-        let mut delivery = None;
-        for _ in 0..20 {
-            let (deliveries, total) = backend
-                .list_event_deliveries(
-                    StorageEventDeliveryListQuery::new(options())
-                        .subscription_id(Some(subscription_id)),
-                )
-                .await
-                .expect("certified backend should list event deliveries")
-                .into_parts();
-            assert!(total.is_some());
-            if let Some(row) = deliveries.into_iter().next() {
-                delivery = Some(row);
-                break;
+        // Parallel PostgreSQL fixtures share the fanout queue. Drive the lifecycle
+        // events for this subscription through the same operation used by the worker.
+        match &environment {
+            BackendTestEnvironment::Postgres { pool } => {
+                for event in audit_events {
+                    let (envelope, _, _) = event.into_parts();
+                    fanout_event(pool, envelope.id())
+                        .await
+                        .expect("fan out fixture event");
+                }
             }
-            backend
-                .process_event_fanout_batch(fanout_settings)
-                .await
-                .expect("certified backend should fan out lifecycle events");
+            BackendTestEnvironment::Memory { .. } => {
+                backend
+                    .process_event_fanout_batch(fanout_settings)
+                    .await
+                    .expect("fan out isolated memory events");
+            }
         }
-        let delivery =
-            delivery.expect("event-administration compatibility event should produce a delivery");
+        let (deliveries, total) = backend
+            .list_event_deliveries(
+                StorageEventDeliveryListQuery::new(options())
+                    .subscription_id(Some(subscription_id)),
+            )
+            .await
+            .expect("certified backend should list event deliveries")
+            .into_parts();
+        assert!(total.is_some());
+        let delivery = deliveries
+            .into_iter()
+            .next()
+            .expect("event-administration compatibility event should produce a delivery");
         let delivery_id = delivery.id();
         let dead = backend
             .mark_event_delivery_dead(delivery_id)

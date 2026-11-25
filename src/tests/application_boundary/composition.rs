@@ -754,15 +754,24 @@ fn every_registered_backend_runs_the_reusable_six_part_audit_contract() {
         );
     }
 
-    let fixture = read_source(&root.join("src/tests/storage_contract/certification.rs"))
+    let fixture = read_source(&root.join("src/tests/storage_contract.rs"))
         .expect("registered backend contract fixture should be readable");
+    assert!(
+        item_body(&fixture, "fn", "verify_audit_contract")
+            .contains("verify_backend_audit_contract(&fixture)"),
+        "the registry must run the shared audit contract"
+    );
+    let certification = scenario_body(
+        &root,
+        "src/tests/storage_contract/certification.rs::every_registered_backend_satisfies_the_audited_mutation_contract",
+    );
     for required in [
         "for environment in available_backend_environments()",
-        "verify_backend_audit_contract(&fixture)",
+        ".verify_audit_contract()",
         "assert_eq!(report.checks(), 6)",
     ] {
         assert!(
-            fixture.contains(required),
+            certification.contains(required),
             "registered backend certification is missing {required}"
         );
     }
