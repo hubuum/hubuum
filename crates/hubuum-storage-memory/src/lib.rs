@@ -159,13 +159,6 @@ struct MemoryRestoreRecord {
     validation_summary: serde_json::Value,
 }
 
-#[derive(Clone, Copy)]
-struct MemoryRestoreInstance {
-    generation: i64,
-    drained: bool,
-    heartbeat_at: DateTime<Utc>,
-}
-
 struct MemoryEventAppend<'a> {
     entity_type: EntityType,
     entity_id: i32,
@@ -424,10 +417,7 @@ struct MemoryState {
     restore_jobs: BTreeMap<i64, MemoryRestoreRecord>,
     restore_receipts: BTreeMap<i64, MemoryRestoreRecord>,
     event_dispatched_at: BTreeMap<i64, DateTime<Utc>>,
-    maintenance_state: MaintenanceState,
-    maintenance_restore_job_id: Option<RestoreJobId>,
-    maintenance_generation: i64,
-    restore_instances: BTreeMap<Uuid, MemoryRestoreInstance>,
+    restore_coordinator: restore_coordinator::RestoreCoordinator,
     events: Vec<StorageRecordedEvent>,
 }
 
@@ -830,6 +820,7 @@ mod operational;
 mod queries;
 mod query_usage;
 mod resources;
+mod restore_coordinator;
 mod runtime_settings;
 mod schema_evolution;
 mod state;
