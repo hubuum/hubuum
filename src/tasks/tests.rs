@@ -16,12 +16,12 @@ use super::planning::{
 };
 use super::request_hash;
 use super::resolution::{
-    remember_class, remember_collection, resolve_class_planning, resolve_collection_by_id_planning,
-    resolve_collection_planning, resolve_object_planning,
+    resolve_class_planning, resolve_collection_by_id_planning, resolve_collection_planning,
+    resolve_object_planning,
 };
 use super::types::{
-    CollectionResolution, ExecutionAccumulator, FailureKind, PlannedExecution, PlannedItem,
-    PlanningFailure, PlanningState, WorkerLoopAction,
+    CacheLookup, CollectionResolution, ExecutionAccumulator, FailureKind, ObjectResolution,
+    PlannedExecution, PlannedItem, PlanningFailure, PlanningState, WorkerLoopAction,
 };
 use super::worker::{
     background_worker_action, mark_claimed_task_failed, process_claimed_task_for_test,
@@ -2005,16 +2005,84 @@ fn test_remember_collection_populates_collection_id_index() {
         exists_in_db: false,
     };
 
-    remember_collection(
-        &mut state,
-        Some("collection:planned".to_string()),
-        collection.clone(),
-    );
+    state.remember_collection(Some("collection:planned".to_string()), collection.clone());
 
     assert_eq!(
-        state.collections_by_id.get(&collection.id).unwrap().name,
+        state.collection_by_id(collection.id).unwrap().name,
         collection.name
     );
+}
+
+#[rstest]
+#[case::unqueried(false)]
+#[case::preloaded_miss(true)]
+fn remembering_a_planned_object_preserves_its_database_lookup(#[case] database_miss: bool) {
+    let mut state = PlanningState::new();
+    let key = (7, String::from("planned"));
+    if database_miss {
+        state.objects.record_missing(key.clone());
+    }
+    state.remember_object(
+        None,
+        ObjectResolution {
+            id: -1,
+            class_id: key.0,
+            collection_id: 3,
+            name: key.1.clone(),
+            exists_in_db: false,
+        },
+    );
+
+    assert!(matches!(state.objects.lookup(&key), CacheLookup::Found(object) if object.id == -1));
+    let persisted = state
+        .objects
+        .lookup_where(&key, |object| object.exists_in_db);
+    assert!(matches!(
+        (database_miss, persisted),
+        (true, CacheLookup::Missing) | (false, CacheLookup::Unknown)
+    ));
+}
+
+#[tokio::test]
+async fn best_effort_import_resolves_a_parent_planned_after_a_name_lookup_miss() {
+    let context = TestContext::new().await;
+    let parent_name = context.scoped_name("late_parent");
+    let parent_key = CollectionKey {
+        name: parent_name.clone(),
+        path: None,
+    };
+    let collection = |name, parent_collection_key| ImportCollectionInput {
+        name,
+        description: String::new(),
+        parent_collection_key,
+        parent_collection_ref: None,
+        ref_: None,
+        condition: None,
+        timestamps: None,
+    };
+    let later_child = context.scoped_name("later_child");
+    let request = ImportRequest {
+        version: CURRENT_IMPORT_VERSION,
+        dry_run: Some(false),
+        mode: Some(ImportMode {
+            atomicity: Some(ImportAtomicity::BestEffort),
+            ..ImportMode::default()
+        }),
+        graph: ImportGraph {
+            collections: vec![
+                collection(context.scoped_name("early_child"), Some(parent_key.clone())),
+                collection(parent_name, None),
+                collection(later_child.clone(), Some(parent_key)),
+            ],
+            ..ImportGraph::default()
+        },
+    };
+
+    let plan = plan_import(&context.pool, &context.admin_user, None, &request).await;
+    assert!(plan.planned_items.iter().any(|item| matches!(
+        &item.execution,
+        Some(PlannedExecution::CreateCollection(input)) if input.name == later_child
+    )));
 }
 
 #[tokio::test]
@@ -2126,8 +2194,7 @@ async fn test_plan_class_rejects_duplicate_name_against_virtual_planned_class() 
     let context = (TestContext::new()).await;
     let fixture = (context.collection_fixture("duplicate_virtual_class")).await;
     let mut state = PlanningState::new();
-    remember_collection(
-        &mut state,
+    state.remember_collection(
         Some("collection:existing".to_string()),
         CollectionResolution {
             id: fixture.collection.id,
@@ -2259,8 +2326,7 @@ async fn test_plan_object_rejects_duplicate_name_against_virtual_planned_object(
     .await
     .unwrap();
     let mut state = PlanningState::new();
-    remember_class(
-        &mut state,
+    state.remember_class(
         Some("class:existing".to_string()),
         class_to_resolution(class.clone()),
     );
@@ -2315,8 +2381,7 @@ async fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
     let fixture_one = (context.collection_fixture("duplicate_class_ref_one")).await;
     let fixture_two = (context.collection_fixture("duplicate_class_ref_two")).await;
     let mut state = PlanningState::new();
-    remember_collection(
-        &mut state,
+    state.remember_collection(
         Some("collection:one".to_string()),
         CollectionResolution {
             id: fixture_one.collection.id,
@@ -2326,8 +2391,7 @@ async fn test_plan_class_rejects_duplicate_ref_against_virtual_planned_class() {
             exists_in_db: true,
         },
     );
-    remember_collection(
-        &mut state,
+    state.remember_collection(
         Some("collection:two".to_string()),
         CollectionResolution {
             id: fixture_two.collection.id,
@@ -2411,13 +2475,11 @@ async fn test_plan_object_rejects_duplicate_ref_against_virtual_planned_object()
     .await
     .unwrap();
     let mut state = PlanningState::new();
-    remember_class(
-        &mut state,
+    state.remember_class(
         Some("class:one".to_string()),
         class_to_resolution(class_one.clone()),
     );
-    remember_class(
-        &mut state,
+    state.remember_class(
         Some("class:two".to_string()),
         class_to_resolution(class_two.clone()),
     );
@@ -2486,22 +2548,11 @@ async fn test_resolve_collection_planning_backfills_caches_after_db_lookup() {
     .unwrap();
 
     assert_eq!(resolved.id, fixture.collection.id);
-    assert_eq!(
-        state
-            .collections_by_name
-            .get(&fixture.collection.name)
-            .unwrap()
-            .iter()
-            .map(|collection| collection.id)
-            .collect::<Vec<_>>(),
-        vec![fixture.collection.id]
+    assert!(
+        matches!(state.collections_named(&fixture.collection.name), CacheLookup::Found([cached]) if cached.id == fixture.collection.id)
     );
     assert_eq!(
-        state
-            .collections_by_id
-            .get(&fixture.collection.id)
-            .unwrap()
-            .name,
+        state.collection_by_id(fixture.collection.id).unwrap().name,
         fixture.collection.name
     );
 }
@@ -2603,22 +2654,11 @@ async fn test_resolve_collection_by_id_planning_backfills_caches_after_db_lookup
             .unwrap();
 
     assert_eq!(resolved.name, fixture.collection.name);
-    assert_eq!(
-        state
-            .collections_by_name
-            .get(&fixture.collection.name)
-            .unwrap()
-            .iter()
-            .map(|collection| collection.id)
-            .collect::<Vec<_>>(),
-        vec![fixture.collection.id]
+    assert!(
+        matches!(state.collections_named(&fixture.collection.name), CacheLookup::Found([cached]) if cached.id == fixture.collection.id)
     );
     assert_eq!(
-        state
-            .collections_by_id
-            .get(&fixture.collection.id)
-            .unwrap()
-            .name,
+        state.collection_by_id(fixture.collection.id).unwrap().name,
         fixture.collection.name
     );
 }
@@ -2657,13 +2697,8 @@ async fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
     .unwrap();
 
     assert_eq!(resolved.id, class.id);
-    assert_eq!(
-        state
-            .classes_by_key
-            .get(&(fixture.collection.id, class.name.clone()))
-            .unwrap()
-            .id,
-        class.id
+    assert!(
+        matches!(state.classes.lookup(&(fixture.collection.id, class.name.clone())), CacheLookup::Found(cached) if cached.id == class.id)
     );
 }
 
@@ -2716,13 +2751,8 @@ async fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
     .unwrap();
 
     assert_eq!(resolved.id, object.id);
-    assert_eq!(
-        state
-            .objects_by_key
-            .get(&(class.id, object.name.clone()))
-            .unwrap()
-            .id,
-        object.id
+    assert!(
+        matches!(state.objects.lookup(&(class.id, object.name.clone())), CacheLookup::Found(cached) if cached.id == object.id)
     );
 }
 
@@ -2876,8 +2906,7 @@ async fn test_plan_class_update_preserves_existing_schema_for_following_objects(
     .unwrap();
 
     let mut state = PlanningState::new();
-    remember_collection(
-        &mut state,
+    state.remember_collection(
         Some("collection:existing".to_string()),
         CollectionResolution {
             id: fixture.collection.id,
@@ -3000,8 +3029,7 @@ async fn test_class_overwrite_omitting_schema_respects_activation_policy(
         None
     };
     let mut state = PlanningState::new();
-    remember_collection(
-        &mut state,
+    state.remember_collection(
         Some("collection:existing".to_string()),
         CollectionResolution {
             id: fixture.collection.id,

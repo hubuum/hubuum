@@ -2,8 +2,7 @@ use crate::api::etag::{
     IfMatchCondition, RevisionedResource, revision_precondition, revision_precondition_for_tag,
 };
 use crate::api::locations as api_locations;
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, AdminAccess, UserAccess};
 use crate::models::group::{GroupID, NewGroup, UpdateGroup};

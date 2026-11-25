@@ -4,11 +4,8 @@ use std::collections::{HashMap, HashSet};
 use super::helpers::{
     storage_class_to_resolution, storage_collection_to_resolution, storage_object_to_resolution,
 };
-use super::resolution::{
-    remember_class, remember_collection, remember_object, resolve_class_planning,
-    resolve_collection_planning,
-};
-use super::types::{CollectionResolution, PlanningState};
+use super::resolution::{resolve_class_planning, resolve_collection_planning};
+use super::types::{CacheLookup, CollectionResolution, PlanningState};
 use crate::models::{ClassKey, ImportRequest, ObjectKey};
 
 use crate::storage::{ImportStorage, storage_handle};
@@ -84,10 +81,7 @@ async fn preload_collections_for_class_keys(
                 .as_ref()
                 .and_then(|collection| collection.path.is_none().then_some(collection.name.clone()))
         })
-        .filter(|name| {
-            !state.collections_by_name.contains_key(name)
-                && !state.missing_collection_names.contains(name)
-        })
+        .filter(|name| matches!(state.collections_named(name), CacheLookup::Unknown))
         .collect::<HashSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
@@ -98,11 +92,11 @@ async fn preload_collections_for_class_keys(
             .await
             .map_err(|err| err.to_string())?;
         if collections.is_empty() {
-            state.missing_collection_names.insert(name);
+            state.record_missing_collection_name(name);
             continue;
         }
         for collection in collections {
-            remember_collection(state, None, storage_collection_to_resolution(collection));
+            state.remember_collection(None, storage_collection_to_resolution(collection));
         }
     }
 
@@ -136,17 +130,14 @@ pub(super) async fn preload_existing_classes(
         };
         if !collection.exists_in_db {
             state
-                .missing_class_keys
-                .insert((collection.id, key.name.clone()));
+                .classes
+                .record_missing((collection.id, key.name.clone()));
             continue;
         }
-        if state
-            .classes_by_key
-            .contains_key(&(collection.id, key.name.clone()))
-            || state
-                .missing_class_keys
-                .contains(&(collection.id, key.name.clone()))
-        {
+        if !matches!(
+            state.classes.lookup(&(collection.id, key.name.clone())),
+            CacheLookup::Unknown
+        ) {
             continue;
         }
         requested
@@ -169,11 +160,11 @@ pub(super) async fn preload_existing_classes(
             .map(|class| class.name().to_string())
             .collect::<HashSet<_>>();
         for class in classes {
-            remember_class(state, None, storage_class_to_resolution(class));
+            state.remember_class(None, storage_class_to_resolution(class));
         }
         for name in names {
             if !found_names.contains(&name) {
-                state.missing_class_keys.insert((collection_id, name));
+                state.classes.record_missing((collection_id, name));
             }
         }
     }
@@ -187,7 +178,7 @@ async fn resolve_class_collection_for_preload(
     key: &ClassKey,
 ) -> Result<Option<CollectionResolution>, String> {
     match (key.collection_ref.as_deref(), key.collection_key.as_ref()) {
-        (Some(reference), None) => Ok(state.collections_by_ref.get(reference).cloned()),
+        (Some(reference), None) => Ok(state.collection_by_ref(reference).cloned()),
         (None, Some(key)) => {
             match resolve_collection_planning(pool, state, None, Some(key)).await {
                 Ok(collection) => Ok(Some(collection)),
@@ -221,18 +212,13 @@ pub(super) async fn preload_existing_objects(
         };
 
         if !class.exists_in_db {
-            state
-                .missing_object_keys
-                .insert((class.id, key.name.clone()));
+            state.objects.record_missing((class.id, key.name.clone()));
             continue;
         }
-        if state
-            .objects_by_key
-            .contains_key(&(class.id, key.name.clone()))
-            || state
-                .missing_object_keys
-                .contains(&(class.id, key.name.clone()))
-        {
+        if !matches!(
+            state.objects.lookup(&(class.id, key.name.clone())),
+            CacheLookup::Unknown
+        ) {
             continue;
         }
         requested
@@ -255,11 +241,11 @@ pub(super) async fn preload_existing_objects(
             .map(|object| object.name().to_string())
             .collect::<HashSet<_>>();
         for object in objects {
-            remember_object(state, None, storage_object_to_resolution(object));
+            state.remember_object(None, storage_object_to_resolution(object));
         }
         for name in names {
             if !found_names.contains(&name) {
-                state.missing_object_keys.insert((class_id, name));
+                state.objects.record_missing((class_id, name));
             }
         }
     }
