@@ -231,7 +231,7 @@ async fn admit(
                     ))
                     .execute(connection)
                     .await?;
-            } else if !queue.objects.is_empty() {
+            } else if total > 0 {
                 insert_internal_task(connection, StorageTaskKind::Reindex, payload, total, None)
                     .await?;
             }
