@@ -10,6 +10,7 @@ use crate::operations::task_execution;
 use crate::operations::task_rows::TaskRow;
 use diesel::{ExpressionMethods, OptionalExtension, QueryDsl, SelectableHelper};
 use diesel_async::RunQueryDsl;
+use hubuum_domain::TaskId;
 use hubuum_storage_core::{
     StorageTaskEventInput, StorageTaskLease, StorageTaskResultCounts, StorageTaskTerminalStatus,
     StorageTaskTerminalUpdate,
@@ -186,7 +187,8 @@ impl LockedComputedObjects<'_> {
     ) -> Result<ReindexBatch, PostgresStorageError> {
         let connection = self.class.transaction.connection;
         let state = ensure_computation_state(connection, self.class.class_id).await?;
-        if state.evaluation_revision != target_revision || state.active_task_id != Some(claimed.id)
+        if state.evaluation_revision != target_revision
+            || state.active_task()?.map(TaskId::id) != Some(claimed.id)
         {
             return Ok(ReindexBatch::Superseded);
         }

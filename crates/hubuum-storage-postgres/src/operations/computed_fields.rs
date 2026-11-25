@@ -81,6 +81,15 @@ impl ComputationStateRow {
         }
     }
 
+    fn active_task(&self) -> Result<Option<TaskId>, PostgresStorageError> {
+        self.active_task_id
+            .map(TaskId::new)
+            .transpose()
+            .map_err(|error| {
+                PostgresStorageError::invalid_persisted_value("active computation task id", error)
+            })
+    }
+
     fn into_storage(self) -> Result<StorageClassComputationState, PostgresStorageError> {
         let rebuild_status = self
             .rebuild_status
@@ -90,7 +99,7 @@ impl ComputationStateRow {
             })?;
         let rebuild_state = StorageComputationRebuildState::try_from_parts(
             rebuild_status,
-            self.active_task_id.map(TaskId::new).transpose()?,
+            self.active_task()?,
             self.last_error,
         )
         .map_err(|error| {
@@ -738,7 +747,7 @@ pub async fn request_computed_field_rebuild(
             acquire_computed_class_exclusive_lock(connection, class_id).await?;
             locked_class_in_collection(connection, class_id, authorized_collection_id).await?;
             let state = ensure_computation_state(connection, class_id).await?;
-            if let Some(task_id) = state.active_task_id
+            if let Some(task_id) = state.active_task()?
                 && active_rebuild_matches(connection, task_id, class_id, state.evaluation_revision)
                     .await?
             {
@@ -1323,7 +1332,7 @@ fn computed_field_event(
 
 async fn active_rebuild_matches(
     connection: &mut PostgresConnection,
-    task_id: i32,
+    task_id: TaskId,
     class_id: i32,
     revision: i64,
 ) -> Result<bool, PostgresStorageError> {
@@ -1334,7 +1343,7 @@ async fn active_rebuild_matches(
         StorageTaskStatus::Running.as_str(),
     ];
     let payload = tasks::tasks
-        .filter(tasks::id.eq(task_id))
+        .filter(tasks::id.eq(task_id.id()))
         .filter(tasks::status.eq_any(active_statuses))
         .select(tasks::request_payload)
         .first::<Option<Value>>(connection)
@@ -1659,11 +1668,7 @@ pub(crate) async fn invalidate_schema_dependency_on(
         return Ok(None);
     }
     let state = advance_revision_and_enqueue(connection, target.class_id().id(), actor_id).await?;
-    state
-        .active_task_id
-        .map(TaskId::new)
-        .transpose()
-        .map_err(PostgresStorageError::from)
+    state.active_task()
 }
 
 #[cfg(test)]
@@ -1671,6 +1676,16 @@ mod tests {
     use hubuum_query::{ParsedQueryParam, SearchOperator};
 
     use super::*;
+
+    #[test]
+    fn invalid_active_computation_task_is_backend_corruption() {
+        let mut row = ComputationStateRow::ready_without_definitions(1);
+        row.active_task_id = Some(0);
+        assert_eq!(
+            row.active_task().unwrap_err().kind(),
+            hubuum_storage_core::StorageErrorKind::Backend
+        );
+    }
 
     #[test]
     fn negative_computation_revisions_are_classified_as_backend_corruption() {
