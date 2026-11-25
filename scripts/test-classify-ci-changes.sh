@@ -929,12 +929,20 @@ for schema_input in crates/hubuum-domain/src/relation_limit.rs crates/hubuum-dom
 done
 for extracted_input in src/services/exports/execution.rs src/services/exports/hydration.rs \
   src/tasks/planning/import.rs crates/hubuum-storage-memory/src/imports/relations.rs \
-  crates/hubuum-storage-core/src/event_administration/sink.rs crates/hubuum-storage-core/src/backup_snapshot/resources.rs \
+  crates/hubuum-storage-core/src/backup_snapshot/resources.rs \
   crates/hubuum-storage-core/src/backup_snapshot/normalization.rs \
   crates/hubuum-auth-core/src/credential.rs; do
   extracted_output="$(bash "$classifier" "$extracted_input")"
   assert_flag "$extracted_output" rust true
   assert_flag "$extracted_output" container true
+done
+
+for shared_record in crates/hubuum-storage-core/src/record.rs \
+  crates/hubuum-storage-core/src/restore_artifact.rs \
+  crates/hubuum-storage-core/src/event_administration/sink.rs; do
+  record_output="$(bash "$classifier" "$shared_record")"
+  assert_flag "$record_output" rust true
+  assert_flag "$record_output" container true
 done
 
 hash_benchmark_output="$(bash "$classifier" benches/computed_hash_criterion.rs)"
