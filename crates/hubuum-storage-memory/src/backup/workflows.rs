@@ -167,8 +167,24 @@ pub(super) fn restore(
             .computed_fields
             .insert(value.metadata().id().id(), value);
     }
-    state.next_event_sink_id = next_id(&state.event_sinks)?;
-    state.next_event_subscription_id = next_id(&state.event_subscriptions)?;
-    state.next_computed_field_id = next_id(&state.computed_fields)?;
+    state
+        .event_sink_ids
+        .observe(state.event_sinks.keys().next_back().copied().unwrap_or(0));
+    state.event_subscription_ids.observe(
+        state
+            .event_subscriptions
+            .keys()
+            .next_back()
+            .copied()
+            .unwrap_or(0),
+    );
+    state.computed_field_ids.observe(
+        state
+            .computed_fields
+            .keys()
+            .next_back()
+            .copied()
+            .unwrap_or(0),
+    );
     Ok(())
 }

@@ -354,8 +354,8 @@ impl TokenStorage for MemoryStorage {
             .read()
             .await
             .credential_approvals
-            .get(&id)
-            .map(|(_, metadata)| metadata.clone())
+            .metadata(id)
+            .cloned()
             .ok_or_else(|| StorageError::not_found("Credential approval not found"))
     }
 

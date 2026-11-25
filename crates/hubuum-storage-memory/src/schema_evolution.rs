@@ -61,9 +61,9 @@ impl MemoryState {
     fn schema_mutation_delta(&self, class_id: ClassId) -> Self {
         let mut delta = Self::new();
         delta.history.clear();
-        delta.next_event_sequence = self.next_event_sequence;
-        delta.next_task_id = self.next_task_id;
-        delta.next_history_id = self.next_history_id;
+        delta.event_sequences = self.event_sequences;
+        delta.task_ids = self.task_ids;
+        delta.history_ids = self.history_ids;
         if let Some(class) = self.classes.get(&class_id.id()) {
             delta.classes.insert(class_id.id(), class.clone());
         }
@@ -107,9 +107,9 @@ impl MemoryState {
     }
 
     fn commit_schema_delta(&mut self, delta: Self) {
-        self.next_event_sequence = delta.next_event_sequence;
-        self.next_task_id = delta.next_task_id;
-        self.next_history_id = delta.next_history_id;
+        self.event_sequences = delta.event_sequences;
+        self.task_ids = delta.task_ids;
+        self.history_ids = delta.history_ids;
         self.classes.extend(delta.classes);
         self.schema_revisions.extend(delta.schema_revisions);
         self.schema_active.extend(delta.schema_active);
@@ -550,8 +550,7 @@ impl MemoryState {
             return Ok(work.clone());
         }
         let class_id = request.target().class_id();
-        let task_id = TaskId::new(self.next_task_id).map_err(schema_error)?;
-        self.next_task_id += 1;
+        let task_id = TaskId::new(self.task_ids.allocate()?).map_err(schema_error)?;
         let work = StorageSchemaWork::start(
             task_id,
             request,
@@ -1167,7 +1166,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
             return Err(StorageError::conflict("Schema work checkpoint changed"));
         }
         let mut state = MemoryState::new();
-        state.next_event_sequence = guard.next_event_sequence;
+        state.event_sequences = guard.event_sequences;
         state.tasks.insert(live.id.id(), live.clone());
         state.schema_work.insert(work.task_id().id(), work.clone());
         let class_id = work.target().class_id().id();
@@ -1286,7 +1285,7 @@ impl SchemaEvolutionStorage for MemoryStorage {
                 }
             }
         }
-        guard.next_event_sequence = state.next_event_sequence;
+        guard.event_sequences = state.event_sequences;
         guard.events.extend(state.events);
         for (id, events) in state.task_events {
             guard.task_events.entry(id).or_default().extend(events);
@@ -1412,11 +1411,7 @@ impl MemoryState {
         }) {
             return Ok(None);
         }
-        let task_id = TaskId::new(self.next_task_id).map_err(schema_error)?;
-        self.next_task_id = self
-            .next_task_id
-            .checked_add(1)
-            .ok_or_else(|| StorageError::internal("Task identity exhausted"))?;
+        let task_id = TaskId::new(self.task_ids.allocate()?).map_err(schema_error)?;
         let mut task = self
             .tasks
             .get(&work.task_id().id())

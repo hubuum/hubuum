@@ -55,6 +55,7 @@ impl RemoteTargetStorage for MemoryStorage {
                 collection_id.id()
             )));
         }
+        state.ensure_audited_history_capacity(1)?;
         let id = state.remote_target_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
@@ -163,6 +164,7 @@ impl RemoteTargetStorage for MemoryStorage {
             &name,
             StorageRemoteTargetDefinition::new(description, updated_transport, updated_policy),
         );
+        state.ensure_audited_history_capacity(1)?;
         state.remote_targets.insert(target_id.id(), target.clone());
         let receipt = state.append_simple_event(
             EntityType::RemoteTarget,
@@ -186,9 +188,10 @@ impl RemoteTargetStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let (target_id, context) = request.into_parts();
         let mut state = self.state.write().await;
-        let Some(target) = state.remote_targets.remove(&target_id.id()) else {
+        let Some(target) = state.remote_targets.get(&target_id.id()).cloned() else {
             return Ok(StorageMutationOutcome::unchanged(()));
         };
+        state.ensure_audited_history_capacity(1)?;
         let (_, _, name, _) = target.clone().into_parts();
         let receipt = state.append_simple_event(
             EntityType::RemoteTarget,
@@ -203,6 +206,7 @@ impl RemoteTargetStorage for MemoryStorage {
             StorageHistoryOperation::Delete,
             &context,
         )?;
+        state.remote_targets.remove(&target_id.id());
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 
@@ -272,9 +276,8 @@ impl TaskQueueStorage for MemoryStorage {
             request.kind(),
             request.maximum_active_tasks(),
         )?;
-        let id = TaskId::new(state.next_task_id)
+        let id = TaskId::new(state.task_ids.allocate()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        state.next_task_id += 1;
         let now = Utc::now();
         let record = MemoryTaskRecord {
             control: StorageTaskControl::new(request.kind()),
@@ -658,6 +661,7 @@ impl TaskExecutionStorage for MemoryStorage {
             .take(batch_size)
             .map(|task| task.id)
             .collect::<Vec<_>>();
+        state.event_sequences.after(task_ids.len())?;
         let mut recovered = Vec::with_capacity(task_ids.len());
         for task_id in task_ids {
             if state
@@ -1017,9 +1021,8 @@ impl RestoreStorage for MemoryStorage {
         let (initiator, artifact, capability_hash, validation_summary, expires_at) =
             request.into_parts();
         let mut state = self.state.write().await;
-        let id = RestoreJobId::new(state.next_restore_job_id)
+        let id = RestoreJobId::new(state.restore_job_ids.next()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        state.next_restore_job_id += 1;
         let now = Utc::now();
         let timestamps = StorageRestoreTimestamps::try_new(expires_at, None, None, now, now)
             .map_err(invalid_contract_value)?;
@@ -1038,6 +1041,7 @@ impl RestoreStorage for MemoryStorage {
             capability_hash.clone(),
         )
         .map_err(invalid_contract_value)?;
+        state.restore_job_ids.observe(id.id());
         state.restore_jobs.insert(
             id.id(),
             MemoryRestoreRecord {
@@ -1181,14 +1185,11 @@ impl RestoreStorage for MemoryStorage {
                 .with_schema_limits(self.schema_limits)?
                 .materialize()?,
         )?;
-        replacement.credential_approvals = state.credential_approvals.clone();
+        replacement.credential_approvals = state
+            .credential_approvals
+            .invalidated_for_restore(started_at);
         // Runtime settings are deployment configuration and survive restores.
         replacement.runtime_settings = state.runtime_settings.clone();
-        for (_, approval) in replacement.credential_approvals.values_mut() {
-            approval.invalidate(Utc::now());
-        }
-        replacement.credential_approval_digests = state.credential_approval_digests.clone();
-        replacement.credential_approval_ids = state.credential_approval_ids;
         crate::backup::append_restore_event(
             &mut replacement,
             &current,
@@ -1211,7 +1212,7 @@ impl RestoreStorage for MemoryStorage {
         )?;
         replacement.restore_receipts.insert(job_id.id(), succeeded);
         replacement.restore_coordinator = state.restore_coordinator.after_replay();
-        replacement.next_restore_job_id = state.next_restore_job_id;
+        replacement.restore_job_ids = state.restore_job_ids;
         let completion = StorageRestoreCompletion::try_new(started_at, finished_at)
             .map_err(invalid_contract_value)?;
         *state = replacement;
@@ -1433,6 +1434,7 @@ impl ExportTemplateStorage for MemoryStorage {
                 collection_id.id()
             )));
         }
+        state.ensure_audited_history_capacity(1)?;
         let id = state.export_template_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
@@ -1494,6 +1496,7 @@ impl ExportTemplateStorage for MemoryStorage {
         )
         .map_err(invalid_contract_value)?;
         let template = StorageExportTemplate::new(metadata, collection_id, &name, definition);
+        state.ensure_audited_history_capacity(1)?;
         state
             .export_templates
             .insert(template_id.id(), template.clone());
@@ -1519,9 +1522,10 @@ impl ExportTemplateStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let (template_id, context) = request.into_parts();
         let mut state = self.state.write().await;
-        let Some(template) = state.export_templates.remove(&template_id.id()) else {
+        let Some(template) = state.export_templates.get(&template_id.id()).cloned() else {
             return Ok(StorageMutationOutcome::unchanged(()));
         };
+        state.ensure_audited_history_capacity(1)?;
         let (_, _, name, _) = template.clone().into_parts();
         let receipt = state.append_simple_event(
             EntityType::ExportTemplate,
@@ -1536,6 +1540,7 @@ impl ExportTemplateStorage for MemoryStorage {
             StorageHistoryOperation::Delete,
             &context,
         )?;
+        state.export_templates.remove(&template_id.id());
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 }
