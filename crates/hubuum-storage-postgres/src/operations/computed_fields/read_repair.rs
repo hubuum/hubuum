@@ -6,11 +6,11 @@ use diesel::prelude::*;
 use diesel::sql_types::{Bool, Nullable, Timestamp};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::{ClassId, ObjectId};
-use hubuum_storage_core::{StorageObject, StorageTask, StorageTaskKind, StorageTaskLease};
+use hubuum_storage_core::{StorageObject, StorageTaskKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{insert_internal_task, locking};
+use super::insert_internal_task;
 use crate::operations::task_execution;
 use crate::operations::task_rows::TaskRow;
 use crate::{PostgresConnection, PostgresRuntime, PostgresStorageError};
@@ -285,37 +285,6 @@ pub(super) enum BatchResult {
         errors: Vec<Vec<&'static str>>,
     },
     Complete(Box<TaskRow>),
-}
-
-pub(super) async fn execute(
-    runtime: &PostgresRuntime,
-    lease: StorageTaskLease,
-) -> Result<StorageTask, PostgresStorageError> {
-    crate::reach_fault_point(crate::PostgresFaultPoint::ComputedRepairBeforeLocks, None).await?;
-    loop {
-        match locking::repair_queue_batch(runtime, lease.clone()).await {
-            Ok(BatchResult::Progress {
-                repaired,
-                backlog,
-                errors,
-            }) => {
-                for codes in errors {
-                    runtime.record_computed_evaluation("shared", &codes);
-                }
-                runtime.record_computed_read_repair("success");
-                tracing::debug!(repaired, backlog, "computed repair batch committed");
-                tokio::task::yield_now().await;
-            }
-            Ok(BatchResult::Complete(task)) => {
-                task_execution::record_task_terminal(runtime, &task);
-                return task.into_storage();
-            }
-            Err(error) => {
-                runtime.record_computed_read_repair("failure");
-                return Err(error);
-            }
-        }
-    }
 }
 
 pub(super) async fn persist_progress(

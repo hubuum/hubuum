@@ -60,7 +60,7 @@ use super::schema_evolution::{
     record_class_schema_on, record_object_schema_on, validate_import_object_on,
 };
 use super::service_account::ServiceAccountRow;
-use super::user::UserRow;
+use super::user_row::UserRow;
 use crate::runtime::ambient_event_context;
 use crate::{
     PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError, SendAsyncFn,

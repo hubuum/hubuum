@@ -1,6 +1,7 @@
 //! PostgreSQL implementation of computed-field definition and rebuild lifecycle.
 
 pub(crate) mod locking;
+use read_repair::BatchResult;
 pub(crate) mod read_repair;
 
 use std::time::Instant;
@@ -788,6 +789,37 @@ pub async fn enqueue_restored_computed_rebuilds_on_connection(
     Ok(())
 }
 
+async fn execute_read_repair(
+    runtime: &PostgresRuntime,
+    lease: StorageTaskLease,
+) -> Result<StorageTask, PostgresStorageError> {
+    crate::reach_fault_point(crate::PostgresFaultPoint::ComputedRepairBeforeLocks, None).await?;
+    loop {
+        match locking::repair_queue_batch(runtime, lease.clone()).await {
+            Ok(BatchResult::Progress {
+                repaired,
+                backlog,
+                errors,
+            }) => {
+                for codes in errors {
+                    runtime.record_computed_evaluation("shared", &codes);
+                }
+                runtime.record_computed_read_repair("success");
+                tracing::debug!(repaired, backlog, "computed repair batch committed");
+                tokio::task::yield_now().await;
+            }
+            Ok(BatchResult::Complete(task)) => {
+                task_execution::record_task_terminal(runtime, &task);
+                return task.into_storage();
+            }
+            Err(error) => {
+                runtime.record_computed_read_repair("failure");
+                return Err(error);
+            }
+        }
+    }
+}
+
 pub async fn execute_computed_field_rebuild(
     runtime: &PostgresRuntime,
     lease: StorageTaskLease,
@@ -796,7 +828,7 @@ pub async fn execute_computed_field_rebuild(
     let claimed = task_execution::claimed_task(&lease)?;
     let task = task_execution::find_task(runtime, claimed.id).await?;
     if read_repair::is_read_repair(&task) {
-        return read_repair::execute(runtime, lease).await;
+        return execute_read_repair(runtime, lease).await;
     }
     if task.kind != StorageTaskKind::Reindex.as_str() {
         return Err(PostgresStorageError::invalid_input(format!(
