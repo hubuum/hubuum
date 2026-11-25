@@ -110,50 +110,50 @@ effects = { point_read = ["resolve_object_relation"], validation = ["prepare_obj
 shared_scenarios = ["src/services/object_relations.rs::object_relation_contract_prepares_a_normalized_endpoint_aggregate", "src/services/object_relations.rs::object_relation_contract_deletes_the_resolved_relation", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_relation_lifecycle"]
 
 [traits.AuthenticationStorage]
-source = "crates/hubuum-storage-core/src/identity.rs"
+source = "crates/hubuum-storage-core/src/capabilities/identity.rs"
 methods = ["authenticate_bearer_token", "get_authentication_identity", "get_authentication_token_scope", "record_credential_creation", "observe_credential_source", "credential_activity", "purge_credential_sources", "create_auth_session", "refresh_principal", "rotate_auth_session", "revoke_auth_sessions", "purge_auth_sessions"]
 effects = { observation = ["authenticate_bearer_token", "record_credential_creation", "observe_credential_source"], point_read = ["get_authentication_identity", "get_authentication_token_scope", "refresh_principal"], page_read = ["credential_activity"], workflow_mutation = ["purge_credential_sources", "purge_auth_sessions"], audited_mutation = ["create_auth_session", "rotate_auth_session", "revoke_auth_sessions"] }
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_authentication_projections", "src/tests/storage_contract/auth_sessions.rs::rotation_preserves_deadline_and_replay_revokes_every_access_token", "src/tests/storage_contract/auth_sessions.rs::source_history_survives_rotation_and_normal_activity_resuming", "src/tests/storage_contract/auth_sessions.rs::creation_provenance_is_immutable_and_does_not_advance_token_revision", "src/tests/storage_contract/auth_sessions.rs::retention_preserves_replay_detection_for_live_families", "src/tests/storage_contract/auth_sessions.rs::activity_retention_preserves_recent_sources", "src/tests/storage_contract/auth_sessions.rs::principal_deletion_removes_refresh_lookup", "src/tests/storage_contract/auth_sessions.rs::logout_all_preserves_durable_credentials"]
 
 [traits.LocalIdentityCredentialStorage]
-source = "crates/hubuum-storage-core/src/identity_operations.rs"
+source = "crates/hubuum-storage-core/src/capabilities/identity.rs"
 methods = ["is_default_admin_bootstrap_required", "bootstrap_default_admin", "reset_local_password"]
 effects = { point_read = ["is_default_admin_bootstrap_required"], audited_mutation = ["reset_local_password"], workflow_mutation = ["bootstrap_default_admin"] }
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
 [traits.IdentityScopeStorage]
-source = "crates/hubuum-storage-core/src/identity_operations.rs"
+source = "crates/hubuum-storage-core/src/capabilities/identity.rs"
 methods = ["ensure_identity_scope", "resolve_identity_scope_name", "resolve_identity_scope_names"]
 effects = { point_read = ["resolve_identity_scope_name"], batch_read = ["resolve_identity_scope_names"], workflow_mutation = ["ensure_identity_scope"] }
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
 [traits.GroupMembershipStorage]
-source = "crates/hubuum-storage-core/src/identity_operations.rs"
+source = "crates/hubuum-storage-core/src/capabilities/identity.rs"
 methods = ["get_principal_group", "list_principal_groups", "is_human_owner_group_member", "load_group_member_principals", "list_group_members", "add_group_member", "remove_group_member"]
 effects = { point_read = ["get_principal_group", "is_human_owner_group_member"], page_read = ["list_principal_groups", "list_group_members"], complete_read = ["load_group_member_principals"], audited_mutation = ["add_group_member", "remove_group_member"] }
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_group_behavior"]
 native_scenarios = ["crates/hubuum-storage-postgres/tests/connection_loss.rs::connection_loss_before_commit_rolls_back_and_pool_recovers"]
 
 [traits.ServiceAccountStorage]
-source = "crates/hubuum-storage-core/src/identity_operations.rs"
+source = "crates/hubuum-storage-core/src/capabilities/identity.rs"
 methods = ["is_service_account_disabled", "get_service_account", "get_service_account_details", "list_manageable_service_accounts", "create_service_account", "update_service_account", "disable_service_account", "delete_service_account"]
 effects = { point_read = ["is_service_account_disabled", "get_service_account", "get_service_account_details"], page_read = ["list_manageable_service_accounts"], audited_mutation = ["create_service_account", "update_service_account", "disable_service_account", "delete_service_account"] }
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
 [traits.ExternalIdentityStorage]
-source = "crates/hubuum-storage-core/src/identity_operations.rs"
+source = "crates/hubuum-storage-core/src/capabilities/identity.rs"
 methods = ["get_external_principal_state", "record_external_sync_failure", "sync_external_user"]
 effects = { point_read = ["get_external_principal_state"], workflow_mutation = ["record_external_sync_failure", "sync_external_user"] }
 shared_scenarios = ["src/tests/storage_contract/authentication.rs::every_backend_preserves_subject_binding", "src/tests/storage_contract/authentication.rs::every_backend_allows_rename_only_for_the_same_external_subject", "src/tests/storage_contract/authentication.rs::every_backend_invalidates_rejected_identity_even_during_later_outage", "src/tests/storage_contract/authentication.rs::every_backend_rejects_pending_login_after_external_identity_recovers", "src/tests/storage_contract/authentication.rs::every_backend_preserves_pending_logins_across_unchanged_external_sync", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
 [traits.UserStorage]
-source = "crates/hubuum-storage-core/src/identity_users.rs"
+source = "crates/hubuum-storage-core/src/capabilities/identity.rs"
 methods = ["get_user", "get_user_by_name", "get_user_details", "list_users", "create_user", "update_user", "set_user_password", "delete_user", "anonymize_user"]
 effects = { point_read = ["get_user", "get_user_by_name", "get_user_details"], page_read = ["list_users"], audited_mutation = ["create_user", "update_user", "set_user_password", "delete_user", "anonymize_user"] }
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations"]
 
 [traits.TokenStorage]
-source = "crates/hubuum-storage-core/src/identity_tokens.rs"
+source = "crates/hubuum-storage-core/src/capabilities/identity.rs"
 methods = ["create_credential_approval", "get_credential_approval", "list_retained_tokens", "token_key_usage", "create_token", "renew_token", "get_token_metadata", "load_token_metadata_by_ids", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"]
 effects = { point_read = ["get_credential_approval", "get_token_metadata"], page_read = ["list_retained_tokens"], batch_read = ["load_token_metadata_by_ids"], complete_read = ["token_key_usage"], audited_mutation = ["create_credential_approval", "create_token", "renew_token", "revoke_token", "revoke_token_by_hash", "revoke_all_principal_tokens"] }
 shared_scenarios = ["src/tests/storage_contract/authentication.rs::every_backend_rejects_login_evidence_after_credential_change", "src/tests/storage_contract/authentication.rs::concurrent_password_reset_cannot_leave_a_login_token_active", "src/tests/storage_contract/login_events.rs::every_backend_commits_login_snapshot_with_token_and_lifecycle_receipts", "src/tests/storage_contract/login_events.rs::every_backend_rejects_failed_login_issuance_without_a_success_event", "src/tests/storage_contract/login_events.rs::ordinary_token_issuance_never_records_a_login", "src/tests/storage_contract/credential_approvals.rs::approvals_allow_only_one_concurrent_consumer_and_retain_evidence", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_identity_operations", "src/tests/storage_contract.rs::every_available_storage_backend_migrates_legacy_token_digests_safely"]
@@ -296,13 +296,13 @@ effects = { candidate_read = ["search_collections", "search_classes", "search_ob
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_ranked_unified_search"]
 
 [traits.GroupStorage]
-source = "crates/hubuum-storage-core/src/identity_resources.rs"
+source = "crates/hubuum-storage-core/src/capabilities/identity.rs"
 methods = ["list_groups", "get_group", "resolve_group_identity_scope_name", "create_group", "update_group", "delete_group"]
 effects = { point_read = ["get_group", "resolve_group_identity_scope_name"], page_read = ["list_groups"], audited_mutation = ["create_group", "update_group", "delete_group"] }
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_group_behavior"]
 
 [traits.PrincipalStorage]
-source = "crates/hubuum-storage-core/src/identity_resources.rs"
+source = "crates/hubuum-storage-core/src/capabilities/identity.rs"
 methods = ["get_principal", "get_principal_settings", "update_principal_settings"]
 effects = { point_read = ["get_principal", "get_principal_settings"], audited_mutation = ["update_principal_settings"] }
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_complete_principal_behavior"]
@@ -320,13 +320,13 @@ effects = { point_read = ["get_remote_target"], page_read = ["list_remote_target
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_remote_target_lifecycle"]
 
 [traits.TaskQueueStorage]
-source = "crates/hubuum-storage-core/src/task_queue.rs"
+source = "crates/hubuum-storage-core/src/capabilities/workflows.rs"
 methods = ["create_task", "get_task_access", "list_tasks", "list_task_events", "list_import_task_results", "list_export_output_summaries", "list_backup_output_summaries", "get_export_output_summary", "get_backup_output_summary", "get_export_output", "get_backup_output"]
 effects = { point_read = ["get_task_access", "get_export_output_summary", "get_backup_output_summary", "get_export_output", "get_backup_output"], page_read = ["list_tasks", "list_task_events", "list_import_task_results"], batch_read = ["list_export_output_summaries", "list_backup_output_summaries"], workflow_mutation = ["create_task"] }
 shared_scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_queue", "src/tests/storage_contract/schema_evolution.rs::generic_schema_tasks_require_administrator_report_access"]
 
 [traits.TaskExecutionStorage]
-source = "crates/hubuum-storage-core/src/task_execution.rs"
+source = "crates/hubuum-storage-core/src/capabilities/workflows.rs"
 methods = ["get_schema_profile_output", "purge_expired_schema_profile_outputs", "poll_task_execution", "request_task_cancellation", "admit_task_execution", "acknowledge_task_stop", "begin_remote_dispatch", "claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"]
 effects = { point_read = ["poll_task_execution", "get_schema_profile_output"], workflow_mutation = ["purge_expired_schema_profile_outputs", "request_task_cancellation", "admit_task_execution", "acknowledge_task_stop", "begin_remote_dispatch", "claim_next_task", "renew_task_lease", "recover_expired_task_leases", "append_task_event", "update_task_state", "complete_task", "fail_task", "purge_expired_export_outputs", "purge_expired_backup_outputs"] }
 shared_scenarios = ["src/tests/storage_contract/task_control.rs::profiling_output_is_published_only_with_successful_fenced_completion", "src/tests/storage_contract/task_control.rs::profiling_output_expires_and_retains_discovery_evidence_after_cleanup", "src/tests/storage_contract/task_control.rs::active_stop_is_durable_and_retains_lease_until_acknowledgement", "src/tests/storage_contract/task_control.rs::execution_deadline_is_pinned_independently_of_renewed_leases", "src/tests/storage_contract/task_control.rs::remote_stop_preserves_dispatch_knowledge_and_forbids_replay", "src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine", "src/tests/storage_contract/schema_evolution.rs::failed_schema_workers_publish_terminal_checkpoints"]
@@ -448,12 +448,12 @@ variants = ["Import", "Export", "Backup", "Reindex", "RemoteCall", "SchemaValida
 scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
 
 [enums.StorageTaskStatus]
-source = "crates/hubuum-storage-core/src/task_queue.rs"
+source = "crates/hubuum-storage-core/src/task_control.rs"
 variants = ["Queued", "Validating", "Running", "Succeeded", "Failed", "PartiallySucceeded", "Cancelled"]
 scenarios = ["src/tests/storage_contract.rs::every_available_storage_backend_supplies_the_complete_task_state_machine"]
 
 [traits.SchemaEvolutionStorage]
-source = "crates/hubuum-storage-core/src/schema_evolution.rs"
+source = "crates/hubuum-storage-core/src/capabilities/workflows.rs"
 methods = ["get_schema_impact_boundary", "schema_compliance_counts", "list_schema_revisions", "get_schema_state", "stage_schema_revision", "abandon_schema_revision", "activate_schema_revision", "request_schema_work", "get_schema_work", "get_schema_work_report", "save_schema_repair_report", "get_schema_repair_report", "process_schema_work", "cancel_schema_work", "list_schema_compliance"]
 effects = { point_read = ["get_schema_impact_boundary", "schema_compliance_counts", "get_schema_state", "get_schema_work", "get_schema_work_report", "get_schema_repair_report"], page_read = ["list_schema_revisions", "list_schema_compliance"], audited_mutation = ["stage_schema_revision", "abandon_schema_revision", "activate_schema_revision", "request_schema_work", "cancel_schema_work"], workflow_mutation = ["process_schema_work", "save_schema_repair_report"] }
 shared_scenarios = ["src/tests/storage_contract/schema_evolution/repair.rs::repair_report_persistence_does_not_change_source_analysis", "src/tests/storage_contract/schema_evolution/repair.rs::repair_report_storage_rechecks_authorized_collection", "src/tests/storage_contract/schema_evolution/impact.rs::impact_compares_both_policies_without_publishing_candidate_evidence", "src/tests/storage_contract/schema_evolution/impact.rs::completed_impact_readiness_tracks_current_state", "src/tests/storage_contract/schema_evolution.rs::immutable_schema_revisions_are_monotonic_and_equivalent_staging_is_idempotent", "src/tests/storage_contract/schema_evolution.rs::schema_mutations_preserve_the_authorized_collection_boundary", "src/tests/storage_contract/schema_evolution.rs::permissive_schema_activation_records_object_effects_without_changing_data", "src/tests/storage_contract/schema_evolution.rs::cancelled_schema_worker_cannot_commit_another_batch", "src/tests/storage_contract/schema_evolution.rs::expired_schema_lease_resumes_from_committed_checkpoint", "src/tests/storage_contract/schema_evolution.rs::schema_compliance_reports_and_filters_share_active_revision", "src/tests/storage_contract/schema_evolution.rs::stage", "src/tests/storage_contract/schema_evolution.rs::request", "src/tests/storage_contract/schema_evolution.rs::activate", "src/tests/storage_contract/schema_evolution.rs::compliance"]
