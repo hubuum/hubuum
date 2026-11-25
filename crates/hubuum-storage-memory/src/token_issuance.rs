@@ -47,8 +47,7 @@ impl MemoryState {
         {
             return Err(StorageError::conflict("Token credential already exists"));
         }
-        let id = TokenId::new(self.next_token_id).expect("memory token id is positive");
-        self.next_token_id += 1;
+        let id = TokenId::new(self.token_ids.allocate()?).expect("memory token id is positive");
         let issued = Utc::now();
         let (default_lifetime_hours, maximum_lifetime_hours) = request.policy().into_parts();
         let maximum_expiry = issued

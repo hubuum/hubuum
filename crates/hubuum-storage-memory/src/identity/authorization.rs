@@ -377,15 +377,14 @@ impl AuthorizationDataStorage for MemoryStorage {
             ));
         }
         let now = Utc::now();
-        let (id, created_at) = current.as_ref().map_or_else(
-            || {
-                let id = AuthorizationGrantId::new(state.next_authorization_grant_id)
-                    .expect("memory authorization grant ids are positive");
-                state.next_authorization_grant_id += 1;
-                (id, now)
-            },
-            |grant| (grant.id(), grant.created_at()),
-        );
+        let (id, created_at) = match &current {
+            Some(grant) => (grant.id(), grant.created_at()),
+            None => (
+                AuthorizationGrantId::new(state.authorization_grant_ids.allocate()?)
+                    .expect("allocated id is positive"),
+                now,
+            ),
+        };
         let grant = StorageAuthorizationGrant::try_new(
             id,
             key.collection_id(),

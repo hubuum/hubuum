@@ -531,7 +531,7 @@ mod tests {
             let (_, lease) = claim.into_parts();
             let mut staged = storage.state.read().await.clone();
             let generation = staged.generation.clone();
-            staged.next_collection_id += 1;
+            staged.collection_ids.allocate().unwrap();
             storage
                 .request_task_cancellation(StorageTaskCancellationRequest::new(
                     &task,

@@ -52,7 +52,9 @@ pub(super) fn restore(
             .map_err(invalid_contract_value)?;
         state.query_usage.insert(value.metadata().id().id(), value);
     }
-    state.next_query_usage_id = next_id(&state.query_usage)?;
+    state
+        .query_usage_ids
+        .observe(state.query_usage.keys().next_back().copied().unwrap_or(0));
     state.event_sink_grants = sections[&StorageBackupStateSection::EventSinkCollectionGrants]
         .iter()
         .map(|row| {

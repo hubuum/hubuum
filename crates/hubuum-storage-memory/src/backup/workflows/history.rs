@@ -3,17 +3,12 @@ use super::*;
 mod tasks;
 
 fn advance_retained_sequence(
-    next: &mut i32,
+    ids: &mut IdSequence,
     rows: &[StorageBackupRow],
     column: &str,
 ) -> Result<(), StorageError> {
     for row in rows {
-        *next = (*next).max(
-            Row(row)
-                .integer(column)?
-                .checked_add(1)
-                .ok_or_else(|| invalid("retained resource sequence"))?,
-        );
+        ids.observe(Row(row).integer(column)?);
     }
     Ok(())
 }
@@ -179,31 +174,31 @@ pub(in crate::backup) fn restore_history(
     for (section, next) in [
         (
             StorageBackupHistorySection::CollectionHistory,
-            &mut state.next_collection_id,
+            &mut state.collection_ids,
         ),
         (
             StorageBackupHistorySection::ClassHistory,
-            &mut state.next_class_id,
+            &mut state.class_ids,
         ),
         (
             StorageBackupHistorySection::ObjectHistory,
-            &mut state.next_object_id,
+            &mut state.object_ids,
         ),
         (
             StorageBackupHistorySection::ClassRelationHistory,
-            &mut state.next_class_relation_id,
+            &mut state.class_relation_ids,
         ),
         (
             StorageBackupHistorySection::ObjectRelationHistory,
-            &mut state.next_object_relation_id,
+            &mut state.object_relation_ids,
         ),
         (
             StorageBackupHistorySection::ExportTemplateHistory,
-            &mut state.next_export_template_id,
+            &mut state.export_template_ids,
         ),
         (
             StorageBackupHistorySection::RemoteTargetHistory,
-            &mut state.next_remote_target_id,
+            &mut state.remote_target_ids,
         ),
     ] {
         advance_retained_sequence(next, &sections[&section], "id")?;
@@ -212,7 +207,7 @@ pub(in crate::backup) fn restore_history(
         StorageBackupHistorySection::ClassSchemaHistory,
         StorageBackupHistorySection::ComputedFieldHistory,
     ] {
-        advance_retained_sequence(&mut state.next_class_id, &sections[&section], "class_id")?;
+        advance_retained_sequence(&mut state.class_ids, &sections[&section], "class_id")?;
     }
     state.schema_history = sections[&StorageBackupHistorySection::ClassSchemaHistory].clone();
     state

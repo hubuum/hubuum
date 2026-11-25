@@ -137,12 +137,8 @@ impl QueryUsageStorage for MemoryStorage {
         let mut state = self.state.write().await;
         check_scope(&state, request.scope())?;
         check_pattern(&state, request.scope(), request.pattern(), None)?;
-        let id = ResourceId::new(state.next_query_usage_id)
-            .map_err(|error| StorageError::internal(error.to_string()))?;
-        let next_id = state
-            .next_query_usage_id
-            .checked_add(1)
-            .ok_or_else(|| StorageError::internal("Declaration identifiers exhausted"))?;
+        let mut ids = state.query_usage_ids;
+        let id = ResourceId::new(ids.allocate()?).expect("allocated id is positive");
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(id, now, now, ResourceRevision::INITIAL)
             .map_err(invalid_contract_value)?;
@@ -160,7 +156,7 @@ impl QueryUsageStorage for MemoryStorage {
             None,
             Some(&record),
         )?;
-        state.next_query_usage_id = next_id;
+        state.query_usage_ids = ids;
         state.query_usage.insert(id.id(), record.clone());
         Ok(StorageMutationOutcome::committed(record, receipt))
     }

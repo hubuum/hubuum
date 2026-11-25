@@ -733,3 +733,69 @@ fn oversized_membership_sources_stop_before_building_an_index_of_the_corpus() {
     assert!(progress.scanned_rows() < 20);
     assert!(progress.retained_bytes() <= limit);
 }
+
+#[rstest::rstest]
+#[case::live_record(false)]
+#[case::deleted_record_in_history(true)]
+fn restored_collection_ids_never_wrap_or_reuse_retained_ids(#[case] deleted: bool) {
+    run(async {
+        let storage = MemoryStorage::new();
+        let event = EventContext::system();
+        let create = |name| StorageCollectionCreate::new(name, "", GroupId::new(1).unwrap(), None);
+        storage
+            .state
+            .write()
+            .await
+            .collection_ids
+            .observe(i32::MAX - 2);
+        let previous = storage
+            .create_collection(create("penultimate"), &event)
+            .await
+            .unwrap()
+            .into_value();
+        if deleted {
+            storage
+                .delete_collection(previous.id(), &event)
+                .await
+                .unwrap()
+                .into_value();
+        }
+
+        let budget = StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap();
+        let snapshot = storage
+            .capture_backup_replay(deleted, budget)
+            .await
+            .unwrap()
+            .at_restore_boundary(Utc::now())
+            .unwrap()
+            .materialize()
+            .unwrap();
+        let storage = restored(snapshot);
+        let last = storage
+            .create_collection(create("last"), &event)
+            .await
+            .unwrap()
+            .into_value();
+        assert_eq!(last.id().id(), i32::MAX);
+
+        let snapshot = storage
+            .capture_backup_replay(true, budget)
+            .await
+            .unwrap()
+            .at_restore_boundary(Utc::now())
+            .unwrap()
+            .materialize()
+            .unwrap();
+        let storage = restored(snapshot);
+        assert!(
+            storage
+                .create_collection(create("overflow"), &event)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            storage.get_collection(last.id()).await.unwrap().name(),
+            "last"
+        );
+    });
+}
