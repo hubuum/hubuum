@@ -1,14 +1,10 @@
 //! Durable task control values and operation-shaped cancellation requests.
 
 use chrono::{DateTime, Utc};
-use hubuum_domain::{PrincipalId, TaskId};
-use hubuum_events_core::EventContext;
-use hubuum_task_core::{TaskCancellationReason, TaskExecutionLimit, TaskStopReason};
+use hubuum_domain::PrincipalId;
+use hubuum_task_core::{TaskCancellationReason, TaskStopReason};
 
-use crate::{
-    StorageRemoteCallArtifactTarget, StorageTask, StorageTaskKind, StorageTaskLease,
-    StorageTaskStatus, StorageValidationError,
-};
+use crate::StorageValidationError;
 
 /// Persisted cancellation intent. Actor deletion can remove the live principal
 /// reference; the accompanying audit event retains the historical provenance.
@@ -262,135 +258,74 @@ impl StorageTaskExecutionObservation {
     }
 }
 
-/// Cancellation of the exact task identity/ownership authorized by the service.
-/// Adapters must compare the captured kind and submitter again under their lock.
-#[derive(Clone, Debug)]
-pub struct StorageTaskCancellationRequest {
-    task_id: TaskId,
-    kind: StorageTaskKind,
-    submitted_by: Option<PrincipalId>,
-    context: EventContext,
-    reason: Option<TaskCancellationReason>,
-    expected_status: Option<StorageTaskStatus>,
+pub use hubuum_domain::TaskKind as StorageTaskKind;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StorageTaskStatus {
+    Queued,
+    Validating,
+    Running,
+    Succeeded,
+    Failed,
+    PartiallySucceeded,
+    Cancelled,
 }
 
-impl StorageTaskCancellationRequest {
+impl StorageTaskStatus {
+    pub const ALL: [Self; 7] = [
+        Self::Queued,
+        Self::Validating,
+        Self::Running,
+        Self::Succeeded,
+        Self::Failed,
+        Self::PartiallySucceeded,
+        Self::Cancelled,
+    ];
+    pub const ACTIVE: [Self; 2] = [Self::Validating, Self::Running];
+    pub const TERMINAL: [Self; 4] = [
+        Self::Succeeded,
+        Self::Failed,
+        Self::PartiallySucceeded,
+        Self::Cancelled,
+    ];
+
     #[must_use]
-    pub fn new(task: &StorageTask, context: EventContext) -> Self {
-        Self {
-            task_id: task.id(),
-            kind: task.kind(),
-            submitted_by: task.submitted_by(),
-            context,
-            reason: None,
-            expected_status: None,
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Validating => "validating",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::PartiallySucceeded => "partially_succeeded",
+            Self::Cancelled => "cancelled",
         }
     }
 
     #[must_use]
-    pub fn reason(mut self, reason: Option<TaskCancellationReason>) -> Self {
-        self.reason = reason;
-        self
+    pub fn from_persisted(value: &str) -> Option<Self> {
+        match value {
+            "queued" => Some(Self::Queued),
+            "validating" => Some(Self::Validating),
+            "running" => Some(Self::Running),
+            "succeeded" => Some(Self::Succeeded),
+            "failed" => Some(Self::Failed),
+            "partially_succeeded" => Some(Self::PartiallySucceeded),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
+        }
     }
 
     #[must_use]
-    pub const fn expected_status(mut self, status: Option<StorageTaskStatus>) -> Self {
-        self.expected_status = status;
-        self
+    pub const fn is_active(self) -> bool {
+        matches!(self, Self::Validating | Self::Running)
     }
 
     #[must_use]
-    pub const fn task_id(&self) -> TaskId {
-        self.task_id
-    }
-    #[must_use]
-    pub const fn kind(&self) -> StorageTaskKind {
-        self.kind
-    }
-    #[must_use]
-    pub const fn submitted_by(&self) -> Option<PrincipalId> {
-        self.submitted_by
-    }
-    #[must_use]
-    pub const fn event_context(&self) -> &EventContext {
-        &self.context
-    }
-    #[must_use]
-    pub const fn cancellation_reason(&self) -> Option<&TaskCancellationReason> {
-        self.reason.as_ref()
-    }
-    #[must_use]
-    pub const fn required_status(&self) -> Option<StorageTaskStatus> {
-        self.expected_status
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StorageTaskCancellationChange {
-    CancelledQueued,
-    Requested,
-    Unchanged,
-}
-
-#[derive(Clone, Debug)]
-pub struct StorageTaskCancellationOutcome {
-    task: StorageTask,
-    change: StorageTaskCancellationChange,
-}
-
-impl StorageTaskCancellationOutcome {
-    #[must_use]
-    pub const fn new(task: StorageTask, change: StorageTaskCancellationChange) -> Self {
-        Self { task, change }
-    }
-    #[must_use]
-    pub const fn task(&self) -> &StorageTask {
-        &self.task
-    }
-    #[must_use]
-    pub const fn change(&self) -> StorageTaskCancellationChange {
-        self.change
-    }
-    #[must_use]
-    pub fn into_task(self) -> StorageTask {
-        self.task
-    }
-}
-
-/// First-claim admission pins a policy-derived deadline using the adapter's
-/// trusted clock. Subsequent claims must retain the original deadline.
-#[derive(Clone, Debug)]
-pub struct StorageTaskExecutionAdmission {
-    lease: StorageTaskLease,
-    limit: TaskExecutionLimit,
-}
-
-impl StorageTaskExecutionAdmission {
-    #[must_use]
-    pub const fn new(lease: StorageTaskLease, limit: TaskExecutionLimit) -> Self {
-        Self { lease, limit }
-    }
-    #[must_use]
-    pub fn into_parts(self) -> (StorageTaskLease, TaskExecutionLimit) {
-        (self.lease, self.limit)
-    }
-}
-
-/// A remote dispatch may start only after this record is durably admitted under
-/// the live lease and an uncancelled, unexpired task control state.
-#[derive(Clone, Debug)]
-pub struct StorageTaskRemoteDispatch {
-    lease: StorageTaskLease,
-    target: StorageRemoteCallArtifactTarget,
-}
-
-impl StorageTaskRemoteDispatch {
-    #[must_use]
-    pub const fn new(lease: StorageTaskLease, target: StorageRemoteCallArtifactTarget) -> Self {
-        Self { lease, target }
-    }
-    #[must_use]
-    pub fn into_parts(self) -> (StorageTaskLease, StorageRemoteCallArtifactTarget) {
-        (self.lease, self.target)
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Failed | Self::PartiallySucceeded | Self::Cancelled
+        )
     }
 }

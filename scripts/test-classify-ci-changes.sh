@@ -968,6 +968,7 @@ done
 
 for shared_record in crates/hubuum-storage-core/src/record.rs \
   crates/hubuum-storage-core/src/capabilities/identity.rs \
+  crates/hubuum-storage-core/src/capabilities/workflows.rs \
   crates/hubuum-storage-core/src/backup_snapshot/task_control.rs \
   crates/hubuum-storage-core/src/restore_artifact.rs \
   crates/hubuum-storage-core/src/event_administration/sink.rs; do
