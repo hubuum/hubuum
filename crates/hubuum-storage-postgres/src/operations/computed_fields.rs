@@ -1,7 +1,7 @@
 //! PostgreSQL implementation of computed-field definition and rebuild lifecycle.
 
 pub(crate) mod locking;
-use locking::BatchResult;
+use read_repair::BatchResult;
 pub(crate) mod read_repair;
 
 use std::time::Instant;

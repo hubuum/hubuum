@@ -278,6 +278,15 @@ pub(crate) async fn enqueue(runtime: &PostgresRuntime, identities: Vec<ComputedR
     }
 }
 
+pub(super) enum BatchResult {
+    Progress {
+        repaired: usize,
+        backlog: usize,
+        errors: Vec<Vec<&'static str>>,
+    },
+    Complete(Box<TaskRow>),
+}
+
 pub(super) async fn persist_progress(
     connection: &mut PostgresConnection,
     claimed: task_execution::ClaimedTask,

@@ -5,7 +5,7 @@
 //! savepoint, or acquire another class after locking objects. Dropping a token
 //! does not unlock PostgreSQL rows: all locks last until transaction completion.
 
-use super::read_repair::{self, RepairQueue};
+use super::read_repair::{self, BatchResult, RepairQueue};
 use crate::operations::task_execution;
 use crate::operations::task_rows::TaskRow;
 use diesel::{ExpressionMethods, OptionalExtension, QueryDsl, SelectableHelper};
@@ -230,15 +230,6 @@ pub(super) async fn reindex_batch(
             .await
     })
     .await
-}
-
-pub(super) enum BatchResult {
-    Progress {
-        repaired: usize,
-        backlog: usize,
-        errors: Vec<Vec<&'static str>>,
-    },
-    Complete(Box<TaskRow>),
 }
 
 /// The queue driver owns the transaction, queue serialization lock, and claim.
