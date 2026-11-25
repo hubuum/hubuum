@@ -185,11 +185,8 @@ impl EventConfigurationStorage for MemoryStorage {
             return Err(StorageError::not_found("Collection was not found"));
         }
         let key = (request.sink_id().id(), request.collection_id().id());
-        let changed = match request.action() {
-            EventSinkGrantAction::Grant => state.event_sink_grants.insert(key),
-            EventSinkGrantAction::Revoke => state.event_sink_grants.remove(&key),
-        };
-        if !changed {
+        let grant = request.action() == EventSinkGrantAction::Grant;
+        if state.event_sink_grants.contains(&key) == grant {
             return Ok(StorageMutationOutcome::unchanged(()));
         }
         let document = AuditDocument::try_new(
@@ -215,6 +212,11 @@ impl EventConfigurationStorage for MemoryStorage {
             None,
             None,
         )?;
+        if grant {
+            state.event_sink_grants.insert(key);
+        } else {
+            state.event_sink_grants.remove(&key);
+        }
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 
@@ -285,7 +287,7 @@ impl EventConfigurationStorage for MemoryStorage {
                 request.name()
             )));
         }
-        let id = EventSinkId::new(state.event_sink_ids.allocate()?)
+        let id = EventSinkId::new(state.event_sink_ids.next()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
         let now = Utc::now();
         let sink = StorageEventSink::builder(
@@ -303,7 +305,6 @@ impl EventConfigurationStorage for MemoryStorage {
         .enabled(request.enabled())
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.event_sinks.insert(id.id(), sink.clone());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSink,
@@ -314,6 +315,8 @@ impl EventConfigurationStorage for MemoryStorage {
             request.event_context(),
             format!("Event sink '{}' created", sink.name()),
         )?;
+        state.event_sink_ids.observe(id.id());
+        state.event_sinks.insert(id.id(), sink.clone());
         Ok(StorageMutationOutcome::committed(sink, receipt))
     }
 
@@ -382,22 +385,25 @@ impl EventConfigurationStorage for MemoryStorage {
         .enabled(enabled)
         .try_build()
         .map_err(invalid_contract_value)?;
+        let mut schedule = None;
+        let mut deliveries = Vec::new();
         if sink.delivery_policy() != current.delivery_policy() {
             let now = Utc::now();
-            if let Some((next, blocked)) = state.event_sink_schedule.get_mut(&sink.id().id()) {
-                *next = match (
+            if let Some(&(next, blocked)) = state.event_sink_schedule.get(&sink.id().id()) {
+                let next = match (
                     current.delivery_policy().min_interval_ms(),
                     sink.delivery_policy().min_interval_ms(),
                 ) {
                     (Some(old), Some(new)) => {
-                        *next + chrono::Duration::milliseconds(new as i64 - old as i64)
+                        next + chrono::Duration::milliseconds(new as i64 - old as i64)
                     }
                     _ => now,
                 };
-                let eligible = (*next).max(*blocked).max(now);
-                let reason = if *blocked > now {
+                schedule = Some((next, blocked));
+                let eligible = next.max(blocked).max(now);
+                let reason = if blocked > now {
                     Some("provider_rate")
-                } else if *next > now {
+                } else if next > now {
                     Some("configured_rate")
                 } else {
                     None
@@ -408,12 +414,12 @@ impl EventConfigurationStorage for MemoryStorage {
                     .filter(|subscription| subscription.sink_id() == sink.id())
                     .map(|subscription| subscription.id())
                     .collect::<std::collections::HashSet<_>>();
-                for delivery in state.event_deliveries.values_mut().filter(|delivery| {
+                for delivery in state.event_deliveries.values().filter(|delivery| {
                     subscriptions.contains(&delivery.subscription_id())
                         && delivery.status() == EventDeliveryStatus::Pending
                         && delivery.deferred_reason().is_some()
                 }) {
-                    *delivery = delivery_metadata(
+                    let updated = delivery_metadata(
                         rebuild_event_delivery(
                             delivery,
                             delivery.status(),
@@ -425,10 +431,10 @@ impl EventConfigurationStorage for MemoryStorage {
                         delivery.purpose(),
                         reason.map(str::to_owned),
                     )?;
+                    deliveries.push((updated.id().id(), updated));
                 }
             }
         }
-        state.event_sinks.insert(sink.id().id(), sink.clone());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSink,
@@ -439,6 +445,11 @@ impl EventConfigurationStorage for MemoryStorage {
             request.event_context(),
             format!("Event sink '{}' updated", sink.name()),
         )?;
+        if let Some(schedule) = schedule {
+            state.event_sink_schedule.insert(sink.id().id(), schedule);
+        }
+        state.event_deliveries.extend(deliveries);
+        state.event_sinks.insert(sink.id().id(), sink.clone());
         Ok(StorageMutationOutcome::committed(sink, receipt))
     }
 
@@ -456,13 +467,11 @@ impl EventConfigurationStorage for MemoryStorage {
         }
         let sink = state
             .event_sinks
-            .remove(&request.id().id())
+            .get(&request.id().id())
+            .cloned()
             .ok_or_else(|| {
                 StorageError::not_found(format!("Event sink {} was not found", request.id().id()))
             })?;
-        state
-            .event_sink_grants
-            .retain(|(sink, _)| *sink != request.id().id());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSink,
@@ -473,6 +482,11 @@ impl EventConfigurationStorage for MemoryStorage {
             request.event_context(),
             format!("Event sink '{}' deleted", sink.name()),
         )?;
+        state.event_sinks.remove(&request.id().id());
+        state.event_sink_schedule.remove(&request.id().id());
+        state
+            .event_sink_grants
+            .retain(|(sink, _)| *sink != request.id().id());
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 
@@ -538,7 +552,7 @@ impl EventConfigurationStorage for MemoryStorage {
                 request.name()
             )));
         }
-        let id = EventSubscriptionId::new(state.event_subscription_ids.allocate()?)
+        let id = EventSubscriptionId::new(state.event_subscription_ids.next()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
         let now = Utc::now();
         let subscription = StorageEventSubscription::builder(
@@ -558,9 +572,6 @@ impl EventConfigurationStorage for MemoryStorage {
         .enabled(request.enabled())
         .try_build()
         .map_err(invalid_contract_value)?;
-        state
-            .event_subscriptions
-            .insert(id.id(), subscription.clone());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSubscription,
@@ -571,6 +582,10 @@ impl EventConfigurationStorage for MemoryStorage {
             request.event_context(),
             format!("Event subscription '{}' created", subscription.name()),
         )?;
+        state.event_subscription_ids.observe(id.id());
+        state
+            .event_subscriptions
+            .insert(id.id(), subscription.clone());
         Ok(StorageMutationOutcome::committed(subscription, receipt))
     }
 
@@ -628,9 +643,6 @@ impl EventConfigurationStorage for MemoryStorage {
         .enabled(enabled)
         .try_build()
         .map_err(invalid_contract_value)?;
-        state
-            .event_subscriptions
-            .insert(subscription.id().id(), subscription.clone());
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSubscription,
@@ -641,6 +653,9 @@ impl EventConfigurationStorage for MemoryStorage {
             request.event_context(),
             format!("Event subscription '{}' updated", subscription.name()),
         )?;
+        state
+            .event_subscriptions
+            .insert(subscription.id().id(), subscription.clone());
         Ok(StorageMutationOutcome::committed(subscription, receipt))
     }
 
@@ -651,8 +666,9 @@ impl EventConfigurationStorage for MemoryStorage {
         let mut state = self.state.write().await;
         let subscription = state
             .event_subscriptions
-            .remove(&request.id().id())
+            .get(&request.id().id())
             .filter(|subscription| subscription.scope() == request.scope())
+            .cloned()
             .ok_or_else(|| {
                 StorageError::not_found(format!(
                     "Event subscription {} was not found in scope {:?}",
@@ -660,16 +676,6 @@ impl EventConfigurationStorage for MemoryStorage {
                     request.scope()
                 ))
             })?;
-        let delivery_ids = state
-            .event_deliveries
-            .values()
-            .filter(|delivery| delivery.subscription_id() == subscription.id())
-            .map(|delivery| delivery.id().id())
-            .collect::<Vec<_>>();
-        for delivery_id in delivery_ids {
-            state.event_deliveries.remove(&delivery_id);
-            state.event_delivery_claims.remove(&delivery_id);
-        }
         let receipt = append_memory_scoped_simple_event!(
             state,
             EntityType::EventSubscription,
@@ -680,6 +686,17 @@ impl EventConfigurationStorage for MemoryStorage {
             request.event_context(),
             format!("Event subscription '{}' deleted", subscription.name()),
         )?;
+        state.event_subscriptions.remove(&subscription.id().id());
+        let delivery_ids = state
+            .event_deliveries
+            .values()
+            .filter(|delivery| delivery.subscription_id() == subscription.id())
+            .map(|delivery| delivery.id().id())
+            .collect::<Vec<_>>();
+        for delivery_id in delivery_ids {
+            state.event_deliveries.remove(&delivery_id);
+            state.event_delivery_claims.remove(&delivery_id);
+        }
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 }
@@ -1579,5 +1596,96 @@ fn ensure_memory_sink_allowed(
         Err(StorageError::permission_denied(
             "Sink is not available to this collection",
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    fn run(future: impl Future<Output = ()>) {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(future);
+    }
+
+    fn sink_request() -> StorageEventSinkCreate {
+        StorageEventSinkCreate::builder("test-sink", "webhook", EventContext::system())
+            .try_build()
+            .unwrap()
+    }
+
+    #[test]
+    fn failed_sink_audit_preserves_the_last_available_sink_id() {
+        run(async {
+            let storage = MemoryStorage::new();
+            {
+                let mut state = storage.state.write().await;
+                state.event_sink_ids.observe(i32::MAX - 1);
+                state.event_sequences.observe(i64::MAX);
+            }
+            assert!(storage.create_event_sink(sink_request()).await.is_err());
+            let state = storage.state.read().await;
+            assert!(state.event_sinks.is_empty());
+            assert_eq!(state.event_sink_ids.next().unwrap(), i32::MAX);
+        });
+    }
+
+    #[rstest]
+    #[case::unavailable_audit(EventSubscriptionScope::System)]
+    #[case::different_scope(EventSubscriptionScope::Collection(CollectionId::new(1).unwrap()))]
+    fn failed_subscription_delete_preserves_the_subscription(
+        #[case] scope: EventSubscriptionScope,
+    ) {
+        run(async {
+            let storage = MemoryStorage::new();
+            let sink = storage
+                .create_event_sink(sink_request())
+                .await
+                .unwrap()
+                .into_value();
+            let subscription = storage
+                .create_event_subscription(
+                    StorageEventSubscriptionCreate::builder(
+                        EventSubscriptionScope::System,
+                        sink.id(),
+                        "test-subscription",
+                        EventContext::system(),
+                    )
+                    .actions(vec![Action::Created])
+                    .entity_types(vec![EntityType::EventSink])
+                    .try_build()
+                    .unwrap(),
+                )
+                .await
+                .unwrap()
+                .into_value();
+            if scope == EventSubscriptionScope::System {
+                storage
+                    .state
+                    .write()
+                    .await
+                    .event_sequences
+                    .observe(i64::MAX);
+            }
+            assert!(
+                storage
+                    .delete_event_subscription(StorageEventSubscriptionDelete::new(
+                        scope,
+                        subscription.id(),
+                        EventContext::system(),
+                    ))
+                    .await
+                    .is_err()
+            );
+            assert!(
+                storage
+                    .get_event_subscription(subscription.scope(), subscription.id())
+                    .await
+                    .is_ok()
+            );
+        });
     }
 }
