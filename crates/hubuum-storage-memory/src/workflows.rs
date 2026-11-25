@@ -55,8 +55,7 @@ impl RemoteTargetStorage for MemoryStorage {
                 collection_id.id()
             )));
         }
-        let id = state.next_remote_target_id;
-        state.next_remote_target_id += 1;
+        let id = state.remote_target_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id).expect("memory remote target id is positive"),
@@ -1189,7 +1188,7 @@ impl RestoreStorage for MemoryStorage {
             approval.invalidate(Utc::now());
         }
         replacement.credential_approval_digests = state.credential_approval_digests.clone();
-        replacement.next_credential_approval_id = state.next_credential_approval_id;
+        replacement.credential_approval_ids = state.credential_approval_ids;
         crate::backup::append_restore_event(
             &mut replacement,
             &current,
@@ -1434,8 +1433,7 @@ impl ExportTemplateStorage for MemoryStorage {
                 collection_id.id()
             )));
         }
-        let id = state.next_export_template_id;
-        state.next_export_template_id += 1;
+        let id = state.export_template_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id).expect("memory export template id is positive"),

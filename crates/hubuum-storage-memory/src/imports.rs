@@ -476,15 +476,12 @@ impl MemoryStorage {
         } else {
             assert_import_create_condition(parts.condition)?;
         }
-        let id = existing.as_ref().map_or_else(
-            || {
-                let id = PrincipalId::new(state.next_principal_id)
-                    .expect("memory import principal id is positive");
-                state.next_principal_id += 1;
-                id
-            },
-            StoragePrincipal::id,
-        );
+        let id = match &existing {
+            Some(value) => value.id(),
+            None => {
+                PrincipalId::new(state.principal_ids.allocate()?).expect("allocated id is positive")
+            }
+        };
         let now = Utc::now();
         let (created_at, updated_at) = parts.timestamps.map_or_else(
             || {

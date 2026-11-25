@@ -40,8 +40,7 @@ impl CollectionStorage for MemoryStorage {
                 parent_id.id()
             )));
         }
-        let id = state.next_collection_id;
-        state.next_collection_id += 1;
+        let id = state.collection_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id)
@@ -433,8 +432,7 @@ impl ClassStorage for MemoryStorage {
                 command.name()
             )));
         }
-        let id = state.next_class_id;
-        state.next_class_id += 1;
+        let id = state.class_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id)
@@ -717,8 +715,7 @@ impl ObjectStorage for MemoryStorage {
                 command.class_id().id()
             )));
         }
-        let id = state.next_object_id;
-        state.next_object_id += 1;
+        let id = state.object_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id)
@@ -1072,8 +1069,7 @@ impl ClassRelationStorage for MemoryStorage {
                 "A class relation already exists between these classes",
             ));
         }
-        let id = state.next_class_relation_id;
-        state.next_class_relation_id += 1;
+        let id = state.class_relation_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id)
@@ -1424,8 +1420,7 @@ impl ObjectRelationStorage for MemoryStorage {
                 "An object relation already exists between these objects",
             ));
         }
-        let id = state.next_object_relation_id;
-        state.next_object_relation_id += 1;
+        let id = state.object_relation_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id)

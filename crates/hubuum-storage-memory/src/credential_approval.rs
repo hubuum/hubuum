@@ -40,19 +40,16 @@ impl MemoryState {
         if authenticated_at > Utc::now() || expires_at <= Utc::now() {
             return Err(denied());
         }
-        let id = self.next_credential_approval_id;
-        self.next_credential_approval_id = id
-            .checked_add(1)
-            .ok_or_else(|| StorageError::internal("Approval IDs exhausted"))?;
-        let metadata =
-            StorageCredentialApprovalMetadata::new(id, &claim, authenticated_at, expires_at)
-                .map_err(invalid_contract_value)?;
         if self
             .credential_approval_digests
             .contains_key(claim.secret_digest().as_str())
         {
             return Err(StorageError::conflict("Approval already exists"));
         }
+        let id = self.credential_approval_ids.allocate()?;
+        let metadata =
+            StorageCredentialApprovalMetadata::new(id, &claim, authenticated_at, expires_at)
+                .map_err(invalid_contract_value)?;
         self.credential_approval_digests
             .insert(claim.secret_digest().as_str().to_string(), id);
         self.credential_approvals

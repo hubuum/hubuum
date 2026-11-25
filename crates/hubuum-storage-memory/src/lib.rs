@@ -343,21 +343,21 @@ struct MemoryState {
     schema_work: BTreeMap<i32, StorageSchemaWork>,
     schema_findings: BTreeMap<(i32, i32), StorageSchemaImpactFinding>,
     schema_repair_reports: BTreeMap<i32, StorageSchemaRepairReport>,
-    next_collection_id: i32,
-    next_class_id: i32,
-    next_object_id: i32,
-    next_class_relation_id: i32,
-    next_object_relation_id: i32,
+    collection_ids: IdSequence,
+    class_ids: IdSequence,
+    object_ids: IdSequence,
+    class_relation_ids: IdSequence,
+    object_relation_ids: IdSequence,
     next_event_sequence: i64,
-    next_identity_scope_id: i32,
-    next_principal_id: i32,
-    next_group_id: i32,
-    next_token_id: i32,
+    identity_scope_ids: IdSequence,
+    principal_ids: IdSequence,
+    group_ids: IdSequence,
+    token_ids: IdSequence,
     next_task_id: i32,
     next_computed_field_id: i32,
-    next_export_template_id: i32,
-    next_remote_target_id: i32,
-    next_authorization_grant_id: i32,
+    export_template_ids: IdSequence,
+    remote_target_ids: IdSequence,
+    authorization_grant_ids: IdSequence,
     next_event_sink_id: i32,
     next_event_subscription_id: i32,
     next_event_delivery_id: i64,
@@ -384,7 +384,7 @@ struct MemoryState {
     credential_approvals:
         BTreeMap<i32, (StorageCredentialClaim, StorageCredentialApprovalMetadata)>,
     credential_approval_digests: BTreeMap<String, i32>,
-    next_credential_approval_id: i32,
+    credential_approval_ids: IdSequence,
     service_accounts: BTreeMap<i32, StorageServiceAccount>,
     tasks: BTreeMap<i32, MemoryTaskRecord>,
     task_events: BTreeMap<i32, Vec<StorageTaskEvent>>,
@@ -399,7 +399,7 @@ struct MemoryState {
     computed_history: Vec<StorageComputedFieldHistory>,
     query_usage: BTreeMap<i32, StorageQueryUsageDeclaration>,
     runtime_settings: runtime_settings::MemoryRuntimeSettings,
-    next_query_usage_id: i32,
+    query_usage_ids: IdSequence,
     computation_states: BTreeMap<i32, StorageClassComputationState>,
     computed_rebuild_tasks: BTreeMap<i32, ClassId>,
     authorization_grants: BTreeMap<(i32, i32), StorageAuthorizationGrant>,
@@ -812,6 +812,8 @@ use event_deliveries::EventDeliveries;
 mod events;
 mod execution;
 mod history;
+mod id_sequence;
+use id_sequence::IdSequence;
 mod identity;
 mod imports;
 mod object_filters;

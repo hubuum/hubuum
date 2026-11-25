@@ -20,9 +20,8 @@ impl IdentityScopeStorage for MemoryStorage {
             }
             return Ok(scope.clone());
         }
-        let id = IdentityScopeId::new(state.next_identity_scope_id)
+        let id = IdentityScopeId::new(state.identity_scope_ids.allocate()?)
             .expect("memory identity scope id is positive");
-        state.next_identity_scope_id += 1;
         let now = Utc::now();
         let scope = StorageIdentityScope::try_new(
             id,
@@ -369,9 +368,8 @@ impl ServiceAccountStorage for MemoryStorage {
                 "Principal '{name}' already exists"
             )));
         }
-        let principal_id = PrincipalId::new(state.next_principal_id)
+        let principal_id = PrincipalId::new(state.principal_ids.allocate()?)
             .expect("memory service-account principal id is positive");
-        state.next_principal_id += 1;
         let id = ServiceAccountId::new(principal_id.id())
             .expect("memory service-account id is positive");
         let now = Utc::now();
@@ -717,7 +715,8 @@ impl ExternalIdentityStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError> {
         let (scope_name, provider_kind, subject, name, proper_name, email, groups) =
             request.into_parts();
-        let mut state = self.state.write().await;
+        let mut live = self.state.write().await;
+        let mut state = live.clone();
         let scope = if let Some(scope) = state.identity_scope_by_name(&scope_name).cloned() {
             if scope.provider_kind() != provider_kind {
                 return Err(StorageError::conflict(format!(
@@ -727,9 +726,8 @@ impl ExternalIdentityStorage for MemoryStorage {
             }
             scope
         } else {
-            let id = IdentityScopeId::new(state.next_identity_scope_id)
+            let id = IdentityScopeId::new(state.identity_scope_ids.allocate()?)
                 .expect("memory identity scope id is positive");
-            state.next_identity_scope_id += 1;
             let now = Utc::now();
             let scope = StorageIdentityScope::try_new(
                 id,
@@ -829,9 +827,8 @@ impl ExternalIdentityStorage for MemoryStorage {
             state.principals.insert(id, principal);
             PrincipalId::new(id).expect("external principal id is positive")
         } else {
-            let principal_id =
-                PrincipalId::new(state.next_principal_id).expect("memory principal id is positive");
-            state.next_principal_id += 1;
+            let principal_id = PrincipalId::new(state.principal_ids.allocate()?)
+                .expect("memory principal id is positive");
             let metadata = StorageRecordMetadata::try_new(
                 ResourceId::new(principal_id.id()).expect("principal resource id is positive"),
                 now,
@@ -883,9 +880,8 @@ impl ExternalIdentityStorage for MemoryStorage {
             }) {
                 group.clone()
             } else {
-                let group_id = GroupId::new(state.next_group_id)
+                let group_id = GroupId::new(state.group_ids.allocate()?)
                     .expect("memory external group id is positive");
-                state.next_group_id += 1;
                 let metadata = StorageRecordMetadata::try_new(
                     ResourceId::new(group_id.id()).expect("group resource id is positive"),
                     now,
@@ -959,6 +955,7 @@ impl ExternalIdentityStorage for MemoryStorage {
             &EventContext::system(),
             format!("External identity '{name}' synchronized"),
         )?;
+        *live = state;
         Ok(StorageMutationOutcome::committed(synced, receipt))
     }
 }
@@ -1288,8 +1285,7 @@ impl GroupStorage for MemoryStorage {
                 "Group '{name}' already exists in identity scope '{identity_scope}'"
             )));
         }
-        let id = GroupId::new(state.next_group_id).expect("memory group id is positive");
-        state.next_group_id += 1;
+        let id = GroupId::new(state.group_ids.allocate()?).expect("memory group id is positive");
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id.id()).expect("group resource id is positive"),
@@ -1524,8 +1520,7 @@ fn create_user_in_state(
         )));
     }
     let principal_id =
-        PrincipalId::new(state.next_principal_id).expect("memory principal id is positive");
-    state.next_principal_id += 1;
+        PrincipalId::new(state.principal_ids.allocate()?).expect("memory principal id is positive");
     let user_id = UserId::new(principal_id.id()).expect("memory user id is positive");
     let now = Utc::now();
     let metadata = StorageRecordMetadata::try_new(
@@ -1650,4 +1645,41 @@ fn update_user_in_state(
         receipt,
         approval_audit,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exhausted_group_ids_roll_back_external_user_synchronization() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let storage = MemoryStorage::new();
+                storage.state.write().await.group_ids.observe(i32::MAX);
+                let sync = StorageExternalUserSync::builder(
+                    "directory",
+                    LDAP_PROVIDER_KIND,
+                    "alice",
+                    "alice",
+                )
+                .groups(vec![StorageExternalGroup::new(
+                    "operators",
+                    "Operators",
+                    None,
+                )])
+                .build();
+                assert!(storage.sync_external_user(sync).await.is_err());
+                let state = storage.state.read().await;
+                assert!(state.identity_scope_by_name("directory").is_none());
+                assert!(
+                    !state
+                        .principals
+                        .values()
+                        .any(|principal| principal.name() == "alice")
+                );
+            });
+    }
 }
