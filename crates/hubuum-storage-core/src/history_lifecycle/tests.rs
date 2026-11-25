@@ -125,6 +125,102 @@ fn preview_totals_agree_with_the_sample(
         HistoryPreviewImpact::new(HistoryPreviewCoverage::Bounded, 2, reported, vec![sample]);
     assert_eq!(impact.is_ok(), valid);
 }
+
+#[rstest]
+#[case::last_complete(HistoryPreviewCoverage::Complete, 999, true)]
+#[case::budget_exhausted(HistoryPreviewCoverage::Bounded, 1000, true)]
+#[case::false_complete(HistoryPreviewCoverage::Complete, 1000, false)]
+fn preview_coverage_preserves_the_native_scan_limit(
+    #[case] coverage: HistoryPreviewCoverage,
+    #[case] scanned: u32,
+    #[case] valid: bool,
+) {
+    assert_eq!(
+        HistoryPreviewImpact::new(coverage, scanned, 0, vec![]).is_ok(),
+        valid
+    );
+}
+
+#[test]
+fn preview_cannot_count_the_same_version_twice() {
+    let row = candidate(Vec::new(), None);
+    let sample = row
+        .inspect(&HistoryPolicyCatalog::default(), at(1), false, &[])
+        .unwrap();
+    assert!(
+        HistoryPreviewImpact::new(
+            HistoryPreviewCoverage::Bounded,
+            2,
+            0,
+            vec![sample.clone(), sample]
+        )
+        .is_err()
+    );
+}
+
+#[rstest]
+#[case::original("original", true)]
+#[case::open_version("open_version", false)]
+#[case::missing_endpoint("missing_endpoint", false)]
+#[case::wrong_family("wrong_family", false)]
+#[case::wrong_deadline("wrong_deadline", false)]
+#[case::ignored_endpoint_blocker("ignored_endpoint_blocker", false)]
+#[case::held("held", true)]
+fn saved_preview_samples_match_the_issued_decision(#[case] change: &str, #[case] valid: bool) {
+    let (preview, principal, fence) = preview_fixture();
+    let catalog = HistoryPolicyCatalog::default()
+        .append(preview.proposal().clone(), principal, preview.issued_at())
+        .unwrap();
+    let row = candidate(
+        vec![HistoryScopeAttribution::new(resource(), None)],
+        Some(HistoryRetentionAnchor::Closed(at(45))),
+    );
+    let decision = row
+        .inspect(&catalog, preview.issued_at(), change == "held", &[])
+        .unwrap();
+    let impact = HistoryPreviewImpact::new(
+        HistoryPreviewCoverage::Complete,
+        1,
+        u32::from(decision.eligible()),
+        vec![decision],
+    )
+    .unwrap();
+    let preview = HistoryPolicyPreview::issue(
+        principal,
+        preview.proposal().clone(),
+        fence,
+        preview.issued_at(),
+        impact,
+    )
+    .unwrap();
+    let mut data = serde_json::to_value(preview).unwrap();
+    let sample = &mut data["impact"]["samples"][0];
+    match change {
+        "original" | "held" => (),
+        "open_version" => sample["anchor"] = serde_json::Value::Null,
+        "missing_endpoint" => sample["endpoints"] = serde_json::json!([]),
+        "wrong_family" => {
+            sample["endpoints"][0]["policy"]["source"]["key"]["family"] = "class".into()
+        }
+        "wrong_deadline" => {
+            sample["endpoints"][0]["deadline"] = serde_json::to_value(at(46)).unwrap()
+        }
+        "ignored_endpoint_blocker" => {
+            // The new anchor makes this endpoint's ten-second deadline fall after issuance.
+            sample["anchor"] =
+                serde_json::to_value(HistoryRetentionAnchor::Closed(at(95))).unwrap();
+            sample["endpoints"][0]["minimum_until"] = serde_json::to_value(at(95)).unwrap();
+            sample["endpoints"][0]["deadline"] = serde_json::to_value(at(105)).unwrap();
+            sample["endpoints"][0]["blocker"] = "trigger_not_reached".into();
+        }
+        _ => unreachable!(),
+    }
+    assert_eq!(
+        serde_json::from_value::<HistoryPolicyPreview>(data).is_ok(),
+        valid
+    );
+}
+
 #[rstest]
 #[case(50, 100, false)]
 #[case(100, 100, false)]

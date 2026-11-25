@@ -45,6 +45,13 @@ fn invalid(message: &str) -> StorageValidationError {
     StorageValidationError::invalid(message)
 }
 
+fn endpoint_count(family: StorageIdentityHistoryKind) -> usize {
+    match family {
+        StorageIdentityHistoryKind::ClassRelation | StorageIdentityHistoryKind::ObjectRelation => 2,
+        _ => 1,
+    }
+}
+
 /// Retained lifecycle budgets include a space after each JSON separator, as in
 /// PostgreSQL's jsonb text representation. The wire encoding stays compact.
 /// Input must be compact JSON emitted by serde_json; punctuation inside strings

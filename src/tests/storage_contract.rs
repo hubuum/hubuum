@@ -1898,7 +1898,6 @@ mod resource_lifecycle;
 mod resource_queries;
 mod task_queue;
 
-
 #[rstest::rstest]
 #[case::class(HistoryPolicyScope::Class { identity: ResourceIdentity::generate() })]
 #[case::collection(HistoryPolicyScope::Collection { identity: ResourceIdentity::generate() })]

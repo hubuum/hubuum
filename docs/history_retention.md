@@ -143,6 +143,10 @@ an executable expiry decision; their bounded samples are never complete gauges. 
 age condition suffices for age-or-size; a false age condition makes age-and-size
 false without consulting size.
 
+A preview that scans all 1,000 allowed rows reports bounded coverage. Stored
+previews count each sampled version once. The sampled eligibility counts,
+endpoint deadlines and blockers must agree with the preview at issuance.
+
 An initial size pass folds the complete family, including all effective size
 sources, then exhausts the same unchanged family again under the history control
 gate. Each pass is capped at 100,000 rows; both share the original five-second

@@ -432,6 +432,31 @@ pub struct HistoryEndpointDecision {
     blocker: Option<HistoryExpiryBlocker>,
 }
 impl HistoryEndpointDecision {
+    fn validate_preview(
+        &self,
+        family: StorageIdentityHistoryKind,
+        anchor: HistoryRetentionAnchor,
+        issued_at: DateTime<Utc>,
+    ) -> Result<(), StorageValidationError> {
+        let policy = &self.policy;
+        let mut references = policy.inherited.iter().chain(&policy.source);
+        if policy.binding == HistoryPolicyBinding::Inherit
+            || (policy.source.is_none() && policy.binding != HistoryPolicyBinding::DisabledExpiry)
+            || references.any(|reference| {
+                reference.key().family() != family || reference.revision().value() == 0
+            })
+        {
+            return Err(invalid("Invalid effective policy in preview sample"));
+        }
+        // A bounded preview never supplies a complete size measurement.
+        if policy.inspect(anchor, issued_at, None)? != *self {
+            return Err(invalid(
+                "Preview endpoint contradicts its policy at issuance",
+            ));
+        }
+        Ok(())
+    }
+
     pub const fn policy(&self) -> &HistoryEffectivePolicy {
         &self.policy
     }
@@ -465,15 +490,7 @@ impl HistoryExpiryCandidate {
         attributions: Vec<HistoryScopeAttribution>,
         has_dependency: bool,
     ) -> Result<Self, StorageValidationError> {
-        let expected = if matches!(
-            family,
-            StorageIdentityHistoryKind::ClassRelation | StorageIdentityHistoryKind::ObjectRelation
-        ) {
-            2
-        } else {
-            1
-        };
-        if !attributions.is_empty() && attributions.len() != expected {
+        if !attributions.is_empty() && attributions.len() != endpoint_count(family) {
             return Err(invalid(
                 "Historical attribution must cover every endpoint or remain explicitly unresolved",
             ));
@@ -629,6 +646,39 @@ pub struct HistoryExpiryDecision {
     blocker: Option<HistoryExpiryBlocker>,
 }
 impl HistoryExpiryDecision {
+    pub(super) fn validate_preview(
+        &self,
+        family: StorageIdentityHistoryKind,
+        issued_at: DateTime<Utc>,
+    ) -> Result<(), StorageValidationError> {
+        use HistoryExpiryBlocker::{Hold, OpenVersion, RetainedDependency, UnknownAttribution};
+        let expected = match (self.anchor, self.endpoints.len()) {
+            (None, 0) => Some(OpenVersion),
+            (Some(_), 0) => Some(UnknownAttribution),
+            (Some(anchor), count) if count == endpoint_count(family) => {
+                for endpoint in &self.endpoints {
+                    endpoint.validate_preview(family, anchor, issued_at)?;
+                }
+                match self.blocker {
+                    Some(Hold | RetainedDependency) => self.blocker,
+                    _ => self
+                        .endpoints
+                        .iter()
+                        .find_map(HistoryEndpointDecision::blocker),
+                }
+            }
+            _ => {
+                return Err(invalid(
+                    "Preview sample does not cover its historical endpoints",
+                ));
+            }
+        };
+        if self.blocker != expected {
+            return Err(invalid("Preview eligibility contradicts the sampled row"));
+        }
+        Ok(())
+    }
+
     pub const fn target(&self) -> StorageRecordIdentity {
         self.target
     }

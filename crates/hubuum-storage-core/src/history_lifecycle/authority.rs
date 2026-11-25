@@ -898,11 +898,19 @@ impl HistoryPreviewImpact {
         samples: Vec<HistoryExpiryDecision>,
     ) -> Result<Self, StorageValidationError> {
         if scanned > Self::MAX_SCANNED
+            || (coverage == HistoryPreviewCoverage::Complete && scanned == Self::MAX_SCANNED)
             || eligible_observed > scanned
             || samples.len() > Self::MAX_SAMPLES
             || samples.len() > scanned as usize
         {
             return Err(invalid("Preview impact exceeds its scan/sample bounds"));
+        }
+        let mut targets = BTreeSet::new();
+        for sample in &samples {
+            let target = sample.target();
+            if !targets.insert((target.resource(), target.version())) {
+                return Err(invalid("Preview samples repeat a history version"));
+            }
         }
         let eligible_samples = samples.iter().filter(|sample| sample.eligible()).count();
         if eligible_samples > eligible_observed as usize
@@ -930,6 +938,17 @@ impl HistoryPreviewImpact {
     }
     pub fn samples(&self) -> &[HistoryExpiryDecision] {
         &self.samples
+    }
+    fn validate_at(
+        &self,
+        proposal: &HistoryPolicyChange,
+        issued_at: DateTime<Utc>,
+    ) -> Result<(), StorageValidationError> {
+        proposal.validate_at(issued_at)?;
+        for sample in &self.samples {
+            sample.validate_preview(proposal.key().family(), issued_at)?;
+        }
+        Ok(())
     }
 }
 impl TryFrom<CoverageInput> for HistoryPreviewImpact {
@@ -1047,7 +1066,7 @@ impl HistoryPolicyPreview {
         issued_at: DateTime<Utc>,
         impact: HistoryPreviewImpact,
     ) -> Result<Self, StorageValidationError> {
-        proposal.validate_at(issued_at)?;
+        impact.validate_at(&proposal, issued_at)?;
         let expires_at = issued_at
             .checked_add_signed(Duration::seconds(Self::LIFETIME_SECONDS))
             .ok_or_else(|| invalid("Preview expiry is outside the supported clock range"))?;
@@ -1123,7 +1142,7 @@ impl TryFrom<PreviewInput> for HistoryPolicyPreview {
             value.reference.preview_id,
             value.reference.proposal_fingerprint,
         )?;
-        value.proposal.validate_at(value.issued_at)?;
+        value.impact.validate_at(&value.proposal, value.issued_at)?;
         if reference.proposal_fingerprint != fingerprint(&value.proposal)?
             || value.expires_at
                 != value

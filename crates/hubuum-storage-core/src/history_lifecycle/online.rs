@@ -400,14 +400,7 @@ impl HistoryExpiryMember {
                 ));
             }
         }
-        let expected = if matches!(
-            self.family,
-            StorageIdentityHistoryKind::ClassRelation | StorageIdentityHistoryKind::ObjectRelation
-        ) {
-            2
-        } else {
-            1
-        };
+        let expected = endpoint_count(self.family);
         if !self.read_span.matches(self.family, self.anchor)
             || self.attributions.len() != expected
             || self.policies.len() != expected
