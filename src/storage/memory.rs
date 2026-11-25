@@ -14,15 +14,13 @@ use crate::events::{Action, EntityType, EventContext};
 use crate::models::{
     Collection, CollectionID, HubuumClass, HubuumClassRelation, HubuumClassRelationID,
     HubuumObject, HubuumObjectRelation, HubuumObjectRelationID, NewHubuumClass,
-    NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation,
-    ObjectRelationCreateSelectorKind, ObjectRelationSelectorKind, PreparedClassRelation,
+    NewHubuumClassRelation, NewHubuumObject, NewHubuumObjectRelation, PreparedClassRelation,
     PreparedObjectRelation, ResolvedClassRelationTarget, ResolvedClassTarget,
     ResolvedObjectRelationTarget, ResolvedObjectTarget, ResourceRevision, UpdateCollection,
     UpdateHubuumClass, UpdateHubuumObject,
 };
 use crate::services::storage_boundary::{
-    class_record_to_storage, collection_to_storage, object_relation_create_selector_from_storage,
-    object_relation_selector_from_storage, object_to_storage,
+    class_record_to_storage, collection_to_storage, object_to_storage,
 };
 
 use super::{
@@ -1287,15 +1285,14 @@ impl ObjectRelationStorage for MemoryStorageModel {
         &self,
         selector: StorageObjectRelationCreateSelector,
     ) -> Result<StoragePreparedObjectRelation, StorageError> {
-        let selector =
-            object_relation_create_selector_from_storage(selector).map_err(map_memory_error)?;
         let state = self.state.read().await;
-        let prepared = match selector.kind() {
-            ObjectRelationCreateSelectorKind::Explicit(command) => {
-                let command = command.clone().normalized().map_err(map_memory_error)?;
-                let (from_object, to_object) = state.object_relation_endpoints(&command)?;
-                let class_relation_id = HubuumClassRelationID::new(command.class_relation_id)
+        let prepared = match selector {
+            StorageObjectRelationCreateSelector::Explicit(command) => {
+                let class_relation_id = command.class_relation_id();
+                let command = NewHubuumObjectRelation::from(command)
+                    .normalized()
                     .map_err(map_memory_error)?;
+                let (from_object, to_object) = state.object_relation_endpoints(&command)?;
                 let class_relation = state.class_relation(class_relation_id)?;
                 let class_relation = state.resolved_class_relation(class_relation)?;
                 PreparedObjectRelation::new(
@@ -1306,7 +1303,7 @@ impl ObjectRelationStorage for MemoryStorageModel {
                 )
                 .map_err(map_memory_error)?
             }
-            ObjectRelationCreateSelectorKind::Between { from, to } => {
+            StorageObjectRelationCreateSelector::Between { from, to } => {
                 let route_from_object = state
                     .objects
                     .get(&from.object_id().id())
@@ -1349,13 +1346,12 @@ impl ObjectRelationStorage for MemoryStorageModel {
         &self,
         selector: StorageObjectRelationSelector,
     ) -> Result<StorageResolvedObjectRelation, StorageError> {
-        let selector = object_relation_selector_from_storage(selector).map_err(map_memory_error)?;
         let state = self.state.read().await;
-        let relation = match selector.kind() {
-            ObjectRelationSelectorKind::ById(relation_id) => {
-                state.object_relation(*relation_id)?.to_owned()
+        let relation = match selector {
+            StorageObjectRelationSelector::Id(relation_id) => {
+                state.object_relation(relation_id)?.to_owned()
             }
-            ObjectRelationSelectorKind::Between { from, to } => {
+            StorageObjectRelationSelector::Between { from, to } => {
                 let route_from_object = state
                     .objects
                     .get(&from.object_id().id())
