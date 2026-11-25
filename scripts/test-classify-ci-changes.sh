@@ -900,6 +900,10 @@ for history_input in src/services/history/access.rs src/services/history/navigat
 done
 
 for adapter_input in crates/hubuum-storage-postgres/src/operations/user_row.rs \
+  crates/hubuum-storage-postgres/src/operations/import_execution/identity.rs \
+  crates/hubuum-storage-postgres/src/operations/import_execution/integrations.rs \
+  crates/hubuum-storage-postgres/src/operations/import_execution/relations.rs \
+  crates/hubuum-storage-postgres/src/operations/relation_query/graph_walk.rs \
   crates/hubuum-storage-postgres/src/operations/token_scope.rs \
   crates/hubuum-storage-postgres/src/operations/object_aggregate/expressions.rs; do
   adapter_output="$(bash "$classifier" "$adapter_input")"

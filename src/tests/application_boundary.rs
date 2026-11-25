@@ -7,6 +7,27 @@ use std::fs;
 #[cfg(test)]
 use std::path::{Path, PathBuf};
 
+#[test]
+fn postgres_operation_modules_are_independent_of_the_application() {
+    let operations = repository_root().join("crates/hubuum-storage-postgres/src/operations");
+    for path in rust_files(&operations) {
+        let source = read_source(&path).unwrap();
+        for forbidden in [
+            "crate::errors",
+            "crate::models",
+            "hubuum_storage_postgres",
+            "ApiError",
+            "get_config",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} depends on application detail {forbidden}",
+                path.display()
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
