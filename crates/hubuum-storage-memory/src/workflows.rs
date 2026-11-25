@@ -405,11 +405,7 @@ impl TaskQueueStorage for MemoryStorage {
             )));
         }
         page(
-            state
-                .import_task_results
-                .get(&task_id.id())
-                .cloned()
-                .unwrap_or_default(),
+            state.import_task_results.for_task(task_id).to_vec(),
             &options,
         )
     }
@@ -674,19 +670,15 @@ impl TaskExecutionStorage for MemoryStorage {
                 continue;
             }
             let has_schema_work = state.schema_work.contains_key(&task_id.id());
-            let results = state.import_task_results.get(&task_id.id());
-            let processed = results.map_or(0, |results| {
-                results
-                    .iter()
-                    .filter(|result| result.outcome() != "unattempted")
-                    .count()
-            }) as i32;
-            let failed = results.map_or(0, |results| {
-                results
-                    .iter()
-                    .filter(|result| matches!(result.outcome(), "failed" | "stale_revision"))
-                    .count()
-            }) as i32;
+            let results = state.import_task_results.for_task(task_id);
+            let processed = results
+                .iter()
+                .filter(|result| result.outcome() != "unattempted")
+                .count() as i32;
+            let failed = results
+                .iter()
+                .filter(|result| matches!(result.outcome(), "failed" | "stale_revision"))
+                .count() as i32;
             let task = state
                 .tasks
                 .get_mut(&task_id.id())
