@@ -15,6 +15,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Require `url` 2.5.9 or later to fix a stack overflow during URL origin
   calculation (RUSTSEC-2026-0592).
 
+### Fixed
+
+- The experimental memory backend preserves identifier high-water marks across
+  restores and rejects exhausted writes without publishing partial history or
+  audit records. Live processes must acknowledge a new restore drain before
+  it can complete.
+
 ## [0.0.23] - 2026-11-21
 
 ### Security
