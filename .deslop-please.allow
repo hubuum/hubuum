@@ -138,7 +138,7 @@ field-leak hubuum_scale_core::ScaleProfile::provisioning
 field-leak hubuum_scale_core::ScaleProfile::totals
 
 # Benchmark runners iterate the same declared scenarios for individual and mixed workloads.
-field-leak hubuum_scale_core::WorkloadSpec::scenarios
+field-leak hubuum_scale_core::workload::WorkloadSpec::scenarios
 
 # Workload execution uses the manifest anchors. Comparison and scale verification check the realized regions and relation distributions.
 field-leak hubuum_scale_core::DatasetManifest::anchors
@@ -151,9 +151,9 @@ field-leak hubuum_scale_core::DatasetManifest::semantic_digest
 field-leak hubuum_scale_core::DatasetManifest::totals
 
 # Sensitivity reports select the measured axis, resources and scenario results from each serialized impact report.
-field-leak hubuum_scale_core::ScaleImpactReport::axis
-field-leak hubuum_scale_core::ScaleImpactReport::resources
-field-leak hubuum_scale_core::ScaleImpactReport::scenarios
+field-leak hubuum_scale_core::impact::ScaleImpactReport::axis
+field-leak hubuum_scale_core::impact::ScaleImpactReport::resources
+field-leak hubuum_scale_core::impact::ScaleImpactReport::scenarios
 
 # Backup capture and replay must enumerate the same identity rows that the in-memory identity capability mutates under the state lock.
 field-leak hubuum_storage_memory::MemoryState::identity_scopes
@@ -229,3 +229,116 @@ field-leak hubuum_storage_postgres::operations::task_queue::TaskEventRow::initia
 
 # Read, write and snapshot entry points must carry the same task-execution context onto their checked-out connection.
 field-leak hubuum_storage_postgres::runtime::TransactionLocalContext::task_execution
+
+# The consuming From<RefreshToken> implementation transfers its owned string to the credential boundary without cloning it.
+field-leak hubuum::models::auth_session::RefreshToken::value
+
+# The request builder validates the class and collection selectors together before constructing the aggregate request.
+field-leak hubuum::models::object_aggregate::ObjectAggregateTarget::class_id
+field-leak hubuum::models::object_aggregate::ObjectAggregateTarget::collection_id
+
+# Approval resolves the same issuance policy for new and renewed tokens and binds the resulting timestamp to the approved operation.
+field-leak hubuum::models::credential_approval::NewTokenRequest::expires_at
+
+# The expression interpreter walks child predicates to enforce nesting limits and translates their fields into the shared query representation.
+field-leak hubuum::models::structured_search::StructuredRelatedPredicate::filters
+field-leak hubuum::models::structured_search::StructuredSearchFieldPredicate::field
+
+# The nested relation-create route obtains one endpoint from the URL and the other from the validated request body.
+field-leak hubuum::models::relation::NewHubuumClassRelationFromClass::to_hubuum_class_id
+
+# Schema validation, import fencing, and worker settlement present the same acquired lease to storage. Rebuilding it would discard the proof of ownership.
+field-leak hubuum::services::tasks::ClaimedTask::lease
+
+# The storage decorator delegates each instrumented capability to the selected backend. The adapter remains private and every delegated call passes through observation.
+field-leak hubuum::storage::observed::ObservedStorage::inner
+
+# Both adapters apply the same validated sink configuration and attach the supplied audit context to the mutation.
+field-leak hubuum_storage_core::event_administration::sink::StorageEventSinkUpdate::configuration
+field-leak hubuum_storage_core::event_administration::sink::StorageEventSinkUpdate::event_context
+
+# The restore summary constructor checks the lifecycle timestamps against the job status when accepting persisted jobs.
+field-leak hubuum_storage_core::restore::StorageRestoreTimestamps::confirmed_at
+field-leak hubuum_storage_core::restore::StorageRestoreTimestamps::finished_at
+
+# The provider-list constructor checks uniqueness across provider entries. Individual entries cannot establish this collection invariant.
+field-leak hubuum_storage_core::runtime_settings::StorageAuthenticationProvider::name
+
+# The bounded impact report builder deduplicates object identities and counts reasons from the typed findings it accepts.
+field-leak hubuum_storage_core::schema_evolution::impact::report::StorageSchemaImpactFinding::object_id
+field-leak hubuum_storage_core::schema_evolution::impact::report::StorageSchemaImpactFinding::reason
+
+# PostgreSQL move and delete operations consult the locked parent link before changing the collection hierarchy.
+field-leak hubuum_storage_postgres::operations::collection::CollectionRow::parent_collection_id
+
+# The replacement row compares the stored template settings to the proposed values to avoid emitting revisions for unchanged templates.
+field-leak hubuum_storage_postgres::operations::export_template::ExportTemplateRow::default_limits
+field-leak hubuum_storage_postgres::operations::export_template::ExportTemplateRow::include
+field-leak hubuum_storage_postgres::operations::export_template::ExportTemplateRow::relation_context
+
+# Import, data patch and computed-field repair read the locked PostgreSQL row to validate and materialize the same object document.
+field-leak hubuum_storage_postgres::operations::object::ObjectRow::data
+
+# The disable operation inspects the stored timestamp to recognize an account that is already disabled.
+field-leak hubuum_storage_postgres::operations::service_account::ServiceAccountRow::disabled_at
+
+# The user-details query projects the persisted creation and modification timestamps into its typed response.
+field-leak hubuum_storage_postgres::operations::user_row::UserRow::created_at
+field-leak hubuum_storage_postgres::operations::user_row::UserRow::updated_at
+
+# The anonymization operation checks the persisted timestamp for an already anonymized account.
+field-leak hubuum_storage_postgres::operations::user_row::UserRow::anonymized_at
+
+# The PostgreSQL index analysis joins the catalog OID to measured usage and attributes it to its owning classes.
+field-leak hubuum_storage_postgres::operations::query_usage_analysis::ManagedResource::class_owners
+field-leak hubuum_storage_postgres::operations::query_usage_analysis::ManagedResource::index_oid
+
+# The drop operation verifies the physical index identity under the recorded ownership before issuing the administrative change.
+field-leak hubuum_storage_postgres::query_usage_executor::Resource::identity
+
+# Scale fixtures measure the selected PostgreSQL implementation and must issue their workload against that same pool.
+field-leak hubuum_storage_postgres::scale_benchmark::PostgresScaleBackend::pool
+
+# The transaction commit compares the snapshot identity while holding the state lock. The write guard renews that identity on mutation.
+field-leak hubuum_storage_memory::MemoryState::generation
+
+# Backup capture records dispatch timestamps and replay restores them with their original event sequences.
+field-leak hubuum_storage_memory::MemoryState::event_dispatched_at
+
+# The settings capability maintains deployment settings, and successful data replay preserves those settings across the state replacement.
+field-leak hubuum_storage_memory::MemoryState::runtime_settings
+
+# Schema capture and replay preserve active revisions and epochs. Class and object mutations advance the same epochs used by validation.
+field-leak hubuum_storage_memory::MemoryState::schema_active
+field-leak hubuum_storage_memory::MemoryState::schema_epochs
+
+# The schema workflow persists work, findings and repair reports in the same adapter state used for fencing, cancellation and reporting.
+field-leak hubuum_storage_memory::MemoryState::schema_findings
+field-leak hubuum_storage_memory::MemoryState::schema_repair_reports
+field-leak hubuum_storage_memory::MemoryState::schema_work
+
+# The task workflows retain output by task identity. Task termination removes the matching retained output.
+field-leak hubuum_storage_memory::MemoryState::backup_outputs
+field-leak hubuum_storage_memory::MemoryState::schema_profile_outputs
+
+# The restore workflow reads staged jobs, updates their status and retains the completion receipt when it swaps in the restored state.
+field-leak hubuum_storage_memory::MemoryState::restore_jobs
+field-leak hubuum_storage_memory::MemoryState::restore_receipts
+
+# These are the remote-target lifecycle and invocation use cases called by HTTP handlers. Their shared implementation enforces authorization and validates templates.
+shallow-module hubuum::services::remote_targets
+
+# The service exposes the separately authorized stage, activation, cancellation, compliance and reporting operations needed by the versioned API.
+shallow-module hubuum::services::schema_evolution
+
+# Sink implementations share a typed delivery error contract with distinct retryable, permanent and rate-limited outcomes and common payload validation.
+shallow-module hubuum_event_sinks_common
+
+# Independent adapters construct typed sink, subscription, permission and audit requests through the storage SDK contract.
+shallow-module hubuum_storage_core::event_administration
+
+# The task-control methods are the permitted transitions on private state, including deadline admission, stop requests and acknowledgement.
+shallow-module hubuum_storage_core::task_control
+
+# Backends implement the revision, staged work and impact contracts, using the public constructors to validate stored and requested state.
+shallow-module hubuum_storage_core::schema_evolution
