@@ -1134,11 +1134,7 @@ impl RestoreStorage for MemoryStorage {
                 approval.context(),
             )?;
         }
-        if !state.maintenance_state.is_normal() {
-            return Err(StorageError::conflict(
-                "Another maintenance operation is already active",
-            ));
-        }
+        state.restore_coordinator.start(job_id)?;
         let current = state
             .restore_jobs
             .get(&job_id.id())
@@ -1164,10 +1160,6 @@ impl RestoreStorage for MemoryStorage {
             false,
         )?;
         state.restore_jobs.insert(job_id.id(), confirmed);
-        state.maintenance_state = MaintenanceState::Draining;
-        state.maintenance_restore_job_id = Some(job_id);
-        state.maintenance_generation = state.maintenance_generation.saturating_add(1);
-        state.restore_instances.clear();
         *guard = state;
         Ok(confirmed_at)
     }
@@ -1178,9 +1170,7 @@ impl RestoreStorage for MemoryStorage {
     ) -> Result<StorageRestoreCompletion, StorageError> {
         let (job_id, metadata, snapshot, source_includes_history) = request.into_parts();
         let mut state = self.state.write().await;
-        if state.maintenance_state != MaintenanceState::Draining
-            || state.maintenance_restore_job_id != Some(job_id)
-        {
+        if !state.restore_coordinator.owns(job_id) {
             return Err(StorageError::conflict(
                 "The restore job does not own draining maintenance",
             ));
@@ -1230,7 +1220,7 @@ impl RestoreStorage for MemoryStorage {
             true,
         )?;
         replacement.restore_receipts.insert(job_id.id(), succeeded);
-        replacement.maintenance_generation = state.maintenance_generation;
+        replacement.restore_coordinator = state.restore_coordinator.after_replay();
         replacement.next_restore_job_id = state.next_restore_job_id;
         let completion = StorageRestoreCompletion::try_new(started_at, finished_at)
             .map_err(invalid_contract_value)?;
@@ -1271,11 +1261,7 @@ impl RestoreStorage for MemoryStorage {
             true,
         )?;
         state.restore_jobs.insert(job_id.id(), failed);
-        if state.maintenance_restore_job_id == Some(job_id) {
-            state.maintenance_state = MaintenanceState::Normal;
-            state.maintenance_restore_job_id = None;
-            state.restore_instances.clear();
-        }
+        state.restore_coordinator.resume(Some(job_id));
         Ok(())
     }
 
@@ -1283,19 +1269,12 @@ impl RestoreStorage for MemoryStorage {
         &self,
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
         let state = self.state.read().await;
-        Ok(StorageRestoreCoordinatorSnapshot::new(
-            state.maintenance_state,
-            state.maintenance_restore_job_id,
-            Utc::now(),
-        ))
+        Ok(state.restore_coordinator.snapshot(Utc::now()))
     }
 
     async fn resume_maintenance_without_restore(&self) -> Result<(), StorageError> {
         let mut state = self.state.write().await;
-        if state.maintenance_restore_job_id.is_none() {
-            state.maintenance_state = MaintenanceState::Normal;
-            state.restore_instances.clear();
-        }
+        state.restore_coordinator.resume(None);
         Ok(())
     }
 
@@ -1313,11 +1292,8 @@ impl RestoreStorage for MemoryStorage {
             StorageRestoreJobStatus::Succeeded
                 | StorageRestoreJobStatus::Failed
                 | StorageRestoreJobStatus::Expired
-        ) && state.maintenance_restore_job_id == Some(job_id)
-        {
-            state.maintenance_state = MaintenanceState::Normal;
-            state.maintenance_restore_job_id = None;
-            state.restore_instances.clear();
+        ) {
+            state.restore_coordinator.resume(Some(job_id));
         }
         Ok(())
     }
@@ -1359,25 +1335,10 @@ impl RestoreStorage for MemoryStorage {
                 );
             }
         }
-        let drained = if state.maintenance_state.is_normal() {
-            false
-        } else {
-            local_work_is_idle()
-        };
-        let generation = state.maintenance_generation;
-        state.restore_instances.insert(
-            instance_id,
-            MemoryRestoreInstance {
-                generation,
-                drained,
-                heartbeat_at: now,
-            },
-        );
-        Ok(StorageRestoreCoordinatorSnapshot::new(
-            state.maintenance_state,
-            state.maintenance_restore_job_id,
-            now,
-        ))
+        state
+            .restore_coordinator
+            .heartbeat(instance_id, now, local_work_is_idle);
+        Ok(state.restore_coordinator.snapshot(now))
     }
 
     async fn get_restore_drain_state(
@@ -1385,28 +1346,15 @@ impl RestoreStorage for MemoryStorage {
         heartbeat_cutoff: DateTime<Utc>,
     ) -> Result<StorageRestoreDrainState, StorageError> {
         let state = self.state.read().await;
-        let instances = state
-            .restore_instances
-            .iter()
-            .filter(|(_, instance)| {
-                instance.heartbeat_at >= heartbeat_cutoff
-                    && instance.generation == state.maintenance_generation
-            })
-            .map(|(id, instance)| {
-                StorageRestoreInstance::try_new(*id, instance.generation, instance.drained)
-                    .map_err(invalid_contract_value)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        StorageRestoreDrainState::try_new(state.maintenance_generation, instances)
-            .map_err(invalid_contract_value)
+        state.restore_coordinator.drain_state(heartbeat_cutoff)
     }
 
     async fn remove_restore_instance(&self, instance_id: Uuid) -> Result<(), StorageError> {
         self.state
             .write()
             .await
-            .restore_instances
-            .remove(&instance_id);
+            .restore_coordinator
+            .remove_instance(instance_id);
         Ok(())
     }
 }

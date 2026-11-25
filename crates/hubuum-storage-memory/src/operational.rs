@@ -77,12 +77,21 @@ impl OperationalStateStorage for MemoryStorage {
     async fn get_readiness_snapshot(&self) -> Result<StorageReadinessSnapshot, StorageError> {
         Ok(StorageReadinessSnapshot::new(
             true,
-            self.state.read().await.maintenance_state,
+            self.state
+                .read()
+                .await
+                .restore_coordinator
+                .maintenance_state(),
         ))
     }
 
     async fn get_maintenance_state(&self) -> Result<MaintenanceState, StorageError> {
-        Ok(self.state.read().await.maintenance_state)
+        Ok(self
+            .state
+            .read()
+            .await
+            .restore_coordinator
+            .maintenance_state())
     }
 
     async fn get_task_queue_snapshot(

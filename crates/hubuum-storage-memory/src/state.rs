@@ -180,10 +180,7 @@ impl MemoryState {
             restore_jobs: BTreeMap::new(),
             restore_receipts: BTreeMap::new(),
             event_dispatched_at: BTreeMap::new(),
-            maintenance_state: MaintenanceState::Normal,
-            maintenance_restore_job_id: None,
-            maintenance_generation: 0,
-            restore_instances: BTreeMap::new(),
+            restore_coordinator: Default::default(),
             events: Vec::new(),
         }
     }
