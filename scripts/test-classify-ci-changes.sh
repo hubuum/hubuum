@@ -931,6 +931,8 @@ for extracted_input in src/services/exports/execution.rs src/services/exports/hy
   src/tasks/planning/import.rs crates/hubuum-storage-memory/src/imports/relations.rs \
   crates/hubuum-storage-core/src/backup_snapshot/resources.rs \
   crates/hubuum-storage-core/src/backup_snapshot/normalization.rs \
+  crates/hubuum-storage-memory/src/history.rs crates/hubuum-storage-memory/src/identity/authorization.rs \
+  crates/hubuum-storage-memory/src/identity/credentials.rs crates/hubuum-storage-memory/src/token_issuance.rs \
   crates/hubuum-auth-core/src/credential.rs; do
   extracted_output="$(bash "$classifier" "$extracted_input")"
   assert_flag "$extracted_output" rust true
