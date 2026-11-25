@@ -2044,6 +2044,48 @@ fn remembering_a_planned_object_preserves_its_database_lookup(#[case] database_m
 }
 
 #[tokio::test]
+async fn best_effort_import_resolves_a_parent_planned_after_a_name_lookup_miss() {
+    let context = TestContext::new().await;
+    let parent_name = context.scoped_name("late_parent");
+    let parent_key = CollectionKey {
+        name: parent_name.clone(),
+        path: None,
+    };
+    let collection = |name, parent_collection_key| ImportCollectionInput {
+        name,
+        description: String::new(),
+        parent_collection_key,
+        parent_collection_ref: None,
+        ref_: None,
+        condition: None,
+        timestamps: None,
+    };
+    let later_child = context.scoped_name("later_child");
+    let request = ImportRequest {
+        version: CURRENT_IMPORT_VERSION,
+        dry_run: Some(false),
+        mode: Some(ImportMode {
+            atomicity: Some(ImportAtomicity::BestEffort),
+            ..ImportMode::default()
+        }),
+        graph: ImportGraph {
+            collections: vec![
+                collection(context.scoped_name("early_child"), Some(parent_key.clone())),
+                collection(parent_name, None),
+                collection(later_child.clone(), Some(parent_key)),
+            ],
+            ..ImportGraph::default()
+        },
+    };
+
+    let plan = plan_import(&context.pool, &context.admin_user, None, &request).await;
+    assert!(plan.planned_items.iter().any(|item| matches!(
+        &item.execution,
+        Some(PlannedExecution::CreateCollection(input)) if input.name == later_child
+    )));
+}
+
+#[tokio::test]
 async fn test_plan_collection_rejects_duplicate_name_within_request() {
     let context = (TestContext::new()).await;
     let mut state = PlanningState::new();

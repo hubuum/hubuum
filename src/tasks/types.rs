@@ -121,7 +121,6 @@ pub(super) struct PlanningState {
     pub(super) planned_object_keys: HashSet<(i32, String)>,
     pub(super) planned_group_keys: HashSet<(String, String)>,
     pub(super) planned_identity_scope_names_by_ref: HashMap<String, String>,
-    missing_collection_names: HashSet<String>,
     collections_by_ref: HashMap<String, CollectionResolution>,
     collections_by_name: HashMap<String, Vec<CollectionResolution>>,
     collections_by_parent_name: HashMap<(Option<i32>, String), CollectionResolution>,
@@ -161,17 +160,15 @@ impl PlanningState {
     }
 
     pub(super) fn collections_named(&self, name: &str) -> CacheLookup<&[CollectionResolution]> {
-        if self.missing_collection_names.contains(name) {
-            CacheLookup::Missing
-        } else if let Some(collections) = self.collections_by_name.get(name) {
-            CacheLookup::Found(collections)
-        } else {
-            CacheLookup::Unknown
+        match self.collections_by_name.get(name).map(Vec::as_slice) {
+            Some([]) => CacheLookup::Missing,
+            Some(collections) => CacheLookup::Found(collections),
+            None => CacheLookup::Unknown,
         }
     }
 
     pub(super) fn record_missing_collection_name(&mut self, name: String) {
-        self.missing_collection_names.insert(name);
+        self.collections_by_name.entry(name).or_default();
     }
 
     pub(super) fn remember_collection(
