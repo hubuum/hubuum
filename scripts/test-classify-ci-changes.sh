@@ -274,6 +274,14 @@ assert_flag "$storage_contract_docs_output" container false
 assert_flag "$storage_contract_docs_output" artifacts false
 assert_flag "$storage_contract_docs_output" benchmarks false
 
+# Moving a storage scenario into a child module must retain its validation tier.
+for suite in storage_contract application_boundary storage_performance; do
+  while IFS= read -r scenario; do
+    scenario_flags="$(bash "$classifier" "$scenario")"
+    assert_flag "$scenario_flags" rust true
+  done < <(find "src/tests/$suite" -type f -name '*.rs')
+done
+
 markdown_config_output="$(bash "$classifier" .markdownlint.json)"
 assert_flag "$markdown_config_output" markdown true
 assert_flag "$markdown_config_output" code false
