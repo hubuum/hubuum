@@ -1,9 +1,8 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse, ResponseLocation};
 use actix_web::{HttpRequest, Responder, delete, get, patch, post, web};
 use hubuum_domain::CollectionId;
 
 use crate::api::etag::{RevisionedResource, revision_precondition};
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::{ApiResponse, ResponseLocation};
 use crate::can;
 use crate::errors::ApiError;
 use crate::extractors::{AccessEventContext, Authenticated};

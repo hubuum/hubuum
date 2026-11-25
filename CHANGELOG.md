@@ -17,6 +17,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Best-effort imports can resolve a parent collection by name after an
+  earlier item failed to find it and a later item planned its creation.
+
 - Imports on the experimental memory backend preserve concurrent writes.
   Restoring an import that used the last available result ID preserves its
   receipts and prevents a later import from reusing that ID.

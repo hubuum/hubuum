@@ -904,12 +904,12 @@ for repair_path in tests/computed_read_repair.rs crates/hubuum-storage-postgres/
   assert_flag "$repair_output" rust true
 done
 
-# Interactive auth and activity schemas must regenerate the public contract.
-for session_schema in src/api/v1/handlers/auth.rs src/models/auth_session.rs src/models/credential_activity.rs; do
-  session_output="$(bash "$classifier" "$session_schema")"
-  assert_flag "$session_output" rust true
-  assert_flag "$session_output" openapi true
-  assert_flag "$session_output" container true
+# Shared HTTP responses, registration, and interactive auth schemas feed the public contract.
+for schema_path in src/api/openapi.rs src/api/response.rs src/api/v1/handlers/auth.rs src/models/auth_session.rs src/models/credential_activity.rs; do
+  schema_output="$(bash "$classifier" "$schema_path")"
+  assert_flag "$schema_output" rust true
+  assert_flag "$schema_output" openapi true
+  assert_flag "$schema_output" container true
 done
 for session_input in src/services/auth_sessions.rs src/services/credential_activity.rs \
   src/tests/storage_contract/auth_sessions.rs tests/api_identity_suite/sessions.rs \

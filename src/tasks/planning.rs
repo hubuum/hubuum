@@ -16,14 +16,13 @@ use super::helpers::{
 };
 use super::preload::{preload_existing_classes, preload_existing_objects};
 use super::resolution::{
-    remember_class, remember_collection, remember_object, resolve_class_planning,
-    resolve_collection_by_id_planning, resolve_collection_parent_planning,
+    resolve_class_planning, resolve_collection_by_id_planning, resolve_collection_parent_planning,
     resolve_collection_planning, resolve_object_planning,
 };
 use super::types::{
-    ClassResolution, CollectionResolution, FailureKind, ImportAdminStatus, ObjectResolution,
-    PlannedExecution, PlannedItem, PlannedTaskResult, PlanningFailure, PlanningOutcome,
-    PlanningState,
+    CacheLookup, ClassResolution, CollectionResolution, FailureKind, ImportAdminStatus,
+    ObjectResolution, PlannedExecution, PlannedItem, PlannedTaskResult, PlanningFailure,
+    PlanningOutcome, PlanningState,
 };
 use crate::errors::ApiError;
 use crate::models::{
@@ -539,7 +538,7 @@ where
 {
     let pool = backend;
     if let Some(reference) = &input.ref_
-        && state.collections_by_ref.contains_key(reference)
+        && state.collection_by_ref(reference).is_some()
     {
         return Err(PlanningFailure {
             kind: FailureKind::Validation,
@@ -585,8 +584,7 @@ where
 
     let existing = if parent.exists_in_db {
         if let Some(collection) = state
-            .collections_by_parent_name
-            .get(&(Some(parent.id), input.name.clone()))
+            .collection_under_parent(Some(parent.id), &input.name)
             .cloned()
             .filter(|collection| collection.exists_in_db)
         {
@@ -670,7 +668,7 @@ where
             parent_collection_id: collection.parent_collection_id,
             exists_in_db: true,
         };
-        remember_collection(state, input.ref_.clone(), resolution.clone());
+        state.remember_collection(input.ref_.clone(), resolution.clone());
 
         Ok(PlannedItem {
             result: planned_result(
@@ -730,7 +728,7 @@ where
             parent_collection_id: Some(parent.id),
             exists_in_db: false,
         };
-        remember_collection(state, input.ref_.clone(), resolution.clone());
+        state.remember_collection(input.ref_.clone(), resolution.clone());
 
         Ok(PlannedItem {
             result: planned_result(
@@ -821,7 +819,7 @@ where
             })?;
     }
     if let Some(reference) = &input.ref_
-        && state.classes_by_ref.contains_key(reference)
+        && state.classes.by_ref(reference).is_some()
     {
         return Err(PlanningFailure {
             kind: FailureKind::Validation,
@@ -870,17 +868,13 @@ where
         });
     }
 
-    let existing = if let Some(class) = state
-        .classes_by_key
-        .get(&class_key)
-        .cloned()
-        .filter(|class| class.exists_in_db)
+    let existing = match state
+        .classes
+        .lookup_where(&class_key, |value| value.exists_in_db)
     {
-        Some(class)
-    } else if state.missing_class_keys.contains(&class_key) {
-        None
-    } else {
-        storage_handle(pool)
+        CacheLookup::Found(value) => Some(value.clone()),
+        CacheLookup::Missing => None,
+        CacheLookup::Unknown => storage_handle(pool)
             .get_import_class_by_name(
                 CollectionId::new(collection.id).map_err(|error| PlanningFailure {
                     kind: FailureKind::Runtime,
@@ -905,7 +899,7 @@ where
                 ),
                 message: sanitize_error_for_storage(&err.into()),
             })?
-            .map(storage_class_to_resolution)
+            .map(storage_class_to_resolution),
     };
 
     let identifier = format!("{}::{}", collection.name, input.name);
@@ -978,7 +972,7 @@ where
             validate_schema: Some(validate_schema),
             ..input.clone()
         };
-        remember_class(state, input.ref_.clone(), updated.clone());
+        state.remember_class(input.ref_.clone(), updated.clone());
 
         let mut result = planned_result(
             "class",
@@ -1064,7 +1058,7 @@ where
             validate_schema: Some(validate_schema),
             ..input.clone()
         };
-        remember_class(state, input.ref_.clone(), created.clone());
+        state.remember_class(input.ref_.clone(), created.clone());
 
         Ok(PlannedItem {
             result: planned_result("class", "create", input.ref_.clone(), Some(identifier)),
@@ -1089,7 +1083,7 @@ where
 {
     let pool = backend;
     if let Some(reference) = &input.ref_
-        && state.objects_by_ref.contains_key(reference)
+        && state.objects.by_ref(reference).is_some()
     {
         return Err(PlanningFailure {
             kind: FailureKind::Validation,
@@ -1156,17 +1150,13 @@ where
         });
     }
 
-    let existing = if let Some(object) = state
-        .objects_by_key
-        .get(&object_key)
-        .cloned()
-        .filter(|object| object.exists_in_db)
+    let existing = match state
+        .objects
+        .lookup_where(&object_key, |value| value.exists_in_db)
     {
-        Some(object)
-    } else if state.missing_object_keys.contains(&object_key) {
-        None
-    } else {
-        storage_handle(pool)
+        CacheLookup::Found(value) => Some(value.clone()),
+        CacheLookup::Missing => None,
+        CacheLookup::Unknown => storage_handle(pool)
             .get_import_object_by_name(
                 ClassId::new(class.id).map_err(|error| PlanningFailure {
                     kind: FailureKind::Runtime,
@@ -1191,7 +1181,7 @@ where
                 ),
                 message: sanitize_error_for_storage(&err.into()),
             })?
-            .map(storage_object_to_resolution)
+            .map(storage_object_to_resolution),
     };
 
     let identifier = format!("{}::{}", class.name, input.name);
@@ -1250,7 +1240,7 @@ where
             class_id: class.id,
             exists_in_db: true,
         };
-        remember_object(state, input.ref_.clone(), updated.clone());
+        state.remember_object(input.ref_.clone(), updated.clone());
 
         Ok(PlannedItem {
             result: planned_result(
@@ -1299,7 +1289,7 @@ where
             class_id: class.id,
             exists_in_db: false,
         };
-        remember_object(state, input.ref_.clone(), created.clone());
+        state.remember_object(input.ref_.clone(), created.clone());
 
         Ok(PlannedItem {
             result: planned_result("object", "create", input.ref_.clone(), Some(identifier)),

@@ -413,8 +413,7 @@ struct MemoryState {
     event_sinks: BTreeMap<i32, StorageEventSink>,
     event_sink_grants: BTreeSet<(i32, i32)>,
     event_subscriptions: BTreeMap<i32, StorageEventSubscription>,
-    event_deliveries: BTreeMap<i64, StorageEventDelivery>,
-    event_delivery_claims: BTreeMap<i64, Uuid>,
+    event_deliveries: EventDeliveries,
     event_sink_schedule: BTreeMap<i32, (DateTime<Utc>, DateTime<Utc>)>,
     event_retention_batches: BTreeMap<Uuid, Vec<i64>>,
     history: Vec<MemoryHistoryEntry>,
@@ -818,6 +817,8 @@ mod backup;
 mod computed_history;
 mod credential_activity;
 mod credential_approval;
+mod event_deliveries;
+use event_deliveries::EventDeliveries;
 mod events;
 mod execution;
 mod identity;
