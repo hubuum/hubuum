@@ -388,7 +388,7 @@ struct MemoryState {
     service_accounts: BTreeMap<i32, StorageServiceAccount>,
     tasks: BTreeMap<i32, MemoryTaskRecord>,
     task_events: BTreeMap<i32, Vec<StorageTaskEvent>>,
-    import_task_results: imports::ImportResults,
+    import_task_results: import_results::ImportResults,
     import_execution_receipts: BTreeSet<(i32, usize)>,
     schema_profile_outputs: BTreeMap<i32, hubuum_storage_core::StorageSchemaProfileArtifact>,
     export_outputs: BTreeMap<i32, StorageExportOutput>,
@@ -815,6 +815,7 @@ mod history;
 mod id_sequence;
 use id_sequence::IdSequence;
 mod identity;
+mod import_results;
 mod imports;
 mod object_filters;
 mod operational;
