@@ -583,7 +583,7 @@ RETURNS TEXT LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_cat
 DECLARE current_material JSONB; old_authority JSONB; new_authority JSONB;
     previous_count INTEGER; next_count INTEGER; additions INTEGER; pending_completions INTEGER; pending_size INTEGER;
     old_size JSONB; new_size JSONB;
-    new_policy JSONB; issued JSONB; old_preview JSONB; next_preview JSONB;
+    new_policy JSONB; issued JSONB; old_preview JSONB; next_preview JSONB; decision_at TIMESTAMPTZ; issued_at TIMESTAMPTZ; expires_at TIMESTAMPTZ;
 BEGIN
     PERFORM id FROM hubuum_control.deletion_authority WHERE id=1
         AND (material->>'revision')::BIGINT=expected_deletion FOR SHARE;
@@ -656,20 +656,6 @@ BEGIN
                OR new_policy->'review'<>jsonb_build_object('reference',issued->'reference','principal',issued->'principal',
                     'fence',issued->'fence','issued_at',issued->'issued_at','expires_at',issued->'expires_at','coverage',issued #> '{impact,coverage}')
                THEN RETURN 'conflict'; END IF;
-            IF issued #>> '{fence,incarnation}'<>expected_incarnation::TEXT
-               OR issued #>> '{fence,authority_revision}'<>old_authority->>'revision'
-               OR issued #>> '{fence,deletion_revision}'<>expected_deletion::TEXT
-               OR (issued->>'issued_at')::TIMESTAMPTZ>clock_timestamp() THEN RETURN 'stale_preview'; END IF;
-            IF (issued->>'expires_at')::TIMESTAMPTZ<=clock_timestamp() THEN RETURN 'preview_expired'; END IF;
-            -- A natural hold expiry changes protection even without a write.
-            IF EXISTS (SELECT 1 FROM (
-                SELECT DISTINCT ON (value #>> '{hold,identity}') value->'hold' AS hold
-                FROM jsonb_array_elements(old_authority->'holds') WITH ORDINALITY AS entries(value,ordinal)
-                ORDER BY value #>> '{hold,identity}',ordinal DESC
-            ) latest WHERE (hold->>'created_at')::TIMESTAMPTZ <= (issued->>'issued_at')::TIMESTAMPTZ
-                AND (hold->>'released_at' IS NULL OR (hold->>'released_at')::TIMESTAMPTZ>(issued->>'issued_at')::TIMESTAMPTZ)
-                AND (hold->>'expires_at')::TIMESTAMPTZ>(issued->>'issued_at')::TIMESTAMPTZ
-                AND (hold->>'expires_at')::TIMESTAMPTZ<=clock_timestamp()) THEN RETURN 'stale_preview'; END IF;
         END IF;
     END IF;
     IF additions=0 THEN
@@ -683,6 +669,36 @@ BEGIN
             ELSIF next_preview<>old_preview THEN RETURN 'conflict';
             END IF;
         END LOOP;
+        -- An issuance may append one new review alongside pruning expired ones.
+        FOR next_preview IN
+            SELECT value FROM jsonb_array_elements(replacement->'previews')
+            EXCEPT ALL SELECT value FROM jsonb_array_elements(current_material->'previews')
+        LOOP
+            IF issued IS NOT NULL OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(current_material->'previews')
+                WHERE value #> '{reference,preview_id}'=next_preview #> '{reference,preview_id}'
+            ) THEN RETURN 'conflict'; END IF;
+            issued := next_preview;
+        END LOOP;
+    END IF;
+    IF issued IS NOT NULL THEN
+        issued_at := (issued->>'issued_at')::TIMESTAMPTZ;
+        expires_at := (issued->>'expires_at')::TIMESTAMPTZ;
+        IF issued_at IS NULL OR expires_at IS DISTINCT FROM issued_at + INTERVAL '300 seconds' THEN RETURN 'conflict'; END IF;
+        decision_at := clock_timestamp();
+        IF issued #>> '{fence,incarnation}' IS DISTINCT FROM expected_incarnation::TEXT
+           OR issued #>> '{fence,authority_revision}' IS DISTINCT FROM old_authority->>'revision'
+           OR issued #>> '{fence,deletion_revision}' IS DISTINCT FROM expected_deletion::TEXT
+           OR issued_at>decision_at THEN RETURN 'stale_preview'; END IF;
+        IF expires_at<=decision_at THEN RETURN 'preview_expired'; END IF;
+        -- A natural hold expiry changes protection even without a write.
+        IF EXISTS (SELECT 1 FROM (
+            SELECT DISTINCT ON (value #>> '{hold,identity}') value->'hold' AS hold
+            FROM jsonb_array_elements(old_authority->'holds') WITH ORDINALITY AS entries(value,ordinal)
+            ORDER BY value #>> '{hold,identity}',ordinal DESC
+        ) latest WHERE (hold->>'created_at')::TIMESTAMPTZ <= issued_at
+            AND least((hold->>'released_at')::TIMESTAMPTZ,(hold->>'expires_at')::TIMESTAMPTZ)>issued_at
+            AND least((hold->>'released_at')::TIMESTAMPTZ,(hold->>'expires_at')::TIMESTAMPTZ)<=decision_at) THEN RETURN 'stale_preview'; END IF;
     END IF;
     UPDATE hubuum_control.history_lifecycle_control SET material=replacement WHERE id=1;
     RETURN 'committed';

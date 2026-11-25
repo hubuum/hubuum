@@ -1,6 +1,7 @@
 use chrono::Duration;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
+use std::ops::Bound::{Excluded, Included};
 use uuid::Uuid;
 
 use super::*;
@@ -362,6 +363,20 @@ impl HistoryLifecycleAuthority {
             .rev()
             .filter(move |entry| seen.insert(entry.hold.identity()))
     }
+    pub(super) fn validate_review_protection(
+        &self,
+        fence: HistoryAuthorityRevision,
+        issued_at: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<(), HistoryPolicyReviewConflict> {
+        if self
+            .hold_revisions_at(fence)
+            .any(|entry| entry.hold.is_active(issued_at) && !entry.hold.is_active(now))
+        {
+            return Err(HistoryPolicyReviewConflict::StalePreview);
+        }
+        Ok(())
+    }
     pub fn current_holds(&self) -> impl Iterator<Item = &HistoryRetentionHold> {
         self.hold_revisions_at(self.revision)
             .map(|entry| &entry.hold)
@@ -387,16 +402,15 @@ impl HistoryLifecycleAuthority {
             measurements,
         )
     }
+    /// Apply a prospective change directly. Use [`HistoryLifecycleControl::apply`]
+    /// to apply a change with its issued review.
     pub fn apply(
         &self,
         change: HistoryPolicyChange,
         principal: PrincipalIdentity,
         at: DateTime<Utc>,
     ) -> Result<Self, StorageValidationError> {
-        let mut next = self.clone();
-        next.policies = self.policies.append(change, principal, at)?;
-        next.revision = self.successor()?;
-        Ok(next)
+        self.apply_reviewed(change, principal, at, None)
     }
     pub(super) fn apply_reviewed(
         &self,
@@ -405,7 +419,10 @@ impl HistoryLifecycleAuthority {
         at: DateTime<Utc>,
         review: Option<HistoryPolicyReviewEvidence>,
     ) -> Result<Self, StorageValidationError> {
-        let mut next = self.apply(change, principal, at)?;
+        change.validate_review_presence(review.as_ref())?;
+        let mut next = self.clone();
+        next.policies = self.policies.append(change, principal, at)?;
+        next.revision = self.successor()?;
         if let Some(review) = review {
             next.policies = next.policies.bind_last_review(review)?;
         }
@@ -559,6 +576,75 @@ impl TryFrom<AuthorityInput> for HistoryLifecycleAuthority {
 }
 
 impl HistoryLifecycleAuthority {
+    fn validate_policy_reviews(
+        &self,
+        operations: &mut BTreeSet<Uuid>,
+    ) -> Result<(), StorageValidationError> {
+        let expiry_decisions = self.expiry.revision().value();
+        let mut previous_expiry_count = 0;
+        // Most reviews span no hold deadline. Reconstruct the historical
+        // hold set only when a release or expiry could fall inside the review.
+        let hold_ends: BTreeSet<_> = self
+            .holds
+            .iter()
+            .flat_map(|entry| {
+                [entry.hold.expires_at(), entry.hold.released_at()]
+                    .into_iter()
+                    .flatten()
+            })
+            .collect();
+        for (index, record) in self.policies.records().iter().enumerate() {
+            record
+                .proposal()
+                .validate_review_presence(record.review())?;
+            let Some(review) = record.review() else {
+                continue;
+            };
+            if !operations.insert(review.reference().preview_id()) {
+                return Err(invalid("Duplicate retained history review identity"));
+            }
+            let fence = review.fence().authority_revision();
+            let holds = self.holds.partition_point(|entry| entry.revision <= fence);
+            let pressures = self
+                .size_transitions
+                .partition_point(|entry| entry.revision() <= fence);
+            // The reviewed policy consumes the next revision. After subtracting
+            // preceding policy, hold and pressure decisions, only expiry remains.
+            let expiry_count = fence
+                .value()
+                .checked_sub((index + holds + pressures) as u64);
+            if fence >= self.revision
+                || self
+                    .holds
+                    .get(holds)
+                    .is_some_and(|entry| entry.revision.value() == fence.value() + 1)
+                || self
+                    .size_transitions
+                    .get(pressures)
+                    .is_some_and(|entry| entry.revision().value() == fence.value() + 1)
+            {
+                return Err(invalid(
+                    "Policy review does not precede an available authority revision",
+                ));
+            }
+            if hold_ends
+                .range((Excluded(review.issued_at()), Included(record.applied_at())))
+                .next()
+                .is_some()
+            {
+                self.validate_review_protection(fence, review.issued_at(), record.applied_at())
+                    .map_err(|_| {
+                        invalid("Hold protection expired between policy review and application")
+                    })?;
+            }
+            previous_expiry_count = expiry_count
+                .filter(|count| (previous_expiry_count..=expiry_decisions).contains(count))
+                .ok_or_else(|| {
+                    invalid("Policy review fence contradicts retained decision order")
+                })?;
+        }
+        Ok(())
+    }
     fn validate(&self) -> Result<(), StorageValidationError> {
         if self.holds.len() > Self::MAX_HOLD_REVISIONS
             || self.revision.value()
@@ -574,16 +660,6 @@ impl HistoryLifecycleAuthority {
             .iter()
             .map(HistoryPolicyRecord::operation)
             .collect::<BTreeSet<_>>();
-        for review in self
-            .policies
-            .records()
-            .iter()
-            .filter_map(HistoryPolicyRecord::review)
-        {
-            if !operations.insert(review.reference().preview_id()) {
-                return Err(invalid("Duplicate retained history review identity"));
-            }
-        }
         let mut last = 0;
         let mut known = std::collections::BTreeMap::<Uuid, &HistoryHoldRevision>::new();
         for entry in &self.holds {
@@ -641,6 +717,8 @@ impl HistoryLifecycleAuthority {
             return Err(invalid("Duplicate retained history operation identity"));
         }
         self.validate_size_transitions()?;
+        self.validate_policy_reviews(&mut operations)?;
+
         for intent in self.expiry.intents() {
             let manifest = intent.manifest();
             let fence = manifest.fence().authority_revision();
@@ -977,10 +1055,20 @@ impl HistoryPolicyPreview {
         if self.reference != *reference || self.proposal != *proposal {
             return Err(HistoryPolicyReviewConflict::PreviewMismatch);
         }
+        self.validate_time(now)?;
+        if self.fence != fence {
+            return Err(HistoryPolicyReviewConflict::StalePreview);
+        }
+        Ok(())
+    }
+    pub(super) fn validate_time(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<(), HistoryPolicyReviewConflict> {
         if now >= self.expires_at {
             return Err(HistoryPolicyReviewConflict::PreviewExpired);
         }
-        if now < self.issued_at || self.fence != fence {
+        if now < self.issued_at {
             return Err(HistoryPolicyReviewConflict::StalePreview);
         }
         Ok(())
@@ -1080,6 +1168,7 @@ impl HistoryPolicyReviewEvidence {
         principal: PrincipalIdentity,
         applied_at: DateTime<Utc>,
     ) -> Result<(), StorageValidationError> {
+        proposal.validate_at(self.issued_at)?;
         if self.principal != principal
             || self.reference.proposal_fingerprint() != fingerprint(proposal)?
             || applied_at < self.issued_at

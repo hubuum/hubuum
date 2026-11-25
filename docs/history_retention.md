@@ -183,7 +183,16 @@ revision, application incarnation, coverage, original issue time and fixed
 expiry. Its maximum lifetime is 300 seconds. Reading or retrying cannot renew
 that lifetime. A matching digest alone is not issuance proof. Retrospective
 application requires the stored review; any supplied prospective review is also
-validated.
+validated. Storage checks the issue time, expiry and hold protection under the
+writer lock before acknowledging a preview. If the review has already expired,
+issuance returns HTTP 409 with `preview_expired`. If a hold expired during
+the scan, issuance returns `stale_preview`.
+
+Recovery verifies that each retrospective policy retains its original review,
+that the cutoff was valid when the review was issued, and that the recorded
+authority revision and hold protection permitted application. A stored pending
+review cannot name a future history revision or a future deletion revision in
+the current application incarnation.
 
 Policy, hold or deletion authority changes and application recovery invalidate
 old reviews. A hold expiring between issuance and application also makes the

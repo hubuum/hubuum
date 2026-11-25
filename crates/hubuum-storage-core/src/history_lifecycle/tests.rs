@@ -356,6 +356,139 @@ fn preview_fixture() -> (HistoryPolicyPreview, PrincipalIdentity, HistoryReviewF
     )
 }
 #[rstest]
+#[case::original("original", true)]
+#[case::missing_review("missing_review", false)]
+#[case::cutoff_after_review("cutoff_after_review", false)]
+#[case::future_review_revision("future_review_revision", false)]
+#[case::hold_creation_revision("hold_creation_revision", false)]
+#[case::hold_release_revision("hold_release_revision", false)]
+#[case::hold_expired_at_application("hold_expired_at_application", false)]
+fn recovery_requires_the_original_retrospective_review(
+    #[case] evidence: &str,
+    #[case] valid: bool,
+) {
+    let (original, principal, initial_fence) = preview_fixture();
+    let hold = HistoryRetentionHold::new(
+        uuid::Uuid::new_v4(),
+        original.proposal().key(),
+        at(1),
+        Some(at(150)),
+        principal,
+    )
+    .unwrap();
+    let identity = hold.identity();
+    let held = HistoryLifecycleControl::empty()
+        .create_hold(hold, initial_fence)
+        .unwrap();
+    let fence = HistoryReviewFence::new(
+        initial_fence.incarnation(),
+        held.next().authority().revision(),
+        initial_fence.deletion_revision(),
+    )
+    .unwrap();
+    let preview = HistoryPolicyPreview::issue(
+        principal,
+        original.proposal().clone(),
+        fence,
+        original.issued_at(),
+        original.impact().clone(),
+    )
+    .unwrap();
+    let issued = held.next().issue_preview(preview.clone(), fence).unwrap();
+    let applied = issued
+        .next()
+        .apply(
+            HistoryPolicyApplyRequest::new(
+                preview.proposal().clone(),
+                Some(preview.reference().clone()),
+            ),
+            principal,
+            fence,
+            at(101),
+        )
+        .unwrap();
+    let authority = applied
+        .next()
+        .authority()
+        .release_hold(identity, principal, at(120))
+        .unwrap();
+    let mut encoded = serde_json::to_value(authority).unwrap();
+    let review = &mut encoded["policies"][0]["review"];
+    match evidence {
+        "original" => {}
+        "missing_review" => *review = serde_json::Value::Null,
+        "cutoff_after_review" => {
+            review["issued_at"] = serde_json::json!(at(49));
+            review["expires_at"] = serde_json::json!(at(349));
+        }
+        "future_review_revision" => review["fence"]["authority_revision"] = serde_json::json!("3"),
+        "hold_creation_revision" => review["fence"]["authority_revision"] = serde_json::json!("0"),
+        "hold_release_revision" => review["fence"]["authority_revision"] = serde_json::json!("2"),
+        "hold_expired_at_application" => {
+            encoded["policies"][0]["applied_at"] = serde_json::json!(at(150))
+        }
+        _ => unreachable!(),
+    }
+    assert_eq!(
+        serde_json::from_value::<HistoryLifecycleAuthority>(encoded).is_ok(),
+        valid
+    );
+}
+
+#[rstest]
+#[case::before_issuance(99, Err(HistoryPolicyReviewConflict::StalePreview))]
+#[case::valid(399, Ok(()))]
+#[case::expired(400, Err(HistoryPolicyReviewConflict::PreviewExpired))]
+fn issuing_a_preview_rechecks_its_lifetime_at_commit(
+    #[case] now: i64,
+    #[case] expected: Result<(), HistoryPolicyReviewConflict>,
+) {
+    let (preview, _, fence) = preview_fixture();
+    let issuance = HistoryLifecycleControl::empty()
+        .issue_preview(preview, fence)
+        .unwrap();
+    assert_eq!(issuance.validate_commit_at(at(now)), expected);
+}
+
+#[rstest]
+#[case::current("current", true)]
+#[case::future_authority("authority_revision", false)]
+#[case::future_deletion("deletion_revision", false)]
+fn a_pending_review_cannot_anticipate_a_future_fence(#[case] field: &str, #[case] valid: bool) {
+    let (preview, _, fence) = preview_fixture();
+    let issued = HistoryLifecycleControl::empty()
+        .issue_preview(preview, fence)
+        .unwrap();
+    let mut encoded = serde_json::to_value(issued.next()).unwrap();
+    if field != "current" {
+        encoded["previews"][0]["fence"][field] = serde_json::json!("1");
+    }
+    let snapshot = HistoryLifecycleControl::decode(&serde_json::to_vec(&encoded).unwrap())
+        .and_then(|control| {
+            HistoryLifecycleSnapshot::new(
+                control,
+                fence.incarnation(),
+                fence.deletion_revision(),
+                at(101),
+            )
+        });
+    assert_eq!(snapshot.is_ok(), valid);
+}
+
+#[test]
+fn pruning_an_expired_review_cannot_renew_its_identity() {
+    let (preview, _, fence) = preview_fixture();
+    let issued = HistoryLifecycleControl::empty()
+        .issue_preview(preview.clone(), fence)
+        .unwrap();
+    let mut encoded = serde_json::to_value(&preview).unwrap();
+    encoded["issued_at"] = serde_json::json!(at(400));
+    encoded["expires_at"] = serde_json::json!(at(700));
+    let renewed = serde_json::from_value(encoded).unwrap();
+    assert!(issued.next().issue_preview(renewed, fence).is_err());
+}
+
+#[rstest]
 #[case::same_review(false, true)]
 #[case::policy_operation(true, false)]
 fn issued_preview_keeps_one_operation_identity(#[case] collide: bool, #[case] valid: bool) {

@@ -1147,7 +1147,7 @@
             }
           },
           "409": {
-            "description": "Policy or protection authority changed",
+            "description": "Policy or hold protection changed, or the preview expired before issuance",
             "content": {
               "application/json": {
                 "schema": {

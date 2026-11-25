@@ -416,13 +416,31 @@ fn removal_rechecks_current_eligibility_and_native_membership(
             },
         )
         .unwrap();
-        authority = authority
+        let principal = PrincipalIdentity::generate();
+        let preview = HistoryPolicyPreview::issue(
+            principal,
+            proposal.clone(),
+            snapshot.fence(),
+            snapshot.observed_at(),
+            HistoryPreviewImpact::new(HistoryPreviewCoverage::Complete, 0, 0, vec![]).unwrap(),
+        )
+        .unwrap();
+        let issued = snapshot
+            .control()
+            .issue_preview(preview.clone(), snapshot.fence())
+            .unwrap();
+        authority = issued
+            .next()
             .apply(
-                proposal,
-                PrincipalIdentity::generate(),
+                HistoryPolicyApplyRequest::new(proposal, Some(preview.reference().clone())),
+                principal,
+                snapshot.fence(),
                 snapshot.observed_at(),
             )
-            .unwrap();
+            .unwrap()
+            .next()
+            .authority()
+            .clone();
     }
     if mode == "hold" {
         authority = authority

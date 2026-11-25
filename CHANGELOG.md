@@ -443,6 +443,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- History policy previews return HTTP 409 if they expire or lose hold protection
+  before issuance commits. Recovery rejects retrospective policies whose original
+  review is missing or inconsistent with the cutoff, revision or hold history.
 - History recovery keeps the database quarantined when a restored checkpoint and
   local history disagree on whether policies, holds or size pressure authorized
   an expiry selection. Recovery checks each endpoint at the original selection

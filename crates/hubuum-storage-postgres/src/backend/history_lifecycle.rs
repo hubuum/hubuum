@@ -1057,10 +1057,11 @@ mod scan_tests {
     }
 
     #[rstest::rstest]
+    #[case::future_issuance(-10, HistoryPolicyReviewConflict::StalePreview)]
     #[case::expired_review(301, HistoryPolicyReviewConflict::PreviewExpired)]
     #[case::expired_hold(10, HistoryPolicyReviewConflict::StalePreview)]
     #[tokio::test]
-    async fn policy_commit_returns_the_locked_review_decision(
+    async fn preview_issuance_returns_the_locked_review_decision(
         #[case] elapsed: i64,
         #[case] expected: HistoryPolicyReviewConflict,
     ) {
@@ -1082,7 +1083,7 @@ mod scan_tests {
                     StorageIdentityHistoryKind::Object,
                     HistoryPolicyScope::Deployment,
                 )?;
-                if expected == HistoryPolicyReviewConflict::StalePreview {
+                if elapsed > 0 && expected == HistoryPolicyReviewConflict::StalePreview {
                     let hold = HistoryRetentionHold::new(
                         Uuid::new_v4(),
                         key,
@@ -1110,30 +1111,17 @@ mod scan_tests {
                 )?;
                 let preview = HistoryPolicyPreview::issue(
                     principal,
-                    proposal.clone(),
+                    proposal,
                     snapshot.fence(),
                     issued_at,
                     HistoryPreviewImpact::new(HistoryPreviewCoverage::Complete, 0, 0, vec![])?,
                 )?;
-                let issued = commit_on(
-                    connection,
-                    snapshot
-                        .control()
-                        .issue_preview(preview.clone(), snapshot.fence())?,
-                )
-                .await?;
-                let change = issued
+                let change = snapshot
                     .control()
-                    .apply(
-                        HistoryPolicyApplyRequest::new(proposal, Some(preview.reference().clone())),
-                        principal,
-                        issued.fence(),
-                        issued_at,
-                    )
-                    .unwrap();
+                    .issue_preview(preview, snapshot.fence())?;
                 let error = StorageError::from(commit_on(connection, change).await.unwrap_err());
                 assert_eq!(error.history_policy_review_conflict(), Some(expected));
-                assert_eq!(capture_on(connection).await?.control(), issued.control());
+                assert_eq!(capture_on(connection).await?.control(), snapshot.control());
                 connection
                     .batch_execute("ROLLBACK TO SAVEPOINT review_clock_fixture")
                     .await?;

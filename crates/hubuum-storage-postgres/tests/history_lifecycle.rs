@@ -343,30 +343,41 @@ async fn prepared_policy_rechecks_temporal_protection_before_commit(#[case] revi
         HistoryPreviewImpact::new(HistoryPreviewCoverage::Complete, 0, 0, vec![]).unwrap(),
     )
     .unwrap();
-    let issued = fixture
-        .storage
-        .commit_history_lifecycle(
-            snapshot
-                .control()
-                .issue_preview(preview.clone(), snapshot.fence())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let change = issued
+    // Model the registry as it was when the review was still valid.
+    let issued = snapshot
         .control()
+        .issue_preview(preview.clone(), snapshot.fence())
+        .unwrap();
+    with_transaction(&fixture.owner_pool, async |connection| {
+        owner(connection).await?;
+        let updated = sql_query("UPDATE hubuum_control.history_lifecycle_control SET material=$1 WHERE id=1 AND material=$2")
+            .bind::<Jsonb, _>(serde_json::to_value(issued.next()).unwrap())
+            .bind::<Jsonb, _>(serde_json::to_value(issued.expected()).unwrap())
+            .execute(connection).await?;
+        assert_eq!(updated, 1);
+        Ok::<_, PostgresStorageError>(())
+    }).await.unwrap();
+    let change = issued
+        .next()
         .apply(
             HistoryPolicyApplyRequest::new(proposal, Some(preview.reference().clone())),
             principal,
-            issued.fence(),
+            snapshot.fence(),
             prepared_at,
         )
         .unwrap();
     let result = fixture.storage.commit_history_lifecycle(change).await;
     let current = fixture.storage.capture_history_lifecycle().await.unwrap();
     fixture.restore().await;
-    assert!(matches!(result, Err(error) if error.kind() == StorageErrorKind::Conflict));
-    assert_eq!(current.control(), issued.control());
+    assert_eq!(
+        result.unwrap_err().history_policy_review_conflict(),
+        Some(if review_expired {
+            HistoryPolicyReviewConflict::PreviewExpired
+        } else {
+            HistoryPolicyReviewConflict::StalePreview
+        })
+    );
+    assert_eq!(current.control(), issued.next());
 }
 
 #[tokio::test]

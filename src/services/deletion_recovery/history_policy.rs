@@ -62,21 +62,16 @@ pub(crate) async fn preview(
     let storage = storage_handle(context);
     let snapshot = storage.capture_history_lifecycle().await?;
     let now = snapshot.observed_at();
-    if proposal.expected_policy_revision()
-        != snapshot
-            .control()
-            .authority()
-            .policies()
-            .current_revision(proposal.key())
+    let authority = snapshot.control().authority();
+    if proposal.expected_policy_revision() != authority.policies().current_revision(proposal.key())
     {
         return Err(ApiError::HistoryPolicyReview(
             HistoryPolicyReviewConflict::StalePreview,
         ));
     }
-    let proposed = snapshot
-        .control()
-        .authority()
-        .apply(proposal.clone(), principal, now)
+    let proposed = authority
+        .policies()
+        .append(proposal.clone(), principal, now)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let scan = HistoryLifecycleScan::new(proposal.key(), HistoryPreviewImpact::MAX_SCANNED)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
@@ -84,8 +79,8 @@ pub(crate) async fn preview(
     let mut samples = Vec::new();
     let mut eligible = 0;
     for candidate in scanned.candidates() {
-        let decision = proposed
-            .inspect(candidate, now, &[])
+        let decision = candidate
+            .inspect(&proposed, now, authority.holds(candidate, now), &[])
             .map_err(|error| ApiError::BadRequest(error.to_string()))?;
         eligible += u32::from(decision.eligible());
         if samples.len() < HistoryPreviewImpact::MAX_SAMPLES {

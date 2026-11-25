@@ -234,6 +234,21 @@ impl HistoryPolicyChange {
     pub const fn application(&self) -> &HistoryPolicyApplication {
         &self.application
     }
+    pub(super) fn validate_review_presence(
+        &self,
+        review: Option<&HistoryPolicyReviewEvidence>,
+    ) -> Result<(), StorageValidationError> {
+        if matches!(
+            self.application(),
+            HistoryPolicyApplication::Retrospective { .. }
+        ) && review.is_none()
+        {
+            return Err(invalid(
+                "Retrospective application requires an issued review",
+            ));
+        }
+        Ok(())
+    }
     pub fn validate_at(&self, now: DateTime<Utc>) -> Result<(), StorageValidationError> {
         if let HistoryPolicyApplication::Retrospective { closed_through } = &self.application
             && *closed_through > now

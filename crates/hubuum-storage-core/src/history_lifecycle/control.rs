@@ -159,7 +159,7 @@ impl HistoryLifecycleControl {
                 "Policy preview capacity exhausted",
             ));
         }
-        if next
+        if self
             .operation_evidence(preview.reference().preview_id())
             .is_some()
         {
@@ -190,41 +190,24 @@ impl HistoryLifecycleControl {
                 HistoryPolicyReviewConflict::StalePreview,
             ));
         }
-        match &request.review {
-            Some(reference) => {
-                let issued = self
-                    .previews
-                    .iter()
-                    .find(|preview| preview.reference().preview_id() == reference.preview_id())
-                    .ok_or(HistoryPolicyApplyError::Conflict(
-                        HistoryPolicyReviewConflict::InaccessiblePreview,
-                    ))?;
-                issued
-                    .validate_apply(principal, &request.proposal, reference, fence, now)
-                    .map_err(HistoryPolicyApplyError::Conflict)?;
-                self.validate_review_protection(issued.issued_at(), now)
-                    .map_err(HistoryPolicyApplyError::Conflict)?;
-            }
-            None if matches!(
-                request.proposal.application(),
-                HistoryPolicyApplication::Retrospective { .. }
-            ) =>
-            {
-                return Err(HistoryPolicyApplyError::Invalid(invalid(
-                    "Retrospective application requires an issued review",
-                )));
-            }
-            None => {}
-        }
-        let review = request
-            .review
-            .as_ref()
-            .and_then(|reference| {
-                self.previews
-                    .iter()
-                    .find(|preview| preview.reference() == reference)
-            })
-            .map(HistoryPolicyPreview::evidence);
+        let review = if let Some(reference) = &request.review {
+            let issued = self
+                .previews
+                .iter()
+                .find(|preview| preview.reference().preview_id() == reference.preview_id())
+                .ok_or(HistoryPolicyApplyError::Conflict(
+                    HistoryPolicyReviewConflict::InaccessiblePreview,
+                ))?;
+            issued
+                .validate_apply(principal, &request.proposal, reference, fence, now)
+                .map_err(HistoryPolicyApplyError::Conflict)?;
+            self.authority
+                .validate_review_protection(fence.authority_revision(), issued.issued_at(), now)
+                .map_err(HistoryPolicyApplyError::Conflict)?;
+            Some(issued.evidence())
+        } else {
+            None
+        };
         let mut next = self.clone();
         next.authority = self
             .authority
@@ -278,20 +261,6 @@ impl HistoryLifecycleControl {
             fence,
         })
     }
-    fn validate_review_protection(
-        &self,
-        issued_at: DateTime<Utc>,
-        now: DateTime<Utc>,
-    ) -> Result<(), HistoryPolicyReviewConflict> {
-        if self
-            .authority
-            .current_holds()
-            .any(|hold| hold.is_active(issued_at) && !hold.is_active(now))
-        {
-            return Err(HistoryPolicyReviewConflict::StalePreview);
-        }
-        Ok(())
-    }
 }
 impl Default for HistoryLifecycleControl {
     fn default() -> Self {
@@ -306,6 +275,11 @@ impl TryFrom<ControlInput> for HistoryLifecycleControl {
         }
         let mut ids = std::collections::BTreeSet::new();
         for preview in &value.previews {
+            if preview.fence().authority_revision() > value.authority.revision() {
+                return Err(invalid(
+                    "Issued preview refers to a future history authority revision",
+                ));
+            }
             let identity = preview.reference().preview_id();
             if !ids.insert(identity) {
                 return Err(invalid("Duplicate issued preview identity"));
@@ -395,7 +369,7 @@ impl HistoryLifecycleControlChange {
     pub fn authority_conflict(&self) -> StorageError {
         let appended = &self.next.authority.policies().records()
             [self.expected.authority.policies().records().len()..];
-        if appended.iter().any(|record| record.review().is_some()) {
+        if self.new_preview().is_some() || appended.iter().any(|record| record.review().is_some()) {
             StorageError::history_policy_review(HistoryPolicyReviewConflict::StalePreview)
         } else {
             StorageError::conflict("History policy authority or application incarnation changed")
@@ -409,6 +383,14 @@ impl HistoryLifecycleControlChange {
         &self,
         now: DateTime<Utc>,
     ) -> Result<(), HistoryPolicyReviewConflict> {
+        if let Some(preview) = self.new_preview() {
+            preview.validate_time(now)?;
+            self.expected.authority.validate_review_protection(
+                self.fence.authority_revision(),
+                preview.issued_at(),
+                now,
+            )?;
+        }
         for record in &self.next.authority.policies().records()
             [self.expected.authority.policies().records().len()..]
         {
@@ -426,8 +408,11 @@ impl HistoryLifecycleControlChange {
                     self.fence,
                     now,
                 )?;
-                self.expected
-                    .validate_review_protection(issued.issued_at(), now)?;
+                self.expected.authority.validate_review_protection(
+                    self.fence.authority_revision(),
+                    issued.issued_at(),
+                    now,
+                )?;
             }
         }
         Ok(())
@@ -491,6 +476,14 @@ impl HistoryLifecycleSnapshot {
             control.authority().revision(),
             deletion_revision,
         )?;
+        if control.previews().iter().any(|preview| {
+            preview.fence().incarnation() == incarnation
+                && preview.fence().deletion_revision() > deletion_revision
+        }) {
+            return Err(invalid(
+                "Issued preview refers to a future deletion revision in this incarnation",
+            ));
+        }
         Ok(Self {
             control,
             fence,
@@ -777,6 +770,17 @@ impl HistoryLifecycleRecovery {
 }
 
 impl HistoryLifecycleControlChange {
+    fn new_preview(&self) -> Option<&HistoryPolicyPreview> {
+        // Issuance prunes expired entries and appends one. All other typed
+        // transitions preserve the registry.
+        self.next.previews.last().filter(|preview| {
+            self.expected
+                .previews
+                .last()
+                .map(HistoryPolicyPreview::reference)
+                != Some(preview.reference())
+        })
+    }
     /// New authority and review scopes requiring existence validation inside the
     /// adapter transaction. Existing bindings remain governable after deletion.
     pub fn scopes_to_validate(&self) -> Vec<HistoryPolicyScope> {
@@ -791,13 +795,7 @@ impl HistoryLifecycleControlChange {
         {
             scopes.insert(entry.hold().key().scope());
         }
-        for preview in self.next.previews.iter().filter(|preview| {
-            !self
-                .expected
-                .previews
-                .iter()
-                .any(|old| old.reference() == preview.reference())
-        }) {
+        if let Some(preview) = self.new_preview() {
             scopes.insert(preview.proposal().key().scope());
         }
         scopes.into_iter().collect()

@@ -1010,7 +1010,7 @@ impl MemoryState {
 }
 
 #[cfg(test)]
-async fn install_expiry_read_fixture(
+async fn install_history_control_fixture(
     storage: &MemoryStorage,
     change: HistoryLifecycleControlChange,
 ) {
@@ -2023,7 +2023,7 @@ mod tests {
                 .unwrap(),
             HistoryExpirySelectionOutcome::Selected
         ));
-        install_expiry_read_fixture(
+        install_history_control_fixture(
             &storage,
             snapshot
                 .control()
@@ -2326,6 +2326,7 @@ mod tests {
     #[tokio::test]
     async fn prepared_policy_rechecks_temporal_protection_before_commit(
         #[case] review_expired: bool,
+        #[values(false, true)] applying: bool,
     ) {
         let storage = MemoryStorage::new();
         let principal = PrincipalIdentity::generate();
@@ -2374,24 +2375,26 @@ mod tests {
             HistoryPreviewImpact::new(HistoryPreviewCoverage::Complete, 0, 0, vec![]).unwrap(),
         )
         .unwrap();
-        let issued = storage
-            .commit_history_lifecycle(
-                snapshot
-                    .control()
-                    .issue_preview(preview.clone(), snapshot.fence())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let change = issued
+        let issuance = snapshot
             .control()
-            .apply(
-                HistoryPolicyApplyRequest::new(proposal, Some(preview.reference().clone())),
-                principal,
-                issued.fence(),
-                prepared_at,
-            )
+            .issue_preview(preview.clone(), snapshot.fence())
             .unwrap();
+        let change = if applying {
+            // Seed the review at the time it was valid, then exercise today's commit.
+            install_history_control_fixture(&storage, issuance.clone()).await;
+            issuance
+                .next()
+                .apply(
+                    HistoryPolicyApplyRequest::new(proposal, Some(preview.reference().clone())),
+                    principal,
+                    snapshot.fence(),
+                    prepared_at,
+                )
+                .unwrap()
+        } else {
+            issuance
+        };
+        let predecessor = change.expected().clone();
         let error = storage.commit_history_lifecycle(change).await.unwrap_err();
         assert_eq!(
             error.history_policy_review_conflict(),
@@ -2403,7 +2406,7 @@ mod tests {
         );
         assert_eq!(
             storage.capture_history_lifecycle().await.unwrap().control(),
-            issued.control()
+            &predecessor
         );
     }
 
@@ -3051,7 +3054,7 @@ mod online_read_tests {
     }
     async fn fixture() -> (MemoryStorage, MemoryHistoryEntry, RuntimeRegistration) {
         let (storage, entry, registration, change) = prepared_fixture().await;
-        install_expiry_read_fixture(&storage, change).await;
+        install_history_control_fixture(&storage, change).await;
         (storage, entry, registration)
     }
 
@@ -3100,7 +3103,7 @@ mod online_read_tests {
     ) {
         let (storage, closed, registration, change) = prepared_fixture().await;
         let last = add_exposure_inventory(&storage, &closed).await;
-        install_expiry_read_fixture(&storage, change).await;
+        install_history_control_fixture(&storage, change).await;
         {
             let mut state = storage.state.write_control().await;
             if mode == "current" {
@@ -3136,7 +3139,7 @@ mod online_read_tests {
     async fn quarantined_reapplication_verifies_large_dependency_inventory() {
         let (storage, closed, registration, change) = prepared_fixture().await;
         add_exposure_inventory(&storage, &closed).await;
-        install_expiry_read_fixture(&storage, change).await;
+        install_history_control_fixture(&storage, change).await;
         storage.unregister_runtime(registration).await.unwrap();
         let fence = {
             let mut state = storage.state.write_control().await;
@@ -3459,7 +3462,7 @@ mod online_read_tests {
     ) {
         let (storage, entry, registration, change) = prepared_fixture().await;
         if retained {
-            install_expiry_read_fixture(&storage, change).await;
+            install_history_control_fixture(&storage, change).await;
         }
         let original = entry
             .logical_identity
