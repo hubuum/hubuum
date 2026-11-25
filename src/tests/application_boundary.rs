@@ -789,6 +789,97 @@ fn is_storage_adapter(root: &Path, path: &Path) -> bool {
 }
 
 #[test]
+fn app_context_exposes_only_an_opaque_backend_handle() {
+    let root = repository_root();
+    let context_path = root.join("src/permissions/context.rs");
+    let context_source = read_source(&context_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", context_path.display()));
+    let trait_path = root.join("src/storage/context");
+    let trait_source = read_rust_module_tree(&trait_path);
+    let application_path = root.join("src/application.rs");
+    let application_source = read_source(&application_path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", application_path.display()));
+
+    assert!(
+        context_source.contains("backend: StorageHandle"),
+        "AppContext must own the opaque backend handle"
+    );
+    for forbidden in [
+        "pub db_pool:",
+        "pub fn postgres_pool",
+        "pub fn clone_postgres_pool",
+        "impl Deref for AppContext",
+        "hubuum_storage_postgres",
+        "PostgresPool",
+        "fn postgres",
+    ] {
+        assert!(
+            !context_source.contains(forbidden),
+            "AppContext exposes forbidden backend detail: {forbidden}"
+        );
+    }
+    let backend_context_body = trait_source
+        .split_once("pub trait StorageContext")
+        .and_then(|(_, remainder)| remainder.split_once("\n}"))
+        .map(|(body, _)| body)
+        .expect("StorageContext should have a readable trait body");
+    assert!(
+        !backend_context_body.contains("fn db_pool"),
+        "StorageContext must not expose a database-pool accessor"
+    );
+    for forbidden in ["PermissionBackend", "permission_backend"] {
+        assert!(
+            !backend_context_body.contains(forbidden),
+            "storage-only contexts must not select authorization policy: {forbidden}"
+        );
+    }
+    let backend_access_body = trait_source
+        .split_once("pub trait BackendAccess")
+        .and_then(|(_, remainder)| remainder.split_once("\n    }"))
+        .map(|(body, _)| body)
+        .expect("the sealed backend access trait should have a readable body");
+    assert!(
+        backend_access_body.contains("fn storage_handle(&self) -> StorageHandle"),
+        "storage contexts must preserve the already configured opaque handle"
+    );
+    for forbidden in ["PostgresPool", "postgres_pool", "db_pool"] {
+        assert!(
+            !backend_access_body.contains(forbidden),
+            "the sealed context contract exposes backend detail: {forbidden}"
+        );
+    }
+    assert!(
+        !application_source.contains(".app_data(Data::new(app_pool"),
+        "the production HTTP server must not register a raw database pool"
+    );
+    assert!(
+        !application_source.contains("pool: db::PostgresPool"),
+        "operational HTTP services must receive AppContext rather than PostgresPool"
+    );
+
+    assert_eq!(
+        trait_source
+            .matches("match &$handle.inner.implementation")
+            .count(),
+        1,
+        "backend selection must stay centralized in dispatch_backend"
+    );
+    assert!(
+        trait_source.contains("macro_rules! dispatch_backend"),
+        "the opaque handle must centralize exhaustive backend dispatch"
+    );
+    for test_only_compatibility in [
+        "#[cfg(any(test, feature = \"integration-test-support\"))]\nimpl private::BackendAccess for PostgresPool",
+        "#[cfg(any(test, feature = \"integration-test-support\"))]\nimpl StorageContext for PostgresPool",
+    ] {
+        assert!(
+            trait_source.contains(test_only_compatibility),
+            "concrete-pool context compatibility must remain test-only"
+        );
+    }
+}
+
+#[test]
 fn persistence_facades_do_not_reexport_internal_layers_wholesale() {
     let root = repository_root();
     let storage_path = root.join("src/storage/mod.rs");
