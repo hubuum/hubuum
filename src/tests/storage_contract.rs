@@ -5336,13 +5336,12 @@ async fn every_available_storage_backend_supplies_object_lifecycle() {
             .into_value();
         assert_eq!(updated.description(), "updated object lifecycle");
 
-        let patch_document = serde_json::from_value(serde_json::json!([
-            {"op": "replace", "path": "/value", "value": 2}
-        ]))
-        .expect("object lifecycle patch should be valid");
-        let patch: StorageObjectDataPatch =
-            crate::services::storage_boundary::object_patch_to_storage(patch_document)
-                .expect("object lifecycle patch should cross the storage boundary");
+        let patch_document: crate::models::ObjectDataPatchDocument =
+            serde_json::from_value(serde_json::json!([
+                {"op": "replace", "path": "/value", "value": 2}
+            ]))
+            .expect("object lifecycle patch should be valid");
+        let patch: StorageObjectDataPatch = patch_document.into();
         let updated_target = objects
             .get_object(created.id())
             .await

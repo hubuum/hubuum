@@ -7,9 +7,7 @@ use crate::models::{
     HubuumObject, NewHubuumObject, ObjectDataPatchDocument, ObjectSelector, ResolvedClassTarget,
     ResolvedObjectTarget, UpdateHubuumObject,
 };
-use crate::services::storage_boundary::{
-    object_from_storage, object_patch_to_storage, object_selector_to_storage,
-};
+use crate::services::storage_boundary::{object_from_storage, object_selector_to_storage};
 use crate::storage::ObjectStorage;
 
 /// Application-facing object resolution and lifecycle use cases.
@@ -72,7 +70,7 @@ impl ObjectService {
     ) -> Result<HubuumObject, ApiError> {
         let target = target.as_storage();
         self.storage
-            .patch_object_data(target, object_patch_to_storage(patch)?, context)
+            .patch_object_data(target, patch.into(), context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())

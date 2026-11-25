@@ -2,11 +2,10 @@ use crate::errors::ApiError;
 use crate::models::{
     ClassSelector, ClassSelectorKind, Collection, Group, HubuumClass, HubuumClassExpanded,
     HubuumClassRelation, HubuumObject, HubuumObjectRelation, NewHubuumClassRelation,
-    NewHubuumObjectRelation, ObjectDataPatchDocument, ObjectRelationCreateSelector,
-    ObjectRelationCreateSelectorKind, ObjectRelationEndpoint, ObjectRelationSelector,
-    ObjectRelationSelectorKind, ObjectSelector, ObjectSelectorKind, Principal, PrincipalGroup,
-    PrincipalSettings, PrincipalSettingsPatch, PrincipalSettingsResponse, TokenResourceScope,
-    TokenScope,
+    NewHubuumObjectRelation, ObjectRelationCreateSelector, ObjectRelationCreateSelectorKind,
+    ObjectRelationEndpoint, ObjectRelationSelector, ObjectRelationSelectorKind, ObjectSelector,
+    ObjectSelectorKind, Principal, PrincipalGroup, PrincipalSettings, PrincipalSettingsPatch,
+    PrincipalSettingsResponse, TokenResourceScope, TokenScope,
 };
 use crate::permissions::permission_to_storage;
 #[cfg(test)]
@@ -14,11 +13,11 @@ use crate::storage::StorageClassSchemaPolicy;
 use crate::storage::{
     StorageClass, StorageClassRelation, StorageClassRelationCreate, StorageClassSelector,
     StorageClassWithCollection, StorageCollection, StorageIdentityGroup, StorageObject,
-    StorageObjectDataPatch, StorageObjectRelation, StorageObjectRelationCreate,
-    StorageObjectRelationCreateSelector, StorageObjectRelationEndpoint,
-    StorageObjectRelationSelector, StorageObjectSelector, StoragePrincipal, StoragePrincipalGroup,
-    StoragePrincipalSettings, StoragePrincipalSettingsMutation, StorageRecordMetadata,
-    StorageResourceScope, StorageVisibility,
+    StorageObjectRelation, StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
+    StorageObjectRelationEndpoint, StorageObjectRelationSelector, StorageObjectSelector,
+    StoragePrincipal, StoragePrincipalGroup, StoragePrincipalSettings,
+    StoragePrincipalSettingsMutation, StorageRecordMetadata, StorageResourceScope,
+    StorageVisibility,
 };
 use hubuum_domain::{ClassId, ClassRelationId, CollectionId, ObjectId, PrincipalId, ResourceId};
 
@@ -337,12 +336,6 @@ pub(crate) fn object_selector_from_storage(
             object_name,
         } => ObjectSelector::by_name(class_name, object_name),
     })
-}
-
-pub(crate) fn object_patch_to_storage(
-    patch: ObjectDataPatchDocument,
-) -> Result<StorageObjectDataPatch, ApiError> {
-    Ok(StorageObjectDataPatch::new(patch.into_bounded_patch()))
 }
 
 #[cfg(test)]
