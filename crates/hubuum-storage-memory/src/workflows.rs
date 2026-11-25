@@ -810,15 +810,11 @@ impl TaskExecutionStorage for MemoryStorage {
         if !stored.status.is_active() || !stored.lease_matches(&lease) {
             return Err(invalid_task_lease());
         }
+        let phase = stored.control.phase();
         let now = Utc::now();
         if stored.control.stop_reason(now).is_some() {
             if let StorageTaskCompletionPayload::RemoteCall(artifact) = payload {
-                crate::backup::store_remote_call_result(
-                    &mut state,
-                    lease.task_id(),
-                    artifact,
-                    now,
-                )?;
+                state.store_remote_call_result(lease.task_id(), artifact, now, phase)?;
             }
             return state.finish_stopped_task(lease.task_id(), now, None);
         }
@@ -827,12 +823,7 @@ impl TaskExecutionStorage for MemoryStorage {
             | StorageTaskCompletionPayload::Reindex
             | StorageTaskCompletionPayload::SchemaValidation => {}
             StorageTaskCompletionPayload::RemoteCall(artifact) => {
-                crate::backup::store_remote_call_result(
-                    &mut state,
-                    lease.task_id(),
-                    artifact,
-                    now,
-                )?;
+                state.store_remote_call_result(lease.task_id(), artifact, now, phase)?;
             }
             StorageTaskCompletionPayload::SchemaProfiling(artifact) => {
                 let task = state
