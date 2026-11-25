@@ -12,8 +12,7 @@ use crate::models::object::{
 use crate::models::object_data_patch::ObjectDataPatchDocument;
 use crate::models::search::{FilterField, SortParam};
 use crate::services::storage_boundary::{
-    collection_from_storage, object_from_storage, object_patch_to_storage,
-    object_selector_to_storage, object_to_storage,
+    collection_from_storage, object_from_storage, object_selector_to_storage, object_to_storage,
 };
 use crate::storage::{StorageClassSelector, StorageContext, storage_handle};
 use crate::traits::accessors::{ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter};
@@ -309,7 +308,7 @@ impl PatchObjectData for ObjectDataPatchDocument {
         let target = target.as_storage();
         storage_handle(backend)
             .object_store()
-            .patch_object_data(target, object_patch_to_storage(self.clone())?, context)
+            .patch_object_data(target, self.clone().into(), context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
