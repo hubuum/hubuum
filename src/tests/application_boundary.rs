@@ -974,5 +974,7 @@ fn actix_http2_stays_disabled_until_its_h2_dependency_is_fixed() {
     );
 }
 
+#[cfg(test)]
 mod composition;
+#[cfg(test)]
 mod postgres;
