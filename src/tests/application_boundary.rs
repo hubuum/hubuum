@@ -868,12 +868,13 @@ fn app_context_exposes_only_an_opaque_backend_handle() {
         trait_source.contains("macro_rules! dispatch_backend"),
         "the opaque handle must centralize exhaustive backend dispatch"
     );
+    let factory = read_source(&root.join("src/storage/factory.rs")).unwrap();
     for test_only_compatibility in [
         "#[cfg(any(test, feature = \"integration-test-support\"))]\nimpl private::BackendAccess for PostgresPool",
         "#[cfg(any(test, feature = \"integration-test-support\"))]\nimpl StorageContext for PostgresPool",
     ] {
         assert!(
-            trait_source.contains(test_only_compatibility),
+            factory.contains(test_only_compatibility),
             "concrete-pool context compatibility must remain test-only"
         );
     }
