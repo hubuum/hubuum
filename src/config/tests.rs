@@ -1,4 +1,5 @@
-use std::{collections::BTreeSet, env, ffi::OsString};
+use super::test_environment::EnvVarGuard;
+use std::collections::BTreeSet;
 
 use clap::Parser;
 use hubuum_domain::ResourceRevision;
@@ -44,33 +45,6 @@ fn server_preserves_explicit_database_url_provenance() {
         parsed.database_url_override.unwrap().as_str(),
         "postgres://cli/db"
     );
-}
-
-struct EnvVarGuard {
-    key: &'static str,
-    original: Option<OsString>,
-}
-
-impl EnvVarGuard {
-    fn set(key: &'static str, value: Option<&str>) -> Self {
-        let original = env::var_os(key);
-
-        match value {
-            Some(value) => unsafe { env::set_var(key, value) },
-            None => unsafe { env::remove_var(key) },
-        }
-
-        Self { key, original }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        match &self.original {
-            Some(value) => unsafe { env::set_var(self.key, value) },
-            None => unsafe { env::remove_var(self.key) },
-        }
-    }
 }
 
 #[test]

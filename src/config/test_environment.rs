@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use std::{env, ffi::OsString};
 
 pub(super) fn get_config_from_env() -> Result<AppConfig, ApiError> {
     use std::env;
@@ -584,4 +586,34 @@ pub(super) fn get_config_from_env() -> Result<AppConfig, ApiError> {
     };
 
     config.validate()
+}
+
+#[cfg(test)]
+pub(super) struct EnvVarGuard {
+    key: &'static str,
+    original: Option<OsString>,
+}
+
+#[cfg(test)]
+impl EnvVarGuard {
+    pub(super) fn set(key: &'static str, value: Option<&str>) -> Self {
+        let original = env::var_os(key);
+
+        match value {
+            Some(value) => unsafe { env::set_var(key, value) },
+            None => unsafe { env::remove_var(key) },
+        }
+
+        Self { key, original }
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(value) => unsafe { env::set_var(self.key, value) },
+            None => unsafe { env::remove_var(self.key) },
+        }
+    }
 }
