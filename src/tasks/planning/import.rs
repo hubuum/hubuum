@@ -59,15 +59,14 @@ impl<C: AuthorizationContext, S: AuthzSubject> ImportPlanner<'_, C, S> {
         let planned_items = &mut self.outcome.planned_items;
         let aborted = &mut self.outcome.aborted;
         let state = &mut self.state;
+        let mut scope_names_by_ref = HashMap::new();
         for input in &request.graph.identity_scopes {
             if control::checkpoint().is_err() {
                 *aborted = true;
                 break;
             }
             if let Some(reference) = &input.ref_ {
-                state
-                    .planned_identity_scope_names_by_ref
-                    .insert(reference.clone(), input.name.clone());
+                scope_names_by_ref.insert(reference, input.name.as_str());
             }
             planned_items.push(plan_system_item(
                 "identity_scope",
@@ -90,10 +89,9 @@ impl<C: AuthorizationContext, S: AuthzSubject> ImportPlanner<'_, C, S> {
                 .map(|key| key.name.clone())
                 .or_else(|| {
                     input.identity_scope_ref.as_ref().and_then(|reference| {
-                        state
-                            .planned_identity_scope_names_by_ref
+                        scope_names_by_ref
                             .get(reference)
-                            .cloned()
+                            .map(|name| name.to_string())
                     })
                 });
             if let Some(scope) = &scope {
@@ -426,9 +424,7 @@ pub(super) async fn plan_import_with_admin_status<C: AuthorizationContext>(
     request: &ImportRequest,
     admin_status: ImportAdminStatus,
 ) -> PlanningOutcome {
-    let mut state = PlanningState::new();
-    state.scopes = scopes.cloned();
-    state.admin_status = admin_status;
+    let state = PlanningState::new(ImportAuthorization::new(scopes, admin_status));
     let mut planner = ImportPlanner {
         backend,
         user,
@@ -443,7 +439,10 @@ pub(super) async fn plan_import_with_admin_status<C: AuthorizationContext>(
     };
     if extended_graph_items(request) > 0 {
         let authorized = scopes.is_none()
-            && is_import_admin(backend, user, &mut planner.state)
+            && planner
+                .state
+                .authorization
+                .is_admin(backend, user)
                 .await
                 .unwrap_or(false);
         if !authorized {

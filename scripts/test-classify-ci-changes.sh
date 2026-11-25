@@ -57,7 +57,7 @@ for transport_path in tests/python/integration/event_transports.py tests/python/
   assert_flag "$transport_output" code true
 done
 
-for authorization_path in src/tests/permissions/candidate_paging.rs \
+for authorization_path in src/tasks/import_authorization.rs src/tests/permissions/candidate_paging.rs \
   src/tests/storage_contract/history_access.rs src/services/remote_targets/invocation.rs \
   src/services/history/computed.rs src/tests/storage_contract/history_computed.rs src/api/v1/handlers/classes/history_computed.rs \
   src/api/v1/handlers/classes/history_relations.rs src/tests/storage_contract/history_relations.rs \
@@ -67,6 +67,11 @@ for authorization_path in src/tests/permissions/candidate_paging.rs \
   authorization_output="$(bash "$classifier" "$authorization_path")"
   assert_flag "$authorization_output" code true
   assert_flag "$authorization_output" treetop_conformance true
+done
+
+for planner_test in src/tasks/tests/import_execution.rs src/tasks/tests/import_planning.rs; do
+  planner_output="$(bash "$classifier" "$planner_test")"
+  assert_flag "$planner_output" rust true
 done
 
 for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs src/models/runtime_settings/discovery.rs; do
