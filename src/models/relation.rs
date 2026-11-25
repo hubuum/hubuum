@@ -2,10 +2,11 @@ use crate::permissions::ClassResourceEndpoint;
 use crate::permissions::ObjectResourceEndpoint;
 #[cfg(test)]
 use crate::services::storage_boundary::{
-    class_record_to_storage, class_relation_to_storage, object_relation_create_to_storage,
-    object_relation_to_storage, object_to_storage,
+    class_record_to_storage, class_relation_to_storage, object_relation_to_storage,
+    object_to_storage,
 };
 use hubuum_storage_core::{StorageClassRelationCreate, StorageObjectRelationCreate};
+use hubuum_storage_core::{StorageObjectRelationCreateSelector, StorageObjectRelationSelector};
 
 use crate::storage::{
     StoragePreparedClassRelation, StoragePreparedObjectRelation, StorageResolvedClassRelation,
@@ -404,6 +405,18 @@ pub struct NewHubuumObjectRelation {
     pub class_relation_id: i32,
 }
 
+impl TryFrom<NewHubuumObjectRelation> for StorageObjectRelationCreate {
+    type Error = ApiError;
+
+    fn try_from(command: NewHubuumObjectRelation) -> Result<Self, Self::Error> {
+        Ok(Self::new(
+            HubuumObjectID::new(command.from_hubuum_object_id)?,
+            HubuumObjectID::new(command.to_hubuum_object_id)?,
+            HubuumClassRelationID::new(command.class_relation_id)?,
+        ))
+    }
+}
+
 impl From<StorageObjectRelationCreate> for NewHubuumObjectRelation {
     fn from(command: StorageObjectRelationCreate) -> Self {
         Self {
@@ -434,53 +447,25 @@ impl NewHubuumObjectRelation {
 }
 
 /// One typed endpoint of an object relation route.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ObjectRelationEndpoint {
-    class_id: HubuumClassID,
-    object_id: HubuumObjectID,
-}
-
-impl ObjectRelationEndpoint {
-    pub fn new(class_id: HubuumClassID, object_id: HubuumObjectID) -> Self {
-        Self {
-            class_id,
-            object_id,
-        }
-    }
-
-    pub fn class_id(self) -> HubuumClassID {
-        self.class_id
-    }
-
-    pub fn object_id(self) -> HubuumObjectID {
-        self.object_id
-    }
-}
+pub use hubuum_storage_core::StorageObjectRelationEndpoint as ObjectRelationEndpoint;
 
 /// Explicit address for a persisted object relation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ObjectRelationSelector(ObjectRelationSelectorKind);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ObjectRelationSelectorKind {
-    ById(HubuumObjectRelationID),
-    Between {
-        from: ObjectRelationEndpoint,
-        to: ObjectRelationEndpoint,
-    },
-}
+pub struct ObjectRelationSelector(StorageObjectRelationSelector);
 
 impl ObjectRelationSelector {
     pub fn by_id(id: HubuumObjectRelationID) -> Self {
-        Self(ObjectRelationSelectorKind::ById(id))
+        Self(StorageObjectRelationSelector::Id(id))
     }
 
     pub fn between(from: ObjectRelationEndpoint, to: ObjectRelationEndpoint) -> Self {
-        Self(ObjectRelationSelectorKind::Between { from, to })
+        Self(StorageObjectRelationSelector::Between { from, to })
     }
+}
 
-    pub(crate) fn kind(&self) -> &ObjectRelationSelectorKind {
-        &self.0
+impl From<ObjectRelationSelector> for StorageObjectRelationSelector {
+    fn from(selector: ObjectRelationSelector) -> Self {
+        selector.0
     }
 }
 
@@ -489,7 +474,7 @@ impl ObjectRelationSelector {
 pub struct ObjectRelationCreateSelector(ObjectRelationCreateSelectorKind);
 
 #[derive(Clone, Debug)]
-pub(crate) enum ObjectRelationCreateSelectorKind {
+enum ObjectRelationCreateSelectorKind {
     Explicit(NewHubuumObjectRelation),
     Between {
         from: ObjectRelationEndpoint,
@@ -505,9 +490,18 @@ impl ObjectRelationCreateSelector {
     pub fn between(from: ObjectRelationEndpoint, to: ObjectRelationEndpoint) -> Self {
         Self(ObjectRelationCreateSelectorKind::Between { from, to })
     }
+}
 
-    pub(crate) fn kind(&self) -> &ObjectRelationCreateSelectorKind {
-        &self.0
+impl TryFrom<ObjectRelationCreateSelector> for StorageObjectRelationCreateSelector {
+    type Error = ApiError;
+
+    fn try_from(selector: ObjectRelationCreateSelector) -> Result<Self, Self::Error> {
+        Ok(match selector.0 {
+            ObjectRelationCreateSelectorKind::Explicit(command) => {
+                Self::Explicit(command.try_into()?)
+            }
+            ObjectRelationCreateSelectorKind::Between { from, to } => Self::Between { from, to },
+        })
     }
 }
 
@@ -604,7 +598,7 @@ impl PreparedObjectRelation {
         let command = command.normalized()?;
         validate_object_relation_membership(&command, &from_object, &to_object, &class_relation)?;
         let storage = StoragePreparedObjectRelation::try_new(
-            object_relation_create_to_storage(command.clone())?,
+            command.clone().try_into()?,
             object_to_storage(from_object.clone())?,
             object_to_storage(to_object.clone())?,
             class_relation.as_storage().clone(),

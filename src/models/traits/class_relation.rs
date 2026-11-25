@@ -12,9 +12,6 @@ use crate::models::{
     ResolvedClassRelationTarget, ResolvedObjectRelationTarget,
 };
 
-use crate::services::storage_boundary::{
-    object_relation_create_selector_to_storage, object_relation_selector_to_storage,
-};
 use crate::services::{prepare_and_create_class_relation, resolve_and_delete_class_relation};
 use crate::storage::{StorageContext, storage_handle};
 use crate::traits::accessors::{
@@ -56,9 +53,9 @@ async fn prepare_object_relation(
 ) -> Result<PreparedObjectRelation, ApiError> {
     storage_handle(backend)
         .object_relation_store()
-        .prepare_object_relation(object_relation_create_selector_to_storage(
-            ObjectRelationCreateSelector::explicit(command.clone()),
-        )?)
+        .prepare_object_relation(
+            ObjectRelationCreateSelector::explicit(command.clone()).try_into()?,
+        )
         .await
         .map_err(ApiError::from)
         .map(PreparedObjectRelation::from)
@@ -70,9 +67,7 @@ async fn resolve_object_relation(
 ) -> Result<ResolvedObjectRelationTarget, ApiError> {
     storage_handle(backend)
         .object_relation_store()
-        .resolve_object_relation(object_relation_selector_to_storage(
-            ObjectRelationSelector::by_id(id),
-        ))
+        .resolve_object_relation(ObjectRelationSelector::by_id(id).into())
         .await
         .map_err(ApiError::from)
         .map(ResolvedObjectRelationTarget::from)

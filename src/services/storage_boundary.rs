@@ -1,25 +1,26 @@
 use crate::errors::ApiError;
 use crate::models::{
-    Collection, HubuumClassExpanded, HubuumObject, NewHubuumObjectRelation,
-    ObjectRelationCreateSelector, ObjectRelationCreateSelectorKind, ObjectRelationEndpoint,
-    ObjectRelationSelector, ObjectRelationSelectorKind, PrincipalSettings, PrincipalSettingsPatch,
+    Collection, HubuumClassExpanded, HubuumObject, PrincipalSettings, PrincipalSettingsPatch,
     PrincipalSettingsResponse, TokenResourceScope, TokenScope,
 };
 #[cfg(test)]
 use crate::models::{HubuumClass, HubuumClassRelation, HubuumObjectRelation};
 use crate::permissions::permission_to_storage;
 #[cfg(test)]
+use crate::storage::StorageObjectRelationCreate;
+#[cfg(test)]
 use crate::storage::{
     StorageClass, StorageClassRelation, StorageClassRelationCreate, StorageClassSchemaPolicy,
     StorageClassSelector, StorageCollection, StorageObjectRelation, StorageObjectSelector,
 };
 use crate::storage::{
-    StorageClassWithCollection, StorageObject, StorageObjectRelationCreate,
-    StorageObjectRelationCreateSelector, StorageObjectRelationEndpoint,
-    StorageObjectRelationSelector, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
-    StorageRecordMetadata, StorageResourceScope, StorageVisibility,
+    StorageClassWithCollection, StorageObject, StoragePrincipalSettings,
+    StoragePrincipalSettingsMutation, StorageRecordMetadata, StorageResourceScope,
+    StorageVisibility,
 };
-use hubuum_domain::{ClassId, ClassRelationId, CollectionId, ObjectId, PrincipalId, ResourceId};
+use hubuum_domain::{ClassId, CollectionId, PrincipalId, ResourceId};
+#[cfg(test)]
+use hubuum_domain::{ClassRelationId, ObjectId};
 
 pub(super) fn visibility(
     principal_id: i32,
@@ -213,92 +214,6 @@ pub(crate) fn object_relation_to_storage(
         ClassRelationId::new(relation.class_relation_id)?,
     )
     .map_err(|error| ApiError::InternalServerError(error.to_string()))
-}
-
-fn relation_endpoint_to_storage(endpoint: ObjectRelationEndpoint) -> StorageObjectRelationEndpoint {
-    StorageObjectRelationEndpoint::new(endpoint.class_id(), endpoint.object_id())
-}
-
-#[cfg(test)]
-fn relation_endpoint_from_storage(
-    endpoint: StorageObjectRelationEndpoint,
-) -> Result<ObjectRelationEndpoint, ApiError> {
-    Ok(ObjectRelationEndpoint::new(
-        endpoint.class_id(),
-        endpoint.object_id(),
-    ))
-}
-
-pub(crate) fn object_relation_create_to_storage(
-    command: NewHubuumObjectRelation,
-) -> Result<StorageObjectRelationCreate, ApiError> {
-    Ok(StorageObjectRelationCreate::new(
-        ObjectId::new(command.from_hubuum_object_id)?,
-        ObjectId::new(command.to_hubuum_object_id)?,
-        ClassRelationId::new(command.class_relation_id)?,
-    ))
-}
-
-pub(crate) fn object_relation_create_selector_to_storage(
-    selector: ObjectRelationCreateSelector,
-) -> Result<StorageObjectRelationCreateSelector, ApiError> {
-    Ok(match selector.kind() {
-        ObjectRelationCreateSelectorKind::Explicit(command) => {
-            StorageObjectRelationCreateSelector::Explicit(object_relation_create_to_storage(
-                command.clone(),
-            )?)
-        }
-        ObjectRelationCreateSelectorKind::Between { from, to } => {
-            StorageObjectRelationCreateSelector::Between {
-                from: relation_endpoint_to_storage(*from),
-                to: relation_endpoint_to_storage(*to),
-            }
-        }
-    })
-}
-
-#[cfg(test)]
-pub(crate) fn object_relation_create_selector_from_storage(
-    selector: StorageObjectRelationCreateSelector,
-) -> Result<ObjectRelationCreateSelector, ApiError> {
-    Ok(match selector {
-        StorageObjectRelationCreateSelector::Explicit(command) => {
-            ObjectRelationCreateSelector::explicit(command.into())
-        }
-        StorageObjectRelationCreateSelector::Between { from, to } => {
-            ObjectRelationCreateSelector::between(
-                relation_endpoint_from_storage(from)?,
-                relation_endpoint_from_storage(to)?,
-            )
-        }
-    })
-}
-
-pub(crate) fn object_relation_selector_to_storage(
-    selector: ObjectRelationSelector,
-) -> StorageObjectRelationSelector {
-    match selector.kind() {
-        ObjectRelationSelectorKind::ById(id) => StorageObjectRelationSelector::Id(*id),
-        ObjectRelationSelectorKind::Between { from, to } => {
-            StorageObjectRelationSelector::Between {
-                from: relation_endpoint_to_storage(*from),
-                to: relation_endpoint_to_storage(*to),
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn object_relation_selector_from_storage(
-    selector: StorageObjectRelationSelector,
-) -> Result<ObjectRelationSelector, ApiError> {
-    Ok(match selector {
-        StorageObjectRelationSelector::Id(id) => ObjectRelationSelector::by_id(id),
-        StorageObjectRelationSelector::Between { from, to } => ObjectRelationSelector::between(
-            relation_endpoint_from_storage(from)?,
-            relation_endpoint_from_storage(to)?,
-        ),
-    })
 }
 
 #[cfg(test)]

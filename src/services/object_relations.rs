@@ -7,9 +7,6 @@ use crate::models::{
     ObjectRelationCreateSelector, ObjectRelationSelector, PreparedObjectRelation,
     ResolvedObjectRelationTarget,
 };
-use crate::services::storage_boundary::{
-    object_relation_create_selector_to_storage, object_relation_selector_to_storage,
-};
 use crate::storage::{
     ObjectRelationStorage, StorageError, StorageMutationOutcome, StorageObjectRelation,
     StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
@@ -60,7 +57,7 @@ impl ObjectRelationService {
         selector: ObjectRelationCreateSelector,
     ) -> Result<PreparedObjectRelation, ApiError> {
         self.storage
-            .prepare_object_relation(object_relation_create_selector_to_storage(selector)?)
+            .prepare_object_relation(selector.try_into()?)
             .await
             .map_err(ApiError::from)
             .map(PreparedObjectRelation::from)
@@ -71,7 +68,7 @@ impl ObjectRelationService {
         selector: ObjectRelationSelector,
     ) -> Result<ResolvedObjectRelationTarget, ApiError> {
         self.storage
-            .resolve_object_relation(object_relation_selector_to_storage(selector))
+            .resolve_object_relation(selector.into())
             .await
             .map_err(ApiError::from)
             .map(ResolvedObjectRelationTarget::from)
@@ -449,13 +446,12 @@ mod tests {
         let lifecycle = &harness.services.object_relations().storage;
         let created = prepare_and_create_object_relation(
             lifecycle.as_ref(),
-            crate::services::storage_boundary::object_relation_create_to_storage(
-                NewHubuumObjectRelation {
-                    from_hubuum_object_id: fixture.from_object.id,
-                    to_hubuum_object_id: fixture.to_object.id,
-                    class_relation_id: fixture.class_relation.relation().id.id(),
-                },
-            )
+            NewHubuumObjectRelation {
+                from_hubuum_object_id: fixture.from_object.id,
+                to_hubuum_object_id: fixture.to_object.id,
+                class_relation_id: fixture.class_relation.relation().id.id(),
+            }
+            .try_into()
             .expect("valid fixture command"),
             &EventContext::system(),
         )
