@@ -60,33 +60,15 @@ impl HistoryPolicyCatalog {
             .ok_or_else(|| invalid("Unknown immutable history policy revision"))?;
         Ok(HistoryEffectivePolicy::from_record(record))
     }
-    /// Reviewed changes retain their exact authority fence. Unreviewed policies
-    /// retain their catalog order only. All endpoints in a batch must agree on
-    /// one possible catalog prefix at the original selection fence.
+    /// All endpoints in a batch must agree on one catalog prefix permitted
+    /// by the retained authority at the original selection fence.
     pub(super) fn validate_selection(
         &self,
         manifest: &HistoryExpiryManifest,
-        possible_nonpolicy_decisions: usize,
+        first: usize,
+        last: usize,
     ) -> Result<(), StorageValidationError> {
-        let fence = manifest.fence().authority_revision().value();
-        let mut first = fence
-            .saturating_sub(possible_nonpolicy_decisions as u64)
-            .max(1);
-        let mut last = fence.min(self.0.len() as u64);
-        for (index, record) in self.0.iter().enumerate() {
-            if let Some(review) = record.review() {
-                let before_review = review.fence().authority_revision().value();
-                let preceding_policies = index as u64;
-                // Each intervening policy consumes one authority revision.
-                if before_review < fence {
-                    first = first.max(preceding_policies + 1);
-                    last = last.min(preceding_policies + (fence - before_review));
-                } else {
-                    first = first.max(preceding_policies.saturating_sub(before_review - fence));
-                    last = last.min(preceding_policies);
-                }
-            }
-        }
+        let first = first.max(1);
         if first > last {
             return Err(invalid(
                 "Retained expiry has no possible policy catalog at selection",
@@ -94,14 +76,12 @@ impl HistoryPolicyCatalog {
         }
         // Changes to other families cannot alter any endpoint in this manifest.
         // Keep only the distinct family catalog states in the possible range.
-        let records: Vec<_> = self.0[..last as usize]
+        let records: Vec<_> = self.0[..last]
             .iter()
             .enumerate()
             .filter(|(_, record)| record.proposal().key().family() == manifest.key().family())
             .collect();
-        let first = records
-            .partition_point(|(index, _)| *index < first as usize)
-            .max(1);
+        let first = records.partition_point(|(index, _)| *index < first).max(1);
         if first > records.len() {
             return Err(invalid(
                 "Retained expiry references an absent policy family",

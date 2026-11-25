@@ -443,6 +443,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- History recovery rejects missing policy revisions and expiry selections or
+  size-pressure observations that cite a policy before it could have existed.
+  Policy previews also reject eligibility counts that contradict their samples.
 - History policy previews return HTTP 409 if they expire or lose hold protection
   before issuance commits. Recovery rejects retrospective policies whose original
   review is missing or inconsistent with the cutoff, revision or hold history.

@@ -150,6 +150,23 @@ fn upper_threshold_is_strict(#[case] bytes: u64, #[case] reclaiming: bool) {
 }
 
 #[rstest]
+#[case::after_policy("2", true)]
+#[case::before_policy("1", false)]
+fn recovered_size_episode_requires_its_policy_at_the_observation_revision(
+    #[case] revision: &str,
+    #[case] valid: bool,
+) {
+    let (snapshot, policy) = fixture(StorageIdentityHistoryKind::Object);
+    let started = apply(&snapshot, &mut measure(&snapshot, &policy, 101));
+    let mut material = serde_json::to_value(started.control()).unwrap();
+    material["authority"]["size_transitions"][0]["revision"] = revision.into();
+    assert_eq!(
+        serde_json::from_value::<HistoryLifecycleControl>(material).is_ok(),
+        valid
+    );
+}
+
+#[rstest]
 #[case::current(false)]
 #[case::old_receipt(true)]
 fn pressure_replay_uses_the_recorded_policy_id_convention(#[case] legacy: bool) {

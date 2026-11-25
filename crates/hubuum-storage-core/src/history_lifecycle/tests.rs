@@ -63,6 +63,68 @@ fn candidate(
     )
     .unwrap()
 }
+
+#[rstest]
+#[case::contiguous("1", "2", true)]
+#[case::missing_first("2", "3", false)]
+#[case::missing_middle("1", "3", false)]
+fn recovered_policy_catalog_accounts_for_every_revision(
+    #[case] first: &str,
+    #[case] second: &str,
+    #[case] valid: bool,
+) {
+    let first_catalog = apply(
+        &HistoryPolicyCatalog::default(),
+        HistoryPolicyScope::Deployment,
+        age(0),
+        HistoryPolicyApplication::Prospective,
+        1,
+    );
+    let catalog = apply(
+        &first_catalog,
+        HistoryPolicyScope::Collection {
+            identity: resource(),
+        },
+        age(0),
+        HistoryPolicyApplication::Prospective,
+        2,
+    );
+    let mut policies = serde_json::to_value(catalog).unwrap();
+    policies[0]["revision"] = first.into();
+    policies[1]["revision"] = second.into();
+    let authority = serde_json::json!({"revision":"2", "holds":[], "policies":policies});
+    assert_eq!(
+        serde_json::from_value::<HistoryLifecycleAuthority>(authority).is_ok(),
+        valid
+    );
+}
+
+#[rstest]
+#[case::eligible_sample_counted(true, 1, true)]
+#[case::eligible_sample_omitted(true, 0, false)]
+#[case::blocked_sample_counted(false, 2, false)]
+#[case::unsampled_row_eligible(false, 1, true)]
+fn preview_totals_agree_with_the_sample(
+    #[case] eligible: bool,
+    #[case] reported: u32,
+    #[case] valid: bool,
+) {
+    let catalog = apply(
+        &HistoryPolicyCatalog::default(),
+        HistoryPolicyScope::Deployment,
+        age(0),
+        HistoryPolicyApplication::Prospective,
+        1,
+    );
+    let row = candidate(
+        vec![HistoryScopeAttribution::new(resource(), None)],
+        Some(HistoryRetentionAnchor::Closed(at(2))),
+    );
+    let sample = row.inspect(&catalog, at(3), !eligible, &[]).unwrap();
+    let impact =
+        HistoryPreviewImpact::new(HistoryPreviewCoverage::Bounded, 2, reported, vec![sample]);
+    assert_eq!(impact.is_ok(), valid);
+}
 #[rstest]
 #[case(50, 100, false)]
 #[case(100, 100, false)]

@@ -1391,6 +1391,115 @@ mod tests {
         .unwrap()
     }
 
+    fn with_prospective_replacement(
+        snapshot: &HistoryLifecycleSnapshot,
+        binding: HistoryPolicyBinding,
+    ) -> HistoryLifecycleSnapshot {
+        let catalog = snapshot.control().authority().policies();
+        let replacement = HistoryPolicyChange::new(
+            key(),
+            catalog.current_revision(key()),
+            binding,
+            HistoryPolicyApplication::Prospective,
+        )
+        .unwrap();
+        let change = snapshot
+            .control()
+            .apply(
+                HistoryPolicyApplyRequest::new(replacement, None),
+                PrincipalIdentity::generate(),
+                snapshot.fence(),
+                at(101),
+            )
+            .unwrap();
+        after_change(snapshot, change)
+    }
+
+    #[rstest]
+    #[case::policy_present("3", true)]
+    #[case::hold_occupies_second_revision("2", false)]
+    fn retained_selection_requires_room_for_its_policy_at_the_fence(
+        #[case] selected_revision: &str,
+        #[case] valid: bool,
+    ) {
+        let initial = snapshot();
+        let principal = PrincipalIdentity::generate();
+        let other_key = HistoryPolicyKey::new(
+            StorageIdentityHistoryKind::Class,
+            HistoryPolicyScope::Deployment,
+        )
+        .unwrap();
+        let hold =
+            HistoryRetentionHold::new(Uuid::new_v4(), other_key, at(100), None, principal).unwrap();
+        let held = after_change(
+            &initial,
+            initial
+                .control()
+                .create_hold(hold, initial.fence())
+                .unwrap(),
+        );
+        let first = &held.control().authority().policies().records()[0];
+        let applied = with_prospective_replacement(&held, first.proposal().binding().clone());
+        let admitted = applied
+            .control()
+            .admit_expiry(manifest(&applied), applied.fence())
+            .unwrap();
+        let mut material = serde_json::to_value(admitted.next()).unwrap();
+        material["authority"]["expiry"][0]["manifest"]["fence"]["authority_revision"] =
+            selected_revision.into();
+        assert_eq!(
+            serde_json::from_value::<HistoryLifecycleControl>(material).is_ok(),
+            valid
+        );
+    }
+
+    #[rstest]
+    #[case::selection_before_replacement(1, true)]
+    #[case::selection_after_replacement(2, false)]
+    fn recovered_pressure_dates_its_unreviewed_source_policy(
+        #[case] batches: usize,
+        #[case] compatible: bool,
+    ) {
+        let common = snapshot();
+        let mut selected = common.clone();
+        for _ in 0..batches {
+            let change = selected
+                .control()
+                .admit_expiry(manifest(&selected), selected.fence())
+                .unwrap();
+            selected = after_change(&selected, change);
+        }
+
+        let changed = with_prospective_replacement(
+            &common,
+            HistoryPolicyBinding::Expire {
+                trigger: HistoryExpiryTrigger::LogicalSize {
+                    upper_logical_bytes: HistoryLogicalBytes::new(100).unwrap(),
+                    lower_logical_bytes: HistoryLogicalBytes::new(50).unwrap(),
+                },
+                minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+            },
+        );
+        let source =
+            HistoryPolicyReference::from(&changed.control().authority().policies().records()[1]);
+        let mut census = HistorySizeCensus::new(changed.clone(), &source).unwrap();
+        census
+            .observe(
+                Some(&candidate(Some(HistoryRetentionAnchor::Closed(at(110))))),
+                HistoryLogicalBytes::new(101).unwrap(),
+                1,
+            )
+            .unwrap();
+        let pressure = changed
+            .control()
+            .observe_size(&mut census.finish().unwrap(), PrincipalIdentity::generate())
+            .unwrap();
+        assert_eq!(
+            HistoryLifecycleRecovery::new(selected, pressure.next().authority().clone()).is_ok(),
+            compatible
+        );
+    }
+
     #[rstest]
     #[case::before_creation(1, true, None, false, true)]
     #[case::active_hold(2, true, None, false, false)]

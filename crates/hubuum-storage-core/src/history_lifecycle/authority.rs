@@ -575,13 +575,31 @@ impl TryFrom<AuthorityInput> for HistoryLifecycleAuthority {
     }
 }
 
+/// Positions among the policy and expiry decisions. Hold and pressure
+/// transitions already occupy fixed revisions and are excluded from this count.
+struct PolicyPlacement {
+    earliest: u64,
+    latest: u64,
+}
+
 impl HistoryLifecycleAuthority {
-    fn validate_policy_reviews(
+    fn policy_or_expiry_slots(&self, revision: u64) -> u64 {
+        let holds = self
+            .holds
+            .partition_point(|entry| entry.revision.value() <= revision);
+        let pressures = self
+            .size_transitions
+            .partition_point(|entry| entry.revision().value() <= revision);
+        revision - (holds + pressures) as u64
+    }
+
+    fn policy_placements(
         &self,
         operations: &mut BTreeSet<Uuid>,
-    ) -> Result<(), StorageValidationError> {
-        let expiry_decisions = self.expiry.revision().value();
-        let mut previous_expiry_count = 0;
+    ) -> Result<Vec<PolicyPlacement>, StorageValidationError> {
+        let capacity = self.policy_or_expiry_slots(self.revision.value());
+        let mut placements = Vec::with_capacity(self.policies.records().len());
+        let mut next_slot = 1;
         // Most reviews span no hold deadline. Reconstruct the historical
         // hold set only when a release or expiry could fall inside the review.
         let hold_ends: BTreeSet<_> = self
@@ -593,58 +611,74 @@ impl HistoryLifecycleAuthority {
                     .flatten()
             })
             .collect();
+        // Place each policy as early as its predecessor permits. An issued
+        // review fixes both ends of its range to the very next decision.
         for (index, record) in self.policies.records().iter().enumerate() {
+            if record.revision().value() != index as u64 + 1 {
+                return Err(invalid("Retained policy catalog is missing a revision"));
+            }
             record
                 .proposal()
                 .validate_review_presence(record.review())?;
-            let Some(review) = record.review() else {
-                continue;
+            let mut placement = PolicyPlacement {
+                earliest: next_slot,
+                latest: capacity,
             };
-            if !operations.insert(review.reference().preview_id()) {
-                return Err(invalid("Duplicate retained history review identity"));
+            if let Some(review) = record.review() {
+                if !operations.insert(review.reference().preview_id()) {
+                    return Err(invalid("Duplicate retained history review identity"));
+                }
+                let fence = review.fence().authority_revision();
+                let slot = self.policy_or_expiry_slots(fence.value()) + 1;
+                if fence >= self.revision
+                    || slot < next_slot
+                    || slot != self.policy_or_expiry_slots(fence.value() + 1)
+                {
+                    return Err(invalid(
+                        "Policy review does not precede an available authority revision",
+                    ));
+                }
+                if hold_ends
+                    .range((Excluded(review.issued_at()), Included(record.applied_at())))
+                    .next()
+                    .is_some()
+                {
+                    self.validate_review_protection(fence, review.issued_at(), record.applied_at())
+                        .map_err(|_| {
+                            invalid("Hold protection expired between policy review and application")
+                        })?;
+                }
+                placement = PolicyPlacement {
+                    earliest: slot,
+                    latest: slot,
+                };
             }
-            let fence = review.fence().authority_revision();
-            let holds = self.holds.partition_point(|entry| entry.revision <= fence);
-            let pressures = self
-                .size_transitions
-                .partition_point(|entry| entry.revision() <= fence);
-            // The reviewed policy consumes the next revision. After subtracting
-            // preceding policy, hold and pressure decisions, only expiry remains.
-            let expiry_count = fence
-                .value()
-                .checked_sub((index + holds + pressures) as u64);
-            if fence >= self.revision
-                || self
-                    .holds
-                    .get(holds)
-                    .is_some_and(|entry| entry.revision.value() == fence.value() + 1)
-                || self
-                    .size_transitions
-                    .get(pressures)
-                    .is_some_and(|entry| entry.revision().value() == fence.value() + 1)
-            {
+            next_slot = placement.earliest + 1;
+            placements.push(placement);
+        }
+        // Each pressure observation has already resolved its exact source in
+        // this contiguous catalog. That policy must exist by this revision.
+        for transition in &self.size_transitions {
+            let ordinal = transition.pressure().policy().revision().value();
+            let placement = &mut placements[ordinal as usize - 1];
+            placement.latest = placement
+                .latest
+                .min(self.policy_or_expiry_slots(transition.revision().value()));
+        }
+        // A later policy's deadline also limits every preceding policy.
+        let mut next_slot = capacity + 1;
+        for placement in placements.iter_mut().rev() {
+            placement.latest = placement.latest.min(next_slot - 1);
+            if placement.earliest > placement.latest {
                 return Err(invalid(
-                    "Policy review does not precede an available authority revision",
+                    "Retained history decisions leave no revision for their governing policy",
                 ));
             }
-            if hold_ends
-                .range((Excluded(review.issued_at()), Included(record.applied_at())))
-                .next()
-                .is_some()
-            {
-                self.validate_review_protection(fence, review.issued_at(), record.applied_at())
-                    .map_err(|_| {
-                        invalid("Hold protection expired between policy review and application")
-                    })?;
-            }
-            previous_expiry_count = expiry_count
-                .filter(|count| (previous_expiry_count..=expiry_decisions).contains(count))
-                .ok_or_else(|| {
-                    invalid("Policy review fence contradicts retained decision order")
-                })?;
+            next_slot = placement.latest;
         }
-        Ok(())
+        Ok(placements)
     }
+
     fn validate(&self) -> Result<(), StorageValidationError> {
         if self.holds.len() > Self::MAX_HOLD_REVISIONS
             || self.revision.value()
@@ -717,7 +751,7 @@ impl HistoryLifecycleAuthority {
             return Err(invalid("Duplicate retained history operation identity"));
         }
         self.validate_size_transitions()?;
-        self.validate_policy_reviews(&mut operations)?;
+        let placements = self.policy_placements(&mut operations)?;
 
         for intent in self.expiry.intents() {
             let manifest = intent.manifest();
@@ -745,19 +779,19 @@ impl HistoryLifecycleAuthority {
                     "Retained expiry was selected under an active history hold",
                 ));
             }
-            let other_decisions = self.holds.partition_point(|entry| entry.revision <= fence)
-                + self
-                    .size_transitions
-                    .partition_point(|entry| entry.revision() <= fence)
-                + self
-                    .expiry
-                    .intents()
-                    .iter()
-                    .filter(|other| other.manifest().fence().authority_revision() < fence)
-                    .map(HistoryExpiryIntent::decision_count)
-                    .sum::<usize>();
-            self.policies
-                .validate_selection(manifest, other_decisions)?;
+            let slots = self.policy_or_expiry_slots(fence.value());
+            let prior_expiry_decisions = self
+                .expiry
+                .intents()
+                .iter()
+                .filter(|other| other.manifest().fence().authority_revision() < fence)
+                .map(HistoryExpiryIntent::decision_count)
+                .sum::<usize>();
+            let first = placements
+                .partition_point(|p| p.latest <= slots)
+                .max((slots as usize).saturating_sub(prior_expiry_decisions));
+            let last = placements.partition_point(|p| p.earliest <= slots);
+            self.policies.validate_selection(manifest, first, last)?;
             manifest.validate_triggers(self)?;
         }
         if self.holds.len() + self.pending_hold_completions() > Self::MAX_HOLD_REVISIONS {
@@ -869,6 +903,14 @@ impl HistoryPreviewImpact {
             || samples.len() > scanned as usize
         {
             return Err(invalid("Preview impact exceeds its scan/sample bounds"));
+        }
+        let eligible_samples = samples.iter().filter(|sample| sample.eligible()).count();
+        if eligible_samples > eligible_observed as usize
+            || samples.len() - eligible_samples > (scanned - eligible_observed) as usize
+        {
+            return Err(invalid(
+                "Preview sample contradicts the observed eligibility count",
+            ));
         }
         Ok(Self {
             coverage,
