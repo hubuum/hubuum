@@ -54,6 +54,14 @@ pub mod token_retention;
 pub mod traits;
 pub mod utilities;
 
+/// Source revision embedded by the build.
+#[must_use]
+pub fn build_git_sha() -> &'static str {
+    option_env!("HUBUUM_BUILD_GIT_SHA")
+        .or(option_env!("GITHUB_SHA"))
+        .unwrap_or("unknown")
+}
+
 /// Generate the canonical pretty-printed OpenAPI document.
 ///
 /// This is the workspace-internal entrypoint used by `hubuum-openapi`.

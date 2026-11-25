@@ -91,11 +91,7 @@ where
     Ok(())
 }
 
-pub fn build_git_sha() -> &'static str {
-    option_env!("HUBUUM_BUILD_GIT_SHA")
-        .or(option_env!("GITHUB_SHA"))
-        .unwrap_or("unknown")
-}
+pub use crate::build_git_sha;
 
 pub fn log_authorization_grant(
     principal_id: i32,

@@ -418,7 +418,7 @@ async fn run_worker_role(
     info!(
         message = "worker startup",
         version = env!("CARGO_PKG_VERSION"),
-        git_sha = logger::build_git_sha(),
+        git_sha = crate::build_git_sha(),
         runtime_role = config.runtime_role.as_str(),
         task_workers = config.task_workers,
         event_fanout_workers = config.event_fanout_workers,
@@ -539,7 +539,7 @@ async fn run_http_role(
     info!(
         message = "server startup",
         version = env!("CARGO_PKG_VERSION"),
-        git_sha = logger::build_git_sha(),
+        git_sha = crate::build_git_sha(),
         runtime_role = config.runtime_role.as_str(),
         bind_address = bind_address.as_str(),
         tls = tls_paths.is_some(),

@@ -6,9 +6,9 @@ use opentelemetry::metrics::{Meter, MeterProvider as _};
 use opentelemetry_sdk::metrics::{Aggregation, Instrument, SdkMeterProvider, Stream};
 use prometheus::{IntGaugeVec, Opts, Registry};
 
+use crate::build_git_sha;
 use crate::config::RuntimeRole;
 use crate::errors::ApiError;
-use crate::logger;
 use crate::operational_contracts::{MetricKind, metric_definition, runtime_metric_definition};
 
 use super::cache::ScrapeCache;
@@ -292,7 +292,7 @@ fn build_metrics() -> Result<Metrics, ApiError> {
         1,
         &[
             KeyValue::new("version", env!("CARGO_PKG_VERSION")),
-            KeyValue::new("git_sha", logger::build_git_sha()),
+            KeyValue::new("git_sha", build_git_sha()),
         ],
     );
     metrics.process_start_time.record(
