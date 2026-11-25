@@ -1238,6 +1238,19 @@ pub(crate) fn app_command() -> clap::Command {
 }
 
 impl AppConfig {
+    /// Both HTTP listeners bind the same validated certificate and private-key paths.
+    pub(crate) fn tls_key_pair(&self) -> Result<Option<(&str, &str)>, &'static str> {
+        environment::constraints::TLS_KEY_PAIR
+            .resolve(self.tls_cert_path.as_deref(), self.tls_key_path.as_deref())
+            .map_err(|_| {
+                if self.tls_cert_path.is_some() {
+                    "TLS certificate specified but key is missing"
+                } else {
+                    "TLS key specified but certificate is missing"
+                }
+            })
+    }
+
     pub fn backup_budget(&self) -> Result<StorageBackupBudget, ApiError> {
         StorageBackupBudget::new(self.backup_max_output_bytes, self.backup_max_capture_rows)
             .map_err(|error| ApiError::BadRequest(error.to_string()))

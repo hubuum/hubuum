@@ -1379,3 +1379,28 @@ fn metrics_path_must_not_have_empty_segments(#[case] path: &str) {
         "metrics_path must not contain empty path segments"
     );
 }
+
+#[rstest]
+#[case(None, None, Ok(None))]
+#[case(Some("server.crt"), Some("server.key"), Ok(Some(("server.crt", "server.key"))))]
+#[case(
+    Some("server.crt"),
+    None,
+    Err("TLS certificate specified but key is missing")
+)]
+#[case(
+    None,
+    Some("server.key"),
+    Err("TLS key specified but certificate is missing")
+)]
+fn both_listeners_resolve_the_same_tls_pair(
+    #[case] certificate: Option<&str>,
+    #[case] private_key: Option<&str>,
+    #[case] expected: Result<Option<(&str, &str)>, &str>,
+) {
+    let _lock = TEST_ENV_LOCK.lock().unwrap();
+    let mut config = AppConfig::parse_from(["hubuum"]);
+    config.tls_cert_path = certificate.map(str::to_owned);
+    config.tls_key_path = private_key.map(str::to_owned);
+    assert_eq!(config.tls_key_pair(), expected);
+}

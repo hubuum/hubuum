@@ -16,7 +16,6 @@ use tracing::{error, info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
 use crate::backups::BackupSettings;
-use crate::config::environment::constraints;
 #[cfg(test)]
 use crate::config::get_config;
 #[cfg(not(test))]
@@ -508,16 +507,11 @@ async fn run_http_role(
 
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
 
-    let tls_paths = constraints::TLS_KEY_PAIR.resolve(
-        config.tls_cert_path.as_ref(),
-        config.tls_key_path.as_ref(),
-    ).unwrap_or_else(|_| {
-        let message = if config.tls_cert_path.is_some() {
-            "TLS certificate specified but key is missing. Please provide both --tls-cert-path and --tls-key-path"
-        } else {
-            "TLS key specified but certificate is missing. Please provide both --tls-cert-path and --tls-key-path"
-        };
-        fatal_error(message, EXIT_CODE_TLS_ERROR)
+    let tls_paths = config.tls_key_pair().unwrap_or_else(|message| {
+        fatal_error(
+            &format!("{message}. Please provide both --tls-cert-path and --tls-key-path"),
+            EXIT_CODE_TLS_ERROR,
+        )
     });
 
     let server = match tls_paths {
@@ -548,7 +542,7 @@ async fn run_http_role(
         git_sha = logger::build_git_sha(),
         runtime_role = config.runtime_role.as_str(),
         bind_address = bind_address.as_str(),
-        tls = config.tls_cert_path.is_some() && config.tls_key_path.is_some(),
+        tls = tls_paths.is_some(),
         log_format = "json",
         log_level = config.log_level.as_str(),
         actix_workers = config.actix_workers,
@@ -640,16 +634,9 @@ fn start_worker_metrics_server(config: &AppConfig, context: AppContext) -> std::
         ))
     });
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
-    let tls_paths = constraints::TLS_KEY_PAIR
-        .resolve(config.tls_cert_path.as_ref(), config.tls_key_path.as_ref())
-        .map_err(|_| {
-            let message = if config.tls_cert_path.is_some() {
-                "TLS certificate specified but key is missing"
-            } else {
-                "TLS key specified but certificate is missing"
-            };
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, message)
-        })?;
+    let tls_paths = config
+        .tls_key_pair()
+        .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
     let server = match tls_paths {
         Some((cert, key)) => tls::configure_server(
             server,
