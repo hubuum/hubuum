@@ -12,7 +12,7 @@ use crate::models::object::{
 use crate::models::object_data_patch::ObjectDataPatchDocument;
 use crate::models::search::{FilterField, SortParam};
 use crate::services::storage_boundary::{
-    collection_from_storage, object_from_storage, object_selector_to_storage, object_to_storage,
+    collection_from_storage, object_from_storage, object_to_storage,
 };
 use crate::storage::{StorageClassSelector, StorageContext, storage_handle};
 use crate::traits::accessors::{ClassAdapter, CollectionAdapter, IdAccessor, InstanceAdapter};
@@ -361,7 +361,7 @@ impl ResolveObjectTarget for ObjectSelector {
     {
         storage_handle(backend)
             .object_store()
-            .resolve_object(object_selector_to_storage(self.clone()))
+            .resolve_object(self.clone().into())
             .await
             .map_err(ApiError::from)
             .and_then(ResolvedObjectTarget::from_storage)

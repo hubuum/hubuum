@@ -4,9 +4,7 @@ use hubuum_domain::{ClassId, CollectionId};
 
 use crate::errors::ApiError;
 use crate::events::EventContext;
-use crate::services::storage_boundary::{
-    class_record_from_storage, class_selector_to_storage, collection_from_storage,
-};
+use crate::services::storage_boundary::{class_record_from_storage, collection_from_storage};
 use crate::storage::{StorageClassSelector, storage_handle};
 use crate::traits::crud::{DeleteAdapter, SaveAdapter, UpdateAdapter};
 
@@ -28,7 +26,7 @@ impl ResolveClassTarget for ClassSelector {
     {
         storage_handle(backend)
             .class_store()
-            .resolve_class(class_selector_to_storage(self.clone()))
+            .resolve_class(self.clone().into())
             .await
             .map_err(ApiError::from)
             .and_then(ResolvedClassTarget::from_storage)
