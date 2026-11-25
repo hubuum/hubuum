@@ -2,6 +2,7 @@ use super::*;
 use crate::models::Permissions;
 use crate::permissions::test_support::{MockAllowRule, MockTreetopBackend};
 use crate::permissions::{ResourceFields, ResourceKind};
+use crate::storage::{StorageSettings, initialize_storage};
 use hubuum_query::parse_query_parameter;
 use hubuum_storage_core::{
     QueryUsageStorage, StorageQueryObservationSettings, StorageQueryUsageCreate,
@@ -270,6 +271,48 @@ async fn analysis_distinguishes_availability_and_avoids_declared_suggestions(
         );
         delete_backend_object_fixture(&backend, fixture).await;
     }
+}
+
+#[rstest::rstest]
+#[case::production(false)]
+#[case::custom_observer(true)]
+#[actix_web::test]
+async fn postgres_handles_supply_operational_providers(#[case] custom_observer: bool) {
+    let _permit = postgres_permit().await;
+    let backend = if custom_observer {
+        let adapter = AdapterPostgresStorage::new(
+            pool().get_ref().clone(),
+            Arc::new(RecordingPostgresObserver::default()),
+        );
+        StorageHandle::from_postgres_backend_with_storage_observer(
+            adapter,
+            Arc::new(RecordingStorageObserver::default()),
+        )
+    } else {
+        let config = crate::tests::integration_test_config().unwrap();
+        let settings = StorageSettings::postgres(config.database_url.clone())
+            .max_connections(2)
+            .statement_timeout_ms(config.db_statement_timeout_ms)
+            .acquire_timeout_ms(config.db_pool_acquire_timeout_ms)
+            .build()
+            .unwrap();
+        initialize_storage(&settings).unwrap()
+    };
+
+    assert!(backend.database_pool_state().is_some());
+    assert!(backend.has_worker_notification_provider());
+    let fixture =
+        create_backend_object_fixture(&backend, &prefix("postgres_providers"), vec![]).await;
+    let scope = StorageQueryUsageScope::new(fixture.class.id(), fixture.collection.id());
+    let analysis = backend
+        .analyze_query_usage(scope, vec![pattern("serial")])
+        .await
+        .unwrap();
+    delete_backend_object_fixture(&backend, fixture).await;
+    assert_eq!(
+        serde_json::to_value(analysis).unwrap()["status"],
+        "insufficient_evidence"
+    );
 }
 
 #[actix_web::test]
