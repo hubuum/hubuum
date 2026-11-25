@@ -348,22 +348,22 @@ struct MemoryState {
     object_ids: IdSequence,
     class_relation_ids: IdSequence,
     object_relation_ids: IdSequence,
-    next_event_sequence: i64,
+    event_sequences: IdSequence<i64>,
     identity_scope_ids: IdSequence,
     principal_ids: IdSequence,
     group_ids: IdSequence,
     token_ids: IdSequence,
-    next_task_id: i32,
+    task_ids: IdSequence,
     next_import_result_id: i32,
-    next_computed_field_id: i32,
+    computed_field_ids: IdSequence,
     export_template_ids: IdSequence,
     remote_target_ids: IdSequence,
     authorization_grant_ids: IdSequence,
-    next_event_sink_id: i32,
-    next_event_subscription_id: i32,
-    next_event_delivery_id: i64,
-    next_history_id: i64,
-    next_restore_job_id: i64,
+    event_sink_ids: IdSequence,
+    event_subscription_ids: IdSequence,
+    delivery_ids: IdSequence<i64>,
+    history_ids: IdSequence<i64>,
+    restore_job_ids: IdSequence<i64>,
     fanout_event_cursor: i64,
     collections: BTreeMap<i32, StorageCollection>,
     classes: BTreeMap<i32, StorageClass>,
@@ -382,10 +382,7 @@ struct MemoryState {
     sessions: BTreeMap<Uuid, auth_sessions::MemorySession>,
     credential_activity:
         BTreeMap<credential_activity::ActivityOwner, credential_activity::MemoryActivity>,
-    credential_approvals:
-        BTreeMap<i32, (StorageCredentialClaim, StorageCredentialApprovalMetadata)>,
-    credential_approval_digests: BTreeMap<String, i32>,
-    credential_approval_ids: IdSequence,
+    credential_approvals: credential_approval::CredentialApprovals,
     service_accounts: BTreeMap<i32, StorageServiceAccount>,
     tasks: BTreeMap<i32, MemoryTaskRecord>,
     task_events: BTreeMap<i32, Vec<StorageTaskEvent>>,
@@ -423,6 +420,12 @@ struct MemoryState {
 }
 
 impl MemoryState {
+    fn ensure_audited_history_capacity(&self, entries: usize) -> Result<(), StorageError> {
+        self.history_ids.after(entries)?;
+        self.event_sequences.next()?;
+        Ok(())
+    }
+
     fn append_event_record(
         &mut self,
         request: MemoryEventAppend<'_>,
@@ -438,9 +441,8 @@ impl MemoryState {
             before_revision,
             after_revision,
         } = request;
-        let sequence = EventSequence::new(self.next_event_sequence)
+        let sequence = EventSequence::new(self.event_sequences.next()?)
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
-        self.next_event_sequence += 1;
         let event_id = Uuid::new_v4();
         let actor_user_id = context.actor_user_id();
         let principal = |principal_id| ProvenancePrincipal {
@@ -480,6 +482,7 @@ impl MemoryState {
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
         self.index_task_event(&envelope)?;
+        self.event_sequences.observe(sequence.get());
         let recorded = StorageRecordedEvent::new(envelope, before_revision, after_revision);
         let receipt = recorded.clone().into_audit_receipt();
         self.events.push(recorded);
@@ -537,6 +540,8 @@ impl MemoryState {
         operation: StorageHistoryOperation,
         context: &EventContext,
     ) -> Result<(), StorageError> {
+        let id = HistoryRecordId::new(self.history_ids.allocate()?)
+            .map_err(|error| StorageError::internal(error.to_string()))?;
         match &value {
             MemoryHistoryValue::Class(class) if operation == StorageHistoryOperation::Delete => {
                 self.schema_delete_class(class, context)?
@@ -564,9 +569,6 @@ impl MemoryState {
             }
             _ => {}
         }
-        let id = HistoryRecordId::new(self.next_history_id)
-            .map_err(|error| StorageError::internal(error.to_string()))?;
-        self.next_history_id += 1;
         let now = Utc::now();
         for previous in &mut self.history {
             if previous.valid_to.is_none()

@@ -182,8 +182,8 @@ impl ComputedFieldStorage for MemoryStorage {
                 "Shared computed definition limit exceeded",
             ));
         }
-        let id = state.next_computed_field_id;
-        state.next_computed_field_id += 1;
+        state.ensure_audited_history_capacity(1)?;
+        let id = state.computed_field_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id).expect("memory computed field id is positive"),
@@ -203,7 +203,7 @@ impl ComputedFieldStorage for MemoryStorage {
             .computation_states
             .get(&class_id.id())
             .map_or(0, |value| value.evaluation_revision().get());
-        let computation_state = ready_computation_state(class_id, previous_revision + 1, now)?;
+        let computation_state = advance_computation_state(class_id, previous_revision, now)?;
         state.computed_fields.insert(id, definition.clone());
         state
             .computation_states
@@ -256,11 +256,12 @@ impl ComputedFieldStorage for MemoryStorage {
             .get(&class_id.id())
             .cloned()
             .unwrap_or(ready_computation_state(class_id, 0, class.created_at())?);
-        let computation_state = ready_computation_state(
+        let computation_state = advance_computation_state(
             class_id,
-            previous.evaluation_revision().get() + 1,
+            previous.evaluation_revision().get(),
             previous.created_at(),
         )?;
+        state.ensure_audited_history_capacity(1)?;
         state
             .computed_fields
             .insert(definition_id.id(), definition.clone());
@@ -298,12 +299,12 @@ impl ComputedFieldStorage for MemoryStorage {
         }
         let definition = state
             .computed_fields
-            .remove(&definition_id.id())
+            .get(&definition_id.id())
+            .cloned()
             .ok_or_else(|| StorageError::not_found("Computed field definition was not found"))?;
         if definition.class_id() != class_id
             || definition.visibility() != StorageComputedFieldVisibility::Shared
         {
-            state.computed_fields.insert(definition_id.id(), definition);
             return Err(StorageError::not_found(
                 "Shared computed field definition was not found",
             ));
@@ -313,11 +314,13 @@ impl ComputedFieldStorage for MemoryStorage {
             .get(&class_id.id())
             .cloned()
             .unwrap_or(ready_computation_state(class_id, 0, class.created_at())?);
-        let computation_state = ready_computation_state(
+        let computation_state = advance_computation_state(
             class_id,
-            previous.evaluation_revision().get() + 1,
+            previous.evaluation_revision().get(),
             previous.created_at(),
         )?;
+        state.ensure_audited_history_capacity(1)?;
+        state.computed_fields.remove(&definition_id.id());
         state
             .computation_states
             .insert(class_id.id(), computation_state.clone());
@@ -364,8 +367,7 @@ impl ComputedFieldStorage for MemoryStorage {
                 input.key()
             )));
         }
-        let id = state.next_computed_field_id;
-        state.next_computed_field_id += 1;
+        let id = state.computed_field_ids.allocate()?;
         let now = Utc::now();
         let metadata = StorageRecordMetadata::try_new(
             ResourceId::new(id).expect("memory computed field id is positive"),
@@ -381,7 +383,6 @@ impl ComputedFieldStorage for MemoryStorage {
             StorageComputedFieldDefinitionContent::new(input),
             StorageComputedFieldProvenance::new(Some(owner_id), Some(owner_id)),
         );
-        state.computed_fields.insert(id, definition.clone());
         let receipt = state.append_simple_event(
             EntityType::ComputedFieldDefinition,
             id,
@@ -390,6 +391,8 @@ impl ComputedFieldStorage for MemoryStorage {
             &context,
             format!("Computed field '{}' created", definition.key()),
         )?;
+        state.computed_fields.insert(id, definition.clone());
+
         Ok(StorageMutationOutcome::committed(definition, receipt))
     }
 
@@ -410,9 +413,6 @@ impl ComputedFieldStorage for MemoryStorage {
             ));
         }
         let definition = updated_computed_field(&current, &patch, owner_id)?;
-        state
-            .computed_fields
-            .insert(definition_id.id(), definition.clone());
         let receipt = state.append_simple_event(
             EntityType::ComputedFieldDefinition,
             definition_id.id(),
@@ -421,6 +421,10 @@ impl ComputedFieldStorage for MemoryStorage {
             &context,
             format!("Computed field '{}' updated", definition.key()),
         )?;
+        state
+            .computed_fields
+            .insert(definition_id.id(), definition.clone());
+
         Ok(StorageMutationOutcome::committed(definition, receipt))
     }
 
@@ -438,7 +442,6 @@ impl ComputedFieldStorage for MemoryStorage {
                 "Personal computed field definition was not found",
             ));
         }
-        state.computed_fields.remove(&definition_id.id());
         let receipt = state.append_simple_event(
             EntityType::ComputedFieldDefinition,
             definition_id.id(),
@@ -447,6 +450,8 @@ impl ComputedFieldStorage for MemoryStorage {
             &context,
             format!("Computed field '{}' deleted", definition.key()),
         )?;
+        state.computed_fields.remove(&definition_id.id());
+
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 
@@ -472,12 +477,8 @@ impl ComputedFieldStorage for MemoryStorage {
             .unwrap_or(ready_computation_state(class_id, 0, class.created_at())?);
         state.ensure_task_capacity(actor_id, StorageTaskKind::Reindex, 100)?;
         let now = Utc::now();
-        let task_id = TaskId::new(state.next_task_id)
+        let task_id = TaskId::new(state.task_ids.allocate()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        state.next_task_id = state
-            .next_task_id
-            .checked_add(1)
-            .ok_or_else(|| StorageError::internal("Task identity exhausted"))?;
         let record = MemoryTaskRecord {
             id: task_id,
             kind: StorageTaskKind::Reindex,
@@ -1540,4 +1541,15 @@ impl UnifiedSearchStorage for MemoryStorage {
             .collect();
         StorageCandidatePage::try_new(rows, has_more, limit).map_err(invalid_contract_value)
     }
+}
+
+fn advance_computation_state(
+    class_id: ClassId,
+    previous: i64,
+    created_at: DateTime<Utc>,
+) -> Result<StorageClassComputationState, StorageError> {
+    let revision = previous
+        .checked_add(1)
+        .ok_or_else(|| StorageError::internal("Computed evaluation revision exhausted"))?;
+    ready_computation_state(class_id, revision, created_at)
 }

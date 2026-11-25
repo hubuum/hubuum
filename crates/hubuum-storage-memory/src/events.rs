@@ -285,9 +285,8 @@ impl EventConfigurationStorage for MemoryStorage {
                 request.name()
             )));
         }
-        let id = EventSinkId::new(state.next_event_sink_id)
+        let id = EventSinkId::new(state.event_sink_ids.allocate()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        state.next_event_sink_id += 1;
         let now = Utc::now();
         let sink = StorageEventSink::builder(
             id,
@@ -539,9 +538,8 @@ impl EventConfigurationStorage for MemoryStorage {
                 request.name()
             )));
         }
-        let id = EventSubscriptionId::new(state.next_event_subscription_id)
+        let id = EventSubscriptionId::new(state.event_subscription_ids.allocate()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        state.next_event_subscription_id += 1;
         let now = Utc::now();
         let subscription = StorageEventSubscription::builder(
             id,
@@ -701,7 +699,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<StorageEventDelivery>, StorageError> {
         let mut state = self.state.write().await;
         let input = memory_notification(&state, selection)?;
-        let id = EventDeliveryId::new(state.next_event_delivery_id)
+        let id = EventDeliveryId::new(state.delivery_ids.next()?)
             .map_err(|e| StorageError::internal(e.to_string()))?;
         let now = Utc::now();
         let delivery = StorageEventDelivery::builder(
@@ -740,7 +738,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
             None,
             None,
         )?;
-        state.next_event_delivery_id += 1;
+        state.delivery_ids.observe(id.id());
         state.event_deliveries.insert(id.id(), delivery.clone());
         Ok(StorageMutationOutcome::committed(delivery, receipt))
     }
@@ -1284,6 +1282,8 @@ impl EventFanoutStorage for MemoryStorage {
             .filter(|subscription| subscription.enabled())
             .cloned()
             .collect::<Vec<_>>();
+        let mut delivery_ids = state.delivery_ids;
+        let mut pending = Vec::new();
         for event in &events {
             for subscription in &subscriptions {
                 let sink_enabled = state
@@ -1302,9 +1302,8 @@ impl EventFanoutStorage for MemoryStorage {
                         && delivery.subscription_id() == subscription.id()
                 });
                 if matches && !exists {
-                    let id = EventDeliveryId::new(state.next_event_delivery_id)
+                    let id = EventDeliveryId::new(delivery_ids.allocate()?)
                         .map_err(|error| StorageError::internal(error.to_string()))?;
-                    state.next_event_delivery_id += 1;
                     let now = Utc::now();
                     let delivery = StorageEventDelivery::builder(
                         id,
@@ -1317,10 +1316,12 @@ impl EventFanoutStorage for MemoryStorage {
                     )
                     .try_build()
                     .map_err(invalid_contract_value)?;
-                    state.event_deliveries.insert(id.id(), delivery);
+                    pending.push((id.id(), delivery));
                 }
             }
         }
+        state.delivery_ids = delivery_ids;
+        state.event_deliveries.extend(pending);
         state.fanout_event_cursor = events
             .last()
             .map(|event| event.id().get())
