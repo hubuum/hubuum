@@ -5262,7 +5262,7 @@ purpose. That proves the application-facing semantics are independently
 implementable; it does not claim to model PostgreSQL isolation or failure
 timing.</p>
 <h2 id="selectable-backend-compatibility">Selectable-Backend Compatibility<a class="headerlink" href="#selectable-backend-compatibility" title="Permanent link">&para;</a></h2>
-<p><code>src/tests/storage_contract.rs</code> owns the current compatibility registry.
+<p><code>src/tests/storage_contract.rs</code> owns the compatibility registry and shared fixtures. Its child modules group scenarios by storage capability.
 <code>available_backend_environments()</code> iterates <code>StorageBackendKind::ALL</code> and owns
 the native fixture resources for each adapter. Generic tests derive an opaque
 <code>StorageHandle</code> from that environment and verify its descriptor before running
@@ -5452,7 +5452,7 @@ failures into one another.</p>
 rather than inline unit tests. This is appropriate for SQL behavior, but it
 means file-local test counts are not a useful coverage measure.</p>
 <h3 id="query-budgets-and-plans">Query budgets and plans<a class="headerlink" href="#query-budgets-and-plans" title="Permanent link">&para;</a></h3>
-<p><code>src/tests/storage_performance.rs</code> instruments Diesel and checks representative query counts, pool checkouts, fixed query shapes, no-op write avoidance, and selected query plans. It protects point reads, lifecycle writes, relations, history, permission depth, paging, ancestor traversal, computed reads, and object aggregation from accidental N+1 or round-trip growth.</p>
+<p>The <code>src/tests/storage_performance.rs</code> suite and its child modules instrument Diesel and check representative query counts, pool checkouts, fixed query shapes, no-op write avoidance, and selected query plans. It protects point reads, lifecycle writes, relations, history, permission depth, paging, ancestor traversal, computed reads, and object aggregation from accidental N+1 or round-trip growth.</p>
 <p>The PostgreSQL benchmark workflow compares representative storage operations
 against the pull request base. Query budgets catch structural regressions;
 benchmarks catch latency changes that preserve query counts.</p>

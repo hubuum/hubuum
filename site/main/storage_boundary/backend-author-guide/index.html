@@ -5626,7 +5626,7 @@ these edits:</p>
 <h2 id="compatibility-and-native-tests">Compatibility and Native Tests<a class="headerlink" href="#compatibility-and-native-tests" title="Permanent link">&para;</a></h2>
 <p>A new backend must pass four distinct kinds of checks.</p>
 <h3 id="shared-behavior">Shared behavior<a class="headerlink" href="#shared-behavior" title="Permanent link">&para;</a></h3>
-<p>Run every test in <code>src/tests/storage_contract.rs</code> through the backend returned
+<p>Run the shared scenarios in <code>src/tests/storage_contract/</code> through the backend returned
 by <code>available_backend_environments()</code>. Do not copy and edit the tests for the
 new adapter. The point of the registry is identical observable behavior while
 adapter-native fixture resources remain contained in one exhaustive enum.</p>
