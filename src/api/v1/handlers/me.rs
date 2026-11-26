@@ -1,10 +1,9 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, put, routes, web};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::api::etag::{RevisionedResource, revision_precondition};
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::principals::{
     PrincipalCollectionPermissions, parse_token_list_query, principal_permissions_response,
 };

@@ -1,3 +1,4 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use crate::config::AppConfig;
 use crate::storage::storage_handle;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
@@ -13,8 +14,6 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::events::visible_event_scope;
 use crate::can;
 use crate::errors::ApiError;

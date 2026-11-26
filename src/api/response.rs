@@ -3,7 +3,9 @@ use actix_web::{
     body::BoxBody,
     http::{StatusCode, header, header::HeaderValue},
 };
+use chrono::{NaiveDate, NaiveDateTime};
 use serde::Serialize;
+use utoipa::ToSchema;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -11,9 +13,9 @@ use std::sync::LazyLock;
 use tracing::debug;
 
 use crate::api::etag::RevisionedResource;
-use crate::api::openapi::MessageResponse;
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
+use crate::models::{IssuedToken, ObjectsByClass};
 use crate::pagination::{CursorPaginated, effective_page_limit, finalize_page, pagination_headers};
 
 static NO_CONTENT_STATUS_CODES: LazyLock<HashSet<StatusCode>> = LazyLock::new(|| {
@@ -23,6 +25,94 @@ static NO_CONTENT_STATUS_CODES: LazyLock<HashSet<StatusCode>> = LazyLock::new(||
     m.insert(StatusCode::NOT_MODIFIED);
     m
 });
+
+#[derive(Serialize, ToSchema)]
+#[schema(example = api_error_response_example)]
+pub struct ApiErrorResponse {
+    /// Machine-readable reason for errors with a client recovery flow.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub error: String,
+    pub message: String,
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(example = message_response_example)]
+pub struct MessageResponse {
+    message: String,
+}
+
+impl MessageResponse {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(example = login_response_example)]
+pub struct LoginResponse {
+    /// Raw bearer token, shown only in this issuance response.
+    token: String,
+    /// Authoritative expiry persisted for the newly issued token.
+    expires_at: NaiveDateTime,
+}
+
+impl LoginResponse {
+    pub fn new(token: impl Into<String>, expires_at: NaiveDateTime) -> Self {
+        Self {
+            token: token.into(),
+            expires_at,
+        }
+    }
+
+    pub fn from_issued(token: &IssuedToken) -> Self {
+        Self::new(token.get_token(), token.expires_at())
+    }
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(example = counts_response_example)]
+pub struct CountsResponse {
+    pub total_objects: i64,
+    pub total_classes: i64,
+    pub total_collections: i64,
+    pub objects_per_class: Vec<ObjectsByClass>,
+}
+
+fn api_error_response_example() -> ApiErrorResponse {
+    ApiErrorResponse {
+        reason: None,
+        error: "Unauthorized".to_string(),
+        message: "Authentication failure".to_string(),
+    }
+}
+
+fn message_response_example() -> MessageResponse {
+    MessageResponse::new("Token is valid.")
+}
+
+fn login_response_example() -> LoginResponse {
+    LoginResponse::new(
+        "eyJhbGciOi...example-token",
+        NaiveDate::from_ymd_opt(2026, 7, 26)
+            .and_then(|date| date.and_hms_opt(12, 0, 0))
+            .expect("example token expiry must be valid"),
+    )
+}
+
+fn counts_response_example() -> CountsResponse {
+    CountsResponse {
+        total_objects: 42,
+        total_classes: 7,
+        total_collections: 3,
+        objects_per_class: vec![ObjectsByClass {
+            hubuum_class_id: 1,
+            count: 6,
+        }],
+    }
+}
 
 pub enum ApiResponse<T> {
     Json {

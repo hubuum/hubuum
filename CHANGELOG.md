@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- PostgreSQL computed-field rebuild and read-repair workers now read only the
+  task settings row when selecting the size of each batch.
+
 ### Security
 
 - Remove the unused Actix Web cookie feature and its dependency on
@@ -14,6 +19,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - Require `url` 2.5.9 or later to fix a stack overflow during URL origin
   calculation (RUSTSEC-2026-0592).
+
+### Fixed
+
+- Best-effort imports can resolve a parent collection by name after an
+  earlier item failed to find it and a later item planned its creation.
 
 ## [0.0.23] - 2026-11-21
 

@@ -1,9 +1,8 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
 use base64::Engine;
 
 use crate::api::locations as api_locations;
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::backups::BackupSettings;
 use crate::errors::ApiError;
 use crate::extractors::UnscopedRuntimeAdmin;

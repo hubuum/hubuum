@@ -1,9 +1,8 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use actix_web::{Responder, get, http::StatusCode};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::permissions::AppContext;
 use crate::storage::OperationalStateStorage;
