@@ -20,28 +20,23 @@ use super::resolution::{
     resolve_collection_planning, resolve_object_planning,
 };
 use super::types::{
-    CacheLookup, ClassResolution, CollectionResolution, FailureKind, ImportAdminStatus,
-    ObjectResolution, PlannedExecution, PlannedItem, PlannedTaskResult, PlanningFailure,
-    PlanningOutcome, PlanningState,
+    CacheLookup, ClassResolution, CollectionResolution, FailureKind, ObjectResolution,
+    PlannedExecution, PlannedItem, PlannedTaskResult, PlanningFailure, PlanningOutcome,
+    PlanningState,
 };
 use crate::errors::ApiError;
 use crate::models::{
-    CONDITIONAL_IMPORT_TARGET_MISSING, CollectionID, ImportAtomicity, ImportClassInput,
-    ImportClassRelationInput, ImportCollectionInput, ImportCollectionPermissionInput,
-    ImportCollisionPolicy, ImportMode, ImportObjectInput, ImportObjectRelationInput,
-    ImportPermissionPolicy, ImportPrincipalSubtype, ImportRequest, ImportWriteCondition,
-    Permissions, RestoreTimestamps,
+    CONDITIONAL_IMPORT_TARGET_MISSING, ImportAtomicity, ImportClassInput, ImportClassRelationInput,
+    ImportCollectionInput, ImportCollectionPermissionInput, ImportCollisionPolicy, ImportMode,
+    ImportObjectInput, ImportObjectRelationInput, ImportPermissionPolicy, ImportPrincipalSubtype,
+    ImportRequest, ImportWriteCondition, Permissions, RestoreTimestamps,
 };
-use crate::permissions::{
-    AuthorizationContext, AuthorizationMode, ClassResourceEndpoint, ResourceRef,
-    authorize_resources,
-};
+use crate::permissions::{AuthorizationContext, ClassResourceEndpoint, ResourceRef};
 use crate::services::schema_evolution;
 
 use crate::storage::{
     ImportStorage, StorageClassSchemaPolicy, StorageImportPlanItem, storage_handle,
 };
-use crate::traits::{UserPermissions, scope_allows, scope_allows_resource};
 
 fn import_item_allows_overwrite(
     condition: Option<ImportWriteCondition>,
@@ -60,7 +55,7 @@ fn import_item_allows_overwrite(
 fn import_item_requires_existing(condition: Option<ImportWriteCondition>) -> bool {
     condition.is_some_and(ImportWriteCondition::requires_existing)
 }
-use crate::permissions::PrincipalRef;
+use super::import_authorization::{ImportAdminStatus, ImportAuthorization};
 
 fn extended_graph_items(request: &ImportRequest) -> usize {
     request.graph.identity_scopes.len()
@@ -244,185 +239,42 @@ async fn preflight_dry_run(
     })
 }
 
-async fn is_import_admin<C>(
-    backend: &C,
-    user: &impl crate::traits::AuthzSubject,
-    state: &mut PlanningState,
-) -> Result<bool, String>
-where
-    C: AuthorizationContext,
-{
-    if let Some(is_admin) = state.admin_status.known() {
-        return Ok(is_admin);
-    }
-    let pool = backend;
-    let is_admin = match backend.authorization_mode() {
-        crate::permissions::AuthorizationMode::Delegated(permission_backend) => {
-            let principal = PrincipalRef::load(pool, user)
-                .await
-                .map_err(|err| err.to_string())?;
-            permission_backend
-                .is_admin(&principal)
-                .await
-                .map_err(|err| err.to_string())?
-        }
-        crate::permissions::AuthorizationMode::LocalStorage => {
-            user.is_admin(pool).await.map_err(|err| err.to_string())?
-        }
-    };
-    state.admin_status = ImportAdminStatus::Known(is_admin);
-    Ok(is_admin)
-}
-
-async fn ensure_collection_permission_cached<C>(
-    backend: &C,
-    user: &impl crate::traits::AuthzSubject,
-    state: &mut PlanningState,
-    collection_id: i32,
-    collection_exists_in_db: bool,
-    permission: Permissions,
-) -> Result<(), String>
-where
-    C: AuthorizationContext,
-{
-    if state.scopes.is_none() && is_import_admin(backend, user, state).await? {
-        return Ok(());
-    }
-
-    if !collection_exists_in_db {
-        return Err("Only admins may operate on newly created collections within an import".into());
-    }
-
-    let key = (collection_id, permission);
-    if let Some(result) = state.collection_permission_cache.get(&key) {
-        return result.clone();
-    }
-
-    let collection = CollectionID::new(collection_id).map_err(|err| err.to_string())?;
-    let scopes = state.scopes.clone();
-    let result: Result<(), crate::errors::ApiError> = async {
-        crate::can!(backend, user, scopes.as_ref(), [permission], collection);
-        Ok(())
-    }
-    .await;
-    let result = result.map_err(|err| err.to_string());
-    state
-        .collection_permission_cache
-        .insert(key, result.clone());
-    result
-}
-
-/// Existing resources must retain their identity for external policy and token
-/// resource checks. Only local collection grants may share a cached decision.
-async fn ensure_existing_resource_permission<C>(
-    backend: &C,
-    user: &impl crate::traits::AuthzSubject,
-    state: &mut PlanningState,
-    resource: ResourceRef,
-    permission: Permissions,
-) -> Result<(), String>
-where
-    C: AuthorizationContext,
-{
-    if state.scopes.is_none() && is_import_admin(backend, user, state).await? {
-        return Ok(());
-    }
-    if !scope_allows(state.scopes.as_ref(), &[permission])
-        || !scope_allows_resource(state.scopes.as_ref(), &resource)
-    {
-        return Err("Permission denied".into());
-    }
-    match backend.authorization_mode() {
-        AuthorizationMode::Delegated(permission_backend) => authorize_resources(
-            permission_backend,
-            backend,
-            user,
-            state.scopes.as_ref(),
-            vec![permission],
-            vec![resource],
-        )
-        .await
-        .map_err(|error| error.to_string()),
-        AuthorizationMode::LocalStorage => {
-            let collection_id = resource
-                .collection_id()
-                .ok_or_else(|| "Import resource has no collection".to_string())?;
-            let key = (collection_id, permission);
-            if let Some(result) = state.collection_permission_cache.get(&key) {
-                return result.clone();
-            }
-            let collection = CollectionID::new(collection_id).map_err(|error| error.to_string())?;
-            let result = user
-                .can(backend, [permission], [collection], state.scopes.as_ref())
-                .await
-                .map_err(|error| error.to_string());
-            state
-                .collection_permission_cache
-                .insert(key, result.clone());
-            result
-        }
-    }
-}
-
 async fn class_relation_exists_cached(
     pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
-    left: i32,
-    right: i32,
+    pair: (i32, i32),
 ) -> Result<bool, String> {
-    let pair = normalize_pair(left, right);
-    if state.class_relations.contains(&pair) {
-        return Ok(true);
-    }
-    // Negative IDs exist only inside this planning pass. A relation involving
-    // a not-yet-persisted class cannot already exist in storage, and virtual
-    // IDs must never cross the storage boundary.
-    if pair.0 <= 0 || pair.1 <= 0 {
-        return Ok(false);
-    }
-    if let Some(exists) = state.class_relation_exists_cache.get(&pair) {
-        return Ok(*exists);
-    }
-
-    let exists = storage_handle(pool)
-        .has_import_class_relation(
-            ClassId::new(pair.0).map_err(|error| error.to_string())?,
-            ClassId::new(pair.1).map_err(|error| error.to_string())?,
-        )
+    state
+        .class_relations
+        .exists(pair, async {
+            storage_handle(pool)
+                .has_import_class_relation(
+                    ClassId::new(pair.0).map_err(|error| error.to_string())?,
+                    ClassId::new(pair.1).map_err(|error| error.to_string())?,
+                )
+                .await
+                .map_err(|err| sanitize_error_for_storage(&err.into()))
+        })
         .await
-        .map_err(|err| sanitize_error_for_storage(&err.into()))?;
-    state.class_relation_exists_cache.insert(pair, exists);
-    Ok(exists)
 }
 
 async fn object_relation_exists_cached(
     pool: &impl crate::storage::StorageContext,
     state: &mut PlanningState,
-    left: i32,
-    right: i32,
+    pair: (i32, i32),
 ) -> Result<bool, String> {
-    let pair = normalize_pair(left, right);
-    if state.object_relations.contains(&pair) {
-        return Ok(true);
-    }
-    // Keep planner-local object IDs on the application side of the boundary.
-    // The backend lookup contract accepts persisted IDs only.
-    if pair.0 <= 0 || pair.1 <= 0 {
-        return Ok(false);
-    }
-    if let Some(exists) = state.object_relation_exists_cache.get(&pair) {
-        return Ok(*exists);
-    }
-
-    let exists = storage_handle(pool)
-        .has_import_object_relation(
-            ObjectId::new(pair.0).map_err(|error| error.to_string())?,
-            ObjectId::new(pair.1).map_err(|error| error.to_string())?,
-        )
+    state
+        .object_relations
+        .exists(pair, async {
+            storage_handle(pool)
+                .has_import_object_relation(
+                    ObjectId::new(pair.0).map_err(|error| error.to_string())?,
+                    ObjectId::new(pair.1).map_err(|error| error.to_string())?,
+                )
+                .await
+                .map_err(|err| sanitize_error_for_storage(&err.into()))
+        })
         .await
-        .map_err(|err| sanitize_error_for_storage(&err.into()))?;
-    state.object_relation_exists_cache.insert(pair, exists);
-    Ok(exists)
 }
 
 #[derive(Debug)]
@@ -479,20 +331,21 @@ where
     C: AuthorizationContext,
 {
     for collection in collections {
-        ensure_collection_permission_cached(
-            backend,
-            user,
-            state,
-            collection.id,
-            collection.exists_in_db,
-            permission,
-        )
-        .await
-        .map_err(|message| PlanningFailure {
-            kind: FailureKind::Permission,
-            item: failure_item.clone(),
-            message,
-        })?;
+        state
+            .authorization
+            .require_collection(
+                backend,
+                user,
+                collection.id,
+                collection.exists_in_db,
+                permission,
+            )
+            .await
+            .map_err(|message| PlanningFailure {
+                kind: FailureKind::Permission,
+                item: failure_item.clone(),
+                message,
+            })?;
     }
     Ok(())
 }
@@ -564,9 +417,7 @@ where
             ),
             message,
         })?;
-    let planned_key = (Some(parent.id), input.name.clone());
-
-    if !state.planned_collection_keys.insert(planned_key.clone()) {
+    if !state.reserve_collection_name(parent.id, &input.name) {
         return Err(PlanningFailure {
             kind: FailureKind::Validation,
             item: planned_result(
@@ -628,25 +479,26 @@ where
     };
 
     if let Some(collection) = existing {
-        ensure_collection_permission_cached(
-            backend,
-            user,
-            state,
-            collection.id,
-            true,
-            Permissions::UpdateCollection,
-        )
-        .await
-        .map_err(|message| PlanningFailure {
-            kind: FailureKind::Permission,
-            item: planned_result(
-                "collection",
-                "update",
-                input.ref_.clone(),
-                Some(collection.name.clone()),
-            ),
-            message,
-        })?;
+        state
+            .authorization
+            .require_collection(
+                backend,
+                user,
+                collection.id,
+                true,
+                Permissions::UpdateCollection,
+            )
+            .await
+            .map_err(|message| PlanningFailure {
+                kind: FailureKind::Permission,
+                item: planned_result(
+                    "collection",
+                    "update",
+                    input.ref_.clone(),
+                    Some(collection.name.clone()),
+                ),
+                message,
+            })?;
 
         if !import_item_allows_overwrite(input.condition, mode) {
             return Err(PlanningFailure {
@@ -695,8 +547,10 @@ where
                 message: CONDITIONAL_IMPORT_TARGET_MISSING.to_string(),
             });
         }
-        if state.scopes.is_some()
-            || !is_import_admin(backend, user, state)
+        if state.authorization.is_scoped()
+            || !state
+                .authorization
+                .is_admin(backend, user)
                 .await
                 .map_err(|err| PlanningFailure {
                     kind: FailureKind::Permission,
@@ -776,8 +630,10 @@ where
 {
     let pool = backend;
     if input.schema_activation.is_some()
-        && (state.scopes.is_some()
-            || !is_import_admin(backend, user, state)
+        && (state.authorization.is_scoped()
+            || !state
+                .authorization
+                .is_admin(backend, user)
                 .await
                 .map_err(|message| PlanningFailure {
                     kind: FailureKind::Permission,
@@ -852,7 +708,7 @@ where
     })?;
 
     let class_key = (collection.id, input.name.clone());
-    if !state.planned_class_keys.insert(class_key.clone()) {
+    if !state.classes.reserve(class_key.clone()) {
         return Err(PlanningFailure {
             kind: FailureKind::Validation,
             item: planned_result(
@@ -905,24 +761,25 @@ where
     let identifier = format!("{}::{}", collection.name, input.name);
 
     if let Some(class) = existing {
-        ensure_existing_resource_permission(
-            backend,
-            user,
-            state,
-            ResourceRef::class(class.id, class.collection_id, Some(class.name.clone())),
-            Permissions::UpdateClass,
-        )
-        .await
-        .map_err(|message| PlanningFailure {
-            kind: FailureKind::Permission,
-            item: planned_result(
-                "class",
-                "update",
-                input.ref_.clone(),
-                Some(identifier.clone()),
-            ),
-            message,
-        })?;
+        state
+            .authorization
+            .require_resource(
+                backend,
+                user,
+                ResourceRef::class(class.id, class.collection_id, Some(class.name.clone())),
+                Permissions::UpdateClass,
+            )
+            .await
+            .map_err(|message| PlanningFailure {
+                kind: FailureKind::Permission,
+                item: planned_result(
+                    "class",
+                    "update",
+                    input.ref_.clone(),
+                    Some(identifier.clone()),
+                ),
+                message,
+            })?;
 
         if !import_item_allows_overwrite(input.condition, mode) {
             return Err(PlanningFailure {
@@ -1012,25 +869,26 @@ where
                 message: CONDITIONAL_IMPORT_TARGET_MISSING.to_string(),
             });
         }
-        ensure_collection_permission_cached(
-            backend,
-            user,
-            state,
-            collection.id,
-            collection.exists_in_db,
-            Permissions::CreateClass,
-        )
-        .await
-        .map_err(|message| PlanningFailure {
-            kind: FailureKind::Permission,
-            item: planned_result(
-                "class",
-                "create",
-                input.ref_.clone(),
-                Some(identifier.clone()),
-            ),
-            message,
-        })?;
+        state
+            .authorization
+            .require_collection(
+                backend,
+                user,
+                collection.id,
+                collection.exists_in_db,
+                Permissions::CreateClass,
+            )
+            .await
+            .map_err(|message| PlanningFailure {
+                kind: FailureKind::Permission,
+                item: planned_result(
+                    "class",
+                    "create",
+                    input.ref_.clone(),
+                    Some(identifier.clone()),
+                ),
+                message,
+            })?;
 
         let created = ClassResolution {
             id: state.next_virtual_id(),
@@ -1134,7 +992,7 @@ where
     }
 
     let object_key = (class.id, input.name.clone());
-    if !state.planned_object_keys.insert(object_key.clone()) {
+    if !state.objects.reserve(object_key.clone()) {
         return Err(PlanningFailure {
             kind: FailureKind::Validation,
             item: planned_result(
@@ -1199,28 +1057,29 @@ where
         })?;
 
     if let Some(object) = existing {
-        ensure_existing_resource_permission(
-            backend,
-            user,
-            state,
-            ResourceRef::object(
-                object.id,
-                ClassResourceEndpoint::new(object.collection_id, object.class_id),
-                Some(object.name.clone()),
-            ),
-            Permissions::UpdateObject,
-        )
-        .await
-        .map_err(|message| PlanningFailure {
-            kind: FailureKind::Permission,
-            item: planned_result(
-                "object",
-                "update",
-                input.ref_.clone(),
-                Some(identifier.clone()),
-            ),
-            message,
-        })?;
+        state
+            .authorization
+            .require_resource(
+                backend,
+                user,
+                ResourceRef::object(
+                    object.id,
+                    ClassResourceEndpoint::new(object.collection_id, object.class_id),
+                    Some(object.name.clone()),
+                ),
+                Permissions::UpdateObject,
+            )
+            .await
+            .map_err(|message| PlanningFailure {
+                kind: FailureKind::Permission,
+                item: planned_result(
+                    "object",
+                    "update",
+                    input.ref_.clone(),
+                    Some(identifier.clone()),
+                ),
+                message,
+            })?;
 
         if !import_item_allows_overwrite(input.condition, mode) {
             return Err(PlanningFailure {
@@ -1262,25 +1121,26 @@ where
                 message: CONDITIONAL_IMPORT_TARGET_MISSING.to_string(),
             });
         }
-        ensure_collection_permission_cached(
-            backend,
-            user,
-            state,
-            collection.id,
-            collection.exists_in_db,
-            Permissions::CreateObject,
-        )
-        .await
-        .map_err(|message| PlanningFailure {
-            kind: FailureKind::Permission,
-            item: planned_result(
-                "object",
-                "create",
-                input.ref_.clone(),
-                Some(identifier.clone()),
-            ),
-            message,
-        })?;
+        state
+            .authorization
+            .require_collection(
+                backend,
+                user,
+                collection.id,
+                collection.exists_in_db,
+                Permissions::CreateObject,
+            )
+            .await
+            .map_err(|message| PlanningFailure {
+                kind: FailureKind::Permission,
+                item: planned_result(
+                    "object",
+                    "create",
+                    input.ref_.clone(),
+                    Some(identifier.clone()),
+                ),
+                message,
+            })?;
 
         let created = ObjectResolution {
             id: state.next_virtual_id(),
@@ -1365,7 +1225,7 @@ where
             message,
         })?;
 
-    let relation_exists = class_relation_exists_cached(pool, state, pair.0, pair.1)
+    let relation_exists = class_relation_exists_cached(pool, state, pair)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Runtime,
@@ -1440,7 +1300,7 @@ where
         RelationPlanDecision::Create => {}
     }
 
-    state.class_relations.insert(pair);
+    state.class_relations.record_creation(pair);
 
     Ok(PlannedItem {
         result: planned_result("class_relation", "create", input.ref_.clone(), identifier),
@@ -1516,19 +1376,18 @@ where
         })?;
 
     let class_pair = normalize_pair(from_object.class_id, to_object.class_id);
-    let class_relation_exists =
-        class_relation_exists_cached(pool, state, class_pair.0, class_pair.1)
-            .await
-            .map_err(|message| PlanningFailure {
-                kind: FailureKind::Runtime,
-                item: planned_result(
-                    "object_relation",
-                    "lookup",
-                    input.ref_.clone(),
-                    identifier.clone(),
-                ),
-                message,
-            })?;
+    let class_relation_exists = class_relation_exists_cached(pool, state, class_pair)
+        .await
+        .map_err(|message| PlanningFailure {
+            kind: FailureKind::Runtime,
+            item: planned_result(
+                "object_relation",
+                "lookup",
+                input.ref_.clone(),
+                identifier.clone(),
+            ),
+            message,
+        })?;
 
     if !class_relation_exists {
         return Err(PlanningFailure {
@@ -1539,7 +1398,7 @@ where
         });
     }
 
-    let relation_exists = object_relation_exists_cached(pool, state, pair.0, pair.1)
+    let relation_exists = object_relation_exists_cached(pool, state, pair)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Runtime,
@@ -1614,7 +1473,7 @@ where
         RelationPlanDecision::Create => {}
     }
 
-    state.object_relations.insert(pair);
+    state.object_relations.record_creation(pair);
 
     Ok(PlannedItem {
         result: planned_result("object_relation", "create", input.ref_.clone(), identifier),
@@ -1655,47 +1514,45 @@ where
         message,
     })?;
 
-    ensure_collection_permission_cached(
-        backend,
-        user,
-        state,
-        collection.id,
-        collection.exists_in_db,
-        Permissions::DelegateCollection,
-    )
-    .await
-    .map_err(|message| PlanningFailure {
-        kind: FailureKind::Permission,
-        item: planned_result(
-            "collection_permission",
-            "apply",
-            input.ref_.clone(),
-            Some(format!(
-                "{}::{}",
-                collection.name, input.group_key.groupname
-            )),
-        ),
-        message,
-    })?;
-
-    let identity_scope = input.group_key.resolve_identity_scope_name();
-    let group_exists = storage_handle(pool)
-        .has_import_group(identity_scope, &input.group_key.groupname)
+    state
+        .authorization
+        .require_collection(
+            backend,
+            user,
+            collection.id,
+            collection.exists_in_db,
+            Permissions::DelegateCollection,
+        )
         .await
-        .map_err(|err| PlanningFailure {
-            kind: FailureKind::Runtime,
+        .map_err(|message| PlanningFailure {
+            kind: FailureKind::Permission,
             item: planned_result(
                 "collection_permission",
-                "lookup",
+                "apply",
                 input.ref_.clone(),
-                Some(input.group_key.groupname.clone()),
+                Some(format!(
+                    "{}::{}",
+                    collection.name, input.group_key.groupname
+                )),
             ),
-            message: sanitize_error_for_storage(&err.into()),
-        })?
-        || state.planned_group_keys.contains(&(
-            identity_scope.to_string(),
-            input.group_key.groupname.clone(),
-        ));
+            message,
+        })?;
+
+    let identity_scope = input.group_key.resolve_identity_scope_name();
+    let group_exists = state.has_planned_group(&input.group_key)
+        || storage_handle(pool)
+            .has_import_group(identity_scope, &input.group_key.groupname)
+            .await
+            .map_err(|err| PlanningFailure {
+                kind: FailureKind::Runtime,
+                item: planned_result(
+                    "collection_permission",
+                    "lookup",
+                    input.ref_.clone(),
+                    Some(input.group_key.groupname.clone()),
+                ),
+                message: sanitize_error_for_storage(&err.into()),
+            })?;
     if !group_exists {
         return Err(PlanningFailure {
             kind: FailureKind::Resolution,

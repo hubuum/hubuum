@@ -1,7 +1,9 @@
 //! Cooperative application execution with a separately scheduled durable-control monitor.
 
 use std::future::Future;
+use std::sync::LazyLock;
 use std::time::Duration;
+use tokio::task::JoinHandle;
 
 use hubuum_storage_core::{
     StorageExecutionScope, StorageTaskExecutionAdmission, TaskExecutionStorage,
@@ -55,7 +57,23 @@ async fn wait_for_stop(execution: &TaskExecutionContext) -> TaskStopReason {
     }
 }
 
-struct ControlMonitor(tokio::task::JoinHandle<()>);
+/// Lease renewals and stop requests must keep running while the task runtime is busy.
+static TASK_LEASE_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_name("task-lease-heartbeat")
+        .enable_all()
+        .build()
+        .expect("task lease heartbeat runtime must start")
+});
+
+pub(super) fn spawn_lease_monitor(
+    monitor: impl Future<Output = ()> + Send + 'static,
+) -> JoinHandle<()> {
+    TASK_LEASE_RUNTIME.spawn(monitor)
+}
+
+struct ControlMonitor(JoinHandle<()>);
 impl Drop for ControlMonitor {
     fn drop(&mut self) {
         self.0.abort();
@@ -87,7 +105,7 @@ where
     }
     let backend = context.backend().clone();
     let lease = task.lease().clone();
-    let _monitor = ControlMonitor(super::worker::task_lease_runtime().spawn(async move {
+    let _monitor = ControlMonitor(spawn_lease_monitor(async move {
         loop {
             tokio::time::sleep(Duration::from_millis(250)).await;
             if let Ok(control) = backend.poll_task_execution(lease.clone()).await
