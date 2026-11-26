@@ -4,10 +4,10 @@ use hubuum_storage_postgres::diesel_async_prelude::*;
 use hubuum_storage_postgres::with_transaction;
 use rstest::rstest;
 
+use super::tests::issue_login_token;
 use super::*;
 use crate::events::EventContext;
 use crate::models::{LoginUser, NewUser, UpdateUser, UserID};
-use crate::services::authentication::issue_login_token;
 use crate::storage::{ExternalIdentityStorage, StorageExternalUserSync, storage_handle};
 use crate::tests::{TestContext, app_context};
 
@@ -35,7 +35,7 @@ async fn verified_password_cannot_issue_a_token_after_reset() {
     )
     .await
     .unwrap();
-    let error = issue_login_token(app.get_ref(), &authenticated, &EventContext::system())
+    let error = issue_login_token(app.get_ref(), &authenticated, EventContext::system())
         .await
         .err()
         .unwrap();

@@ -2,7 +2,7 @@ use crate::models::HubuumClass;
 use crate::services::schema_evolution as service;
 use crate::storage::storage_handle;
 use crate::{
-    api::{openapi::ApiErrorResponse, response::ApiResponse},
+    api::response::{ApiErrorResponse, ApiResponse},
     can,
     errors::ApiError,
     extractors::{AccessEventContext, Authenticated, UnscopedRuntimeAdmin},

@@ -17,6 +17,7 @@ const METRIC_SOURCES: &[&str] = &[
     include_str!("../observability/metrics/inventory.rs"),
     include_str!("../observability/metrics/login.rs"),
     include_str!("../observability/metrics/process.rs"),
+    include_str!("../observability/metrics/refresh.rs"),
     include_str!("../observability/metrics/registry.rs"),
     include_str!("../observability/metrics/remote_call.rs"),
     include_str!("../observability/metrics/scrape.rs"),

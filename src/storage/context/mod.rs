@@ -14,11 +14,7 @@ use hubuum_storage_core::{
     StorageHistoryNavigationQuery,
 };
 use hubuum_storage_memory::MemoryStorage;
-#[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]
-use hubuum_storage_postgres::PostgresPool;
 use hubuum_storage_postgres::PostgresStorage;
-#[cfg(any(test, feature = "integration-test-support"))]
-use hubuum_storage_postgres::{PostgresPoolSettings, build_postgres_pool};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -124,7 +120,7 @@ use crate::storage::{DatabaseDiagnosticsProvider, DatabasePoolState, DatabaseSto
 use crate::storage::{StorageClassHistoryRecord, StorageCollectionHistoryRecord};
 use async_trait::async_trait;
 
-mod private {
+pub(super) mod private {
     use super::StorageHandle;
 
     pub trait BackendAccess {
@@ -259,54 +255,6 @@ impl StorageHandle {
         dispatch_backend!(self, |backend| backend.schema_limits())
     }
 
-    #[cfg(any(test, feature = "integration-test-support", feature = "postgres-bench"))]
-    pub(crate) fn postgres(pool: PostgresPool) -> Self {
-        Self::from_postgres_backend(super::factory::compose_postgres(pool))
-    }
-
-    #[cfg(any(test, feature = "integration-test-support"))]
-    pub(crate) fn postgres_with_operational_pool_settings(
-        pool: PostgresPool,
-        settings: PostgresPoolSettings,
-    ) -> Self {
-        let task_lease_pool = build_postgres_pool(&settings)
-            .expect("validated task-lease pool settings must remain constructible");
-        let notification_listener_pool_settings =
-            super::factory::notification_listener_pool_settings(&settings)
-                .expect("validated notification-listener settings must remain constructible");
-        let notification_listener_pool = build_postgres_pool(&notification_listener_pool_settings)
-            .expect("validated notification-listener pool settings must remain constructible");
-        Self::from_postgres_backend(
-            super::factory::compose_postgres(pool)
-                .with_task_lease_pool(task_lease_pool)
-                .with_notification_listener_pool(notification_listener_pool),
-        )
-    }
-
-    pub(in crate::storage) fn from_postgres_backend(backend: PostgresStorage) -> Self {
-        let database_diagnostics = super::factory::postgres_database_diagnostics(backend.clone());
-        let worker_notification_provider = Arc::new(backend.clone());
-        let query_usage_analysis = Arc::new(backend.clone());
-        Self::from_registered_backend(backend)
-            .with_database_diagnostics(database_diagnostics)
-            .with_worker_notification_provider(worker_notification_provider)
-            .with_query_usage_analysis(query_usage_analysis)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn from_postgres_backend_with_storage_observer(
-        backend: PostgresStorage,
-        observer: Arc<dyn StorageObserver>,
-    ) -> Self {
-        let database_diagnostics = super::factory::postgres_database_diagnostics(backend.clone());
-        let worker_notification_provider = Arc::new(backend.clone());
-        let query_usage_analysis = Arc::new(backend.clone());
-        Self::from_registered_backend_with_observer(backend, observer)
-            .with_database_diagnostics(database_diagnostics)
-            .with_worker_notification_provider(worker_notification_provider)
-            .with_query_usage_analysis(query_usage_analysis)
-    }
-
     pub(crate) fn from_registered_backend<S>(backend: S) -> Self
     where
         S: RegisteredStorageBackend,
@@ -351,7 +299,7 @@ impl StorageHandle {
         self
     }
 
-    fn with_worker_notification_provider(
+    pub(super) fn with_worker_notification_provider(
         mut self,
         provider: Arc<dyn WorkerNotificationProvider>,
     ) -> Self {
@@ -361,7 +309,10 @@ impl StorageHandle {
         self
     }
 
-    fn with_query_usage_analysis(mut self, provider: Arc<dyn QueryUsageAnalysisProvider>) -> Self {
+    pub(super) fn with_query_usage_analysis(
+        mut self,
+        provider: Arc<dyn QueryUsageAnalysisProvider>,
+    ) -> Self {
         Arc::get_mut(&mut self.inner)
             .expect("new storage handles have no other owners")
             .query_usage_analysis = Some(provider);
@@ -429,6 +380,22 @@ impl StorageHandle {
             future,
         )
         .await
+    }
+
+    #[cfg(test)]
+    pub(super) fn assert_postgres_providers_attached(&self) {
+        assert!(
+            self.database_pool_state().is_some(),
+            "missing database diagnostics"
+        );
+        assert!(
+            self.has_worker_notification_provider(),
+            "missing worker notifications"
+        );
+        assert!(
+            self.inner.query_usage_analysis.is_some(),
+            "missing query-usage analysis"
+        );
     }
 
     /// Return adapter-projected pool diagnostics for the legacy database endpoint.

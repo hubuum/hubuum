@@ -274,6 +274,14 @@ assert_flag "$storage_contract_docs_output" container false
 assert_flag "$storage_contract_docs_output" artifacts false
 assert_flag "$storage_contract_docs_output" benchmarks false
 
+# Moving a storage scenario into a child module must retain its validation tier.
+for suite in storage_contract application_boundary storage_performance; do
+  while IFS= read -r scenario; do
+    scenario_flags="$(bash "$classifier" "$scenario")"
+    assert_flag "$scenario_flags" rust true
+  done < <(find "src/tests/$suite" -type f -name '*.rs')
+done
+
 markdown_config_output="$(bash "$classifier" .markdownlint.json)"
 assert_flag "$markdown_config_output" markdown true
 assert_flag "$markdown_config_output" code false
@@ -764,6 +772,7 @@ for observation_test in src/storage/context/runtime_settings.rs \
   src/middlewares/runtime_settings.rs \
   src/tests/storage_contract/runtime_settings.rs \
   crates/hubuum-storage-core/src/runtime_settings.rs \
+  crates/hubuum-storage-core/src/query_observation_settings.rs \
   crates/hubuum-storage-postgres/tests/runtime_settings.rs \
   crates/hubuum-storage-postgres/migrations/2026-10-19-000001_query_observation_control/up.sql \
   crates/hubuum-storage-postgres/migrations/2026-11-06-000001_runtime_settings/up.sql \
@@ -899,17 +908,29 @@ for history_input in src/services/history/access.rs src/services/history/navigat
   assert_flag "$history_output" treetop_conformance true
 done
 
+for adapter_input in crates/hubuum-storage-postgres/src/operations/user_row.rs \
+  crates/hubuum-storage-postgres/src/operations/import_execution/identity.rs \
+  crates/hubuum-storage-postgres/src/operations/import_execution/integrations.rs \
+  crates/hubuum-storage-postgres/src/operations/import_execution/relations.rs \
+  crates/hubuum-storage-postgres/src/operations/relation_query/graph_walk.rs \
+  crates/hubuum-storage-postgres/src/operations/token_scope.rs \
+  crates/hubuum-storage-postgres/src/operations/object_aggregate/expressions.rs; do
+  adapter_output="$(bash "$classifier" "$adapter_input")"
+  assert_flag "$adapter_output" rust true
+  assert_flag "$adapter_output" container true
+done
+
 for repair_path in tests/computed_read_repair.rs crates/hubuum-storage-postgres/src/operations/computed_fields/read_repair.rs crates/hubuum-storage-postgres/tests/computed_read_repair_migration.rs crates/hubuum-storage-postgres/migrations/2026-10-25-000001_computed_read_repairs/up.sql; do
   repair_output="$(bash "$classifier" "$repair_path")"
   assert_flag "$repair_output" rust true
 done
 
-# Interactive auth and activity schemas must regenerate the public contract.
-for session_schema in src/api/v1/handlers/auth.rs src/models/auth_session.rs src/models/credential_activity.rs; do
-  session_output="$(bash "$classifier" "$session_schema")"
-  assert_flag "$session_output" rust true
-  assert_flag "$session_output" openapi true
-  assert_flag "$session_output" container true
+# Shared HTTP responses, registration, and interactive auth schemas feed the public contract.
+for schema_path in src/api/openapi.rs src/api/response.rs src/api/v1/handlers/auth.rs src/models/auth_session.rs src/models/credential_activity.rs; do
+  schema_output="$(bash "$classifier" "$schema_path")"
+  assert_flag "$schema_output" rust true
+  assert_flag "$schema_output" openapi true
+  assert_flag "$schema_output" container true
 done
 for session_input in src/services/auth_sessions.rs src/services/credential_activity.rs \
   src/tests/storage_contract/auth_sessions.rs tests/api_identity_suite/sessions.rs \

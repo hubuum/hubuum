@@ -3,6 +3,7 @@ mod authorization;
 mod bounded_json;
 mod candidate;
 mod computed;
+mod expressions;
 mod filters;
 mod sql;
 

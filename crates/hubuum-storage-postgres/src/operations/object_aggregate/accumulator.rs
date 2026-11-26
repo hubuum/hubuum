@@ -4,7 +4,7 @@ use futures_util::TryStreamExt;
 
 use super::ObjectAggregatePaging;
 use super::bounded_json::{MAX_OBJECT_AGGREGATE_ACCUMULATOR_BYTES, ObjectAggregateJsonBound};
-use super::sql::{
+use super::expressions::{
     ObjectAggregateBindValue, ObjectAggregateSqlSpec, append_page_options,
     bind_object_aggregate_query, grouped_measure_state_sql, measure_response_sql,
     merged_measure_state_sql,

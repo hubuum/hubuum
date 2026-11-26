@@ -5,6 +5,31 @@ use hubuum_auth_ldap::{LdapScopeConfig, LdapSearchScope};
 use rstest::rstest;
 use uuid::Uuid;
 
+use crate::events::EventContext;
+use crate::models::{IssuedToken, Token};
+use crate::permissions::AppContext;
+use crate::services::auth_sessions;
+use hubuum_storage_core::{ObservedSource, SessionClientId};
+
+pub(super) async fn issue_login_token(
+    context: &AppContext,
+    authenticated: &AuthenticatedLogin,
+    event_context: EventContext,
+) -> Result<IssuedToken, ApiError> {
+    let response = auth_sessions::issue(
+        context,
+        authenticated,
+        SessionClientId::try_new("test").unwrap(),
+        event_context,
+        ObservedSource::Unavailable,
+    )
+    .await?;
+    Ok(IssuedToken::new(
+        Token::try_from(response.access_token)?,
+        response.access_expires_at.naive_utc(),
+    ))
+}
+
 const CONFIG_SECRET: &str = "auth-config-secret";
 
 struct TestAuthConfigFile {
