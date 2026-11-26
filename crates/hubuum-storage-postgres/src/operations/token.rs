@@ -26,10 +26,11 @@ use hubuum_storage_core::{
 };
 use serde_json::{Value, json};
 
+use super::token_scope::{load_token_scope, permission_from_persisted};
 use crate::cursor::{CursorSqlField, CursorSqlType};
 use crate::operations::authentication::active_token_predicate;
 use crate::operations::event_record::append_event;
-use crate::operations::user::UserRow;
+use crate::operations::user_row::UserRow;
 use crate::revision::RevisionOwner;
 use crate::runtime::assert_locked_revision_precondition;
 use crate::{PostgresConnection, PostgresRevision, PostgresRuntime, PostgresStorageError};
@@ -52,14 +53,6 @@ struct TokenKeyUsageRow {
     earliest_expiry: Option<NaiveDateTime>,
     #[diesel(sql_type = Nullable<Timestamp>)]
     latest_expiry: Option<NaiveDateTime>,
-}
-
-fn permission_from_persisted(
-    value: String,
-) -> Result<StorageAuthorizationPermission, PostgresStorageError> {
-    StorageAuthorizationPermission::from_name(&value).map_err(|error| {
-        PostgresStorageError::invalid_persisted_value("token permission scope", error)
-    })
 }
 
 #[derive(Clone, Queryable, Selectable)]
@@ -891,71 +884,6 @@ pub async fn revoke_all_principal_tokens_on_connection(
     .execute(connection)
     .await
     .map_err(PostgresStorageError::from)
-}
-
-pub(crate) async fn load_token_scope(
-    connection: &mut PostgresConnection,
-    query: StorageAuthenticationTokenScopeQuery,
-) -> Result<Option<StorageAuthenticationTokenScope>, PostgresStorageError> {
-    if !query.is_scoped() {
-        return Ok(None);
-    }
-    let token_id = query.token_id().id();
-    let permissions = if query.is_permission_scoped() {
-        Some(
-            crate::schema::token_scopes::table
-                .filter(crate::schema::token_scopes::token_id.eq(token_id))
-                .order_by(crate::schema::token_scopes::permission.asc())
-                .select(crate::schema::token_scopes::permission)
-                .load::<String>(connection)
-                .await?
-                .into_iter()
-                .map(permission_from_persisted)
-                .collect::<Result<Vec<_>, _>>()?,
-        )
-    } else {
-        None
-    };
-    let resources = if query.is_resource_scoped() {
-        let collection_ids = crate::schema::token_collection_scopes::table
-            .filter(crate::schema::token_collection_scopes::token_id.eq(token_id))
-            .order_by(crate::schema::token_collection_scopes::collection_id.asc())
-            .select(crate::schema::token_collection_scopes::collection_id)
-            .load::<i32>(connection)
-            .await?;
-        let class_ids = crate::schema::token_class_scopes::table
-            .filter(crate::schema::token_class_scopes::token_id.eq(token_id))
-            .order_by(crate::schema::token_class_scopes::class_id.asc())
-            .select(crate::schema::token_class_scopes::class_id)
-            .load::<i32>(connection)
-            .await?;
-        let object_ids = crate::schema::token_object_scopes::table
-            .filter(crate::schema::token_object_scopes::token_id.eq(token_id))
-            .order_by(crate::schema::token_object_scopes::object_id.asc())
-            .select(crate::schema::token_object_scopes::object_id)
-            .load::<i32>(connection)
-            .await?;
-        Some(StorageAuthenticationResourceScope::new(
-            collection_ids
-                .into_iter()
-                .map(hubuum_domain::CollectionId::new)
-                .collect::<Result<Vec<_>, _>>()?,
-            class_ids
-                .into_iter()
-                .map(hubuum_domain::ClassId::new)
-                .collect::<Result<Vec<_>, _>>()?,
-            object_ids
-                .into_iter()
-                .map(hubuum_domain::ObjectId::new)
-                .collect::<Result<Vec<_>, _>>()?,
-        ))
-    } else {
-        None
-    };
-    Ok(Some(StorageAuthenticationTokenScope::new(
-        permissions,
-        resources,
-    )))
 }
 
 struct TokenCreateParts {

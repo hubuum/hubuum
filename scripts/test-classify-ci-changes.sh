@@ -908,6 +908,18 @@ for history_input in src/services/history/access.rs src/services/history/navigat
   assert_flag "$history_output" treetop_conformance true
 done
 
+for adapter_input in crates/hubuum-storage-postgres/src/operations/user_row.rs \
+  crates/hubuum-storage-postgres/src/operations/import_execution/identity.rs \
+  crates/hubuum-storage-postgres/src/operations/import_execution/integrations.rs \
+  crates/hubuum-storage-postgres/src/operations/import_execution/relations.rs \
+  crates/hubuum-storage-postgres/src/operations/relation_query/graph_walk.rs \
+  crates/hubuum-storage-postgres/src/operations/token_scope.rs \
+  crates/hubuum-storage-postgres/src/operations/object_aggregate/expressions.rs; do
+  adapter_output="$(bash "$classifier" "$adapter_input")"
+  assert_flag "$adapter_output" rust true
+  assert_flag "$adapter_output" container true
+done
+
 for repair_path in tests/computed_read_repair.rs crates/hubuum-storage-postgres/src/operations/computed_fields/read_repair.rs crates/hubuum-storage-postgres/tests/computed_read_repair_migration.rs crates/hubuum-storage-postgres/migrations/2026-10-25-000001_computed_read_repairs/up.sql; do
   repair_output="$(bash "$classifier" "$repair_path")"
   assert_flag "$repair_output" rust true
