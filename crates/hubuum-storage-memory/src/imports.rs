@@ -2,6 +2,7 @@ mod identity;
 mod integrations;
 mod relations;
 mod resources;
+mod workflow;
 
 use super::*;
 
@@ -37,7 +38,7 @@ fn assert_import_create_condition(
 }
 
 impl MemoryStorage {
-    pub(crate) async fn commit_import_operation(
+    async fn commit_import_operation(
         &self,
         operation: StorageImportOperation,
         references: &mut BTreeMap<String, MemoryImportReference>,
@@ -266,7 +267,7 @@ impl MemoryStorage {
             .ok_or_else(|| StorageError::not_found("Import event sink was not found"))
     }
 
-    pub(crate) async fn apply_import_operation(
+    async fn apply_import_operation(
         &self,
         operation: StorageImportOperation,
         references: &mut BTreeMap<String, MemoryImportReference>,
@@ -602,4 +603,68 @@ fn memory_import_event_context() -> EventContext {
         .flatten()
         .map(EventContext::from_mutation)
         .unwrap_or_else(EventContext::system)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hubuum_storage_core::{StorageImportCollectionParts, StorageImportPlanItem};
+    use std::task::{Context, Waker};
+
+    #[test]
+    fn strict_import_preserves_an_independent_collection_write() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let storage = MemoryStorage::new();
+                let guard = storage.state.write().await;
+                let importer = storage.clone();
+                let mut import = Box::pin(async move {
+                    let operation = StorageImportOperation::CreateCollection(
+                        StorageImportCollection::from_parts(StorageImportCollectionParts {
+                            name: "imported".into(),
+                            description: String::new(),
+                            reference: None,
+                            parent_collection_ref: None,
+                            parent_collection_key: None,
+                            condition: None,
+                            timestamps: None,
+                        }),
+                    );
+                    let plan =
+                        StorageImportPlan::try_new(vec![StorageImportPlanItem::new(0, operation)])
+                            .unwrap();
+                    importer.apply_import_strict(plan).await.unwrap();
+                });
+                let writer = storage.clone();
+                let mut write = Box::pin(async move {
+                    let request = StorageCollectionCreate::new(
+                        "independent",
+                        "",
+                        GroupId::new(1).unwrap(),
+                        None,
+                    );
+                    writer
+                        .create_collection(request, &memory_import_event_context())
+                        .await
+                        .unwrap()
+                        .into_value()
+                });
+
+                // Queue both operations on the live lock before allowing either to proceed.
+                let mut cx = Context::from_waker(Waker::noop());
+                assert!(import.as_mut().poll(&mut cx).is_pending());
+                assert!(write.as_mut().poll(&mut cx).is_pending());
+                drop(guard);
+                let import = tokio::spawn(import);
+                let written = write.await;
+                import.await.unwrap();
+
+                assert_eq!(
+                    storage.get_collection(written.id()).await.unwrap().name(),
+                    "independent"
+                );
+            });
+    }
 }

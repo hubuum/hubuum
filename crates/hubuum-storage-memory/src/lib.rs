@@ -361,7 +361,6 @@ struct MemoryState {
     next_group_id: i32,
     next_token_id: i32,
     next_task_id: i32,
-    next_import_result_id: i32,
     next_computed_field_id: i32,
     next_export_template_id: i32,
     next_remote_target_id: i32,
@@ -396,7 +395,7 @@ struct MemoryState {
     service_accounts: BTreeMap<i32, StorageServiceAccount>,
     tasks: BTreeMap<i32, MemoryTaskRecord>,
     task_events: BTreeMap<i32, Vec<StorageTaskEvent>>,
-    import_task_results: BTreeMap<i32, Vec<StorageImportTaskResult>>,
+    import_task_results: import_results::ImportResults,
     import_execution_receipts: BTreeSet<(i32, usize)>,
     schema_profile_outputs: BTreeMap<i32, hubuum_storage_core::StorageSchemaProfileArtifact>,
     export_outputs: BTreeMap<i32, StorageExportOutput>,
@@ -823,6 +822,7 @@ use event_deliveries::EventDeliveries;
 mod events;
 mod execution;
 mod identity;
+mod import_results;
 mod imports;
 mod object_filters;
 mod operational;
