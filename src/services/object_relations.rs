@@ -7,11 +7,6 @@ use crate::models::{
     ObjectRelationCreateSelector, ObjectRelationSelector, PreparedObjectRelation,
     ResolvedObjectRelationTarget,
 };
-use crate::services::storage_boundary::{
-    object_relation_create_selector_to_storage, object_relation_selector_to_storage,
-    prepared_object_relation_from_storage, prepared_object_relation_to_storage,
-    resolved_object_relation_from_storage, resolved_object_relation_to_storage,
-};
 use crate::storage::{
     ObjectRelationStorage, StorageError, StorageMutationOutcome, StorageObjectRelation,
     StorageObjectRelationCreate, StorageObjectRelationCreateSelector,
@@ -62,10 +57,10 @@ impl ObjectRelationService {
         selector: ObjectRelationCreateSelector,
     ) -> Result<PreparedObjectRelation, ApiError> {
         self.storage
-            .prepare_object_relation(object_relation_create_selector_to_storage(selector)?)
+            .prepare_object_relation(selector.try_into()?)
             .await
             .map_err(ApiError::from)
-            .and_then(prepared_object_relation_from_storage)
+            .map(PreparedObjectRelation::from)
     }
 
     pub async fn resolve(
@@ -73,10 +68,10 @@ impl ObjectRelationService {
         selector: ObjectRelationSelector,
     ) -> Result<ResolvedObjectRelationTarget, ApiError> {
         self.storage
-            .resolve_object_relation(object_relation_selector_to_storage(selector))
+            .resolve_object_relation(selector.into())
             .await
             .map_err(ApiError::from)
-            .and_then(resolved_object_relation_from_storage)
+            .map(ResolvedObjectRelationTarget::from)
     }
 
     pub async fn create(
@@ -84,13 +79,13 @@ impl ObjectRelationService {
         prepared: &PreparedObjectRelation,
         context: &EventContext,
     ) -> Result<ResolvedObjectRelationTarget, ApiError> {
-        let prepared = prepared_object_relation_to_storage(prepared);
+        let prepared = prepared.as_storage();
         self.storage
             .create_object_relation(prepared, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(resolved_object_relation_from_storage)
+            .map(ResolvedObjectRelationTarget::from)
     }
 
     pub async fn delete(
@@ -98,7 +93,7 @@ impl ObjectRelationService {
         target: &ResolvedObjectRelationTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        let target = resolved_object_relation_to_storage(target);
+        let target = target.as_storage();
         self.storage
             .delete_object_relation(target, context)
             .await
@@ -451,13 +446,12 @@ mod tests {
         let lifecycle = &harness.services.object_relations().storage;
         let created = prepare_and_create_object_relation(
             lifecycle.as_ref(),
-            crate::services::storage_boundary::object_relation_create_to_storage(
-                NewHubuumObjectRelation {
-                    from_hubuum_object_id: fixture.from_object.id,
-                    to_hubuum_object_id: fixture.to_object.id,
-                    class_relation_id: fixture.class_relation.relation().id.id(),
-                },
-            )
+            NewHubuumObjectRelation {
+                from_hubuum_object_id: fixture.from_object.id,
+                to_hubuum_object_id: fixture.to_object.id,
+                class_relation_id: fixture.class_relation.relation().id.id(),
+            }
+            .try_into()
             .expect("valid fixture command"),
             &EventContext::system(),
         )

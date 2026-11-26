@@ -31,7 +31,7 @@ pub(super) fn capture(
     }
     sections.insert(StorageBackupHistorySection::TerminalTasks, tasks);
     let mut results = Vec::new();
-    for r in state.import_task_results.values().flatten() {
+    for r in state.import_task_results.rows() {
         progress.scan_row()?;
         if !terminal(r.task_id().id()) {
             continue;
@@ -160,11 +160,7 @@ pub(super) fn restore(
         .error(r.optional_text("error")?)
         .details(r.optional_value("details").cloned())
         .build();
-        state
-            .import_task_results
-            .entry(result.task_id().id())
-            .or_default()
-            .push(result);
+        state.import_task_results.insert(result);
     }
     for row in &sections[&StorageBackupHistorySection::ExportOutputs] {
         let r = Row(row);
@@ -205,15 +201,6 @@ pub(super) fn restore(
     state
         .task_ids
         .observe(state.tasks.keys().next_back().copied().unwrap_or(0));
-    state.next_import_result_id = state
-        .import_task_results
-        .values()
-        .flatten()
-        .map(|v| v.id().id())
-        .max()
-        .unwrap_or(0)
-        .checked_add(1)
-        .ok_or_else(|| invalid("import result sequence"))?;
     Ok(())
 }
 

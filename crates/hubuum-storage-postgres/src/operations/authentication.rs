@@ -372,7 +372,7 @@ pub async fn get_authentication_token_scope(
 ) -> Result<Option<StorageAuthenticationTokenScope>, PostgresStorageError> {
     runtime
         .with_read_connection(async move |connection| {
-            super::token::load_token_scope(connection, query).await
+            super::token_scope::load_token_scope(connection, query).await
         })
         .await
 }

@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- PostgreSQL computed-field rebuild and read-repair workers now read only the
+  task settings row when selecting the size of each batch.
+
 ### Security
 
 - Remove the unused Actix Web cookie feature and its dependency on
@@ -16,6 +21,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   calculation (RUSTSEC-2026-0592).
 
 ### Fixed
+
+- Best-effort imports can resolve a parent collection by name after an
+  earlier item failed to find it and a later item planned its creation.
+
+- Imports on the experimental memory backend preserve concurrent writes.
+  Restoring an import that used the last available result ID preserves its
+  receipts and prevents a later import from reusing that ID.
 
 - The experimental memory backend preserves identifier high-water marks across
   restores and rejects exhausted writes without publishing partial history or

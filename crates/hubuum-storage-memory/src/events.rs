@@ -1,4 +1,5 @@
 use super::*;
+use crate::event_deliveries::{rebuild_event_delivery, with_deferred_reason};
 use hubuum_events_core::EventSubscriptionScope;
 use hubuum_storage_core::StorageEventDeliveryConfiguration;
 use hubuum_storage_core::StorageEventDeliveryDisposition;
@@ -414,25 +415,11 @@ impl EventConfigurationStorage for MemoryStorage {
                     .filter(|subscription| subscription.sink_id() == sink.id())
                     .map(|subscription| subscription.id())
                     .collect::<std::collections::HashSet<_>>();
-                for delivery in state.event_deliveries.values().filter(|delivery| {
-                    subscriptions.contains(&delivery.subscription_id())
-                        && delivery.status() == EventDeliveryStatus::Pending
-                        && delivery.deferred_reason().is_some()
-                }) {
-                    let updated = delivery_metadata(
-                        rebuild_event_delivery(
-                            delivery,
-                            delivery.status(),
-                            delivery.attempts(),
-                            eligible,
-                            delivery.last_error().map(str::to_owned),
-                            delivery.locked_until(),
-                        )?,
-                        delivery.purpose(),
-                        reason.map(str::to_owned),
-                    )?;
-                    deliveries.push((updated.id().id(), updated));
-                }
+                deliveries = state.event_deliveries.rescheduled_deferred(
+                    &subscriptions,
+                    eligible,
+                    reason,
+                )?;
             }
         }
         let receipt = append_memory_scoped_simple_event!(
@@ -448,7 +435,9 @@ impl EventConfigurationStorage for MemoryStorage {
         if let Some(schedule) = schedule {
             state.event_sink_schedule.insert(sink.id().id(), schedule);
         }
-        state.event_deliveries.extend(deliveries);
+        for delivery in deliveries {
+            state.event_deliveries.store_unclaimed(delivery);
+        }
         state.event_sinks.insert(sink.id().id(), sink.clone());
         Ok(StorageMutationOutcome::committed(sink, receipt))
     }
@@ -687,16 +676,9 @@ impl EventConfigurationStorage for MemoryStorage {
             format!("Event subscription '{}' deleted", subscription.name()),
         )?;
         state.event_subscriptions.remove(&subscription.id().id());
-        let delivery_ids = state
+        state
             .event_deliveries
-            .values()
-            .filter(|delivery| delivery.subscription_id() == subscription.id())
-            .map(|delivery| delivery.id().id())
-            .collect::<Vec<_>>();
-        for delivery_id in delivery_ids {
-            state.event_deliveries.remove(&delivery_id);
-            state.event_delivery_claims.remove(&delivery_id);
-        }
+            .remove_where(|delivery| delivery.subscription_id() == subscription.id());
         Ok(StorageMutationOutcome::committed((), receipt))
     }
 }
@@ -756,7 +738,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
             None,
         )?;
         state.delivery_ids.observe(id.id());
-        state.event_deliveries.insert(id.id(), delivery.clone());
+        state.event_deliveries.store_unclaimed(delivery.clone());
         Ok(StorageMutationOutcome::committed(delivery, receipt))
     }
 
@@ -786,7 +768,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
             .read()
             .await
             .event_deliveries
-            .get(&delivery_id.id())
+            .get(delivery_id)
             .cloned()
             .ok_or_else(|| {
                 StorageError::not_found(format!(
@@ -803,7 +785,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
         let mut state = self.state.write().await;
         let current = state
             .event_deliveries
-            .get(&delivery_id.id())
+            .get(delivery_id)
             .cloned()
             .ok_or_else(|| {
                 StorageError::not_found(format!(
@@ -819,10 +801,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
             None,
             None,
         )?;
-        state.event_delivery_claims.remove(&delivery_id.id());
-        state
-            .event_deliveries
-            .insert(delivery_id.id(), delivery.clone());
+        state.event_deliveries.store_unclaimed(delivery.clone());
         Ok(delivery)
     }
 
@@ -833,7 +812,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
         let mut state = self.state.write().await;
         let current = state
             .event_deliveries
-            .get(&delivery_id.id())
+            .get(delivery_id)
             .cloned()
             .ok_or_else(|| {
                 StorageError::not_found(format!(
@@ -854,10 +833,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
             Some("Marked dead by an administrator".to_string()),
             None,
         )?;
-        state.event_delivery_claims.remove(&delivery_id.id());
-        state
-            .event_deliveries
-            .insert(delivery_id.id(), delivery.clone());
+        state.event_deliveries.store_unclaimed(delivery.clone());
         Ok(delivery)
     }
 }
@@ -955,10 +931,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 sink.secret_ref().map(ToOwned::to_owned),
             )
             .map_err(invalid_contract_value)?;
-            state
-                .event_delivery_claims
-                .insert(delivery.id().id(), token);
-            state.event_deliveries.insert(delivery.id().id(), delivery);
+            state.event_deliveries.store_claimed(delivery, token);
             work.push(StorageEventDeliveryWorkItem::new(
                 claim,
                 envelope,
@@ -1004,18 +977,9 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
     ) -> Result<Option<StorageEventDeliveryLease>, StorageError> {
         let check_started = Instant::now();
         let mut state = self.state.write().await;
-        let Some(delivery) = state
-            .event_deliveries
-            .get(&claim.delivery_id().id())
-            .cloned()
-        else {
+        let Ok(delivery) = state.event_deliveries.claimed(claim).cloned() else {
             return Ok(None);
         };
-        if state.event_delivery_claims.get(&claim.delivery_id().id()) != Some(&claim.token())
-            || delivery.status() != EventDeliveryStatus::InFlight
-        {
-            return Ok(None);
-        }
         let now = Utc::now();
         let Some(remaining) = delivery
             .locked_until()
@@ -1061,8 +1025,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 (!allowed).then(|| "Sink use revoked or destination disabled".to_string()),
                 None,
             )?;
-            state.event_deliveries.insert(delivery.id().id(), rejected);
-            state.event_delivery_claims.remove(&delivery.id().id());
+            state.event_deliveries.store_unclaimed(rejected);
             return Ok(None);
         }
         let interval = state
@@ -1087,9 +1050,8 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 None,
                 None,
             )?;
-            let deferred = delivery_metadata(
-                deferred,
-                delivery.purpose(),
+            let deferred = with_deferred_reason(
+                &deferred,
                 Some(
                     if blocked > now {
                         "provider_rate"
@@ -1099,8 +1061,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                     .to_string(),
                 ),
             )?;
-            state.event_deliveries.insert(delivery.id().id(), deferred);
-            state.event_delivery_claims.remove(&delivery.id().id());
+            state.event_deliveries.store_unclaimed(deferred);
             return Ok(None);
         }
         state.event_sink_schedule.insert(
@@ -1110,8 +1071,10 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 blocked,
             ),
         );
-        let admitted = delivery_metadata(delivery.clone(), delivery.purpose(), None)?;
-        state.event_deliveries.insert(delivery.id().id(), admitted);
+        let admitted = with_deferred_reason(&delivery, None)?;
+        state
+            .event_deliveries
+            .store_claimed(admitted, claim.token());
         StorageEventDeliveryLease::try_new(claim.clone(), check_started, remaining)
             .map(Some)
             .map_err(invalid_contract_value)
@@ -1124,16 +1087,10 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
     ) -> Result<(), StorageError> {
         let mut state = self.state.write().await;
         let now = Utc::now();
-        let current = state
-            .event_deliveries
-            .get(&claim.delivery_id().id())
-            .cloned()
-            .ok_or_else(|| StorageError::not_found("Delivery was removed"))?;
-        if state.event_delivery_claims.get(&current.id().id()) != Some(&claim.token())
-            || current.status() != EventDeliveryStatus::InFlight
-            || current
-                .locked_until()
-                .is_none_or(|deadline| deadline <= now)
+        let current = state.event_deliveries.claimed(claim)?.clone();
+        if current
+            .locked_until()
+            .is_none_or(|deadline| deadline <= now)
         {
             return Err(StorageError::conflict("Event delivery claim is stale"));
         }
@@ -1172,15 +1129,10 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                     None,
                     None,
                 )?;
-                delivery_metadata(
-                    updated,
-                    current.purpose(),
-                    Some("provider_rate".to_string()),
-                )?
+                with_deferred_reason(&updated, Some("provider_rate".to_string()))?
             }
         };
-        state.event_deliveries.insert(current.id().id(), updated);
-        state.event_delivery_claims.remove(&current.id().id());
+        state.event_deliveries.store_unclaimed(updated);
         Ok(())
     }
 
@@ -1189,36 +1141,16 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         claim: &StorageEventDeliveryClaim,
     ) -> Result<(), StorageError> {
         let mut state = self.state.write().await;
-        if state.event_delivery_claims.get(&claim.delivery_id().id()) != Some(&claim.token()) {
-            return Err(StorageError::conflict("Event delivery claim is stale"));
-        }
-        let current = state
-            .event_deliveries
-            .get(&claim.delivery_id().id())
-            .cloned()
-            .ok_or_else(|| StorageError::not_found("Event delivery was not found"))?;
-        if current.status() != EventDeliveryStatus::InFlight
-            || current.attempts() != claim.attempts()
-            || current
-                .locked_until()
-                .is_none_or(|deadline| deadline <= Utc::now())
-        {
-            return Err(StorageError::conflict("Event delivery claim is stale"));
-        }
+        let current = state.event_deliveries.claimed_attempt(claim)?;
         let delivery = rebuild_event_delivery(
-            &current,
+            current,
             EventDeliveryStatus::Succeeded,
             current.attempts(),
             current.next_attempt_at(),
             None,
             None,
         )?;
-        state
-            .event_delivery_claims
-            .remove(&claim.delivery_id().id());
-        state
-            .event_deliveries
-            .insert(claim.delivery_id().id(), delivery);
+        state.event_deliveries.store_unclaimed(delivery);
         Ok(())
     }
 
@@ -1229,22 +1161,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         error: &str,
     ) -> Result<(), StorageError> {
         let mut state = self.state.write().await;
-        if state.event_delivery_claims.get(&claim.delivery_id().id()) != Some(&claim.token()) {
-            return Err(StorageError::conflict("Event delivery claim is stale"));
-        }
-        let current = state
-            .event_deliveries
-            .get(&claim.delivery_id().id())
-            .cloned()
-            .ok_or_else(|| StorageError::not_found("Event delivery was not found"))?;
-        if current.status() != EventDeliveryStatus::InFlight
-            || current.attempts() != claim.attempts()
-            || current
-                .locked_until()
-                .is_none_or(|deadline| deadline <= Utc::now())
-        {
-            return Err(StorageError::conflict("Event delivery claim is stale"));
-        }
+        let current = state.event_deliveries.claimed_attempt(claim)?;
         let attempts = current.attempts() + 1;
         let exhausted = attempts >= settings.max_attempts();
         let status = if exhausted {
@@ -1257,19 +1174,14 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
             .map(|value| DateTime::from_naive_utc_and_offset(value, Utc))
             .ok_or_else(|| StorageError::internal("event retry deadline overflowed"))?;
         let delivery = rebuild_event_delivery(
-            &current,
+            current,
             status,
             attempts,
             next_attempt_at,
             Some(error.to_string()),
             None,
         )?;
-        state
-            .event_delivery_claims
-            .remove(&claim.delivery_id().id());
-        state
-            .event_deliveries
-            .insert(claim.delivery_id().id(), delivery);
+        state.event_deliveries.store_unclaimed(delivery);
         Ok(())
     }
 }
@@ -1333,12 +1245,14 @@ impl EventFanoutStorage for MemoryStorage {
                     )
                     .try_build()
                     .map_err(invalid_contract_value)?;
-                    pending.push((id.id(), delivery));
+                    pending.push(delivery);
                 }
             }
         }
         state.delivery_ids = delivery_ids;
-        state.event_deliveries.extend(pending);
+        for delivery in pending {
+            state.event_deliveries.store_unclaimed(delivery);
+        }
         state.fanout_event_cursor = events
             .last()
             .map(|event| event.id().get())
@@ -1486,25 +1400,16 @@ impl EventRetentionStorage for MemoryStorage {
             let (event, _, _) = recorded.clone().into_parts();
             !event_ids.contains(&event.id().get())
         });
-        let terminal_delivery_ids = state
-            .event_deliveries
-            .values()
-            .filter(|delivery| {
-                event_ids.contains(&delivery.event_id().get())
-                    && matches!(
-                        delivery.status(),
-                        EventDeliveryStatus::Succeeded | EventDeliveryStatus::Dead
-                    )
-            })
-            .map(|delivery| delivery.id().id())
-            .collect::<Vec<_>>();
-        for delivery_id in &terminal_delivery_ids {
-            state.event_deliveries.remove(delivery_id);
-            state.event_delivery_claims.remove(delivery_id);
-        }
+        let removed = state.event_deliveries.remove_where(|delivery| {
+            event_ids.contains(&delivery.event_id().get())
+                && matches!(
+                    delivery.status(),
+                    EventDeliveryStatus::Succeeded | EventDeliveryStatus::Dead
+                )
+        });
         Ok(StorageEventRetentionSummary::new(
             before_events - state.events.len(),
-            terminal_delivery_ids.len(),
+            removed,
         ))
     }
 }
@@ -1520,29 +1425,6 @@ fn sink_delivery_deadline(state: &MemoryState, sink: &StorageEventSink) -> Optio
                 *blocked
             }
         })
-}
-
-fn delivery_metadata(
-    current: StorageEventDelivery,
-    purpose: hubuum_domain::EventDeliveryPurpose,
-    deferred_reason: Option<String>,
-) -> Result<StorageEventDelivery, StorageError> {
-    StorageEventDelivery::builder(
-        current.id(),
-        current.event_id(),
-        current.subscription_id(),
-        current.status(),
-        current.next_attempt_at(),
-        current.created_at(),
-        current.updated_at(),
-    )
-    .attempts(current.attempts())
-    .last_error(current.last_error().map(str::to_owned))
-    .locked_until(current.locked_until())
-    .purpose(purpose)
-    .deferred_reason(deferred_reason)
-    .try_build()
-    .map_err(invalid_contract_value)
 }
 
 fn memory_notification(

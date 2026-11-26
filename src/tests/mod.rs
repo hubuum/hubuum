@@ -835,8 +835,7 @@ pub async fn ensure_admin_group(pool: &PostgresPool) -> Group {
             .await;
 
     if let Ok(group) = result {
-        return crate::services::storage_boundary::group_from_storage(group)
-            .expect("persisted administrator group should be valid");
+        return group.into();
     }
 
     let result = NewGroup {
@@ -857,7 +856,7 @@ pub async fn ensure_admin_group(pool: &PostgresPool) -> Group {
                 .await
                 .map_err(hubuum_storage_core::StorageError::from)
                 .map_err(ApiError::from)
-                .and_then(crate::services::storage_boundary::group_from_storage)
+                .map(Into::into)
                 .expect("Failed to fetch user after conflict");
             }
             _ => panic!("Failed to create admin group: {e:?}"),

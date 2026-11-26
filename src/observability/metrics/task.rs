@@ -7,7 +7,7 @@ use crate::storage::{
     MetricsStorage, StorageTaskGaugeSnapshot, StorageTaskKind, StorageTaskStatus,
 };
 
-use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
+use super::refresh::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 use super::{Metrics, current};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

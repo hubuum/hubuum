@@ -1,5 +1,7 @@
 //! Versioned schema lifecycle, compatibility analysis and fenced validation evidence.
 
+pub use crate::capabilities::workflows::SchemaEvolutionStorage;
+
 mod impact;
 mod repair;
 pub use impact::{
@@ -10,7 +12,6 @@ pub use impact::{
 };
 pub use repair::{StorageSchemaRepairReport, StorageSchemaRepairReportWrite};
 
-use async_trait::async_trait;
 use chrono::{DateTime, SubsecRound, Utc};
 use hubuum_domain::{
     ClassId, CollectionId, CompiledSchema, JsonSchemaLimits, ObjectId, PrincipalId,
@@ -20,10 +21,7 @@ use hubuum_events_core::EventContext;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{
-    StorageClassSchemaPolicy, StorageError, StorageMutationOutcome, StorageTaskLease,
-    StorageValidationError,
-};
+use crate::{StorageClassSchemaPolicy, StorageValidationError};
 
 /// Schema policy validated once before it crosses into lifecycle persistence.
 #[derive(Clone)]
@@ -971,75 +969,6 @@ impl Default for StorageSchemaBatchLimits {
     fn default() -> Self {
         Self::for_schema_limits(JsonSchemaLimits::default())
     }
-}
-
-#[async_trait]
-pub trait SchemaEvolutionStorage: Send + Sync {
-    async fn get_schema_impact_boundary(
-        &self,
-        target: SchemaReference,
-    ) -> Result<StorageSchemaImpactBoundary, StorageError>;
-    async fn schema_compliance_counts(&self) -> Result<StorageComplianceCounts, StorageError>;
-    async fn list_schema_revisions(
-        &self,
-        query: StorageSchemaPage,
-    ) -> Result<Vec<StorageSchemaRevision>, StorageError>;
-    async fn get_schema_state(
-        &self,
-        class_id: ClassId,
-    ) -> Result<StorageClassSchemaState, StorageError>;
-    async fn stage_schema_revision(
-        &self,
-        request: StorageSchemaStage,
-    ) -> Result<StorageMutationOutcome<StorageSchemaRevision>, StorageError>;
-    async fn abandon_schema_revision(
-        &self,
-        target: SchemaReference,
-        authorized_collection: CollectionId,
-        context: &EventContext,
-    ) -> Result<StorageMutationOutcome<StorageSchemaRevision>, StorageError>;
-    async fn activate_schema_revision(
-        &self,
-        request: StorageSchemaActivation,
-    ) -> Result<StorageMutationOutcome<StorageSchemaActivationResult>, StorageError>;
-    async fn request_schema_work(
-        &self,
-        request: StorageSchemaWorkRequest,
-    ) -> Result<StorageMutationOutcome<StorageSchemaWork>, StorageError>;
-    async fn get_schema_work(&self, task_id: TaskId) -> Result<StorageSchemaWork, StorageError>;
-    /// Read one consistent checkpoint and its separately persisted findings.
-    /// Charge the budget before retaining rows and abort with InputTooLarge on
-    /// exhaustion. Use the shared report builder to preserve these semantics.
-    async fn get_schema_work_report(
-        &self,
-        task_id: TaskId,
-        budget: StorageSchemaReportBudget,
-    ) -> Result<StorageSchemaWorkReport, StorageError>;
-    /// Retain the latest complete rendering without changing the source analysis.
-    async fn save_schema_repair_report(
-        &self,
-        request: StorageSchemaRepairReportWrite,
-    ) -> Result<(), StorageError>;
-    async fn get_schema_repair_report(
-        &self,
-        task_id: TaskId,
-    ) -> Result<StorageSchemaRepairReport, StorageError>;
-    async fn process_schema_work(
-        &self,
-        lease: StorageTaskLease,
-        limits: StorageSchemaBatchLimits,
-    ) -> Result<StorageSchemaWork, StorageError>;
-    async fn cancel_schema_work(
-        &self,
-        task_id: TaskId,
-        authorized_collection: CollectionId,
-        context: &EventContext,
-    ) -> Result<StorageMutationOutcome<StorageSchemaWork>, StorageError>;
-    async fn list_schema_compliance(
-        &self,
-        query: StorageSchemaPage,
-        status: Option<StorageComplianceStatus>,
-    ) -> Result<Vec<StorageObjectCompliance>, StorageError>;
 }
 
 /// Revision-aware activation intent carried by an import's resolved class item.

@@ -458,13 +458,13 @@ pub(in crate::backup) fn restore_history(
         .last_error(r.optional_text("last_error")?)
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.event_deliveries.insert(value.id().id(), value);
+        state.event_deliveries.store_unclaimed(value);
     }
     let last_id = state
         .event_deliveries
-        .keys()
+        .values()
         .next_back()
-        .copied()
+        .map(|delivery| delivery.id().id())
         .unwrap_or(0);
     state.delivery_ids.observe(last_id);
     tasks::restore(&sections, state)?;

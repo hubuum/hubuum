@@ -354,7 +354,6 @@ struct MemoryState {
     group_ids: IdSequence,
     token_ids: IdSequence,
     task_ids: IdSequence,
-    next_import_result_id: i32,
     computed_field_ids: IdSequence,
     export_template_ids: IdSequence,
     remote_target_ids: IdSequence,
@@ -386,7 +385,7 @@ struct MemoryState {
     service_accounts: BTreeMap<i32, StorageServiceAccount>,
     tasks: BTreeMap<i32, MemoryTaskRecord>,
     task_events: BTreeMap<i32, Vec<StorageTaskEvent>>,
-    import_task_results: BTreeMap<i32, Vec<StorageImportTaskResult>>,
+    import_task_results: import_results::ImportResults,
     import_execution_receipts: BTreeSet<(i32, usize)>,
     schema_profile_outputs: BTreeMap<i32, hubuum_storage_core::StorageSchemaProfileArtifact>,
     export_outputs: BTreeMap<i32, StorageExportOutput>,
@@ -404,8 +403,7 @@ struct MemoryState {
     event_sinks: BTreeMap<i32, StorageEventSink>,
     event_sink_grants: BTreeSet<(i32, i32)>,
     event_subscriptions: BTreeMap<i32, StorageEventSubscription>,
-    event_deliveries: BTreeMap<i64, StorageEventDelivery>,
-    event_delivery_claims: BTreeMap<i64, Uuid>,
+    event_deliveries: EventDeliveries,
     event_sink_schedule: BTreeMap<i32, (DateTime<Utc>, DateTime<Utc>)>,
     event_retention_batches: BTreeMap<Uuid, Vec<i64>>,
     history: Vec<MemoryHistoryEntry>,
@@ -811,12 +809,15 @@ mod backup;
 mod computed_history;
 mod credential_activity;
 mod credential_approval;
+mod event_deliveries;
+use event_deliveries::EventDeliveries;
 mod events;
 mod execution;
 mod history;
 mod id_sequence;
 use id_sequence::IdSequence;
 mod identity;
+mod import_results;
 mod imports;
 mod object_filters;
 mod operational;
