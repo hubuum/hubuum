@@ -973,6 +973,27 @@ hash_benchmark_output="$(bash "$classifier" benches/computed_hash_criterion.rs)"
 assert_flag "$hash_benchmark_output" code true
 assert_flag "$hash_benchmark_output" benchmarks true
 
+# Moving a contract into a Rust child module must preserve its CI selection.
+for module_path in \
+  crates/hubuum-query/src/cursor_codec.rs crates/hubuum-events-core/src/audit.rs \
+  crates/hubuum-scale-core/src/sensitivity.rs crates/hubuum-storage-core/src/task_queue/tests.rs \
+  src/auth/tests.rs src/config/test_environment.rs src/models/task/tests.rs \
+  src/api/openapi/tests.rs src/operational_contracts/metrics.rs; do
+  module_dir="${module_path%/*}"
+  case "$module_dir" in
+    */src) module_root="$module_dir/lib.rs" ;;
+    *) module_root="$module_dir.rs" ;;
+  esac
+  [[ "$(bash "$classifier" "$module_root")" == "$(bash "$classifier" "$module_path")" ]] || {
+    echo "CI classification of $module_path differs from $module_root" >&2
+    exit 1
+  }
+done
+
+for openapi_source in src/api/openapi.rs src/api/openapi/tests.rs; do
+  assert_flag "$(bash "$classifier" "$openapi_source")" openapi true
+done
+
 for discovery_path in src/models/class_fields.rs src/models/class_fields/tests.rs src/api/v1/handlers/classes/field_discovery.rs; do
   discovery_output="$(bash "$classifier" "$discovery_path")"
   assert_flag "$discovery_output" rust true

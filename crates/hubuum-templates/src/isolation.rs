@@ -414,6 +414,52 @@ impl WorkerRuntime {
         })
     }
 
+    async fn submit(
+        &self,
+        request: WorkerRequest<'_>,
+        started: Instant,
+    ) -> Result<Vec<RenderedTemplate>, TemplateError> {
+        let capacity = self.admit(started)?;
+        let max_response_bytes = request
+            .max_output_bytes
+            .saturating_mul(6)
+            .saturating_add(1024 * 1024);
+        // Borrowed input is encoded into a size-bounded buffer before transferring
+        // ownership. No unbounded clone of the caller's context is made.
+        let mut encoded = SizeLimitedWriter::new(MAX_REQUEST_BYTES);
+        serde_json::to_writer(&mut encoded, &request).map_err(|_| {
+            event("input_limit", started);
+            TemplateError::boundary("template input budget exceeded")
+        })?;
+        let encoded = encoded
+            .into_string()
+            .map_err(|_| TemplateError::boundary("invalid template protocol input"))?;
+        let mut command = Command::new(worker_executable()?);
+        command.env_clear();
+        let (response, result) = oneshot::channel();
+        let span = info_span!("template_execution", operation_id = NEXT_OPERATION.fetch_add(1, Ordering::Relaxed), operation = ?request.operation, pid = tracing::field::Empty);
+        let job = Job {
+            encoded,
+            max_response_bytes,
+            expected_results: request.templates.len(),
+            started,
+            deadline: started + DEADLINE,
+            response,
+            capacity,
+            span,
+            dispatcher: tracing::dispatcher::get_default(Clone::clone),
+            command,
+        };
+        self.jobs
+            .try_send(job)
+            .map_err(|_| TemplateError::boundary("template supervisor unavailable"))?;
+        // Dropping this receiver cancels queued or executing work. The independent
+        // supervisor retains its permits until pipe teardown and child reaping.
+        result
+            .await
+            .map_err(|_| TemplateError::boundary("template supervisor unavailable"))?
+    }
+
     async fn shutdown(&self) {
         self.capacity.close();
         let _ = self.stopping.send(true);
@@ -450,46 +496,7 @@ async fn execute(request: WorkerRequest<'_>) -> Result<Vec<RenderedTemplate>, Te
             "template supervisor is shutting down",
         ));
     }
-    let capacity = runtime.admit(started)?;
-    let max_response_bytes = request
-        .max_output_bytes
-        .saturating_mul(6)
-        .saturating_add(1024 * 1024);
-    // Borrowed input is encoded into a size-bounded buffer before transferring
-    // ownership. No unbounded clone of the caller's context is made.
-    let mut encoded = SizeLimitedWriter::new(MAX_REQUEST_BYTES);
-    serde_json::to_writer(&mut encoded, &request).map_err(|_| {
-        event("input_limit", started);
-        TemplateError::boundary("template input budget exceeded")
-    })?;
-    let encoded = encoded
-        .into_string()
-        .map_err(|_| TemplateError::boundary("invalid template protocol input"))?;
-    let mut command = Command::new(worker_executable()?);
-    command.env_clear();
-    let (response, result) = oneshot::channel();
-    let span = info_span!("template_execution", operation_id = NEXT_OPERATION.fetch_add(1, Ordering::Relaxed), operation = ?request.operation, pid = tracing::field::Empty);
-    let job = Job {
-        encoded,
-        max_response_bytes,
-        expected_results: request.templates.len(),
-        started,
-        deadline: started + DEADLINE,
-        response,
-        capacity,
-        span,
-        dispatcher: tracing::dispatcher::get_default(Clone::clone),
-        command,
-    };
-    runtime
-        .jobs
-        .try_send(job)
-        .map_err(|_| TemplateError::boundary("template supervisor unavailable"))?;
-    // Dropping this receiver cancels queued or executing work. The independent
-    // supervisor retains its permits until pipe teardown and child reaping.
-    result
-        .await
-        .map_err(|_| TemplateError::boundary("template supervisor unavailable"))?
+    runtime.submit(request, started).await
 }
 
 async fn supervise(mut job: Job, workers: Arc<Semaphore>, mut shutdown: watch::Receiver<bool>) {

@@ -244,6 +244,13 @@ impl TokenRetentionSettings {
         self.batch_size
     }
 
+    /// Retain the deployment lifetime used to interpret tokens that have no explicit expiry.
+    #[must_use]
+    pub fn with_legacy_lifetime(mut self, lifetime: TokenLifetime) -> Self {
+        self.token_lifetime = lifetime;
+        self
+    }
+
     pub fn cutoffs(self, now: NaiveDateTime) -> Result<TokenRetentionCutoffs, TokenPolicyError> {
         let explicit_expiry = now
             .checked_sub_signed(self.retention_period.0)
