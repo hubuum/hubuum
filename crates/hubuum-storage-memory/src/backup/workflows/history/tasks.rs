@@ -198,7 +198,9 @@ pub(super) fn restore(
         state.export_outputs.insert(output.task_id().id(), output);
     }
     state.remote_call_results = sections[&StorageBackupHistorySection::RemoteCallResults].clone();
-    state.next_task_id = next_id(&state.tasks)?;
+    state
+        .task_ids
+        .observe(state.tasks.keys().next_back().copied().unwrap_or(0));
     Ok(())
 }
 

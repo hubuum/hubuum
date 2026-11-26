@@ -38,15 +38,11 @@ impl MemoryStorage {
         } else {
             assert_import_create_condition(parts.condition)?;
         }
-        let id = existing.as_ref().map_or_else(
-            || {
-                let id = ExportTemplateId::new(state.next_export_template_id)
-                    .expect("memory import export-template id is positive");
-                state.next_export_template_id += 1;
-                id
-            },
-            |value| ExportTemplateId::from(value.metadata().id()),
-        );
+        let id = match &existing {
+            Some(value) => ExportTemplateId::from(value.metadata().id()),
+            None => ExportTemplateId::new(state.export_template_ids.allocate()?)
+                .expect("allocated id is positive"),
+        };
         let now = Utc::now();
         let (created_at, updated_at) = parts.timestamps.map_or_else(
             || {
@@ -142,15 +138,11 @@ impl MemoryStorage {
         } else {
             assert_import_create_condition(parts.condition)?;
         }
-        let id = existing.as_ref().map_or_else(
-            || {
-                let id = RemoteTargetId::new(state.next_remote_target_id)
-                    .expect("memory import remote-target id is positive");
-                state.next_remote_target_id += 1;
-                id
-            },
-            |value| RemoteTargetId::from(value.metadata().id()),
-        );
+        let id = match &existing {
+            Some(value) => RemoteTargetId::from(value.metadata().id()),
+            None => RemoteTargetId::new(state.remote_target_ids.allocate()?)
+                .expect("allocated id is positive"),
+        };
         let now = Utc::now();
         let (created_at, updated_at) = parts.timestamps.map_or_else(
             || {
@@ -208,15 +200,11 @@ impl MemoryStorage {
         } else {
             assert_import_create_condition(parts.condition)?;
         }
-        let id = existing.as_ref().map_or_else(
-            || {
-                let id = EventSinkId::new(state.next_event_sink_id)
-                    .expect("memory import event-sink id is positive");
-                state.next_event_sink_id += 1;
-                id
-            },
-            StorageEventSink::id,
-        );
+        let id = match &existing {
+            Some(value) => value.id(),
+            None => EventSinkId::new(state.event_sink_ids.allocate()?)
+                .expect("allocated id is positive"),
+        };
         let now = Utc::now();
         let (created_at, updated_at) = parts.timestamps.map_or_else(
             || {
@@ -307,15 +295,11 @@ impl MemoryStorage {
         } else {
             assert_import_create_condition(parts.condition)?;
         }
-        let id = existing.as_ref().map_or_else(
-            || {
-                let id = EventSubscriptionId::new(state.next_event_subscription_id)
-                    .expect("memory import event-subscription id is positive");
-                state.next_event_subscription_id += 1;
-                id
-            },
-            StorageEventSubscription::id,
-        );
+        let id = match &existing {
+            Some(value) => value.id(),
+            None => EventSubscriptionId::new(state.event_subscription_ids.allocate()?)
+                .expect("allocated id is positive"),
+        };
         let now = Utc::now();
         let (created_at, updated_at) = parts.timestamps.map_or_else(
             || {

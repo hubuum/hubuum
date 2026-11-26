@@ -397,8 +397,10 @@ fn postgres_task_audit_rows_restore_the_task_event_read_model() {
     });
 }
 
-#[test]
-fn task_event_sequences_continue_after_imported_history() {
+#[rstest::rstest]
+#[case::ordinary(200)]
+#[case::last_valid(i64::MAX - 2)]
+fn task_event_sequences_continue_after_imported_history(#[case] first: i64) {
     run(async {
         let storage = MemoryStorage::new();
         let id = completed_task(&storage).await;
@@ -414,8 +416,8 @@ fn task_event_sequences_continue_after_imported_history() {
                 .expect("replay rows"),
             StorageBackupHistorySection::AuditEvents,
             |rows| {
-                set_field(&mut rows[0], "id", json!(200));
-                set_field(&mut rows[1], "id", json!(201));
+                set_field(&mut rows[0], "id", json!(first));
+                set_field(&mut rows[1], "id", json!(first + 1));
                 rows.reverse();
             },
         );
@@ -434,7 +436,7 @@ fn task_event_sequences_continue_after_imported_history() {
             .iter()
             .map(|event| event.id().get())
             .collect::<Vec<_>>();
-        assert_eq!(ids, vec![200, 201, 202]);
+        assert_eq!(ids, vec![first, first + 1, first + 2]);
     });
 }
 
@@ -732,4 +734,88 @@ fn oversized_membership_sources_stop_before_building_an_index_of_the_corpus() {
     assert_eq!(error.kind(), StorageErrorKind::InputTooLarge);
     assert!(progress.scanned_rows() < 20);
     assert!(progress.retained_bytes() <= limit);
+}
+
+#[rstest::rstest]
+#[case::live_record(false)]
+#[case::deleted_record_in_history(true)]
+fn restored_collection_ids_never_wrap_or_reuse_retained_ids(#[case] deleted: bool) {
+    run(async {
+        let storage = MemoryStorage::new();
+        let event = EventContext::system();
+        let create = |name| StorageCollectionCreate::new(name, "", GroupId::new(1).unwrap(), None);
+        storage
+            .state
+            .write()
+            .await
+            .collection_ids
+            .observe(i32::MAX - 2);
+        let previous = storage
+            .create_collection(create("penultimate"), &event)
+            .await
+            .unwrap()
+            .into_value();
+        if deleted {
+            storage
+                .delete_collection(previous.id(), &event)
+                .await
+                .unwrap()
+                .into_value();
+        }
+
+        let budget = StorageBackupBudget::new(256 * 1024 * 1024, 1_000_000).unwrap();
+        let snapshot = storage
+            .capture_backup_replay(deleted, budget)
+            .await
+            .unwrap()
+            .at_restore_boundary(Utc::now())
+            .unwrap()
+            .materialize()
+            .unwrap();
+        let storage = restored(snapshot);
+        let last = storage
+            .create_collection(create("last"), &event)
+            .await
+            .unwrap()
+            .into_value();
+        assert_eq!(last.id().id(), i32::MAX);
+
+        let snapshot = storage
+            .capture_backup_replay(true, budget)
+            .await
+            .unwrap()
+            .at_restore_boundary(Utc::now())
+            .unwrap()
+            .materialize()
+            .unwrap();
+        let storage = restored(snapshot);
+        assert!(
+            storage
+                .create_collection(create("overflow"), &event)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            storage.get_collection(last.id()).await.unwrap().name(),
+            "last"
+        );
+    });
+}
+
+#[test]
+fn exhausted_history_leaves_resource_and_audit_unchanged() {
+    run(async {
+        let storage = MemoryStorage::new();
+        storage.state.write().await.history_ids.observe(i64::MAX);
+        let create =
+            StorageCollectionCreate::new("unrecordable", "", GroupId::new(1).unwrap(), None);
+        assert!(
+            storage
+                .create_collection(create, &EventContext::system())
+                .await
+                .is_err()
+        );
+        let state = storage.state.read().await;
+        assert_eq!((state.collections.len(), state.events.len()), (1, 0));
+    });
 }

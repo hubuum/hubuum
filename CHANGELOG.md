@@ -29,6 +29,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Restoring an import that used the last available result ID preserves its
   receipts and prevents a later import from reusing that ID.
 
+- The experimental memory backend preserves identifier high-water marks across
+  restores and rejects exhausted writes without publishing partial history or
+  audit records. Live processes must acknowledge a new restore drain before
+  it can complete.
+- On the memory backend, a failed event configuration change preserves the
+  previous settings. Deleting a subscription in the wrong scope leaves the
+  subscription and its pending deliveries intact.
+
 ## [0.0.23] - 2026-11-21
 
 ### Security
