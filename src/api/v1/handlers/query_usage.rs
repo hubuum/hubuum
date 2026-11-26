@@ -1,5 +1,5 @@
 use crate::{
-    api::{openapi::ApiErrorResponse, response::ApiResponse},
+    api::response::{ApiErrorResponse, ApiResponse},
     can,
     errors::ApiError,
     extractors::{AccessEventContext, Authenticated, UnscopedRuntimeAdmin},

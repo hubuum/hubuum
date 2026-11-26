@@ -1,10 +1,9 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use actix_web::{HttpRequest, Responder, get, http::StatusCode, web};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::api::v1::handlers::history::{
     HistoryResponse, parse_as_of, resolve_history_principal_names,
 };

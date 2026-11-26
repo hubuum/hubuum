@@ -155,7 +155,7 @@ timing.
 
 ## Selectable-Backend Compatibility
 
-`src/tests/storage_contract.rs` owns the current compatibility registry.
+`src/tests/storage_contract.rs` owns the compatibility registry and shared fixtures. Its child modules group scenarios by storage capability.
 `available_backend_environments()` iterates `StorageBackendKind::ALL` and owns
 the native fixture resources for each adapter. Generic tests derive an opaque
 `StorageHandle` from that environment and verify its descriptor before running
@@ -292,7 +292,7 @@ means file-local test counts are not a useful coverage measure.
 
 ### Query budgets and plans
 
-`src/tests/storage_performance.rs` instruments Diesel and checks representative query counts, pool checkouts, fixed query shapes, no-op write avoidance, and selected query plans. It protects point reads, lifecycle writes, relations, history, permission depth, paging, ancestor traversal, computed reads, and object aggregation from accidental N+1 or round-trip growth.
+The `src/tests/storage_performance.rs` suite and its child modules instrument Diesel and check representative query counts, pool checkouts, fixed query shapes, no-op write avoidance, and selected query plans. It protects point reads, lifecycle writes, relations, history, permission depth, paging, ancestor traversal, computed reads, and object aggregation from accidental N+1 or round-trip growth.
 
 The PostgreSQL benchmark workflow compares representative storage operations
 against the pull request base. Query budgets catch structural regressions;

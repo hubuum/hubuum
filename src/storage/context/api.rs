@@ -23,19 +23,6 @@ impl private::BackendAccess for StorageHandle {
 
 impl StorageContext for StorageHandle {}
 
-// Adapter-focused tests can opt into the historical pool-shaped context. The
-// production adapter and application composition both use their explicit
-// boundaries instead of making a concrete pool an application capability.
-#[cfg(any(test, feature = "integration-test-support"))]
-impl private::BackendAccess for PostgresPool {
-    fn storage_handle(&self) -> StorageHandle {
-        StorageHandle::postgres(self.clone())
-    }
-}
-
-#[cfg(any(test, feature = "integration-test-support"))]
-impl StorageContext for PostgresPool {}
-
 impl private::BackendAccess for AppContext {
     fn storage_handle(&self) -> StorageHandle {
         self.clone_backend()

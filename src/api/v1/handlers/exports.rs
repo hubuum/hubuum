@@ -1,8 +1,7 @@
+use crate::api::response::{ApiErrorResponse, ApiResponse};
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
 
 use crate::api::locations as api_locations;
-use crate::api::openapi::ApiErrorResponse;
-use crate::api::response::ApiResponse;
 use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::{
