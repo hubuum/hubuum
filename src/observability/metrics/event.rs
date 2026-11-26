@@ -8,7 +8,7 @@ use crate::storage::{
     MetricsStorage, StorageEventDeliveryStatusSnapshot, StorageEventMetricsSnapshot,
 };
 
-use super::scrape::{RefreshOutcome, RefreshSource, record_refresh_attempt};
+use super::refresh::{RefreshOutcome, RefreshSource, record_refresh_attempt};
 use super::{Metrics, current};
 
 pub fn event_worker_wakeup(worker: &'static str, kind: &'static str) {
