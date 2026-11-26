@@ -28,7 +28,6 @@ mod computed_fields;
 mod computed_objects;
 mod credential_approval;
 mod event_administration;
-mod event_sink_access;
 mod events;
 mod execution;
 mod export_query;
@@ -55,7 +54,10 @@ mod resource_lifecycle;
 mod restore;
 mod restore_artifact;
 mod runtime_settings;
-pub use restore_artifact::{StorageRestoreArtifact, StorageRestoreArtifactBuilder};
+pub use restore_artifact::{
+    StorageRestoreArtifact, StorageRestoreArtifactBuilder, StorageRestoreArtifactSummary,
+    StorageRestoreArtifactSummaryParts,
+};
 pub use runtime_settings::*;
 mod task_control;
 mod task_execution;
@@ -70,7 +72,7 @@ mod validation;
 mod worker_notifications;
 
 pub use authorization::{
-    AuthorizationDataStorage, StorageAuthorizationClassResource, StorageAuthorizationCollection,
+    AuthorizationDataStorage, StorageAuthorizationCollection,
     StorageAuthorizationCollectionAccessQuery, StorageAuthorizationCollectionCandidateQuery,
     StorageAuthorizationCollectionGrantListQuery, StorageAuthorizationCollectionsAccessQuery,
     StorageAuthorizationCollectionsQuery, StorageAuthorizationGrant,
@@ -79,12 +81,12 @@ pub use authorization::{
     StorageAuthorizationGroupCandidateQuery, StorageAuthorizationGroupGrant,
     StorageAuthorizationGroupIdentity, StorageAuthorizationGroupMembershipQuery,
     StorageAuthorizationGroupProfile, StorageAuthorizationGroupSyncState,
-    StorageAuthorizationObjectResource, StorageAuthorizationPermission,
-    StorageAuthorizationPermissionSet, StorageAuthorizationPermissionSetQuery,
-    StorageAuthorizationPolicySnapshotRow, StorageAuthorizationPrincipal,
-    StorageAuthorizationResourceIds,
+    StorageAuthorizationPermission, StorageAuthorizationPermissionSet,
+    StorageAuthorizationPermissionSetQuery, StorageAuthorizationPolicySnapshotRow,
+    StorageAuthorizationPrincipal, StorageAuthorizationResourceIds,
 };
 pub use authorization_resources::{
+    StorageAuthorizationClassResource, StorageAuthorizationObjectResource,
     StorageAuthorizationResource, StorageAuthorizationResourceKey,
     StorageAuthorizationResourcesQuery,
 };
@@ -95,6 +97,12 @@ pub use backup_snapshot::{
     StorageBackupReplayBuilder, StorageBackupReplayRows, StorageBackupRow, StorageBackupSnapshot,
     StorageBackupStateSection, StorageBackupStateSections,
 };
+pub use capabilities::identity::{
+    AuthenticationStorage, ExternalIdentityStorage, GroupMembershipStorage, GroupStorage,
+    IdentityScopeStorage, LocalIdentityCredentialStorage, PrincipalStorage, ServiceAccountStorage,
+    TokenStorage, UserStorage,
+};
+pub use capabilities::workflows::{SchemaEvolutionStorage, TaskExecutionStorage, TaskQueueStorage};
 pub use catalog::{CatalogStorage, StorageCatalogListQuery};
 pub use collection_authorization::{
     CollectionAuthorizationQueryStorage, StorageAuthorizationCollectionGroupsPageQuery,
@@ -120,19 +128,19 @@ pub use computed_objects::{
     StorageComputedObjectVisibility, StorageComputedScope, StorageSharedComputedScope,
 };
 pub use credential_approval::*;
+pub use event_administration::sink::{
+    EventSinkGrantAction, StorageAuthorizedEventSink, StorageEventSink, StorageEventSinkBuilder,
+    StorageEventSinkCreate, StorageEventSinkCreateBuilder, StorageEventSinkDelete,
+    StorageEventSinkGrantChange, StorageEventSinkListQuery, StorageEventSinkUpdate,
+};
 pub use event_administration::{
     AuditEventStorage, EventConfigurationStorage, EventDeliveryAdministrationStorage,
     StorageAuditEvent, StorageAuditEventFilters, StorageAuditEventListQuery, StorageAuditSubject,
     StorageEventDelivery, StorageEventDeliveryBuilder, StorageEventDeliveryListQuery,
-    StorageEventNotificationInput, StorageEventNotificationSelection, StorageEventSink,
-    StorageEventSinkBuilder, StorageEventSinkCreate, StorageEventSinkCreateBuilder,
-    StorageEventSinkDelete, StorageEventSinkListQuery, StorageEventSinkUpdate,
-    StorageEventSubscription, StorageEventSubscriptionBuilder, StorageEventSubscriptionCreate,
+    StorageEventNotificationInput, StorageEventNotificationSelection, StorageEventSubscription,
+    StorageEventSubscriptionBuilder, StorageEventSubscriptionCreate,
     StorageEventSubscriptionCreateBuilder, StorageEventSubscriptionDelete,
     StorageEventSubscriptionListQuery, StorageEventSubscriptionUpdate,
-};
-pub use event_sink_access::{
-    EventSinkGrantAction, StorageAuthorizedEventSink, StorageEventSinkGrantChange,
 };
 pub use events::{
     EventArchiveSink, EventDeliveryWorkerStorage, EventFanoutStorage, EventRetentionStorage,
@@ -175,18 +183,15 @@ pub use history::{
 pub use hubuum_domain::PrincipalKind;
 pub use hubuum_events_core::AuditDocument;
 pub use identity::{
-    AuthenticationStorage, StorageAuthenticatedToken, StorageAuthenticatedTokenBuilder,
-    StorageAuthenticationAttempt, StorageAuthenticationHuman, StorageAuthenticationIdentity,
-    StorageAuthenticationPrincipal, StorageAuthenticationResourceScope,
-    StorageAuthenticationTokenScope, StorageAuthenticationTokenScopeQuery,
-    StorageTokenMigrationOutcome,
+    StorageAuthenticatedToken, StorageAuthenticatedTokenBuilder, StorageAuthenticationAttempt,
+    StorageAuthenticationHuman, StorageAuthenticationIdentity, StorageAuthenticationPrincipal,
+    StorageAuthenticationResourceScope, StorageAuthenticationTokenScope,
+    StorageAuthenticationTokenScopeQuery, StorageTokenMigrationOutcome,
 };
 pub use identity_operations::{
-    ExternalIdentityStorage, GroupMembershipStorage, IdentityScopeStorage,
-    LocalIdentityCredentialStorage, ServiceAccountStorage, StorageDefaultAdminBootstrap,
-    StorageExternalGroup, StorageExternalPrincipalState, StorageExternalSyncFailure,
-    StorageExternalUserSync, StorageExternalUserSyncBuilder, StorageGroupListQuery,
-    StorageIdentityGroup, StorageIdentityGroupBuilder, StorageIdentityScope,
+    StorageDefaultAdminBootstrap, StorageExternalGroup, StorageExternalPrincipalState,
+    StorageExternalSyncFailure, StorageExternalUserSync, StorageExternalUserSyncBuilder,
+    StorageGroupListQuery, StorageIdentityGroup, StorageIdentityGroupBuilder, StorageIdentityScope,
     StorageIdentityScopeEnsure, StorageLocalPasswordReset, StoragePrincipalGroup,
     StoragePrincipalGroupListQuery, StorageServiceAccount, StorageServiceAccountCreate,
     StorageServiceAccountDetails, StorageServiceAccountDisableOutcome,
@@ -195,20 +200,19 @@ pub use identity_operations::{
     StorageTokenMetadata, StorageTokenMetadataBuilder, StorageTokenObservation,
 };
 pub use identity_resources::{
-    GroupStorage, PrincipalStorage, StorageGroupCreate, StorageGroupMember, StorageGroupUpdate,
-    StoragePrincipal, StoragePrincipalBuilder, StoragePrincipalSettings,
-    StoragePrincipalSettingsMutation,
+    StorageGroupCreate, StorageGroupMember, StorageGroupUpdate, StoragePrincipal,
+    StoragePrincipalBuilder, StoragePrincipalSettings, StoragePrincipalSettingsMutation,
 };
 pub use identity_tokens::{
-    StorageLogin, StoragePrincipalTokensRevoke, StorageTokenCreate, StorageTokenCreateParts,
+    StoragePrincipalTokensRevoke, StorageTokenCreate, StorageTokenCreateParts,
     StorageTokenHashRevoke, StorageTokenIssuancePolicy, StorageTokenIssuancePolicyError,
-    StorageTokenKeyUsage, StorageTokenRenew, StorageTokenRevoke, TokenStorage,
+    StorageTokenKeyUsage, StorageTokenRenew, StorageTokenRevoke,
 };
 pub use identity_users::{
-    StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete, StorageUserDetails,
-    StorageUserDetailsParts, StorageUserListItem, StorageUserListItemBuilder,
+    StorageLogin, StorageUser, StorageUserAnonymize, StorageUserCreate, StorageUserDelete,
+    StorageUserDetails, StorageUserDetailsParts, StorageUserListItem, StorageUserListItemBuilder,
     StorageUserListItemParts, StorageUserListQuery, StorageUserParts, StorageUserPasswordUpdate,
-    StorageUserUpdate, UserStorage,
+    StorageUserUpdate,
 };
 pub use import_workflow::{
     FencedImportItem, FencedImportPlan, FencedImportResults, ImportStorage, StorageImportApply,
@@ -267,7 +271,7 @@ pub use page::{
     MAX_STORAGE_CANDIDATE_PAGE_SIZE, StorageCandidatePage, StorageCandidatePageLimit, StoragePage,
     StoragePageParts,
 };
-pub use record::StorageRecordMetadata;
+pub use record::{StorageCollection, StorageObject, StorageRecordMetadata};
 pub use relation_lifecycle::{
     ClassRelationStorage, ObjectRelationStorage, StorageClassRelationCreate,
     StorageClassRelationCreateBuilder, StorageClassRelationLabelsUpdate,
@@ -299,14 +303,14 @@ pub use resource_lifecycle::{
     StorageObjectUpdate, StorageObjectUpdateBuilder, StorageResolvedClass, StorageResolvedObject,
 };
 pub use restore::{
-    RestoreStorage, StorageRestoreArtifactJob, StorageRestoreArtifactSummary,
-    StorageRestoreArtifactSummaryParts, StorageRestoreCompletion,
+    RestoreStorage, StorageRestoreArtifactJob, StorageRestoreCompletion,
     StorageRestoreCoordinatorSnapshot, StorageRestoreDocumentMetadata, StorageRestoreDrainState,
     StorageRestoreFailure, StorageRestoreInitiator, StorageRestoreInitiatorParts,
     StorageRestoreInstance, StorageRestoreJobStatus, StorageRestoreJobSummary,
     StorageRestoreReplayApply, StorageRestoreStageArtifact, StorageRestoreStatus,
     StorageRestoreTimestamps, StorageRestoreTimestampsParts,
 };
+pub use task_control::{StorageTaskKind, StorageTaskStatus};
 pub use task_execution::{
     StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageExportTaskArtifactBuilder,
     StorageExportTaskArtifactContent, StorageExportTaskArtifactIdentity,
@@ -317,17 +321,21 @@ pub use task_execution::{
     StorageTaskClaim, StorageTaskClaimToken, StorageTaskCompletion, StorageTaskCompletionPayload,
     StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskLease,
     StorageTaskLeaseDuration, StorageTaskResultCounts, StorageTaskTerminalStatus,
-    StorageTaskTerminalUpdate, TaskExecutionStorage,
+    StorageTaskTerminalUpdate,
+};
+pub use task_execution::{
+    StorageTaskCancellationChange, StorageTaskCancellationOutcome, StorageTaskCancellationRequest,
+    StorageTaskExecutionAdmission, StorageTaskRemoteDispatch,
 };
 pub use task_queue::{
     StorageBackupOutput, StorageBackupOutputSummary, StorageExportOutput,
     StorageExportOutputBuilder, StorageExportOutputSummary, StorageImportTaskResult,
     StorageImportTaskResultBuilder, StorageTask, StorageTaskAccess, StorageTaskBuilder,
     StorageTaskChildListQuery, StorageTaskCreateRequest, StorageTaskCreateRequestBuilder,
-    StorageTaskDurations, StorageTaskEvent, StorageTaskEventBuilder, StorageTaskKind,
-    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskProgress, StorageTaskScopeSnapshot,
-    StorageTaskStatus, TaskQueueStorage,
+    StorageTaskDurations, StorageTaskEvent, StorageTaskEventBuilder, StorageTaskOutputLookup,
+    StorageTaskProgress, StorageTaskScopeSnapshot,
 };
+pub use task_search::StorageTaskListQuery;
 pub use task_search::{StorageTaskSearch, TaskTimeRange};
 pub use telemetry::{StorageCapability, StorageObservation, StorageObserver};
 pub use token_credentials::{
@@ -340,9 +348,9 @@ pub use transaction::{
     TransactionalObjects,
 };
 pub use unified_search::{
-    StorageClassWithCollection, StorageClassWithCollectionBuilder, StorageCollection,
-    StorageObject, StorageResourceScope, StorageUnifiedSearchCandidate, StorageUnifiedSearchCursor,
-    StorageUnifiedSearchQuery, StorageVisibility, UnifiedSearchStorage,
+    StorageClassWithCollection, StorageClassWithCollectionBuilder, StorageResourceScope,
+    StorageUnifiedSearchCandidate, StorageUnifiedSearchCursor, StorageUnifiedSearchQuery,
+    StorageVisibility, UnifiedSearchStorage,
 };
 pub use validation::{StorageValidationError, StorageValidationErrorKind};
 pub use worker_notifications::{
@@ -353,9 +361,8 @@ pub use worker_notifications::{
 use hubuum_domain::ResourceRevision;
 use std::fmt;
 pub use task_control::{
-    StorageTaskCancellation, StorageTaskCancellationChange, StorageTaskCancellationOutcome,
-    StorageTaskCancellationRequest, StorageTaskControl, StorageTaskExecutionAdmission,
-    StorageTaskExecutionObservation, StorageTaskExecutionPhase, StorageTaskRemoteDispatch,
+    StorageTaskCancellation, StorageTaskControl, StorageTaskExecutionObservation,
+    StorageTaskExecutionPhase,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

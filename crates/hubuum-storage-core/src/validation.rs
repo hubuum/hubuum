@@ -4,6 +4,22 @@ use chrono::{DateTime, Utc};
 
 use crate::StorageError;
 
+pub(super) fn validate_sha256(
+    value: &str,
+    description: &'static str,
+) -> Result<(), StorageValidationError> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(StorageValidationError::invalid(format!(
+            "{description} must contain exactly 64 lowercase hexadecimal characters"
+        )));
+    }
+    Ok(())
+}
+
 /// The reason a value failed storage-contract validation.
 ///
 /// This is deliberately independent of [`crate::StorageErrorKind`]. The same

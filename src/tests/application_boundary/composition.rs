@@ -678,7 +678,7 @@ fn audited_resource_mutations_return_durable_receipt_outcomes() {
     for file in [
         "resource_lifecycle.rs",
         "relation_lifecycle.rs",
-        "identity_resources.rs",
+        "capabilities/identity.rs",
         "transaction.rs",
     ] {
         let source = read_source(&root.join("crates/hubuum-storage-core/src").join(file))

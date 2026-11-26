@@ -9,6 +9,7 @@ mod replay;
 mod resources;
 mod revisions;
 mod schemas;
+mod task_control;
 mod task_discovery;
 mod view;
 pub use replay::{StorageBackupReplay, StorageBackupReplayBuilder, StorageBackupReplayRows};
@@ -21,7 +22,7 @@ use hubuum_events_core::CorrelationId;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::task_control::SNAPSHOT_FIELDS;
+use self::task_control::SNAPSHOT_FIELDS;
 use crate::{StorageError, StorageValidationError};
 
 macro_rules! backup_sections {
@@ -344,7 +345,7 @@ impl StorageBackupSnapshot {
                 for row in rows {
                     row.canonicalize_history(*section);
                     if *section == StorageBackupHistorySection::TerminalTasks {
-                        crate::task_control::validate_control_snapshot(row)?;
+                        task_control::validate_control_snapshot(row)?;
                         if let Some(value) = row.0.get("discovery_metadata") {
                             let kind = row
                                 .0

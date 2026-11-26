@@ -1,9 +1,80 @@
 //! Immutable exact artifact bytes, independently replayable without a heap copy.
-use crate::{StorageError, StorageRestoreArtifactSummary};
+use crate::validation::validate_sha256;
+use crate::{StorageError, StorageValidationError};
 use sha2::{Digest, Sha256};
+use std::fmt;
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
+
+/// Non-secret artifact identity shared by restore projections.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StorageRestoreArtifactSummary {
+    byte_size: i64,
+    sha256: String,
+}
+
+/// Named restore-artifact components used by adapters and application mappers.
+pub struct StorageRestoreArtifactSummaryParts {
+    byte_size: i64,
+    sha256: String,
+}
+
+impl StorageRestoreArtifactSummaryParts {
+    #[must_use]
+    pub const fn byte_size(&self) -> i64 {
+        self.byte_size
+    }
+
+    #[must_use]
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+}
+
+impl StorageRestoreArtifactSummary {
+    pub fn try_new(
+        byte_size: i64,
+        sha256: impl Into<String>,
+    ) -> Result<Self, StorageValidationError> {
+        let sha256 = sha256.into();
+        if byte_size < 0 {
+            return Err(StorageValidationError::invalid(
+                "Restore artifact byte size must not be negative",
+            ));
+        }
+        validate_sha256(&sha256, "Restore artifact SHA-256 digest")?;
+        Ok(Self { byte_size, sha256 })
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> StorageRestoreArtifactSummaryParts {
+        StorageRestoreArtifactSummaryParts {
+            byte_size: self.byte_size,
+            sha256: self.sha256,
+        }
+    }
+
+    #[must_use]
+    pub const fn byte_size(&self) -> i64 {
+        self.byte_size
+    }
+
+    #[must_use]
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+}
+
+impl fmt::Debug for StorageRestoreArtifactSummary {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StorageRestoreArtifactSummary")
+            .field("byte_size", &self.byte_size)
+            .field("digest", &"[redacted]")
+            .finish()
+    }
+}
 
 fn io_error(error: impl std::fmt::Display) -> StorageError {
     StorageError::internal(format!("Restore artifact I/O failed: {error}"))

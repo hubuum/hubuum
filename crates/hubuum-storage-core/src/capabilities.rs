@@ -8,9 +8,9 @@
 
 /// Common errors, pages, records, and mutation outcomes.
 pub mod common {
+    pub use crate::StorageRecordMetadata;
     pub use crate::mutation::*;
     pub use crate::page::*;
-    pub use crate::record::*;
     pub use crate::{StorageError, StorageErrorKind};
 }
 
@@ -31,20 +31,7 @@ pub mod resources {
 }
 
 /// Authentication, identity, group, principal, and authorization capabilities.
-pub mod identity {
-    pub use crate::IdentityStorage;
-    pub use crate::auth_sessions::*;
-    pub use crate::authorization::*;
-    pub use crate::authorization_resources::*;
-    pub use crate::collection_authorization::*;
-    pub use crate::credential_activity::*;
-    pub use crate::credential_approval::*;
-    pub use crate::identity::*;
-    pub use crate::identity_operations::*;
-    pub use crate::identity_resources::*;
-    pub use crate::identity_tokens::*;
-    pub use crate::identity_users::*;
-}
+pub mod identity;
 
 /// Backend-neutral read-model capabilities.
 pub mod queries {
@@ -59,30 +46,15 @@ pub mod queries {
         QueryStorage, StorageAuthorizationPermission, StorageClass, StorageComputationRevision,
         StorageExportTemplate, StorageRemoteTarget,
     };
+    pub use crate::{StorageCollection, StorageObject};
 }
 
 /// Long-running and application workflow capabilities.
-pub mod workflows {
-    pub use crate::backup_snapshot::*;
-    pub use crate::computed_fields::*;
-    pub use crate::export_query::*;
-    pub use crate::export_template_lifecycle::*;
-    pub use crate::import_workflow::*;
-    pub use crate::query_usage::*;
-    pub use crate::remote_target::*;
-    pub use crate::restore::*;
-    pub use crate::schema_evolution::*;
-    pub use crate::task_control::*;
-    pub use crate::task_execution::*;
-    pub use crate::task_queue::*;
-    pub use crate::{
-        StorageAuthorizationPermission, StorageClass, StorageCollection, StorageObject,
-        WorkflowStorage,
-    };
-}
+pub mod workflows;
 
 /// Audit, fan-out, delivery, administration, and retention capabilities.
 pub mod events {
+    pub use crate::event_administration::sink::*;
     pub use crate::event_administration::*;
     pub use crate::events::*;
     pub use crate::{
@@ -90,9 +62,6 @@ pub mod events {
         StorageEventDeliveryStatusSnapshot, StorageEventFanoutSnapshot, StorageEventQueueSnapshot,
         StorageEventSinkHealthSnapshot, StorageEventSinkSnapshot,
         StorageEventSubscriptionHealthSnapshot,
-    };
-    pub use crate::{
-        EventSinkGrantAction, StorageAuthorizedEventSink, StorageEventSinkGrantChange,
     };
 }
 
