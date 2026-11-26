@@ -1,5 +1,8 @@
 use crate::models::token_scope::TokenScope;
 use hubuum_domain::{CollectionId, GroupId};
+use hubuum_storage_core::StorageCollection;
+use hubuum_storage_core::StorageCollectionCreate;
+use hubuum_storage_core::StorageCollectionUpdate;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -18,7 +21,7 @@ use crate::permissions::{
     authorization_group_grant_from_storage, grant_from_storage, permission_to_storage,
 };
 use crate::services::identity::token_scope_to_storage;
-use crate::services::storage_boundary::collection_from_storage;
+
 use crate::storage::{
     AuthorizationDataStorage, CollectionAuthorizationQueryStorage,
     StorageAuthorizationCollectionGrantListQuery, StorageAuthorizationCollectionGroupsPageQuery,
@@ -41,6 +44,22 @@ pub struct Collection {
     pub revision: ResourceRevision,
 }
 
+impl From<StorageCollection> for Collection {
+    fn from(row: StorageCollection) -> Self {
+        let (id, name, description, created_at, updated_at, parent_collection_id, revision) =
+            row.into_parts();
+        Self {
+            id: id.id(),
+            name,
+            description,
+            created_at: created_at.naive_utc(),
+            updated_at: updated_at.naive_utc(),
+            parent_collection_id: parent_collection_id.map(|id| id.id()),
+            revision,
+        }
+    }
+}
+
 pub use hubuum_domain::CollectionId as CollectionID;
 
 #[derive(Serialize, Deserialize, Clone, ToSchema)]
@@ -48,6 +67,12 @@ pub use hubuum_domain::CollectionId as CollectionID;
 pub struct UpdateCollection {
     pub name: Option<String>,
     pub description: Option<String>,
+}
+
+impl From<UpdateCollection> for StorageCollectionUpdate {
+    fn from(update: UpdateCollection) -> Self {
+        StorageCollectionUpdate::new(update.name, update.description)
+    }
 }
 
 #[cfg(test)]
@@ -76,6 +101,17 @@ pub struct NewCollectionWithAssignee {
     #[schema(value_type = i32, minimum = 1)]
     pub group_id: GroupID,
     pub parent_collection_id: Option<CollectionID>,
+}
+
+impl From<NewCollectionWithAssignee> for StorageCollectionCreate {
+    fn from(command: NewCollectionWithAssignee) -> Self {
+        StorageCollectionCreate::new(
+            command.name,
+            command.description,
+            command.group_id,
+            command.parent_collection_id,
+        )
+    }
 }
 
 /// A new collection, without an assignee. Used for creating new collection entries
@@ -529,14 +565,14 @@ where
     T: CollectionAccessors,
 {
     let collection_id = collection_ref.collection_id(backend).await?;
-    storage_handle(backend)
+    Ok(storage_handle(backend)
         .collection_store()
         .list_collection_children(collection_id)
         .await
         .map_err(ApiError::from)?
         .into_iter()
-        .map(collection_from_storage)
-        .collect()
+        .map(Collection::from)
+        .collect())
 }
 
 pub async fn list_collection_ancestors<C, T>(
@@ -548,14 +584,14 @@ where
     T: CollectionAccessors,
 {
     let collection_id = collection_ref.collection_id(backend).await?;
-    storage_handle(backend)
+    Ok(storage_handle(backend)
         .collection_store()
         .list_collection_ancestors(collection_id)
         .await
         .map_err(ApiError::from)?
         .into_iter()
-        .map(collection_from_storage)
-        .collect()
+        .map(Collection::from)
+        .collect())
 }
 
 pub async fn move_collection<C>(
@@ -577,7 +613,7 @@ where
         .await
         .map_err(ApiError::from)
         .map(|outcome| outcome.into_value())
-        .and_then(collection_from_storage)
+        .map(Collection::from)
 }
 
 #[derive(serde::Serialize, Clone, Debug, ToSchema)]

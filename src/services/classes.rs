@@ -1,3 +1,4 @@
+use hubuum_storage_core::StorageClassUpdate;
 use std::sync::Arc;
 
 use crate::errors::ApiError;
@@ -5,10 +6,7 @@ use crate::events::EventContext;
 use crate::models::{
     ClassSelector, HubuumClass, NewHubuumClass, ResolvedClassTarget, UpdateHubuumClass,
 };
-use crate::services::storage_boundary::{
-    class_create_to_storage, class_record_from_storage, class_selector_to_storage,
-    class_update_to_storage, resolved_class_from_storage, resolved_class_to_storage,
-};
+
 use crate::storage::ClassStorage;
 
 /// Application-facing class resolution and lifecycle use cases.
@@ -24,10 +22,10 @@ impl ClassService {
 
     pub async fn resolve(&self, selector: ClassSelector) -> Result<ResolvedClassTarget, ApiError> {
         self.storage
-            .resolve_class(class_selector_to_storage(selector))
+            .resolve_class(selector.into())
             .await
             .map_err(ApiError::from)
-            .and_then(resolved_class_from_storage)
+            .map(ResolvedClassTarget::from)
     }
 
     pub async fn create(
@@ -35,13 +33,13 @@ impl ClassService {
         command: NewHubuumClass,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
-        let command = class_create_to_storage(command)?;
+        let command = command.try_into()?;
         self.storage
             .create_class(command, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(class_record_from_storage)
+            .map(HubuumClass::from)
     }
 
     pub async fn update(
@@ -50,14 +48,14 @@ impl ClassService {
         changes: UpdateHubuumClass,
         context: &EventContext,
     ) -> Result<HubuumClass, ApiError> {
-        let target = resolved_class_to_storage(target);
-        let changes = class_update_to_storage(changes)?;
+        let target = target.as_storage();
+        let changes = StorageClassUpdate::try_from(changes)?;
         self.storage
             .update_class(target, changes, context)
             .await
             .map_err(ApiError::from)
             .map(|outcome| outcome.into_value())
-            .and_then(class_record_from_storage)
+            .map(HubuumClass::from)
     }
 
     pub async fn delete(
@@ -65,7 +63,7 @@ impl ClassService {
         target: &ResolvedClassTarget,
         context: &EventContext,
     ) -> Result<(), ApiError> {
-        let target = resolved_class_to_storage(target);
+        let target = target.as_storage();
         self.storage
             .delete_class(target, context)
             .await

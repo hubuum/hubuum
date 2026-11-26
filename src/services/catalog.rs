@@ -1,9 +1,7 @@
 use crate::errors::ApiError;
 use crate::models::search::QueryOptions;
 use crate::models::{Collection, HubuumClassExpanded, HubuumObject, TokenScope};
-use crate::services::storage_boundary::{
-    class_from_storage, collection_from_storage, object_from_storage, visibility,
-};
+use crate::services::storage_boundary::{class_from_storage, visibility};
 use crate::storage::{CatalogStorage, StorageCatalogListQuery, StorageContext, storage_handle};
 
 fn query(
@@ -29,12 +27,7 @@ pub(crate) async fn list_collections(
         .list_collections(query(principal_id, is_admin, scope, options)?)
         .await?
         .into_parts();
-    Ok((
-        rows.into_iter()
-            .map(collection_from_storage)
-            .collect::<Result<Vec<_>, _>>()?,
-        total,
-    ))
+    Ok((rows.into_iter().map(Collection::from).collect(), total))
 }
 
 pub(crate) async fn list_classes(
@@ -67,10 +60,5 @@ pub(crate) async fn list_objects(
         .list_objects(query(principal_id, is_admin, scope, options)?)
         .await?
         .into_parts();
-    Ok((
-        rows.into_iter()
-            .map(object_from_storage)
-            .collect::<Result<Vec<_>, _>>()?,
-        total,
-    ))
+    Ok((rows.into_iter().map(HubuumObject::from).collect(), total))
 }

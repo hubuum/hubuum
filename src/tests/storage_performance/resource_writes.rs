@@ -421,8 +421,8 @@ async fn object_transaction_reuses_the_direct_create_round_trip_budget() {
         ))
         .await
         .expect("class fixture should resolve");
-    let storage_class = resolved_class_to_storage(&class_target).clone();
-    let command = object_create_to_storage(NewHubuumObject {
+    let storage_class = class_target.as_storage().clone();
+    let command = StorageObjectCreate::try_from(NewHubuumObject {
         name: scope.scoped_name("query_budget_object_transaction_create"),
         collection_id: fixture.collection.id,
         hubuum_class_id: class.id,
