@@ -177,6 +177,52 @@ Upgrade archive readers and recovery binaries before publishing version-2
 segments. Catalog producers can obtain the verified format from
 `HistorySegment::format_version`. Version-1 segments can stay in place.
 
+## PostgreSQL catalog, index and manifest size
+
+The catalog, embedded index and artifact manifests exceeded the P1 allowance at
+both sizes in this collection-history fixture. The calculation pairs each
+PostgreSQL descriptor with the exact version-2 segment it references. On
+2026-11-27, five fresh paired runs after one warm-up produced identical byte
+counts on PostgreSQL 18.7 with default TOAST compression. Each table entry is
+the value observed in all five samples, including the median and p95.
+
+| Physical or encoded bytes | 10,000 versions | 100,000 versions |
+| --- | ---: | ---: |
+| Framed records | 15,715,400 | 157,350,300 |
+| PostgreSQL catalog table including TOAST | 1,712,128 | 16,711,680 |
+| PostgreSQL catalog indexes | 16,384 | 57,344 |
+| Embedded segment indexes | 640,000 | 6,400,000 |
+| Artifact manifests | 22,500 | 225,000 |
+| Metadata lower bound | 2,391,012 | 23,394,024 |
+| P1 allowance (5% of framed record bytes plus 1 MiB) | 1,834,346 | 8,916,091 |
+
+Even counting the entire segment in the denominator gives allowances of only
+1,866,851 and 9,241,141 bytes. At 100,000 versions the native PostgreSQL table
+and indexes alone exceed either allowance. The embedded index also repeats the
+version and interval already in the catalog.
+
+Each resource has 100 closed versions and one independently verified, published
+segment. Each small collection description contains 256 bytes. Every hundredth
+contains 64 KiB. Resource and version UUIDs are freshly generated. The
+diagnostic copies the migrated catalog definition and indexes into a temporary
+PostgreSQL table, inserts the production JSONB representation, and runs
+`ANALYZE` before measuring the table, TOAST, and indexes. Segment and manifest
+counts come from the same publications in the memory artifact store.
+
+Run against a disposable, migrated PostgreSQL database with
+`HUBUUM_DATABASE_URL` set. Split-role deployments also need the migration
+connection and owner settings used by the repository test runner.
+
+```bash
+cargo test --locked -p hubuum --features integration-test-support,embedded-migrations \
+  --lib postgres_archive_catalog_allocation -- --ignored --nocapture --test-threads=1
+```
+
+The diagnostic reports measurements when both fixtures complete. The P1
+comparison uses those byte counts. The collection-only fixture excludes
+provider-side allocation, query captures, and dependent history families.
+The class-skewed `archive-exact-v1` deployment still requires qualification.
+
 ## Remaining acceptance
 
 Project #3 tracks the remaining #514 work on `project/workload-lifecycle`.
