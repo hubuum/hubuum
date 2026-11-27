@@ -93,12 +93,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Fixed
 
 - GitHub rate-limit headers now preserve the cached-authority outage window
-  even when the provider sends an unreadable error page.
-- OAuth rejects token responses that contain both an error and a bearer and
-  reports temporary token-endpoint failures as provider outages.
+  even when GitHub sends an unreadable error page. An interrupted HTTP 403
+  response from another provider still counts as an outage.
+- OAuth rejects token responses that contain both an error and a credential
+  on success and error HTTP statuses. It reports temporary token-endpoint
+  failures as provider outages.
   OIDC rejects duplicate discovery and signing-key fields, checks the type
   of the callback issuer capability, and requires a
-  single JSON media type before accepting UserInfo membership claims.
+  single JSON media type before accepting UserInfo membership claims. A media
+  type error during renewal preserves the original cached-authority deadline.
 
 - External authentication renewal preserves other sessions and personal access
   tokens when a replica cannot read a retained credential and uses an available

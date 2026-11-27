@@ -662,7 +662,7 @@ fn userinfo_profile(
         return Err(OidcError::Denied);
     }
     if !profile::has_json_content_type(reply.headers()) {
-        return Err(OidcError::InvalidResponse);
+        return Err(OidcError::Unavailable);
     }
     let document = profile::parse(reply.body())?;
     if document.get("sub").and_then(Value::as_str) != Some(signed_subject) {

@@ -86,6 +86,7 @@ async fn code_exchange_and_authenticated_profile_are_bound(#[case] github: bool)
         let call = calls.get();
         calls.set(call + 1);
         let document = if call == 0 {
+            assert!(request.extensions().get::<OAuthProfile>().is_none());
             assert_eq!(
                 request.uri().to_string(),
                 adapter.definition.endpoints()[1].as_str()
@@ -120,6 +121,10 @@ async fn code_exchange_and_authenticated_profile_are_bound(#[case] github: bool)
             json!({"access_token":"fixture-access", "token_type":"bearer"})
         } else {
             assert_eq!(call, 1);
+            assert_eq!(
+                request.extensions().get::<OAuthProfile>(),
+                Some(adapter.definition.profile())
+            );
             assert_eq!(
                 request.uri().to_string(),
                 adapter.definition.endpoints()[2].as_str()
@@ -463,6 +468,12 @@ async fn renewal_distinguishes_github_rate_limits_from_rejection(
 #[case::error_in_success(200, "application/json", json!({"error":"server_error"}), OAuthError::Unavailable)]
 #[case::client_configuration(200, "application/json", json!({"error":"incorrect_client_credentials"}), OAuthError::Configuration)]
 #[case::contradictory_success(200, "application/json", json!({"error":"invalid_grant", "access_token":"access", "token_type":"bearer"}), OAuthError::InvalidResponse)]
+#[case::contradictory_failure(400, "application/json", json!({"error":"temporarily_unavailable", "access_token":"access"}), OAuthError::InvalidResponse)]
+#[case::refresh_token_in_error(401, "application/json", json!({"error":"invalid_client", "refresh_token":"replacement"}), OAuthError::InvalidResponse)]
+#[case::id_token_in_error(400, "application/json", json!({"error":"invalid_grant", "id_token":"credential"}), OAuthError::InvalidResponse)]
+#[case::grant_on_error_status(400, "application/json", json!({"access_token":"access", "token_type":"bearer"}), OAuthError::InvalidResponse)]
+#[case::malformed_error(400, "application/json", json!({"error":"invalid_grant","error_description":42}), OAuthError::InvalidResponse)]
+#[case::provider_error_without_json_media_type(400, "text/plain", json!({"error":"temporarily_unavailable"}), OAuthError::Unavailable)]
 #[case::wrong_type(200, "text/html", json!({"access_token":"access", "token_type":"bearer"}), OAuthError::InvalidResponse)]
 #[case::other_json_format(200, "application/json-seq", json!({"access_token":"access", "token_type":"bearer"}), OAuthError::InvalidResponse)]
 #[tokio::test]

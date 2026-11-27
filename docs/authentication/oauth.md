@@ -99,6 +99,8 @@ Providers requiring those features need a small explicit adapter.
 Successful token and user-profile responses require one `application/json`
 Content-Type header. Parameters such as `charset=utf-8` are accepted. A token
 response containing an `error` member stops the exchange before the profile lookup.
+Hubuum rejects a response that contains both an error and a credential on either
+a success or an error HTTP status.
 
 Optional `profile_headers` permits at most eight bounded lowercase `accept`,
 `user-agent` or `x-*` headers. These headers select the identity namespace. Changing a
@@ -120,8 +122,10 @@ does not extend upstream identity evidence.
 
 GitHub primary and secondary rate limits are temporary failures, including HTTP
 403 responses identified by rate-limit metadata or the secondary-limit error
-message. An explicit rate-limit header on a 403 is sufficient even when the
-error body is unreadable. After a temporary profile-read failure, Hubuum retains
+message. For the GitHub user endpoint, an explicit rate-limit header on a 403
+is sufficient even when the error body is unreadable. If a generic provider
+drops the connection partway through a 403 response, Hubuum records an outage.
+After a temporary profile-read failure, Hubuum retains
 the encrypted access token and waits 30 seconds before retrying that session. The failed read
 does not extend the cached membership lifetime.
 

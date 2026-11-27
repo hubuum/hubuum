@@ -655,7 +655,7 @@ fn userinfo_rejects_duplicate_members(#[case] body: &[u8]) {
 #[case::missing(&[])]
 #[case::incorrect(&["text/plain"])]
 #[case::ambiguous(&["application/json", "application/json"])]
-fn userinfo_requires_one_json_content_type(#[case] media_types: &[&str]) {
+fn userinfo_without_one_json_media_type_is_unavailable(#[case] media_types: &[&str]) {
     let mut reply = openidconnect::http::Response::builder();
     for media_type in media_types {
         reply = reply.header("content-type", *media_type);
@@ -665,7 +665,7 @@ fn userinfo_requires_one_json_content_type(#[case] media_types: &[&str]) {
         .unwrap();
     assert_eq!(
         userinfo_profile(&reply, "stable-subject"),
-        Err(OidcError::InvalidResponse)
+        Err(OidcError::Unavailable)
     );
 }
 

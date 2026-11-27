@@ -79,7 +79,9 @@ claims and do not substitute for group paths. Example non-secret definition:
 For `claim_source: "userinfo"`, enable the mapper's UserInfo output as well.
 Hubuum requests UserInfo only for that profile and requires its `sub` to match
 the validated ID token. UserInfo must return one `application/json` Content-Type
-header. Hubuum rejects duplicate fields in discovery documents and signing-key
+header. A missing, repeated or incorrect media type blocks sign-in. During renewal
+it leaves previously verified memberships usable only until their existing stale
+deadline. Hubuum rejects duplicate fields in discovery documents and signing-key
 sets before using the endpoints or keys. Missing, malformed, partial or
 distributed group claims fail closed. An explicit empty group array removes provider-owned memberships;
 manual local assignments remain. Choose an admission policy deliberately;

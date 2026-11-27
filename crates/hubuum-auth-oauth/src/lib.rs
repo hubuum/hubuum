@@ -15,7 +15,7 @@ use hubuum_secrets::SecretValue;
 use oauth2::{
     AsyncHttpClient, AuthType, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
     EndpointNotSet, EndpointSet, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, TokenUrl,
-    basic::{BasicClient, BasicRequestTokenError, BasicTokenResponse},
+    basic::{BasicClient, BasicErrorResponse, BasicTokenResponse},
     http,
 };
 use serde::{Deserialize, Serialize};
@@ -151,13 +151,14 @@ impl OAuthAdapter {
                 ))
                 .request_async(&|request| async {
                     let reply = client.call(request).await?;
-                    if reply.status() == http::StatusCode::OK {
-                        validate_token_response(&reply)?;
-                    }
+                    validate_token_response(&reply)?;
                     Ok(reply)
                 })
                 .await
-                .map_err(token_error)?;
+                .map_err(|error| match error {
+                    oauth2::RequestTokenError::Request(error) => error,
+                    _ => OAuthError::InvalidResponse,
+                })?;
             let credentials = self.credentials(response)?;
             self.authenticate_using(credentials, context, client).await
         })
@@ -283,6 +284,8 @@ impl OAuthAdapter {
         let github = *self.definition.profile() == OAuthProfile::Github;
         let mut request = http::Request::builder()
             .uri(self.definition.endpoints()[2].as_str())
+            // Local transport metadata. Only this request reads the user profile.
+            .extension(self.definition.profile().clone())
             .header(
                 "accept",
                 if github {
@@ -518,19 +521,23 @@ fn serialize_secret(value: &impl Serialize) -> Result<SecretValue, OAuthError> {
         .map_err(|_| OAuthError::InvalidResponse)
 }
 fn validate_token_response(reply: &oauth2::HttpResponse) -> Result<(), OAuthError> {
-    if !profile::has_json_content_type(reply.headers()) {
+    let success = reply.status() == http::StatusCode::OK;
+    if success && !profile::has_json_content_type(reply.headers()) {
         return Err(OAuthError::InvalidResponse);
     }
     let document = profile::parse(reply.body())?;
-    let Some(error) = document.get("error") else {
-        return Ok(());
-    };
-    if document.get("access_token").is_some() || document.get("refresh_token").is_some() {
+    if document.get("error").is_none() {
+        return success.then_some(()).ok_or(OAuthError::InvalidResponse);
+    }
+    if ["access_token", "refresh_token", "id_token"]
+        .iter()
+        .any(|field| document.get(field).is_some())
+    {
         return Err(OAuthError::InvalidResponse);
     }
-    Err(token_endpoint_error(
-        error.as_str().ok_or(OAuthError::InvalidResponse)?,
-    ))
+    let error: BasicErrorResponse =
+        serde_json::from_value(document).map_err(|_| OAuthError::InvalidResponse)?;
+    Err(token_endpoint_error(error.error().as_ref()))
 }
 
 fn token_endpoint_error(code: &str) -> OAuthError {
@@ -544,16 +551,6 @@ fn token_endpoint_error(code: &str) -> OAuthError {
         | "incorrect_client_credentials"
         | "redirect_uri_mismatch" => OAuthError::Configuration,
         _ => OAuthError::Denied,
-    }
-}
-
-fn token_error(error: BasicRequestTokenError<OAuthError>) -> OAuthError {
-    match error {
-        oauth2::RequestTokenError::Request(error) => error,
-        oauth2::RequestTokenError::ServerResponse(response) => {
-            token_endpoint_error(response.error().as_ref())
-        }
-        _ => OAuthError::InvalidResponse,
     }
 }
 

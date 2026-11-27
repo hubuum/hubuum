@@ -19,3 +19,6 @@ hubuum-outbound-http = { path = "../hubuum-outbound-http" }
 oauth2 = { version = "5", default-features = false, features = ["timing-resistant-secret-traits"] }
 serde_json = { version = "1", features = ["raw_value"] }
 tokio = { version = "1", features = ["sync", "time"] }
+
+[dev-dependencies]
+rstest = "0.28"
