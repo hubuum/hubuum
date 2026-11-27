@@ -125,8 +125,6 @@ pub async fn measure_archive_catalog_allocation(
              (LIKE hubuum_control.history_archive_catalogs INCLUDING ALL) ON COMMIT DROP;
              CREATE TEMP TABLE catalog_packed
              (LIKE hubuum_control.history_archive_catalogs INCLUDING ALL) ON COMMIT DROP;
-             ALTER TABLE pg_temp.catalog_packed ALTER COLUMN material DROP NOT NULL,
-             ADD COLUMN packed bytea, ADD COLUMN version_count integer;
              CREATE TEMP TABLE archive_destinations (LIKE public.artifact_destinations INCLUDING ALL) ON COMMIT DROP;
              CREATE TEMP TABLE archive_attempts (LIKE public.artifact_attempts INCLUDING ALL) ON COMMIT DROP;
              CREATE TEMP TABLE archive_chunks (LIKE public.artifact_chunks INCLUDING ALL) ON COMMIT DROP",

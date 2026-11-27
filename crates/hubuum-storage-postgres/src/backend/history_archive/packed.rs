@@ -13,6 +13,9 @@ use crate::PostgresStorageError;
 const MAGIC: &[u8; 5] = b"HUBC\x01";
 const PREFIX_BYTES: usize = MAGIC.len() + 16 + 8 + 4 + 4;
 const COMMITMENT_BYTES: usize = 16 + 32;
+const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
+const SINGLE_SEGMENT: u8 = 1 << 5;
+const DICTIONARY_ID: u8 = 0b11;
 
 fn invalid() -> PostgresStorageError {
     PostgresStorageError::database("Invalid packed archive catalog")
@@ -46,7 +49,10 @@ pub(super) fn encode(catalog: &HistoryArchiveCatalog) -> Result<Vec<u8>, Postgre
         commitments.extend_from_slice(&digest);
     }
     let header = history_archive_encoded_bytes(&metadata, HISTORY_ARCHIVE_CATALOG_BYTES)?;
-    let frame = bulk::compress(&header, 3).map_err(|_| invalid())?;
+    let mut encoder = bulk::Compressor::new(3).map_err(|_| invalid())?;
+    // A single segment's declared size also bounds its decoding window.
+    encoder.window_log(22).map_err(|_| invalid())?;
+    let frame = encoder.compress(&header).map_err(|_| invalid())?;
     let mut output = Vec::with_capacity(PREFIX_BYTES + frame.len() + commitments.len());
     output.extend_from_slice(MAGIC);
     output.extend_from_slice(catalog.resource().as_bytes());
@@ -59,6 +65,9 @@ pub(super) fn encode(catalog: &HistoryArchiveCatalog) -> Result<Vec<u8>, Postgre
 }
 
 pub(super) fn decode(bytes: &[u8]) -> Result<HistoryArchiveCatalog, PostgresStorageError> {
+    if bytes.len() > HISTORY_ARCHIVE_CATALOG_BYTES {
+        return Err(invalid());
+    }
     let mut body = bytes.strip_prefix(MAGIC).ok_or_else(invalid)?;
     let resource = ResourceIdentity::from_bytes(field(&mut body)?).map_err(|_| invalid())?;
     let generation = i64::from_be_bytes(field(&mut body)?);
@@ -69,7 +78,10 @@ pub(super) fn decode(bytes: &[u8]) -> Result<HistoryArchiveCatalog, PostgresStor
     if !remainder.is_empty()
         || count != members.len()
         || count > HISTORY_ARCHIVE_MAX_VERSIONS
-        || frame.len() > zstd::compress_bound(HISTORY_ARCHIVE_CATALOG_BYTES)
+        || !frame.starts_with(&ZSTD_MAGIC)
+        || frame
+            .get(ZSTD_MAGIC.len())
+            .is_none_or(|flags| flags & (SINGLE_SEGMENT | DICTIONARY_ID) != SINGLE_SEGMENT)
         || zstd_safe::find_frame_compressed_size(frame).ok() != Some(frame.len())
     {
         return Err(invalid());
@@ -114,3 +126,6 @@ pub(super) fn decode(bytes: &[u8]) -> Result<HistoryArchiveCatalog, PostgresStor
         PostgresStorageError::invalid_persisted_value("packed history catalog", error)
     })
 }
+
+#[cfg(test)]
+mod tests;

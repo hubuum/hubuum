@@ -281,6 +281,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- **Breaking for older PostgreSQL archive readers.** New publications store
+  compact per-resource catalogs with complete version UUIDs and payload digests.
+  Stop old API, worker and recovery binaries, back up the database, apply
+  `2026-11-27-000001_packed_history_catalogs`, reconcile role grants and
+  deploy matching binaries. Existing JSONB catalogs remain readable. Downgrade
+  requires a pre-upgrade backup once packed rows exist.
+
 - **Breaking for older experimental archive readers.** New history segments use
   64 KiB blocks and a v3 index. Only the fixed-width index is compressed.
   Upgrade every archive reader and recovery tool before publishing v3 segments.

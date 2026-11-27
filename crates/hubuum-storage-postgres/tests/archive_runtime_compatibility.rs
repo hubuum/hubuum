@@ -22,6 +22,8 @@ const DOWN: &str =
     include_str!("../migrations/2026-11-11-000001_archive_runtime_compatibility/down.sql");
 const LIFECYCLE_DOWN: &str =
     include_str!("../migrations/2026-11-19-000002_history_lifecycle/down.sql");
+const PACKED_CATALOG_DOWN: &str =
+    include_str!("../migrations/2026-11-27-000001_packed_history_catalogs/down.sql");
 const SCHEDULER_UP: &str =
     include_str!("../migrations/2026-11-19-000001_idle_task_scheduling/up.sql");
 const SCHEDULER_DOWN: &str =
@@ -86,6 +88,16 @@ async fn become_owner(connection: &mut PostgresConnection) -> Result<(), Postgre
     Ok(())
 }
 
+async fn revert_packed_catalogs(
+    connection: &mut PostgresConnection,
+) -> Result<(), PostgresStorageError> {
+    connection.batch_execute(PACKED_CATALOG_DOWN).await?;
+    sql_query("DELETE FROM public.__diesel_schema_migrations WHERE version = '20261127000001'")
+        .execute(connection)
+        .await?;
+    Ok(())
+}
+
 async fn entry(
     connection: &mut PostgresConnection,
     permit: &StorageExecutionPermit,
@@ -136,6 +148,7 @@ async fn compatibility_migration_only_changes_unversioned_legacy_guards(
             .execute(connection)
             .await?;
         if !versioned {
+            revert_packed_catalogs(connection).await?;
             connection.batch_execute(LIFECYCLE_DOWN).await?;
             connection
                 .batch_execute(if upgrade { down } else { up })
@@ -207,6 +220,7 @@ async fn lifecycle_rollback_preserves_archive_entry_at_the_synchronized_checkpoi
     let mut allowed = None;
     let result = with_transaction(&fixture.admin, async |connection| {
         become_owner(connection).await?;
+        revert_packed_catalogs(connection).await?;
         connection.batch_execute(LIFECYCLE_DOWN).await?;
         sql_query("DELETE FROM public.__diesel_schema_migrations WHERE version = '20261119000002'")
             .execute(connection)
@@ -237,6 +251,7 @@ async fn unversioned_archive_guard_rejects_unknown_future_checkpoints() {
     let mut rejection = None;
     let result = with_transaction(&fixture.admin, async |connection| {
         become_owner(connection).await?;
+        revert_packed_catalogs(connection).await?;
         connection.batch_execute(LIFECYCLE_DOWN).await?;
         sql_query("INSERT INTO public.__diesel_schema_migrations(version) VALUES($1)")
             .bind::<Text, _>("20990101000001")
@@ -266,4 +281,25 @@ async fn unversioned_archive_guard_rejects_unknown_future_checkpoints() {
             .unwrap_err()
             .contains("Unversioned archive runtime schema is not supported")
     );
+}
+
+#[tokio::test]
+async fn packed_catalog_downgrade_refuses_to_discard_retained_rows() {
+    let _serial = MIGRATION_FIXTURE.lock().await;
+    let fixture = Fixture::new();
+    let result = with_transaction(&fixture.admin, async |connection| {
+        become_owner(connection).await?;
+        // The database validates the envelope. The adapter tests validate the
+        // compressed contents and full round trip through the public functions.
+        sql_query("INSERT INTO hubuum_control.history_archive_catalogs(resource,generation,packed,version_count)
+            SELECT id,1,decode('4855424301','hex') || uuid_send(id) || int8send(1) ||
+                int4send(1) || int4send(1) || decode('00','hex') || decode(repeat('11',48),'hex'),1
+            FROM (SELECT gen_random_uuid() AS id) f").execute(connection).await?;
+        connection.batch_execute("SAVEPOINT downgrade").await?;
+        let failure = connection.batch_execute(PACKED_CATALOG_DOWN).await.unwrap_err();
+        connection.batch_execute("ROLLBACK TO SAVEPOINT downgrade").await?;
+        assert!(failure.to_string().contains("Packed history archive catalogs remain"));
+        Err::<(), _>(PostgresStorageError::invalid_input(ROLLBACK))
+    }).await;
+    assert_eq!(result.unwrap_err().to_string(), ROLLBACK);
 }
