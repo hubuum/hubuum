@@ -176,9 +176,14 @@ resolved from the right of the `[X-Forwarded-For..., peer]` hop chain, so attack
 - `HUBUUM_TRUST_IP_HEADERS=true` is the master switch for honoring `X-Forwarded-For`.
 - `HUBUUM_TRUSTED_PROXIES` (preferred): comma-separated proxy IPs/CIDRs. Hops in this set
   are skipped from the connection peer inward, and the first untrusted hop is taken as the
-  client (e.g. `HUBUUM_TRUSTED_PROXIES=10.0.0.0/8,192.168.0.0/16`).
+  client (e.g. `HUBUUM_TRUSTED_PROXIES=10.20.0.10,10.20.0.11`).
+- List only the addresses of the reverse proxies themselves. Do not use broad private
+  ranges such as `10.0.0.0/8` or `192.168.0.0/16`: every client in those ranges would be
+  treated as a proxy and could spoof another source address. If the whole chain is inside
+  the trusted set, Hubuum falls back to the connection peer address.
 - `HUBUUM_TRUSTED_PROXY_HOPS` (fallback when no allowlist is set): the number of proxy
-  hops in front of the server to skip from the right of the chain.
+  hops in front of the server to skip from the right of the chain. A single reverse proxy
+  in front of Hubuum uses `1`.
 - If `HUBUUM_TRUST_IP_HEADERS=true` but neither of the above is set, forwarded headers are
   **ignored** and the connection peer address is used (forwarded values are never trusted
   blindly).

@@ -206,7 +206,8 @@ pub async fn get_tasks(
     let search_params = prepare_db_pagination::<TaskResponse>(&params)?;
     let backend = context.permission_backend();
     let principal = PrincipalRef::load(&context, &requestor.principal).await?;
-    let is_admin = backend.is_admin(&principal).await?;
+    // A scoped token never inherits an administrator's task-wide visibility.
+    let is_admin = requestor.scopes().is_none() && backend.is_admin(&principal).await?;
     let submitted_by_filter = if is_admin {
         filters.submitted_by
     } else if backend.supports_storage_visibility_filtering() {
@@ -342,7 +343,8 @@ pub async fn get_task(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    let mut task = load_authorized_task(&context, &requestor.principal, task_id).await?;
+    let mut task =
+        load_authorized_task(&context, &requestor.principal, task_id, requestor.scopes()).await?;
     discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
     if task.kind == TaskKind::SchemaValidation.as_str() && requestor.scopes().is_some() {
         return Err(ApiError::NotFound("Task not found".into()));
@@ -387,7 +389,8 @@ pub async fn get_task_events(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    let task = load_authorized_task(&context, &requestor.principal, task_id).await?;
+    let task =
+        load_authorized_task(&context, &requestor.principal, task_id, requestor.scopes()).await?;
     if task.kind == TaskKind::SchemaValidation.as_str() && requestor.scopes().is_some() {
         return Err(ApiError::NotFound("Task not found".into()));
     }

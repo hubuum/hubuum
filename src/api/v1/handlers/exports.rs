@@ -111,7 +111,8 @@ pub async fn get_export(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    let mut task = load_authorized_export(&context, &requestor.principal, task_id).await?;
+    let mut task =
+        load_authorized_export(&context, &requestor.principal, task_id, requestor.scopes()).await?;
     super::tasks::discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
     let output = export_output_summary(&context, task_id).await?;
     Ok(ApiResponse::new(
@@ -153,7 +154,8 @@ pub async fn get_export_output(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    let mut task = load_authorized_export(&context, &requestor.principal, task_id).await?;
+    let mut task =
+        load_authorized_export(&context, &requestor.principal, task_id, requestor.scopes()).await?;
     super::tasks::discovery::redact(&context, &requestor, std::slice::from_mut(&mut task)).await?;
     if !task.discovery_authorized {
         return Err(ApiError::NotFound("Export output not found".into()));

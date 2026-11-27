@@ -14,6 +14,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Scoped administrator tokens no longer inherit task-wide visibility. Task
+  listing and point reads require an unscoped token for the administrator
+  fast path.
+- Login performs the dummy password verification for accounts with a missing
+  or unusable hash, removing a timing oracle for anonymized accounts.
+- Group membership endpoints now require an administrator or membership of
+  the requested group.
+- Trusted-proxy resolution falls back to the connection peer when every
+  forwarded hop is trusted, and the documentation warns against broad
+  `HUBUUM_TRUSTED_PROXIES` ranges.
+
 - Remove the unused Actix Web cookie feature and its dependency on
   `cookie` 0.16.2 (RUSTSEC-2026-0594).
 

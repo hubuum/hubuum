@@ -448,17 +448,19 @@ pub(crate) async fn load_authorized_task<S>(
     backend: &impl AuthorizationContext,
     requestor: &S,
     task_id: TaskID,
+    scopes: Option<&TokenScope>,
 ) -> Result<TaskRecord, ApiError>
 where
     S: AuthzSubject + ?Sized,
 {
-    load_authorized_task_of_kind(backend, requestor, task_id, None, "Task", false).await
+    load_authorized_task_of_kind(backend, requestor, task_id, None, "Task", false, scopes).await
 }
 
 pub(crate) async fn load_authorized_import<S>(
     backend: &impl AuthorizationContext,
     requestor: &S,
     task_id: TaskID,
+    scopes: Option<&TokenScope>,
 ) -> Result<TaskRecord, ApiError>
 where
     S: AuthzSubject + ?Sized,
@@ -470,6 +472,7 @@ where
         Some(TaskKind::Import),
         "Import task",
         true,
+        scopes,
     )
     .await
 }
@@ -478,6 +481,7 @@ pub(crate) async fn load_authorized_export<S>(
     backend: &impl AuthorizationContext,
     requestor: &S,
     task_id: TaskID,
+    scopes: Option<&TokenScope>,
 ) -> Result<TaskRecord, ApiError>
 where
     S: AuthzSubject + ?Sized,
@@ -489,6 +493,7 @@ where
         Some(TaskKind::Export),
         "Export task",
         true,
+        scopes,
     )
     .await
 }
@@ -497,6 +502,7 @@ pub(crate) async fn load_authorized_backup<S>(
     backend: &impl AuthorizationContext,
     requestor: &S,
     task_id: TaskID,
+    scopes: Option<&TokenScope>,
 ) -> Result<TaskRecord, ApiError>
 where
     S: AuthzSubject + ?Sized,
@@ -508,6 +514,7 @@ where
         Some(TaskKind::Backup),
         "Backup task",
         true,
+        scopes,
     )
     .await
 }
@@ -519,6 +526,7 @@ async fn load_authorized_task_of_kind<S>(
     required_kind: Option<TaskKind>,
     label: &str,
     hide_external_denial: bool,
+    scopes: Option<&TokenScope>,
 ) -> Result<TaskRecord, ApiError>
 where
     S: AuthzSubject + ?Sized,
@@ -537,16 +545,20 @@ where
 
     let principal = PrincipalRef::load(backend, requestor).await?;
     let authorization_mode = backend.authorization_mode();
-    if task.kind == TaskKind::SchemaValidation.as_str() {
-        let is_admin = match &authorization_mode {
+    // Administrator fast paths apply only to unscoped tokens. A scoped token is
+    // a least-privilege boundary even for an administrator principal.
+    let unscoped_admin = if scopes.is_some() {
+        false
+    } else {
+        match &authorization_mode {
             AuthorizationMode::LocalStorage => requestor.is_admin(backend).await?,
             AuthorizationMode::Delegated(permission_backend) => {
                 permission_backend.is_admin(&principal).await?
             }
-        };
-        if !is_admin {
-            return Err(ApiError::NotFound(format!("{label} not found")));
         }
+    };
+    if task.kind == TaskKind::SchemaValidation.as_str() && !unscoped_admin {
+        return Err(ApiError::NotFound(format!("{label} not found")));
     }
     let local = matches!(authorization_mode, AuthorizationMode::LocalStorage);
     let allowed = match authorization_mode {
@@ -555,7 +567,7 @@ where
                 .get_authentication_identity(requestor.validated_principal_id()?)
                 .await?
                 .into_parts();
-            requestor.is_admin(backend).await?
+            unscoped_admin
                 || task.submitted_by == Some(principal.user_id)
                 || (identity.is_human()
                     && submitter_owner_group_id
