@@ -20,6 +20,8 @@ const UP: &str =
     include_str!("../migrations/2026-11-11-000001_archive_runtime_compatibility/up.sql");
 const DOWN: &str =
     include_str!("../migrations/2026-11-11-000001_archive_runtime_compatibility/down.sql");
+const EXPIRY_PROJECTION_DOWN: &str =
+    include_str!("../migrations/2026-11-27-000002_history_expiry_projection/down.sql");
 const LIFECYCLE_DOWN: &str =
     include_str!("../migrations/2026-11-19-000002_history_lifecycle/down.sql");
 const SCHEDULER_UP: &str =
@@ -86,6 +88,19 @@ async fn become_owner(connection: &mut PostgresConnection) -> Result<(), Postgre
     Ok(())
 }
 
+async fn revert_to_unversioned_history(
+    connection: &mut PostgresConnection,
+) -> Result<(), PostgresStorageError> {
+    // Follow the migrator's reverse order. An unversioned guard checks the
+    // actual checkpoint even after the lifecycle function has been restored.
+    connection.batch_execute(EXPIRY_PROJECTION_DOWN).await?;
+    sql_query("DELETE FROM public.__diesel_schema_migrations WHERE version = '20261127000002'")
+        .execute(connection)
+        .await?;
+    connection.batch_execute(LIFECYCLE_DOWN).await?;
+    Ok(())
+}
+
 async fn entry(
     connection: &mut PostgresConnection,
     permit: &StorageExecutionPermit,
@@ -136,7 +151,7 @@ async fn compatibility_migration_only_changes_unversioned_legacy_guards(
             .execute(connection)
             .await?;
         if !versioned {
-            connection.batch_execute(LIFECYCLE_DOWN).await?;
+            revert_to_unversioned_history(connection).await?;
             connection
                 .batch_execute(if upgrade { down } else { up })
                 .await?;
@@ -207,7 +222,7 @@ async fn lifecycle_rollback_preserves_archive_entry_at_the_synchronized_checkpoi
     let mut allowed = None;
     let result = with_transaction(&fixture.admin, async |connection| {
         become_owner(connection).await?;
-        connection.batch_execute(LIFECYCLE_DOWN).await?;
+        revert_to_unversioned_history(connection).await?;
         sql_query("DELETE FROM public.__diesel_schema_migrations WHERE version = '20261119000002'")
             .execute(connection)
             .await?;
@@ -237,7 +252,7 @@ async fn unversioned_archive_guard_rejects_unknown_future_checkpoints() {
     let mut rejection = None;
     let result = with_transaction(&fixture.admin, async |connection| {
         become_owner(connection).await?;
-        connection.batch_execute(LIFECYCLE_DOWN).await?;
+        revert_to_unversioned_history(connection).await?;
         sql_query("INSERT INTO public.__diesel_schema_migrations(version) VALUES($1)")
             .bind::<Text, _>("20990101000001")
             .execute(connection)
