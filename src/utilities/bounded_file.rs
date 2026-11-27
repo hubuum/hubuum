@@ -12,39 +12,13 @@ pub(crate) fn read_bounded_regular_file(
 ) -> io::Result<Vec<u8>> {
     let max_bytes_u64 = u64::try_from(max_bytes).unwrap_or(u64::MAX);
 
-    // Resolve the configured path once so that deployment-managed symlinks
-    // (for example Kubernetes secret volumes) keep working, then reason about
-    // the resolved file for the rest of the read.
-    let resolved = fs::canonicalize(path).map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("Failed to resolve {description} {path:?}: {error}"),
-        )
-    })?;
-    let expected_metadata = fs::metadata(&resolved).map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("Failed to inspect {description} {path:?}: {error}"),
-        )
-    })?;
-    validate_metadata(
-        path,
-        description,
-        max_bytes,
-        max_bytes_u64,
-        &expected_metadata,
-    )?;
-
-    let file = open_no_follow(&resolved, path, description)?;
-    let file_metadata = file.metadata().map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("Failed to inspect open {description} {path:?}: {error}"),
-        )
-    })?;
-    validate_metadata(path, description, max_bytes, max_bytes_u64, &file_metadata)?;
-    validate_same_file(path, description, &expected_metadata, &file_metadata)?;
-
+    let (file, file_metadata) = open_bounded_file(path, description, max_bytes, max_bytes_u64)
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("Failed to open {description} {path:?}: {error}"),
+            )
+        })?;
     let mut bytes = Vec::with_capacity(file_metadata.len() as usize);
     file.take(max_bytes_u64.saturating_add(1))
         .read_to_end(&mut bytes)
@@ -60,50 +34,50 @@ pub(crate) fn read_bounded_regular_file(
     Ok(bytes)
 }
 
-fn open_no_follow(resolved: &Path, path: &Path, description: &str) -> io::Result<File> {
-    let mut options = File::options();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    options.open(resolved).map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("Failed to open {description} {path:?}: {error}"),
-        )
-    })
-}
-
-/// Reject a file that was replaced between resolution and open.
-///
-/// On Unix the `(device, inode)` pair identifies the object that was inspected;
-/// the descriptor must refer to exactly that object. This closes the stat/open
-/// race without rejecting symlinks that were resolved above.
-fn validate_same_file(
+#[cfg(unix)]
+fn open_bounded_file(
     path: &Path,
     description: &str,
-    expected: &fs::Metadata,
-    opened: &fs::Metadata,
-) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
+    max_bytes: usize,
+    max_bytes_u64: u64,
+) -> io::Result<(File, fs::Metadata)> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
-        if expected.dev() != opened.dev() || expected.ino() != opened.ino() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("{description} {path:?} changed while it was opened"),
-            ));
-        }
+    // Resolve configured symlinks once, then compare the inspected identity to
+    // the open descriptor. Nonblocking open also handles replacement of a
+    // regular file by a special file without stalling the caller.
+    let resolved = fs::canonicalize(path)?;
+    let expected = fs::metadata(&resolved)?;
+    validate_metadata(path, description, max_bytes, max_bytes_u64, &expected)?;
+    let file = File::options()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(resolved)?;
+    let opened = file.metadata()?;
+    if (expected.dev(), expected.ino()) != (opened.dev(), opened.ino()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{description} {path:?} changed while it was opened"),
+        ));
     }
-    #[cfg(not(unix))]
-    {
-        let _ = (expected, opened);
-        let _ = (path, description);
-    }
-    Ok(())
+    validate_metadata(path, description, max_bytes, max_bytes_u64, &opened)?;
+    Ok((file, opened))
+}
+
+#[cfg(not(unix))]
+fn open_bounded_file(
+    path: &Path,
+    description: &str,
+    max_bytes: usize,
+    max_bytes_u64: u64,
+) -> io::Result<(File, fs::Metadata)> {
+    // Let the OS follow any configured link in a single open. Inspect and
+    // later read that same handle, so that replacing the pathname cannot
+    // change the file between validation and consumption.
+    let file = File::open(path)?;
+    let opened = file.metadata()?;
+    validate_metadata(path, description, max_bytes, max_bytes_u64, &opened)?;
+    Ok((file, opened))
 }
 
 fn validate_metadata(
