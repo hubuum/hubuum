@@ -82,7 +82,7 @@ Collection managers can still edit the name, description and timeout, or disable
 Re-enabling a credential-bearing target requires administrator approval.
 
 Credential-bearing URL templates must start with a literal HTTPS host and optional port. Templates
-may fill path segments below the final literal directory prefix and values of explicitly
+may fill path segments after the approved literal path prefix and values of explicitly
 named query parameters. A literal path must match exactly. Fixed query values, parameter
 names, order, and count are also bound. A substitution in the first path segment approves
 the entire origin's path space. Use expression substitutions in credentialed URL templates;

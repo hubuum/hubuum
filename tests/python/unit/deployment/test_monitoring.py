@@ -21,6 +21,15 @@ class MonitoringTests(InstallerFixture):
         # Last --engine takes precedence over the base fixture's Docker default.
         return super().run_script(script, *args, "--engine", self.engine, **kwargs)
 
+    def test_metrics_network_survives_configuration_refresh(self):
+        networks = "198.51.100.0/24,2001:db8::/64"
+        self.install("--metrics-allow-cidr", networks)
+        self.run_script("install-single-host.sh", "--refresh-config")
+        self.assertEqual(self.values()["METRICS_ALLOW_CIDR"], networks)
+        caddy = (self.installation / "Caddyfile").read_text()
+        self.assertIn("@metrics_denied not remote_ip 198.51.100.0/24 2001:db8::/64", caddy)
+        self.assertIn("@outside_scrape_network not remote_ip 198.51.100.0/24 2001:db8::/64", caddy)
+
     def test_backup_spools_use_disk_with_read_only_backend_roots(self):
         self.install()
         compose = (self.installation / "compose.yml").read_text()

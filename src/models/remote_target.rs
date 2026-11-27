@@ -120,17 +120,16 @@ impl RemoteAuthConfig {
     }
 }
 
-/// An HTTPS authority fixed by the credential owner's target definition.
-/// Invocation data may fill paths and queries, but cannot select another origin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ApprovedPath {
     /// The template has no substitutions in its path; the rendered path must
     /// match it exactly.
     Exact(String),
-    /// Substitutions are allowed below a literal directory prefix.
+    /// Keep every literal byte preceding the first substitution.
     Prefix(String),
 }
 
+/// The HTTPS authority, path boundary and query layout approved for these credentials.
 pub(crate) struct CredentialBoundDestination {
     host: String,
     port: u16,
@@ -258,14 +257,7 @@ impl ApprovedPath {
     fn from_template_path(path_template: &str, slot: &str) -> Self {
         match path_template.find(slot) {
             None => Self::Exact(path_template.to_string()),
-            Some(index) => {
-                let literal = &path_template[..index];
-                let prefix = match literal.rfind('/') {
-                    Some(position) => &literal[..=position],
-                    None => "/",
-                };
-                Self::Prefix(prefix.to_string())
-            }
+            Some(index) => Self::Prefix(path_template[..index].to_owned()),
         }
     }
 }
@@ -1114,6 +1106,25 @@ mod tests {
         let accepted = validate_outbound_url(url)
             .is_ok_and(|parts| destination.validate_rendered(&parts).is_ok());
         assert_eq!(accepted, valid);
+    }
+
+    #[rstest]
+    #[case("https://service.example/items/record-42", true)]
+    #[case("https://service.example/items/other-42", false)]
+    fn credential_path_preserves_a_literal_partial_segment(
+        #[case] url: &str,
+        #[case] expected: bool,
+    ) {
+        let destination = CredentialBoundDestination::from_template(
+            "https://service.example/items/record-{{ parameters.id }}",
+        )
+        .unwrap();
+        assert_eq!(
+            destination
+                .validate_rendered(&validate_outbound_url(url).unwrap())
+                .is_ok(),
+            expected
+        );
     }
 
     #[rstest]

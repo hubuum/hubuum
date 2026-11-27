@@ -9,15 +9,6 @@ from support.installer import InstallerFixture, SERVER, FRONTEND
 
 
 class ImageTagTests(InstallerFixture):
-    def test_metrics_network_survives_configuration_refresh(self):
-        networks = "198.51.100.0/24,2001:db8::/64"
-        self.install("--metrics-allow-cidr", networks)
-        self.run_script("install-single-host.sh", "--refresh-config")
-        self.assertEqual(self.values()["METRICS_ALLOW_CIDR"], networks)
-        caddy = (self.installation / "Caddyfile").read_text()
-        self.assertIn("@metrics_denied not remote_ip 198.51.100.0/24 2001:db8::/64", caddy)
-        self.assertIn("@outside_scrape_network not remote_ip 198.51.100.0/24 2001:db8::/64", caddy)
-
     def test_legacy_installation_accepts_updates_with_and_without_tag_overrides(self):
         for script in ("install-single-host.sh", "update-single-host.sh"):
             for saved_server in ("main", "v0.0.14"):
