@@ -47,7 +47,9 @@ async fn stage_archive(
         "key": root.join("key"),
     }))
     .unwrap();
-    let isolation = require_runtime_permit(&storage, &options)
+    // The fixture checkpoint has finished. A parallel fork can still hold
+    // its lock descriptor briefly until exec.
+    let isolation = after_repository_release(|| require_runtime_permit(&storage, &options))
         .await
         .unwrap()
         .into_runtime_lifetime();

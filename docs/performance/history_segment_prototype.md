@@ -8,7 +8,7 @@ outside the storage SDK and HTTP API. It does not complete #514 or enable source
 
 ## Format and limits
 
-Both versions are uncompressed. `HUBH` plus a one-byte version precedes a
+All versions store uncompressed record frames. `HUBH` plus a one-byte version precedes a
 length-prefixed JSON scope: one history family and stable collection UUID.
 Length-prefixed JSON records preserve stable resource/version UUIDs, closed
 half-open validity intervals, dependency version UUIDs, and payloads. Mixing
@@ -18,6 +18,21 @@ staging.
 An offset index follows the records. Its four-byte little-endian length and
 `HUBI` plus the matching header version terminate the stream. Version 1 stores
 JSON entries. Version 2 stores one 64-byte entry per record in physical order.
+Version 3 begins its index with the version key width, followed by one
+dictionary-free Zstandard frame. The writer takes a prefix of each version
+UUID of length 1, 2, 4, 8 or 16 bytes, choosing the smallest width
+that distinguishes every version in this segment. All other fields use their
+v2 field encodings. Each byte position across the entries forms one column, in
+physical record order. Each column starts with its first byte and then stores
+the difference from the preceding byte modulo 256, including across wraparound.
+The frame contains the columns consecutively.
+A shortened key locates one candidate. Exact lookups verify the full
+UUID in the decoded record before returning it, including when an absent UUID
+shares a key. Catalogs, query pins, and the records themselves retain full
+identities. The reader checks the single-segment flag, frame boundary and
+declared size before allocating space for the entries. The window and decoded
+index are both bounded by that declared size.
+[Zstandard frame header](https://www.rfc-editor.org/rfc/rfc8878#section-3.1.1.1)
 
 | Bytes in a v2 entry | Value |
 | --- | --- |
@@ -26,8 +41,9 @@ JSON entries. Version 2 stores one 64-byte entry per record in physical order.
 | 56–59, 60–63 | Unsigned 32-bit frame offset and length including prefix, little-endian |
 
 The reader reconstructs the full index on open. The count comes from the
-encoded length, which must be a multiple of 64 in v2. Both versions validate
-UUIDs, intervals, unique versions and contiguous record boundaries.
+decoded length divided by the entry width, 64 bytes in v2 and 48 bytes plus
+the key width in v3. Readers reject partial entries, duplicate version keys, invalid
+intervals and discontinuous record boundaries.
 The existing artifact manifest binds every byte,
 including the header, framing, index, and footer. The producer uses the existing
 bounded channel and independent full read-back verification; it does not
@@ -46,7 +62,7 @@ block. A lookup miss describes only this segment, not complete query coverage.
 | Encoded record, including its four-byte length | 4 MiB |
 | Artifact block | 64 KiB for new writes, retained reader ceiling 1 MiB |
 | Records per segment | 10,000 |
-| Encoded index | 4 MiB for v1, 640,000 bytes for v2 |
+| Encoded index | 4 MiB for v1, 640,000 bytes for v2, 1 MiB stored and 640,000 bytes decoded for v3 |
 | Scope header | 512 bytes |
 | Dependency version references per record | 128 distinct, non-self references |
 
@@ -173,9 +189,102 @@ exact-read allowance and 1,367,518 bytes of the as-of allowance for other
 work on this fixture. Storage round trips, database catalog traffic,
 dependency resolution and worker memory need separate measurement.
 
-Upgrade archive readers and recovery binaries before publishing version-2
-segments. Catalog producers can obtain the verified format from
-`HistorySegment::format_version`. Version-1 segments can stay in place.
+Catalog producers obtain the verified format from `HistorySegment::format_version`.
+Upgrade archive readers and recovery binaries before publishing version-3
+segments. Both earlier formats can stay in place.
+
+## PostgreSQL catalog, index and manifest size
+
+The catalog, embedded index and artifact manifests exceeded the P1 allowance at
+both sizes in this collection-history fixture. The calculation pairs each
+PostgreSQL descriptor with the exact version-2 segment it references. On
+2026-11-27, five fresh paired runs after one warm-up produced identical byte
+counts on PostgreSQL 18.7 with default TOAST compression. Each table entry is
+the value observed in all five samples, including the median and p95.
+
+| Physical or encoded bytes | 10,000 versions | 100,000 versions |
+| --- | ---: | ---: |
+| Framed records | 15,715,400 | 157,350,300 |
+| PostgreSQL catalog table including TOAST | 1,712,128 | 16,711,680 |
+| PostgreSQL catalog indexes | 16,384 | 57,344 |
+| Embedded segment indexes | 640,000 | 6,400,000 |
+| Artifact manifests | 22,500 | 225,000 |
+| Metadata lower bound | 2,391,012 | 23,394,024 |
+| P1 allowance (5% of framed record bytes plus 1 MiB) | 1,834,346 | 8,916,091 |
+
+Even counting the entire segment in the denominator gives allowances of only
+1,866,851 and 9,241,141 bytes. At 100,000 versions the native PostgreSQL table
+and indexes alone exceed either allowance. The embedded index also repeats the
+version and interval already in the catalog.
+
+Each resource has 100 closed versions and one independently verified, published
+segment. Each small collection description contains 256 bytes. Every hundredth
+contains 64 KiB. Resource and version UUIDs are freshly generated. The
+diagnostic copies the migrated catalog definition and indexes into a temporary
+PostgreSQL table, inserts the production JSONB representation, and runs
+`ANALYZE` before measuring the table, TOAST, and indexes. Segment and manifest
+counts come from the same publications in the memory artifact store.
+
+Run against a disposable, migrated PostgreSQL database with
+`HUBUUM_DATABASE_URL` set. Split-role deployments also need the migration
+connection and owner settings used by the repository test runner.
+
+```bash
+cargo test --locked -p hubuum --features integration-test-support,embedded-migrations \
+  --lib postgres_archive_catalog_allocation -- --ignored --nocapture --test-threads=1
+```
+
+The original v2 measurements above count encoded manifests and exclude other
+provider allocations. The current diagnostic also copies the migrated
+PostgreSQL destination, attempt and chunk tables into the temporary schema.
+It inserts the published manifests and the verified bytes of each block.
+It counts the physical destination and attempt relations, including manifests
+and indexes. For the chunk relation it subtracts the physical content column
+sizes from the full table, TOAST and index allocation. The difference includes
+tuple overhead and unused page space. The embedded index is counted
+separately at its encoded size. Each manifest is counted once. The sum of
+logical chunk lengths must equal the published segments' lengths.
+
+The diagnostic compares the current JSONB catalog with a candidate binary
+encoding in a separate temporary table. It verifies that each candidate
+decodes to the complete original catalog, including all version identities
+and content digests. These tables model a fresh set of published rows. Live
+update bloat, query captures, dependent history families and the class-skewed
+`archive-exact-v1` deployment still require measurement.
+
+## Compressed index and packed catalog measurements
+
+At commit `bb069f25`, a fresh v3 open of the 10,000-record single-segment
+fixture read 295,444 bytes, including a 24,489-byte manifest. The segment
+occupied 44,311,147 bytes including a 201,050-byte index. Both cold exact and
+cold as-of reads returned the 4,407-byte record after reading 360,980 bytes
+in total. The v2 result was 800,146 bytes. These are segment reads; the
+application also reads the catalog and validates the capture.
+
+On PostgreSQL 18.7, five paired runs after one warm-up used new resource,
+version and artifact UUIDs in the collection fixture. Each entry below is the
+median and nearest-rank p95 in bytes. Total metadata includes the measured
+catalog, embedded index and PostgreSQL artifact overhead described above.
+
+| Allocation (median / p95) | 10,000 versions | 100,000 versions |
+| --- | ---: | ---: |
+| JSONB catalog | 1,728,512 / 1,728,512 | 16,769,024 / 16,769,024 |
+| Candidate packed catalog | 679,936 / 679,936 | 6,422,528 / 6,422,528 |
+| Embedded v3 index | 37,486 / 38,261 | 367,296 / 367,591 |
+| PostgreSQL artifacts including manifests | 409,773 / 410,711 | 2,011,525 / 2,029,084 |
+| Total with JSONB catalog | 2,175,771 / 2,176,029 | 19,147,646 / 19,164,412 |
+| Total with packed catalog | 1,127,195 / 1,127,453 | 8,801,150 / 8,817,916 |
+| P1 allowance | 1,834,346 | 8,916,091 |
+
+| Packed total, bytes | Run 1 | Run 2 | Run 3 | Run 4 | Run 5 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10,000 versions | 1,127,114 | 1,127,195 | 1,127,453 | 1,127,352 | 1,127,066 |
+| 100,000 versions | 8,784,622 | 8,817,916 | 8,801,644 | 8,801,150 | 8,792,946 |
+
+At 100,000 versions, 98,175 bytes remained in the largest sample. Additional
+online state or a different resource distribution can consume this margin.
+All five JSONB totals exceeded the allowance at both sizes. Packed catalog
+storage in this diagnostic is experimental.
 
 ## Remaining acceptance
 
