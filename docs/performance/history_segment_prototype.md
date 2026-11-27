@@ -286,6 +286,59 @@ online state or a different resource distribution can consume this margin.
 All five JSONB totals exceeded the allowance at both sizes. Packed catalog
 storage in this diagnostic is experimental.
 
+## PostgreSQL traffic for a complete collection lookup
+
+The collection archive service exceeded P2 for a 3 MiB description on PostgreSQL
+18.7. Exact lookup received 31,729,712 bytes at p95 against a 5,243,437-byte
+allowance. As-of lookup received 31,729,608 bytes against its 7,340,589-byte
+allowance. Both modes returned the original row with complete coverage.
+
+The fixture published 100 closed revisions of one collection into one v3 segment
+and one packed catalog. It used 98 descriptions of 256 bytes, one of 64 KiB and
+one of 3 MiB. The primary rows stayed present. A collection reader with a native
+group grant requested each selected revision by version and by its original
+interval start. Each lookup created a fresh capture, executed the retained read
+and accessed the result under current authorization. Fixture setup and cleanup
+ran outside the measurement.
+
+A loopback relay counted bytes between the application's runtime-role connection
+pool and PostgreSQL. Reply traffic includes catalog selection, capture,
+permission and fence checks, artifact verification and final access. The
+provider read counter measures the artifact I/O included in this path. The
+diagnostic also emits
+client-to-database bytes separately. PostgreSQL page reads, process RSS and
+public HTTP serialization require separate measurements.
+
+Five fresh databases after one warm-up produced the following results. P95 is the
+largest of the five observations. The allowance uses the encoded result payload
+and the smaller of P2's two limits.
+
+| Description size | Lookup | Payload bytes | Median reply bytes | P95 reply bytes | P2 allowance |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 256 B | Exact | 811 | 263,221 | 263,335 | 1,055,064 |
+| 256 B | As-of | 811 | 261,483 | 261,577 | 2,110,128 |
+| 64 KiB | Exact | 66,093 | 915,256 | 915,346 | 1,577,320 |
+| 64 KiB | As-of | 66,093 | 915,129 | 915,218 | 3,154,640 |
+| 3 MiB | Exact | 3,146,285 | 31,729,536 | 31,729,712 | 5,243,437 |
+| 3 MiB | As-of | 3,146,285 | 31,729,451 | 31,729,608 | 7,340,589 |
+
+For the 3 MiB exact case, median replies were 6,322,406 bytes during capture,
+19,102,244 during execution and 6,304,882 during access. The artifact reader
+charged 3,309,631 bytes. The service loads the persisted capture, including its
+hot payload, on both sides of authorization and again for the read reservation.
+Current permission, original runtime ownership, deletion and expiry checks must
+continue to hold as this repeated payload transfer is reduced. P2 qualification
+remains open for large results and the named deployment workload.
+
+Run the diagnostic with the normal split-role test fixture and a local
+PostgreSQL endpoint. Each of the six observations checks the returned row
+against its original captured value.
+
+```bash
+source .env
+./run_tests.sh --lib postgres_archive_service_wire_traffic -- --ignored --nocapture
+```
+
 ## Remaining acceptance
 
 Project #3 tracks the remaining #514 work on `project/workload-lifecycle`.
