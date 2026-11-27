@@ -313,7 +313,9 @@ Import execution happens in four major phases:
 
 ### 1. Load payload
 
-The worker deserializes `tasks.request_payload` into `ImportRequest`.
+The import worker opens credential-bearing envelopes with their persisted key
+reference and verifies the principal and request fingerprint. It then
+deserializes the authenticated bytes into `ImportRequest`.
 
 If the payload is missing or invalid, the task is marked failed.
 
