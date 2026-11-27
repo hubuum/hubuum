@@ -94,7 +94,7 @@ async fn reopened_provider_can_fence_the_exact_sealed_replacement() {
             .unwrap();
         let (intent, owner, selection) = fixture.admit(&store, &source).await;
         let rewrite = source
-            .stage_owned_subset_rewrite(&store, &store, &owner, &selection, &mut budget)
+            .prepare_owned_subset_rewrite(&store, &store, &owner, &selection, &mut budget)
             .await
             .unwrap();
         assert_eq!(
@@ -190,7 +190,7 @@ async fn a_mismatched_request_cannot_use_or_abort_an_admitted_rewrite(#[case] ch
     };
     assert!(matches!(
         source
-            .stage_owned_subset_rewrite(&store, &store, &owner, &selection, &mut budget)
+            .prepare_owned_subset_rewrite(&store, &store, &owner, &selection, &mut budget)
             .await,
         Err(ArtifactError::Conflict(_))
     ));
@@ -215,7 +215,7 @@ async fn a_failed_scan_leaves_its_attempt_available_to_the_same_owner() {
         .unwrap();
     let (intent, owner, selection) = fixture.admit(&store, &source).await;
     let short = source
-        .stage_owned_subset_rewrite(
+        .prepare_owned_subset_rewrite(
             &store,
             &store,
             &owner,
@@ -225,11 +225,217 @@ async fn a_failed_scan_leaves_its_attempt_available_to_the_same_owner() {
         .await;
     assert!(matches!(short, Err(ArtifactError::Limit(_))));
     let result = source
-        .stage_owned_subset_rewrite(&store, &store, &owner, &selection, &mut budget)
+        .prepare_owned_subset_rewrite(&store, &store, &owner, &selection, &mut budget)
         .await
         .unwrap();
     assert_eq!(
         result.segment().proof().manifest().identity(),
         intent.identity()
     );
+}
+
+#[rstest]
+#[case::after_seal(false)]
+#[case::after_provider_publication(true)]
+#[tokio::test]
+async fn restart_reconciles_the_original_rewrite(#[case] publish: bool) {
+    let mut fixture = Fixture::new().await;
+    let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+    let (encoded_intent, expected_manifest, expected_publication) = {
+        let store = FilesystemArtifactStore::open_existing(&fixture.root)
+            .await
+            .unwrap();
+        let scope = fixture.survivor.scope.clone();
+        let mut large = record(scope.clone(), fixture.survivor.interval.resource, 3, 4)
+            .with_dependencies(vec![VersionIdentity::generate()])
+            .unwrap();
+        large.payload = json!({"text": "x".repeat(2 * BLOCK_BYTES as usize)});
+        let segment = HistorySegment::stage(
+            &store,
+            ArtifactIdentity::new(fixture.source.identity().destination()),
+            scope,
+            [fixture.survivor.clone(), fixture.target.clone(), large],
+        )
+        .await
+        .unwrap();
+        fixture.source = store.publish(segment.proof()).await.unwrap();
+        let source = RetainedHistorySegment::open(&store, &fixture.source, &mut budget)
+            .await
+            .unwrap();
+        let (intent, owner, selection) = fixture.admit(&store, &source).await;
+        let rewrite = source
+            .prepare_owned_subset_rewrite(&store, &store, &owner, &selection, &mut budget)
+            .await
+            .unwrap();
+        let proof = rewrite.segment().proof();
+        let published = if publish {
+            Some(store.publish_owned(&owner, proof).await.unwrap())
+        } else {
+            None
+        };
+        (
+            intent.encode().unwrap(),
+            proof.manifest().clone(),
+            published,
+        )
+    };
+    let reopened = FilesystemArtifactStore::open_existing(&fixture.root)
+        .await
+        .unwrap();
+    let intent = ArtifactCreationIntent::decode(&encoded_intent).unwrap();
+    let OwnedArtifactResolution::Established { artifact, .. } =
+        reopened.resolve_owned(&intent).await.unwrap()
+    else {
+        panic!("the original owned attempt must survive restart");
+    };
+    let source = RetainedHistorySegment::open(&reopened, &fixture.source, &mut budget)
+        .await
+        .unwrap();
+    let selection = SegmentRewriteSelection::new([identity(&fixture.target)]).unwrap();
+    let recovered = source
+        .prepare_owned_subset_rewrite(&reopened, &reopened, &artifact, &selection, &mut budget)
+        .await
+        .unwrap();
+    assert_eq!(recovered.segment().proof().manifest(), &expected_manifest);
+    assert_eq!(
+        recovered.published_reference(),
+        expected_publication.as_ref()
+    );
+}
+
+enum WrongReplacement {
+    Payload,
+    SelectedRow,
+    ExtraRow,
+    Scope,
+}
+
+#[rstest]
+#[case::same_identity_and_length_with_changed_payload(WrongReplacement::Payload)]
+#[case::selected_instead_of_surviving_version(WrongReplacement::SelectedRow)]
+#[case::additional_version(WrongReplacement::ExtraRow)]
+#[case::different_scope(WrongReplacement::Scope)]
+#[tokio::test]
+async fn a_valid_owned_artifact_must_still_match_the_surviving_frames(
+    #[case] wrong: WrongReplacement,
+) {
+    let fixture = Fixture::new().await;
+    let store = FilesystemArtifactStore::open_existing(&fixture.root)
+        .await
+        .unwrap();
+    let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+    let source = RetainedHistorySegment::open(&store, &fixture.source, &mut budget)
+        .await
+        .unwrap();
+    let (intent, owner, selection) = fixture.admit(&store, &source).await;
+
+    let mut survivor = fixture.survivor.clone();
+    let mut scope = source.scope().clone();
+    let records = match wrong {
+        WrongReplacement::Payload => {
+            survivor.payload = json!({"value": "modified"});
+            vec![survivor]
+        }
+        WrongReplacement::SelectedRow => vec![fixture.target.clone()],
+        WrongReplacement::ExtraRow => vec![fixture.target.clone(), survivor],
+        WrongReplacement::Scope => {
+            scope = super::scope();
+            survivor.scope = scope.clone();
+            vec![survivor]
+        }
+    };
+    let session = owner.session(&store);
+    HistorySegment::stage(&session, intent.identity().clone(), scope, records)
+        .await
+        .unwrap();
+    let recovered = source
+        .prepare_owned_subset_rewrite(&store, &store, &owner, &selection, &mut budget)
+        .await;
+    assert!(matches!(recovered, Err(ArtifactError::Conflict(_))));
+}
+
+#[tokio::test]
+async fn reconciling_a_fenced_rewrite_cannot_reopen_its_output() {
+    let fixture = Fixture::new().await;
+    let store = FilesystemArtifactStore::open_existing(&fixture.root)
+        .await
+        .unwrap();
+    let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+    let source = RetainedHistorySegment::open(&store, &fixture.source, &mut budget)
+        .await
+        .unwrap();
+    let (_, owner, selection) = fixture.admit(&store, &source).await;
+    source
+        .prepare_owned_subset_rewrite(&store, &store, &owner, &selection, &mut budget)
+        .await
+        .unwrap();
+    store.abort_owned(&owner).await.unwrap();
+    assert!(matches!(
+        source
+            .prepare_owned_subset_rewrite(&store, &store, &owner, &selection, &mut budget)
+            .await,
+        Err(ArtifactError::Conflict(_))
+    ));
+}
+
+#[rstest]
+#[case::matching_block(true)]
+#[case::different_block(false)]
+#[tokio::test]
+async fn restart_resumes_only_an_identical_appended_block(#[case] matching: bool) {
+    let fixture = Fixture::new().await;
+    let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+    let (encoded, expected_digest) = {
+        let store = FilesystemArtifactStore::open_existing(&fixture.root)
+            .await
+            .unwrap();
+        let source = RetainedHistorySegment::open(&store, &fixture.source, &mut budget)
+            .await
+            .unwrap();
+        let (intent, owner, _) = fixture.admit(&store, &source).await;
+        let original = HistorySegment::stage(
+            &store,
+            ArtifactIdentity::new(fixture.source.identity().destination()),
+            source.scope().clone(),
+            [fixture.survivor.clone()],
+        )
+        .await
+        .unwrap();
+        let manifest = original.proof().manifest();
+        assert_eq!(manifest.block_count(), 1);
+        let mut block = store.block(manifest.identity(), 0).await.unwrap().unwrap();
+        if !matching {
+            block[0] ^= 1;
+        }
+        // The block reached the provider, but the worker never sent the seal.
+        store.append_owned(&owner, 0, &block).await.unwrap();
+        (intent.encode().unwrap(), *manifest.stream_digest())
+    };
+
+    let store = FilesystemArtifactStore::open_existing(&fixture.root)
+        .await
+        .unwrap();
+    let intent = ArtifactCreationIntent::decode(&encoded).unwrap();
+    let OwnedArtifactResolution::Established {
+        artifact,
+        phase: OwnedArtifactPhase::Staging,
+    } = store.resolve_owned(&intent).await.unwrap()
+    else {
+        panic!("partially written output must retain its owner");
+    };
+    let source = RetainedHistorySegment::open(&store, &fixture.source, &mut budget)
+        .await
+        .unwrap();
+    let selection = SegmentRewriteSelection::new([identity(&fixture.target)]).unwrap();
+    let result = source
+        .prepare_owned_subset_rewrite(&store, &store, &artifact, &selection, &mut budget)
+        .await;
+    if matching {
+        assert_eq!(
+            result.unwrap().segment().proof().manifest().stream_digest(),
+            &expected_digest
+        );
+    } else {
+        assert!(matches!(result, Err(ArtifactError::Conflict(_))));
+    }
 }

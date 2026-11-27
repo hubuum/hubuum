@@ -134,7 +134,10 @@ version UUIDs. The selection is limited to 1,000 members and 16 MiB of selected
 frames. Every source frame is authenticated and decoded, including selected
 frames. Surviving frames retain their original bytes. An absent version, a
 survivor depending on a selected version, corruption or a depleted read budget
-stops staging. Publication, cross-segment dependency checks and retirement of
+stops staging. After a restart the same owned attempt can recover a sealed or
+published replacement. The worker verifies the destination and compares every
+surviving frame with the original source before returning its provider state.
+Catalog handoff, cross-segment dependency checks and retirement of
 the old copy still require the owning operation and its durable fences. See the
 [local subset-rewrite measurements](performance/history_segment_prototype.md#local-mixed-segment-rewrite).
 

@@ -349,7 +349,15 @@ exact source manifest digest and sorted resource/version pairs to the new
 attempt. A caller can retain that intent before writing and reconcile the same
 attempt after a restart. The provider checks its owner when staging, sealing
 and fencing the replacement. A different selection cannot use the receipt.
-After a failed scan the owner can retry or reconcile the recorded phase.
+If the worker loses a seal or publication reply, it can reopen the provider and
+resolve the retained intent. Recovery reads back the sealed manifest and blocks,
+checks each surviving interval against the replacement index and reconstructs
+the expected stream digest from the source frames and the retained header and
+index. This also checks payloads and dependencies when the logical identities
+match. The worker rereads the provider phase under the same owner before
+returning the verified output and any existing publication reference. A fenced
+attempt yields a conflict. Recovery reports the extra destination reads in its
+verification byte count. The five measurements above cover fresh writes.
 Only the owner responsible for settlement can fence an abandoned attempt,
 so a failed writer cannot invalidate a concurrent successful write.
 Fencing prevents subsequent publication. Physical cleanup requires separate evidence.

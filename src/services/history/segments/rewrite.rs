@@ -2,16 +2,17 @@
 use std::collections::BTreeMap;
 
 use hubuum_artifacts::{
-    ArtifactIdentity, ArtifactWriter, OwnedArtifactReceipt, OwnedArtifactSession,
-    OwnedArtifactStore, verify,
+    ArtifactIdentity, ArtifactManifest, ArtifactReference, ArtifactWriter, OwnedArtifactPhase,
+    OwnedArtifactReceipt, OwnedArtifactResolution, OwnedArtifactSession, OwnedArtifactStore,
+    verify,
 };
 use hubuum_storage_core::{HistoryExpiryInputBytes, HistoryExpiryManifest, StorageRecordIdentity};
 use sha2::{Digest, Sha256};
 
 use super::{
     ArtifactError, ArtifactResult, ArtifactStore, ByteBudget, ByteLimit, Entry, HistorySegment,
-    ResourceIdentity, RetainedHistorySegment, SEGMENT_BYTES, SegmentBlockReader, VersionIdentity,
-    segment_header, segment_index,
+    ResourceIdentity, RetainedHistorySegment, SEGMENT_BYTES, SegmentBlockReader, SegmentRecord,
+    VersionIdentity, segment_header, segment_index,
 };
 
 /// Exact identities for one source segment. This carries no deletion authority.
@@ -42,21 +43,53 @@ impl SegmentRewriteSelection {
         }
         Ok(Self(selected))
     }
+
+    fn survivor_count(&self, source: &RetainedHistorySegment) -> ArtifactResult<usize> {
+        if self.0.len() >= source.entries.len() {
+            return Err(ArtifactError::Invalid(
+                "A subset rewrite needs surviving records".into(),
+            ));
+        }
+        let mut removed_bytes =
+            ByteLimit::new(HistoryExpiryInputBytes::MAX_BATCH_BYTES as usize).start();
+        for (&version, &resource) in &self.0 {
+            let entry = source
+                .versions
+                .get(&source.key_width.key(version))
+                .map(|&position| &source.entries[position])
+                .filter(|entry| entry.resource == resource)
+                .ok_or_else(|| {
+                    ArtifactError::Conflict("History rewrite selection is stale".into())
+                })?;
+            removed_bytes.consume(entry.length as usize).map_err(|_| {
+                ArtifactError::Limit(
+                    "Selected history frames exceed the rewrite input budget".into(),
+                )
+            })?;
+        }
+        Ok(source.entries.len() - self.0.len())
+    }
 }
 
-/// Read-back evidence for the staged replacement. Publication still requires a
-/// catalog generation and an independent check of erasure and copy obligations.
-pub struct StagedSegmentRewrite {
+/// Read-back evidence for a replacement. Provider publication and a catalog
+/// handoff are separate facts; this value cannot authorize source retirement.
+pub struct VerifiedSegmentRewrite {
     segment: HistorySegment,
     verification_bytes: u64,
+    published: Option<ArtifactReference>,
 }
 
-impl StagedSegmentRewrite {
+impl VerifiedSegmentRewrite {
     pub fn segment(&self) -> &HistorySegment {
         &self.segment
     }
 
-    /// Sealed manifest, full block read-back, and reopening the destination index.
+    /// Provider reference observed under the original owner after verification.
+    pub fn published_reference(&self) -> Option<&ArtifactReference> {
+        self.published.as_ref()
+    }
+
+    /// Destination bytes fetched for verification, including recovery reads.
     pub fn verification_bytes(&self) -> u64 {
         self.verification_bytes
     }
@@ -75,12 +108,10 @@ impl RetainedHistorySegment {
         hash.finalize().into()
     }
 
-    /// Verify all source frames and independently read back a fresh, unpublished
-    /// replacement. Surviving frames are copied byte-for-byte, including their
-    /// logical identities, dependency lists and original time precision. A failed
-    /// or concurrent writer leaves the durable owner responsible for reconciling
-    /// its attempt; fencing here could invalidate a successful sibling writer.
-    pub async fn stage_owned_subset_rewrite<
+    /// Stage or recover the original owned attempt. On recovery, compare every
+    /// surviving source frame with the sealed destination before reporting the
+    /// provider phase. A caller still needs a fenced catalog handoff.
+    pub async fn prepare_owned_subset_rewrite<
         S: ArtifactStore + ?Sized,
         D: OwnedArtifactStore + ?Sized,
     >(
@@ -90,7 +121,7 @@ impl RetainedHistorySegment {
         receipt: &D::Receipt,
         selection: &SegmentRewriteSelection,
         source_budget: &mut ByteBudget,
-    ) -> ArtifactResult<StagedSegmentRewrite> {
+    ) -> ArtifactResult<VerifiedSegmentRewrite> {
         let intent = receipt.intent();
         if intent.identity() == self.manifest.identity()
             || intent.request_commitment() != &self.rewrite_commitment(selection)
@@ -100,14 +131,43 @@ impl RetainedHistorySegment {
                 "History rewrite intent differs from its source, selection or limits".into(),
             ));
         }
-        self.rewrite_into(
-            source,
-            &OwnedArtifactSession::new(destination, receipt),
-            intent.identity().clone(),
-            selection,
-            source_budget,
-        )
-        .await
+        let session = OwnedArtifactSession::new(destination, receipt);
+        let mut output = match owned_phase(destination, receipt).await? {
+            OwnedArtifactPhase::Staging => {
+                self.rewrite_into(
+                    source,
+                    &session,
+                    intent.identity().clone(),
+                    selection,
+                    source_budget,
+                )
+                .await?
+            }
+            OwnedArtifactPhase::Sealed | OwnedArtifactPhase::Published(_) => {
+                let bytes = session.manifest(intent.identity()).await?;
+                let manifest =
+                    ArtifactManifest::decode(&bytes, intent.identity(), intent.limits())?;
+                let mut output = VerifiedSegmentRewrite::read_back(&session, &manifest).await?;
+                output.verification_bytes += bytes.len() as u64;
+                output.verification_bytes += self
+                    .compare_survivors(source, &session, selection, source_budget, &output.segment)
+                    .await?;
+                output
+            }
+            OwnedArtifactPhase::Fenced => return Err(inactive_attempt()),
+        };
+        output.published = match owned_phase(destination, receipt).await? {
+            OwnedArtifactPhase::Sealed => None,
+            OwnedArtifactPhase::Published(reference)
+                if reference.identity() == intent.identity()
+                    && reference.manifest_digest()
+                        == &output.segment.proof().manifest().manifest_digest() =>
+            {
+                Some(reference)
+            }
+            _ => return Err(inactive_attempt()),
+        };
+        Ok(output)
     }
 
     pub(super) async fn rewrite_into<S: ArtifactStore + ?Sized, D: ArtifactStore + ?Sized>(
@@ -117,35 +177,89 @@ impl RetainedHistorySegment {
         identity: ArtifactIdentity,
         selection: &SegmentRewriteSelection,
         source_budget: &mut ByteBudget,
-    ) -> ArtifactResult<StagedSegmentRewrite> {
-        if selection.0.len() >= self.entries.len() {
-            return Err(ArtifactError::Invalid(
-                "A subset rewrite needs surviving records".into(),
-            ));
-        }
-        let mut removed_bytes =
-            ByteLimit::new(HistoryExpiryInputBytes::MAX_BATCH_BYTES as usize).start();
-        for (&version, &resource) in &selection.0 {
-            let entry = self
-                .versions
-                .get(&self.key_width.key(version))
-                .map(|&position| &self.entries[position])
-                .filter(|entry| entry.resource == resource)
-                .ok_or_else(|| {
-                    ArtifactError::Conflict("History rewrite selection is stale".into())
-                })?;
-            removed_bytes.consume(entry.length as usize).map_err(|_| {
-                ArtifactError::Limit(
-                    "Selected history frames exceed the rewrite input budget".into(),
-                )
-            })?;
-        }
+    ) -> ArtifactResult<VerifiedSegmentRewrite> {
+        let survivor_count = selection.survivor_count(self)?;
         let mut writer =
             ArtifactWriter::new(destination, identity, HistorySegment::write_limits()?).await?;
         let header = segment_header(&self.scope)?;
         writer.write(&header).await?;
         let mut offset = header.len() as u32;
-        let mut entries = Vec::with_capacity(self.entries.len() - selection.0.len());
+        let mut entries = Vec::with_capacity(survivor_count);
+        self.visit_survivors(source, selection, source_budget, async |record, frame| {
+            writer.write(&frame).await?;
+            entries.push(Entry {
+                interval: record.interval,
+                offset,
+                length: frame.len() as u32,
+            });
+            offset += frame.len() as u32; // Input and output are each bounded by SEGMENT_BYTES.
+            Ok(())
+        })
+        .await?;
+        writer.write(&segment_index(&entries)?).await?;
+        let manifest = writer.seal().await?;
+        VerifiedSegmentRewrite::read_back(destination, &manifest).await
+    }
+
+    async fn compare_survivors<S: ArtifactStore + ?Sized, D: ArtifactStore + ?Sized>(
+        &self,
+        source: &S,
+        destination: &D,
+        selection: &SegmentRewriteSelection,
+        source_budget: &mut ByteBudget,
+        output: &HistorySegment,
+    ) -> ArtifactResult<u64> {
+        let mismatch = || {
+            ArtifactError::Conflict("Sealed replacement differs from the surviving history".into())
+        };
+        if output.scope() != self.scope()
+            || output.record_count() != selection.survivor_count(self)?
+        {
+            return Err(mismatch());
+        }
+        let entries = &output.reader.entries;
+        let mut candidate = entries.iter();
+        let manifest = output.proof().manifest();
+        let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+        let mut reader = SegmentBlockReader::new(destination, manifest, &mut budget);
+        reader.sequential = true;
+        // Keep the actual header and compressed index so a codec upgrade can
+        // recover older output. The verified index bounds a contiguous frame
+        // stream. Reconstruct that stream from the source without a second
+        // full read of the destination.
+        let mut offset = entries.first().ok_or_else(mismatch)?.offset as usize;
+        let mut expected = Sha256::new();
+        expected.update(reader.range(0, offset).await?);
+        self.visit_survivors(source, selection, source_budget, async |record, frame| {
+            let entry = candidate.next().ok_or_else(mismatch)?;
+            if !entry.matches(&record.interval, output.reader.key_width)
+                || entry.length as usize != frame.len()
+            {
+                return Err(mismatch());
+            }
+            offset += frame.len();
+            expected.update(frame);
+            Ok(())
+        })
+        .await?;
+        expected.update(
+            reader
+                .range(offset as u64, manifest.byte_size() as usize - offset)
+                .await?,
+        );
+        if &<[u8; 32]>::from(expected.finalize()) != manifest.stream_digest() {
+            return Err(mismatch());
+        }
+        Ok(budget.used() as u64)
+    }
+
+    async fn visit_survivors<S: ArtifactStore + ?Sized>(
+        &self,
+        source: &S,
+        selection: &SegmentRewriteSelection,
+        source_budget: &mut ByteBudget,
+        mut visit: impl AsyncFnMut(SegmentRecord, Vec<u8>) -> ArtifactResult<()>,
+    ) -> ArtifactResult<()> {
         let mut removed = 0;
         let mut reader = SegmentBlockReader::new(source, &self.manifest, source_budget);
         reader.sequential = true;
@@ -167,13 +281,7 @@ impl RetainedHistorySegment {
                     "Surviving history depends on a selected version".into(),
                 ));
             }
-            writer.write(&frame).await?;
-            entries.push(Entry {
-                interval: record.interval,
-                offset,
-                length: entry.length,
-            });
-            offset += entry.length; // Input and output are each bounded by SEGMENT_BYTES.
+            visit(record, frame).await?;
         }
         // A shortened key can match a selected UUID absent from this segment.
         if removed != selection.0.len() {
@@ -181,16 +289,42 @@ impl RetainedHistorySegment {
                 "History rewrite selection is stale".into(),
             ));
         }
-        writer.write(&segment_index(&entries)?).await?;
-        let manifest = writer.seal().await?;
-        let proof = verify(destination, &manifest).await?;
+        Ok(())
+    }
+}
+
+async fn owned_phase<D: OwnedArtifactStore + ?Sized>(
+    store: &D,
+    receipt: &D::Receipt,
+) -> ArtifactResult<OwnedArtifactPhase> {
+    match store.resolve_owned(receipt.intent()).await? {
+        OwnedArtifactResolution::Established { artifact, phase }
+            if artifact.same_binding(receipt) && artifact.intent() == receipt.intent() =>
+        {
+            Ok(phase)
+        }
+        _ => Err(inactive_attempt()),
+    }
+}
+
+fn inactive_attempt() -> ArtifactError {
+    ArtifactError::Conflict(
+        "History rewrite attempt is unavailable or changed owner or phase".into(),
+    )
+}
+
+impl VerifiedSegmentRewrite {
+    async fn read_back<D: ArtifactStore + ?Sized>(
+        destination: &D,
+        manifest: &ArtifactManifest,
+    ) -> ArtifactResult<Self> {
+        let proof = verify(destination, manifest).await?;
         let mut reopen = ByteLimit::new(SEGMENT_BYTES).start();
         let segment = HistorySegment::open_verified(destination, proof, &mut reopen).await?;
-        Ok(StagedSegmentRewrite {
+        Ok(Self {
             segment,
-            verification_bytes: manifest.encoded_len() as u64
-                + manifest.byte_size()
-                + reopen.used() as u64,
+            verification_bytes: manifest.stored_bytes() + reopen.used() as u64,
+            published: None,
         })
     }
 }
