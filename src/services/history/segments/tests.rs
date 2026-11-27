@@ -278,22 +278,24 @@ async fn verified_bytes(bytes: &[u8], block_bytes: u32) -> (MemoryStorage, Verif
 #[case::index_outside_segment(2)]
 #[case::oversized_header(3)]
 #[case::oversized_index(4)]
+#[case::mismatched_header_footer(5)]
 #[tokio::test]
 async fn invalid_retained_format_is_rejected(#[case] variant: u8) {
     let scope = scope();
     let header = encode(&scope, 512).unwrap();
-    let mut bytes = MAGIC.to_vec();
+    let mut bytes = b"HUBH\x01".to_vec();
     write_frame(&mut bytes, &header).unwrap();
     bytes.extend_from_slice(b"[]");
     bytes.extend_from_slice(&2_u32.to_le_bytes());
-    bytes.extend_from_slice(FOOTER);
+    bytes.extend_from_slice(b"HUBI\x01");
     let footer = bytes.len() - 9;
     match variant {
-        0 => bytes[4] = 2,
-        1 => *bytes.last_mut().unwrap() = 2,
+        0 => bytes[4] = 3,
+        1 => *bytes.last_mut().unwrap() = 3,
         2 => bytes[footer..footer + 4].copy_from_slice(&((footer + 1) as u32).to_le_bytes()),
         3 => bytes[5..9].copy_from_slice(&513_u32.to_le_bytes()),
-        _ => bytes[footer..footer + 4].copy_from_slice(&((INDEX_BYTES + 1) as u32).to_le_bytes()),
+        4 => bytes[footer..footer + 4].copy_from_slice(&((INDEX_BYTES + 1) as u32).to_le_bytes()),
+        _ => bytes[4] = 2,
     }
     let (store, proof) = verified_bytes(&bytes, BLOCK_BYTES).await;
     assert!(
@@ -306,12 +308,12 @@ async fn invalid_retained_format_is_rejected(#[case] variant: u8) {
 #[tokio::test]
 async fn index_cannot_omit_record_bytes() {
     let header = encode(&scope(), 512).unwrap();
-    let mut bytes = MAGIC.to_vec();
+    let mut bytes = b"HUBH\x01".to_vec();
     write_frame(&mut bytes, &header).unwrap();
     write_frame(&mut bytes, b"omitted").unwrap();
     bytes.extend_from_slice(b"[]");
     bytes.extend_from_slice(&2_u32.to_le_bytes());
-    bytes.extend_from_slice(FOOTER);
+    bytes.extend_from_slice(b"HUBI\x01");
     let (store, proof) = verified_bytes(&bytes, BLOCK_BYTES).await;
     assert!(matches!(
         HistorySegment::open_verified(&store, proof, &mut ByteLimit::new(SEGMENT_BYTES).start())
@@ -320,31 +322,60 @@ async fn index_cannot_omit_record_bytes() {
     ));
 }
 
+// Reproduce the original JSON wire format independently of the current writer.
+fn legacy_bytes(row: &SegmentRecord) -> Vec<u8> {
+    let mut bytes = b"HUBH\x01".to_vec();
+    write_frame(&mut bytes, &serde_json::to_vec(&row.scope).unwrap()).unwrap();
+    let offset = bytes.len();
+    write_frame(&mut bytes, &serde_json::to_vec(row).unwrap()).unwrap();
+    let index = serde_json::to_vec(&json!([{
+        "interval": row.interval, "offset": offset, "length": bytes.len() - offset,
+    }]))
+    .unwrap();
+    bytes.extend_from_slice(&index);
+    bytes.extend_from_slice(&(index.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(b"HUBI\x01");
+    bytes
+}
+
 #[rstest]
-#[case::initial_blocks(1024 * 1024)]
-#[case::current_blocks(BLOCK_BYTES)]
+#[case::initial_v1_blocks(1024 * 1024)]
+#[case::later_v1_blocks(512 * 1024)]
 #[tokio::test]
-async fn retained_index_reopens_without_writer_state(#[case] block_bytes: u32) {
-    let scope = scope();
-    let resource = ResourceIdentity::generate();
-    let mut row = record(scope.clone(), resource, 10, 20);
+async fn retained_v1_reopens_without_writer_state(
+    #[case] block_bytes: u32,
+    #[values(false, true)] as_of: bool,
+) {
+    let mut row = record(scope(), ResourceIdentity::generate(), 10, 20);
     row.payload = json!("x".repeat(1024 * 1024));
-    let (store, segment) = fixture(vec![row.clone()], scope).await.unwrap();
-    let bytes = staged_bytes(&store, &segment).await;
-    drop(segment);
-    drop(store);
-    let (store, proof) = verified_bytes(&bytes, block_bytes).await;
+    let (store, proof) = verified_bytes(&legacy_bytes(&row), block_bytes).await;
+    let reference = store.publish(&proof).await.unwrap();
     let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
-    let reopened = HistorySegment::open_verified(&store, proof, &mut budget)
+    let segment = RetainedHistorySegment::open(&store, &reference, &mut budget)
         .await
         .unwrap();
-    assert_eq!(
-        reopened
-            .exact(&store, resource, row.interval.version, &mut budget)
+    assert_eq!(segment.format_version(), 1);
+    let restored = if as_of {
+        segment
+            .as_of(
+                &store,
+                row.interval.resource,
+                row.interval.valid_from,
+                &mut budget,
+            )
             .await
-            .unwrap(),
-        Some(row)
-    );
+    } else {
+        segment
+            .exact(
+                &store,
+                row.interval.resource,
+                row.interval.version,
+                &mut budget,
+            )
+            .await
+    }
+    .unwrap();
+    assert_eq!(restored, Some(row));
 }
 
 #[tokio::test]
@@ -378,9 +409,9 @@ async fn authentic_artifact_with_invalid_record_is_rejected(#[case] variant: u8)
     if variant == 3 {
         payload[0] = b'!';
     }
-    let mut bytes = MAGIC.to_vec();
+    let mut bytes = b"HUBH\x01".to_vec();
     write_frame(&mut bytes, &encode(&scope, 512).unwrap()).unwrap();
-    let offset = bytes.len() as u64;
+    let offset = bytes.len() as u32;
     write_frame(&mut bytes, &payload).unwrap();
     if variant == 0 {
         bytes[offset as usize..offset as usize + 4].copy_from_slice(&0_u32.to_le_bytes());
@@ -393,7 +424,7 @@ async fn authentic_artifact_with_invalid_record_is_rejected(#[case] variant: u8)
     let index = encode(&vec![entry], INDEX_BYTES).unwrap();
     bytes.extend_from_slice(&index);
     bytes.extend_from_slice(&(index.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(FOOTER);
+    bytes.extend_from_slice(b"HUBI\x01");
     let (store, proof) = verified_bytes(&bytes, BLOCK_BYTES).await;
     let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
     let segment = HistorySegment::open_verified(&store, proof, &mut budget)
@@ -429,7 +460,7 @@ async fn cross_block_reads_fit_p2_budget(
     let version = selected.interval.version;
     let result_bytes = serde_json::to_vec(&selected).unwrap().len();
     let block_bytes = BLOCK_BYTES as usize;
-    let header_bytes = MAGIC.len() + 4 + encode(&scope, 512).unwrap().len();
+    let header_bytes = MARKER_BYTES + encode(&scope, 512).unwrap().len();
     let mut padding = record(scope.clone(), ResourceIdentity::generate(), 10, 20);
     padding.payload = json!("");
     let padding_overhead = serde_json::to_vec(&padding).unwrap().len() + 4;
@@ -497,7 +528,9 @@ async fn cold_open_charges_shared_framing_blocks_once_per_open(#[case] block_byt
     let scope = scope();
     let mut row = record(scope.clone(), ResourceIdentity::generate(), 10, 20);
     row.payload = json!({"data": "x".repeat(4096)});
-    let (original_store, segment) = fixture(vec![row], scope).await.unwrap();
+    let mut records = vec![row];
+    records.extend((0..3).map(|_| record(scope.clone(), ResourceIdentity::generate(), 10, 20)));
+    let (original_store, segment) = fixture(records, scope).await.unwrap();
     let bytes = staged_bytes(&original_store, &segment).await;
     let block_bytes = block_bytes.unwrap_or(bytes.len() as u32 - 4);
     let (store, proof) = verified_bytes(&bytes, block_bytes).await;
@@ -605,5 +638,113 @@ async fn published_as_of_preserves_original_half_open_interval(
             .unwrap()
             .is_some(),
         present
+    );
+}
+
+#[rstest]
+#[case::invalid_resource(0..16, 0)]
+#[case::invalid_version(16..32, 0)]
+#[case::invalid_timestamp(40..44, 0xff)]
+#[case::reversed_interval(44..52, 0)]
+#[case::wrong_offset(56..60, 0)]
+#[case::wrong_length(60..64, 0)]
+#[tokio::test]
+async fn invalid_compact_entry_is_corrupt(#[case] field: std::ops::Range<usize>, #[case] fill: u8) {
+    let scope = scope();
+    let row = record(scope.clone(), ResourceIdentity::generate(), 10, 20);
+    let (original, segment) = fixture(vec![row], scope).await.unwrap();
+    let mut bytes = staged_bytes(&original, &segment).await;
+    let start = bytes.len() - MARKER_BYTES - segment.index_bytes();
+    bytes[start + field.start..start + field.end].fill(fill);
+    let (store, proof) = verified_bytes(&bytes, BLOCK_BYTES).await;
+    assert!(matches!(
+        HistorySegment::open_verified(&store, proof, &mut ByteLimit::new(SEGMENT_BYTES).start())
+            .await,
+        Err(ArtifactError::Corrupt(_))
+    ));
+}
+
+#[test]
+fn compact_index_rejects_a_partial_entry() {
+    assert!(matches!(
+        SegmentFormat::Compact.decode_index(&[0; 63]),
+        Err(ArtifactError::Corrupt(_))
+    ));
+}
+
+#[tokio::test]
+async fn compact_index_preserves_subsecond_and_pre_epoch_intervals() {
+    let scope = scope();
+    let interval = VersionInterval::new(
+        ResourceIdentity::generate(),
+        VersionIdentity::generate(),
+        DateTime::from_timestamp(-1, 987_654_321).unwrap(),
+        DateTime::from_timestamp(59, 1_123_456_789).unwrap(),
+    )
+    .unwrap();
+    let row = SegmentRecord::new(scope.clone(), interval.clone(), json!(null));
+    let (store, segment) = fixture(vec![row.clone()], scope).await.unwrap();
+    assert_eq!(
+        segment
+            .as_of(
+                &store,
+                interval.resource,
+                interval.valid_from,
+                &mut ByteLimit::new(SEGMENT_BYTES).start()
+            )
+            .await
+            .unwrap(),
+        Some(row)
+    );
+}
+
+#[rstest]
+#[tokio::test]
+async fn cold_lookup_with_a_full_compact_index_fits_p2(#[values(false, true)] as_of: bool) {
+    let scope = scope();
+    let records = (0..MAX_RECORDS)
+        .map(|_| record(scope.clone(), ResourceIdentity::generate(), 10, 20))
+        .collect::<Vec<_>>();
+    let row = records[MAX_RECORDS / 2].clone();
+    let (store, segment) = fixture(records, scope).await.unwrap();
+    let reference = store.publish(segment.proof()).await.unwrap();
+    drop(segment);
+    // Manifest I/O reserves the artifact contract's full 4 MiB error envelope.
+    // P2 measures actual physical bytes for the successful complete lookup.
+    let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+    let reader = RetainedHistorySegment::open(&store, &reference, &mut budget)
+        .await
+        .unwrap();
+    let result = if as_of {
+        reader
+            .as_of(
+                &store,
+                row.interval.resource,
+                row.interval.valid_from,
+                &mut budget,
+            )
+            .await
+    } else {
+        reader
+            .exact(
+                &store,
+                row.interval.resource,
+                row.interval.version,
+                &mut budget,
+            )
+            .await
+    }
+    .unwrap();
+    let result_bytes = serde_json::to_vec(&row).unwrap().len();
+    assert_eq!(result, Some(row));
+    let limit = if as_of {
+        2 * 1024 * 1024 + 16 * result_bytes
+    } else {
+        1024 * 1024 + 8 * result_bytes
+    };
+    assert!(
+        budget.used() <= limit,
+        "charged {} bytes against {limit}",
+        budget.used()
     );
 }

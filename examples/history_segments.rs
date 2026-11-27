@@ -67,6 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Exact/as-of records disagree".into());
     }
     let reference = store.publish(segment.proof()).await?;
+    let block_bytes = segment.proof().manifest().block_bytes();
     let segment_bytes = segment.proof().manifest().byte_size();
     let manifest_bytes = segment.proof().manifest().encoded_len();
     drop(segment);
@@ -95,6 +96,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::to_string_pretty(&json!({
             "diagnostic_only": true,
             "records": reader.record_count(),
+            "format_version": reader.format_version(),
+            "block_bytes": block_bytes,
             "segment_bytes": segment_bytes,
             "index_bytes": reader.index_bytes(),
             "manifest_bytes": manifest_bytes,

@@ -177,7 +177,7 @@ for artifact_input in crates/hubuum-artifacts/Cargo.toml \
   crates/hubuum-artifacts/src/s3/tests.rs \
   src/benchmark_support/history_segments.rs src/benchmark_support/history_segments/tests.rs \
   src/services/history/segments.rs src/services/history/segments/tests.rs \
-  src/services/history/archive.rs \
+  src/services/history/segments/index.rs src/services/history/archive.rs \
   crates/hubuum-storage-core/src/history_archive.rs \
   crates/hubuum-storage-core/src/history_archive/tests.rs \
   crates/hubuum-storage-postgres/src/backend/history_archive.rs \

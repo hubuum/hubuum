@@ -336,7 +336,8 @@ impl TestContext {
         .await
         .unwrap();
         let reference = store.publish(segment.proof()).await.unwrap();
-        HistoryArchiveDescriptor::new(row, dependencies, 1, reference).unwrap()
+        HistoryArchiveDescriptor::new(row, dependencies, segment.format_version(), reference)
+            .unwrap()
     }
     async fn malformed_descriptor(
         &self,
@@ -414,16 +415,14 @@ impl TestContext {
         let index_length =
             u32::from_le_bytes(bytes[footer..footer + 4].try_into().unwrap()) as usize;
         let index_start = footer - index_length;
-        let mut index: serde_json::Value =
-            serde_json::from_slice(&bytes[index_start..footer]).unwrap();
-        let field = if overlap { "valid_from" } else { "version" };
-        let replacement = index[0]["interval"][field].clone();
-        index[1]["interval"][field] = replacement;
-        let index = serde_json::to_vec(&index).unwrap();
-        bytes.truncate(index_start);
-        bytes.extend_from_slice(&index);
-        bytes.extend_from_slice(&(index.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(b"HUBI\x01");
+        // Format 2 has two 64-byte entries. Duplicate the version UUID or
+        // move the second lower timestamp onto the first interval's start.
+        assert_eq!(index_length, 2 * 64);
+        let field = if overlap { 32..44 } else { 16..32 };
+        bytes.copy_within(
+            index_start + field.start..index_start + field.end,
+            index_start + 64 + field.start,
+        );
         let limits = ArtifactLimits::builder()
             .block_bytes(512 * 1024)
             .artifact_bytes(64 * 1024)
@@ -450,7 +449,7 @@ impl TestContext {
             "Duplicate history version identity"
         };
         assert!(matches!(malformed,Err(ArtifactError::Corrupt(message)) if message==reason));
-        HistoryArchiveDescriptor::new(row, vec![], 1, reference).unwrap()
+        HistoryArchiveDescriptor::new(row, vec![], segment.format_version(), reference).unwrap()
     }
 
     async fn publish(&self, descriptor: HistoryArchiveDescriptor) -> HistoryArchiveCatalog {
@@ -581,7 +580,8 @@ async fn catalog_replacement_keeps_admitted_location_and_generation() {
 #[case::missing(0, HistoryArchiveCoverageState::Unavailable)]
 #[case::corrupt(1, HistoryArchiveCoverageState::Corrupt)]
 #[case::dependencies(2, HistoryArchiveCoverageState::DependencyIncomplete)]
-#[case::format(3, HistoryArchiveCoverageState::Unsupported)]
+#[case::unknown_format(3, HistoryArchiveCoverageState::Unsupported)]
+#[case::mislabeled_format(4, HistoryArchiveCoverageState::Corrupt)]
 #[actix_web::test]
 async fn incomplete_archives_never_claim_complete(
     #[case] kind: u8,
@@ -609,8 +609,13 @@ async fn incomplete_archives_never_claim_complete(
                 }
                 _ => {
                     let descriptor = ctx.descriptor(&row, false, vec![]).await;
-                    HistoryArchiveDescriptor::new(&row, vec![], 2, descriptor.location().clone())
-                        .unwrap()
+                    HistoryArchiveDescriptor::new(
+                        &row,
+                        vec![],
+                        if kind == 3 { 3 } else { 1 },
+                        descriptor.location().clone(),
+                    )
+                    .unwrap()
                 }
             };
             ctx.publish(descriptor).await;
