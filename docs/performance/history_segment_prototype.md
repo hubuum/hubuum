@@ -8,15 +8,27 @@ outside the storage SDK and HTTP API. It does not complete #514 or enable source
 
 ## Format and limits
 
-Version 1 is uncompressed. `HUBH` plus a one-byte version precedes a
+Both versions are uncompressed. `HUBH` plus a one-byte version precedes a
 length-prefixed JSON scope: one history family and stable collection UUID.
 Length-prefixed JSON records preserve stable resource/version UUIDs, closed
 half-open validity intervals, dependency version UUIDs, and payloads. Mixing
 scopes, duplicate version UUIDs, and overlapping intervals of one resource fail
 staging.
 
-A JSON offset index follows the records. Its length and `HUBI` plus a one-byte
-version terminate the stream. The existing artifact manifest binds every byte,
+An offset index follows the records. Its four-byte little-endian length and
+`HUBI` plus the matching header version terminate the stream. Version 1 stores
+JSON entries. Version 2 stores one 64-byte entry per record in physical order.
+
+| Bytes in a v2 entry | Value |
+| --- | --- |
+| 0–15, 16–31 | Resource and version UUIDs in RFC byte order |
+| 32–43, 44–55 | Start and end, each signed 64-bit Unix seconds and unsigned 32-bit subsecond nanoseconds, little-endian |
+| 56–59, 60–63 | Unsigned 32-bit frame offset and length including prefix, little-endian |
+
+The reader reconstructs the full index on open. The count comes from the
+encoded length, which must be a multiple of 64 in v2. Both versions validate
+UUIDs, intervals, unique versions and contiguous record boundaries.
+The existing artifact manifest binds every byte,
 including the header, framing, index, and footer. The producer uses the existing
 bounded channel and independent full read-back verification; it does not
 publish the artifact. Catalog owners must fence publication separately.
@@ -32,9 +44,9 @@ block. A lookup miss describes only this segment, not complete query coverage.
 | --- | --- |
 | Complete segment, including index and framing | 64 MiB |
 | Encoded record, including its four-byte length | 4 MiB |
-| Artifact block | 512 KiB for new writes; retained reader ceiling 1 MiB |
+| Artifact block | 64 KiB for new writes, retained reader ceiling 1 MiB |
 | Records per segment | 10,000 |
-| Encoded index | 4 MiB |
+| Encoded index | 4 MiB for v1, 640,000 bytes for v2 |
 | Scope header | 512 bytes |
 | Dependency version references per record | 128 distinct, non-self references |
 
@@ -50,7 +62,8 @@ allocation bounds.
 `ArtifactReference`, resolves durable publication, checks its exact immutable
 location and manifest digest, and reconstructs the index from verified blocks.
 It does not need the producer's in-memory verification proof. Serialized reference
-roundtrips exercise exact and half-open as-of reads for both retained block sizes.
+roundtrips exercise exact and half-open as-of reads, including the original
+1 MiB and 512 KiB v1 blocks.
 Unpublished attempts, changed locations and wrong manifest digests fail closed.
 
 Before external I/O, the reader requires the artifact contract's full 4 MiB
@@ -94,7 +107,7 @@ The segment includes the index. These counts exclude database/catalog
 allocation and index-open traffic; they cannot establish P1/P2 acceptance for
 the eventual complete query pipeline.
 
-New writes use 512 KiB blocks. Two full blocks then cost 1 MiB, so a small
+Later version-1 writes used 512 KiB blocks. Two full blocks then cost 1 MiB, so a small
 record crossing a block boundary fits P2's `8 × result bytes + 1 MiB`
 exact-read allowance. Larger contiguous frames add less than two blocks of
 rounding to their framed size, including the four-byte length prefix. The
@@ -104,8 +117,7 @@ frames. Each read receives the smaller of P2's absolute and proportional limits;
 full physical blocks are still charged.
 
 The reader retains version 1's independent 1 MiB block ceiling and reads the
-original 1 MiB-block segments. The segment framing and embedded index are
-unchanged; block size is bound by the artifact manifest. Existing segments can
+original 1 MiB-block segments. The artifact manifest binds the block size. Existing segments can
 still exhaust the smaller exact-read allowance at a boundary. They remain
 readable with a sufficient explicit budget; changing the write policy does not
 waive physical-read accounting or turn exhaustion into a complete empty result.
@@ -138,6 +150,32 @@ as-of. Both cold reads exceed those limits. The embedded index alone occupies
 2,157,478 bytes. These measurements include the fetched manifest, framing,
 index and selected data blocks. Database catalog traffic and dependency reads
 remain outside this fixture.
+
+## Compact index measurements
+
+On the same 10,000-record fixture, a fresh version-2 reader returned the
+same 4,407-byte record for exact and as-of lookups. Each lookup used a new
+manifest and index. Both versions verified the full index.
+
+| Bytes | v1, 512 KiB blocks | v2, 64 KiB blocks |
+| --- | ---: | ---: |
+| Complete segment | 46,267,575 | 44,750,097 |
+| Embedded index | 2,157,478 | 640,000 |
+| Manifest | 3,321 | 24,705 |
+| Cold open including manifest | 2,754,992 | 734,610 |
+| Cold exact lookup | 3,279,280 | 800,146 |
+| Cold as-of lookup | 3,279,280 | 800,146 |
+| Record lookup with loaded index | 524,288 | 65,536 |
+
+The smaller blocks increased manifest traffic by 21,384 bytes. The complete
+cold lookup saved 2,479,134 bytes (75.6%). This leaves 283,686 bytes of the
+exact-read allowance and 1,367,518 bytes of the as-of allowance for other
+work on this fixture. Storage round trips, database catalog traffic,
+dependency resolution and worker memory need separate measurement.
+
+Upgrade archive readers and recovery binaries before publishing version-2
+segments. Catalog producers can obtain the verified format from
+`HistorySegment::format_version`. Version-1 segments can stay in place.
 
 ## Remaining acceptance
 

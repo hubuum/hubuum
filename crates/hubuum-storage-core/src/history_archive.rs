@@ -338,6 +338,9 @@ impl HistoryArchiveDescriptor {
     pub const fn location(&self) -> &ArtifactReference {
         &self.location
     }
+    const fn supported_format(&self) -> bool {
+        matches!(self.format_version, 1 | 2)
+    }
     pub const fn format_version(&self) -> u16 {
         self.format_version
     }
@@ -806,7 +809,7 @@ impl HistoryArchiveCapture {
             HistoryArchiveCoverageState::Corrupt
         } else if archive
             .as_ref()
-            .is_some_and(|entry| entry.format_version != 1)
+            .is_some_and(|entry| !entry.supported_format())
         {
             HistoryArchiveCoverageState::Unsupported
         } else if archive
@@ -938,7 +941,7 @@ impl HistoryArchiveCapture {
         if self.coverage == HistoryArchiveCoverageState::Complete
             && (self.selection.family() != StorageBackupHistorySection::CollectionHistory
                 || self.archive.as_ref().is_some_and(|entry| {
-                    entry.format_version() != 1 || !entry.dependencies().is_empty()
+                    !entry.supported_format() || !entry.dependencies().is_empty()
                 })
                 || (self.hot.is_none()
                     && !matches!(self.selection.point(), HistoryArchivePoint::AsOf { .. })))

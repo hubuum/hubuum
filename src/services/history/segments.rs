@@ -20,13 +20,14 @@ use hubuum_storage_core::StorageBackupHistorySection;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, from_slice, to_writer};
 
-const MAGIC: &[u8; 5] = b"HUBH\x01";
-const FOOTER: &[u8; 5] = b"HUBI\x01";
-const MARKER_BYTES: usize = MAGIC.len() + size_of::<u32>();
+mod index;
+use index::SegmentFormat;
+
+const MARKER_BYTES: usize = 5 + size_of::<u32>();
 // Retained format v1 must not follow future artifact write-policy defaults.
 const MAX_BLOCK_BYTES: u32 = 1024 * 1024;
-// Two fetched blocks must fit P2's 1 MiB allowance for small exact results.
-const BLOCK_BYTES: u32 = MAX_BLOCK_BYTES / 2;
+// Leave room for the compact index, manifest, and block rounding on cold reads.
+const BLOCK_BYTES: u32 = 64 * 1024;
 pub const SEGMENT_BYTES: usize = 64 * 1024 * 1024;
 pub const ROW_BYTES: usize = 4 * 1024 * 1024;
 pub const INDEX_BYTES: usize = 4 * 1024 * 1024;
@@ -166,7 +167,7 @@ impl SegmentRecord {
 #[serde(deny_unknown_fields)]
 struct Entry {
     interval: VersionInterval,
-    offset: u64,
+    offset: u32,
     length: u32,
 }
 
@@ -180,6 +181,7 @@ pub struct HistorySegment {
 /// Index reconstructed from a durably published artifact and trusted catalog digest.
 /// This proves segment-local inclusion only, never authorization or query coverage.
 pub struct RetainedHistorySegment {
+    format: SegmentFormat,
     manifest: ArtifactManifest,
     scope: SegmentScope,
     entries: Vec<Entry>,
@@ -208,7 +210,9 @@ impl HistorySegment {
         let output_scope = scope;
         let (proof, ()) = stage_producer(store, identity, limits, move |output| {
             let mut output = LimitedWriter::new(output, ByteLimit::new(SEGMENT_BYTES));
-            output.write_all(MAGIC).map_err(io_error)?;
+            output
+                .write_all(SegmentFormat::Compact.header())
+                .map_err(io_error)?;
             let header = encode(&output_scope, 512)?;
             write_frame(&mut output, &header)?;
             let mut entries = Vec::new();
@@ -225,7 +229,7 @@ impl HistorySegment {
                 }
                 // Include the four-byte frame prefix in the encoded-row ceiling.
                 let bytes = encode(&record, ROW_BYTES - 4)?;
-                let offset = output.budget().used() as u64;
+                let offset = output.budget().used() as u32; // Bounded by SEGMENT_BYTES.
                 write_frame(&mut output, &bytes)?;
                 entries.push(Entry {
                     interval: record.interval,
@@ -234,12 +238,14 @@ impl HistorySegment {
                 });
             }
             validate_entries(&entries)?;
-            let index = encode(&entries, INDEX_BYTES)?;
+            let index = index::encode_compact(&entries);
             output.write_all(&index).map_err(io_error)?;
             output
                 .write_all(&(index.len() as u32).to_le_bytes())
                 .map_err(io_error)?;
-            output.write_all(FOOTER).map_err(io_error)?;
+            output
+                .write_all(SegmentFormat::Compact.footer())
+                .map_err(io_error)?;
             Ok(())
         })
         .await?;
@@ -256,7 +262,7 @@ impl HistorySegment {
     }
 
     /// Reconstruct the index from retained bytes under a pinned verification
-    /// proof. A changed write policy cannot change the version-1 reader limits.
+    /// proof. A changed write policy cannot change the retained reader limits.
     /// This does not grant application access to the staged artifact.
     pub async fn open_verified<S: ArtifactStore + ?Sized>(
         store: &S,
@@ -268,6 +274,9 @@ impl HistorySegment {
         Ok(Self { proof, reader })
     }
 
+    pub fn format_version(&self) -> u16 {
+        self.reader.format_version()
+    }
     pub fn proof(&self) -> &VerifiedArtifact {
         &self.proof
     }
@@ -303,6 +312,10 @@ impl HistorySegment {
 }
 
 impl RetainedHistorySegment {
+    pub fn format_version(&self) -> u16 {
+        self.format as u16
+    }
+
     /// Resolve a trusted persisted reference. Publication and manifest digest are
     /// checked before any index bytes are interpreted. Manifest traffic and every
     /// fetched block count against the same cumulative caller budget.
@@ -362,11 +375,7 @@ impl RetainedHistorySegment {
         }
         let mut blocks = SegmentBlockReader::new(store, &manifest, budget);
         let header = blocks.range(0, MARKER_BYTES).await?;
-        if &header[..5] != MAGIC {
-            return Err(ArtifactError::Corrupt(
-                "Unsupported history segment format".into(),
-            ));
-        }
+        let format = SegmentFormat::from_header(&header[..5])?;
         let header_length =
             u32::from_le_bytes(header[5..].try_into().expect("fixed header")) as usize;
         if header_length > 512 {
@@ -378,14 +387,14 @@ impl RetainedHistorySegment {
             .map_err(|_| ArtifactError::Corrupt("Invalid history scope".into()))?;
         let footer_offset = manifest.byte_size() - MARKER_BYTES as u64;
         let footer = blocks.range(footer_offset, MARKER_BYTES).await?;
-        if &footer[4..] != FOOTER {
+        if &footer[4..] != format.footer() {
             return Err(ArtifactError::Corrupt(
                 "Unsupported history index format".into(),
             ));
         }
         let index_bytes =
             u32::from_le_bytes(footer[..4].try_into().expect("fixed footer")) as usize;
-        if index_bytes > INDEX_BYTES {
+        if index_bytes > format.max_index_bytes() {
             return Err(ArtifactError::Limit(
                 "History index exceeds byte budget".into(),
             ));
@@ -395,8 +404,7 @@ impl RetainedHistorySegment {
             .ok_or_else(|| ArtifactError::Corrupt("History index lies outside segment".into()))?;
         let index = blocks.range(index_offset, index_bytes).await?;
         drop(blocks);
-        let entries: Vec<Entry> = from_slice(&index)
-            .map_err(|_| ArtifactError::Corrupt("Invalid history index".into()))?;
+        let entries = format.decode_index(&index)?;
         if entries.len() > MAX_RECORDS {
             return Err(ArtifactError::Limit(
                 "History index exceeds record budget".into(),
@@ -404,7 +412,8 @@ impl RetainedHistorySegment {
         }
         let mut offset = (MARKER_BYTES + header_length) as u64;
         for entry in &entries {
-            if entry.offset != offset || !(4..=ROW_BYTES as u32).contains(&entry.length) {
+            if u64::from(entry.offset) != offset || !(4..=ROW_BYTES as u32).contains(&entry.length)
+            {
                 return Err(ArtifactError::Corrupt(
                     "Invalid history index frame layout".into(),
                 ));
@@ -424,6 +433,7 @@ impl RetainedHistorySegment {
             other => other,
         })?;
         let mut segment = Self {
+            format,
             manifest,
             scope,
             entries,
@@ -508,7 +518,7 @@ impl RetainedHistorySegment {
         budget: &mut ByteBudget,
     ) -> ArtifactResult<SegmentRecord> {
         let bytes = SegmentBlockReader::new(store, &self.manifest, budget)
-            .range(entry.offset, entry.length as usize)
+            .range(u64::from(entry.offset), entry.length as usize)
             .await?;
         if bytes.len() < 4
             || u32::from_le_bytes(bytes[..4].try_into().expect("checked length")) as usize

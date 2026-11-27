@@ -399,6 +399,9 @@ impl HistoryArchiveQuery {
                         &mut budget,
                     )
                     .await?;
+                    if segment.format_version() != descriptor.format_version() {
+                        return Err(ArtifactError::Corrupt("Archive format mismatch".into()));
+                    }
                     if segment.scope()
                         != &SegmentScope::new(
                             StorageBackupHistorySection::CollectionHistory,

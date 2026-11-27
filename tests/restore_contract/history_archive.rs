@@ -134,7 +134,12 @@ async fn logical_restore_preserves_catalog_and_invalidates_old_captures(
                 )
                 .await?;
                 let reference = storage.publish(segment.proof()).await?;
-                let descriptor = HistoryArchiveDescriptor::new(row, vec![], 1, reference)?;
+                let descriptor = HistoryArchiveDescriptor::new(
+                    row,
+                    vec![],
+                    segment.format_version(),
+                    reference,
+                )?;
                 let published = storage
                     .publish_history_archive(
                         HistoryArchiveCatalogGeneration::default(),

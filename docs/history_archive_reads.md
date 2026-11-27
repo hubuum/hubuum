@@ -54,7 +54,10 @@ and generation. Publication does not delete or move any artifact or primary row.
 
 Segment work happens after that transaction ends. Readers resolve durable artifact
 publication and verify the trusted manifest, index blocks, selected record and
-captured content commitment. As-of execution reads the exact version selected at
+captured content commitment. The pinned catalog format must match the header and
+footer. Readers accept both the original JSON index (v1) and the compact index
+(v2). Upgrade readers and recovery tools before publishing v2 segments.
+As-of execution reads the exact version selected at
 admission; it does not run a newer as-of search. A corrupt or missing archive
 cannot fall back to a hot row and claim complete coverage.
 
