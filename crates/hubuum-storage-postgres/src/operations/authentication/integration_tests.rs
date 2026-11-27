@@ -1,8 +1,9 @@
 use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use diesel::dsl::sql;
 use diesel::prelude::*;
-use diesel::sql_types::BigInt;
+use diesel::sql_types::{BigInt, Timestamp};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::UserId;
 use hubuum_events_core::EventContext;
@@ -16,7 +17,7 @@ use tokio::time::timeout;
 use uuid::Uuid;
 
 use super::authenticate_bearer_token;
-use crate::operations::user::{create_user, delete_user};
+use crate::operations::user::{create_user, delete_user, set_user_password_on_connection};
 use crate::schema::tokens;
 use crate::test_support::integration_test_pool;
 use crate::{PostgresFaultController, PostgresFaultPoint, PostgresRuntime, PostgresStorageError};
@@ -114,6 +115,54 @@ impl TestContext {
         .unwrap()
         .into_value();
     }
+}
+
+#[tokio::test]
+async fn password_reset_started_before_issuance_records_an_ordered_revocation() {
+    let fixture = TestContext::new(None).await;
+    let reset = PostgresRuntime::unobserved(integration_test_pool(1));
+    let (issued, revoked_at) = reset
+        .with_transaction(async |connection| {
+            diesel::sql_query("SET LOCAL TIME ZONE 'UTC'")
+                .execute(connection)
+                .await?;
+            // Commit a token on a second connection after the reset transaction
+            // starts, so the ordering does not depend on task scheduling.
+            let (id, issued) = fixture
+                .runtime
+                .with_connection(async |writer| {
+                    diesel::insert_into(tokens::table)
+                        .values((
+                            tokens::principal_id.eq(fixture.user_id.id()),
+                            tokens::token.eq(format!("reset-{}", fixture.digest)),
+                            tokens::issued
+                                .eq(sql::<Timestamp>("statement_timestamp() AT TIME ZONE 'UTC'")),
+                        ))
+                        .returning((tokens::id, tokens::issued))
+                        .get_result::<(i32, NaiveDateTime)>(writer)
+                        .await
+                })
+                .await?;
+            set_user_password_on_connection(
+                connection,
+                fixture.user_id.id(),
+                "replacement".into(),
+                &EventContext::system(),
+                false,
+            )
+            .await?
+            .into_value();
+            let revoked_at = tokens::table
+                .find(id)
+                .select(tokens::revoked_at)
+                .first::<Option<NaiveDateTime>>(connection)
+                .await?;
+            Ok::<_, PostgresStorageError>((issued, revoked_at))
+        })
+        .await
+        .unwrap();
+    fixture.cleanup().await;
+    assert!(revoked_at.is_some_and(|revoked| revoked >= issued));
 }
 
 #[derive(QueryableByName)]
