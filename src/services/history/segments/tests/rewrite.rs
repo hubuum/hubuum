@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use hubuum_storage_core::StorageRecordIdentity;
 
 use super::*;
@@ -217,6 +219,126 @@ async fn selected_frame_budget_is_enforced_before_source_payload_io() {
     assert_eq!(scan.used(), 0);
 }
 
+#[rstest]
+#[case::empty(|_| vec![])]
+#[case::absent_member(|id: StorageRecordIdentity| vec![id.next_version()])]
+#[case::wrong_resource(|id: StorageRecordIdentity| vec![StorageRecordIdentity::new(ResourceIdentity::generate(), id.version())])]
+#[case::duplicate_member(|id| vec![id, id])]
+fn source_projection_rejects_invalid_members(
+    #[case] members: fn(StorageRecordIdentity) -> Vec<StorageRecordIdentity>,
+) {
+    let target =
+        StorageRecordIdentity::new(ResourceIdentity::generate(), VersionIdentity::generate());
+    let batch = SegmentRewriteSelection::new([target]).unwrap();
+    assert!(matches!(
+        batch.for_source(members(target)),
+        Err(ArtifactError::Invalid(_))
+    ));
+}
+
+enum OtherSegmentContents {
+    Independent,
+    Dependent,
+    ContainsUnexpectedTarget,
+}
+
+#[rstest]
+#[case::independent(OtherSegmentContents::Independent)]
+#[case::dependent(OtherSegmentContents::Dependent)]
+#[case::unexpected_selected_frame(OtherSegmentContents::ContainsUnexpectedTarget)]
+#[tokio::test]
+async fn other_published_segments_check_the_entire_rewrite_batch(
+    #[case] contents: OtherSegmentContents,
+    #[values(true, false)] mixed: bool,
+) {
+    let scope = scope();
+    let resource = ResourceIdentity::generate();
+    let other = record(scope.clone(), resource, 0, 1);
+    let local = record(scope.clone(), resource, 1, 2);
+    let mut survivor = record(scope.clone(), resource, 2, 3);
+    if matches!(contents, OtherSegmentContents::Dependent) {
+        survivor = survivor
+            .with_dependencies(vec![other.interval.version])
+            .unwrap();
+    }
+    let mut other_records = vec![other.clone()];
+    if !mixed {
+        other_records.push(local.clone());
+    }
+    let (store, first) = fixture(other_records, scope.clone()).await.unwrap();
+    let first_ref = store.publish(first.proof()).await.unwrap();
+    let mut records = vec![survivor.clone()];
+    if mixed {
+        records.push(local.clone());
+    }
+    if matches!(contents, OtherSegmentContents::ContainsUnexpectedTarget) {
+        records.push(other.clone());
+    }
+    let second = HistorySegment::stage(
+        &store,
+        ArtifactIdentity::new(first_ref.identity().destination()),
+        scope,
+        records,
+    )
+    .await
+    .unwrap();
+    let reference = store.publish(second.proof()).await.unwrap();
+    let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+    let retained = RetainedHistorySegment::open(&store, &reference, &mut budget)
+        .await
+        .unwrap();
+    let batch = SegmentRewriteSelection::new([identity(&other), identity(&local)]).unwrap();
+    let result = if mixed {
+        let selection = batch.for_source([identity(&local)]).unwrap();
+        retained
+            .rewrite_into(
+                &store,
+                &store,
+                ArtifactIdentity::new(reference.identity().destination()),
+                &selection,
+                &mut budget,
+            )
+            .await
+            .map(|_| ())
+    } else {
+        retained
+            .verify_unaffected_by_rewrite(&store, &batch, &mut budget)
+            .await
+    };
+    if matches!(contents, OtherSegmentContents::Independent) {
+        result.unwrap();
+    } else {
+        assert!(matches!(result, Err(ArtifactError::Conflict(_))));
+    }
+    assert_eq!(
+        retained
+            .exact(&store, resource, survivor.interval.version, &mut budget)
+            .await
+            .unwrap(),
+        Some(survivor)
+    );
+}
+
+#[tokio::test]
+async fn an_unaffected_segment_needs_budget_to_read_its_dependency_frames() {
+    let scope = scope();
+    let survivor = record(scope.clone(), ResourceIdentity::generate(), 0, 1);
+    let batch = SegmentRewriteSelection::new([identity(&survivor).next_version()]).unwrap();
+    let (store, segment) = fixture(vec![survivor], scope).await.unwrap();
+    let reference = store.publish(segment.proof()).await.unwrap();
+    let source = RetainedHistorySegment::open(
+        &store,
+        &reference,
+        &mut ByteLimit::new(SEGMENT_BYTES).start(),
+    )
+    .await
+    .unwrap();
+    let result = source
+        .verify_unaffected_by_rewrite(&store, &batch, &mut ByteLimit::new(0).start())
+        .await;
+    assert!(matches!(result, Err(ArtifactError::Limit(_))));
+}
+
 fn profile_class(object: usize) -> usize {
     let group = object / 100;
     let within = object % 100;
@@ -236,6 +358,21 @@ fn profile_class(object: usize) -> usize {
 #[ignore = "archive-exact-v1 local subset-rewrite traffic diagnostic"]
 async fn one_percent_subset_rewrite_traffic(#[case] versions: usize) {
     let objects: Vec<_> = (0..10_000).map(|_| ResourceIdentity::generate()).collect();
+    // Rotate targets across classes and both payload sizes. All touched sources
+    // see the same complete batch, including versions in other collections.
+    let targets_by_ordinal: BTreeMap<_, _> = (0..versions)
+        .filter(|ordinal| ordinal % 100 == (ordinal / 100) % 100)
+        .map(|ordinal| {
+            (
+                ordinal,
+                StorageRecordIdentity::new(
+                    objects[ordinal % objects.len()],
+                    VersionIdentity::generate(),
+                ),
+            )
+        })
+        .collect();
+    let batch = SegmentRewriteSelection::new(targets_by_ordinal.values().copied()).unwrap();
     let mut collections: Vec<Vec<usize>> = vec![Vec::new(); 32];
     for ordinal in 0..versions {
         let object = ordinal % objects.len();
@@ -249,15 +386,15 @@ async fn one_percent_subset_rewrite_traffic(#[case] versions: usize) {
         let scope = scope();
         for (part, ordinals) in ordinals.chunks(MAX_RECORDS).enumerate() {
             total_segments += 1;
-            // Rotate the selected offset between groups of 100 so removals
-            // cover hot/cold classes and both payload sizes.
-            let selected = |ordinal: usize| ordinal % 100 == (ordinal / 100) % 100;
             let rows: Vec<_> = ordinals
                 .iter()
                 .map(|&ordinal| {
                     let object = ordinal % objects.len();
                     let revision = (ordinal / objects.len()) as i64;
                     let mut row = record(scope.clone(), objects[object], revision, revision + 1);
+                    if let Some(target) = targets_by_ordinal.get(&ordinal) {
+                        row.interval.version = target.version();
+                    }
                     let size = if (object + 1).is_multiple_of(100) {
                         64 * 1024
                     } else {
@@ -268,18 +405,16 @@ async fn one_percent_subset_rewrite_traffic(#[case] versions: usize) {
                     row
                 })
                 .collect();
-            let targets: Vec<_> = rows
+            let targets: Vec<_> = ordinals
                 .iter()
-                .zip(ordinals)
-                .filter(|(_, ordinal)| selected(**ordinal))
-                .map(|(row, _)| identity(row))
+                .filter_map(|ordinal| targets_by_ordinal.get(ordinal).copied())
                 .collect();
             if targets.is_empty() {
                 continue;
             }
             touched += 1;
             removed += targets.len();
-            let selection = SegmentRewriteSelection::new(targets.iter().copied()).unwrap();
+            let selection = batch.for_source(targets.iter().copied()).unwrap();
             let (store, source) = fixture(rows.clone(), scope.clone()).await.unwrap();
             let reference = store.publish(source.proof()).await.unwrap();
             let mut source_read = ByteLimit::new(2 * SEGMENT_BYTES).start();
@@ -324,7 +459,10 @@ async fn one_percent_subset_rewrite_traffic(#[case] versions: usize) {
                     )
                     .await
                     .unwrap();
-                assert_eq!(actual, (!selected(ordinal)).then_some(row));
+                assert_eq!(
+                    actual,
+                    (!targets_by_ordinal.contains_key(&ordinal)).then_some(row)
+                );
             }
         }
     }

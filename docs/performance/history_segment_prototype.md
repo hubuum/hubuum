@@ -361,3 +361,17 @@ verification byte count. The five measurements above cover fresh writes.
 Only the owner responsible for settlement can fence an abandoned attempt,
 so a failed writer cannot invalidate a concurrent successful write.
 Fencing prevents subsequent publication. Physical cleanup requires separate evidence.
+
+For a batch spanning several segments, the coordinator supplies the exact batch
+of up to 1,000 resource/version pairs and identifies the members expected in
+each source. A rewrite scans the surviving frames for dependencies on any
+selected version, including versions in another segment. A selected frame
+encountered outside its expected membership also blocks the rewrite. The same
+bounded scan can check a retained segment that the coordinator expects to leave
+intact. The caller must cover the complete inventory and fence its generation
+before catalog handoff or deletion.
+
+Multi-segment output intents bind the full sorted membership, the source
+projection and the source manifest. Reordering an equivalent batch permits
+recovery. Changing another target or its assignment to this source requires a
+new intent. Existing single-segment attempts keep their original commitment.

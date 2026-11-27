@@ -130,15 +130,17 @@ constrained profiles, complete pipeline amplification and subset-rewrite costs
 remain unqualified. No cold-provider or source-retirement acceptance is claimed.
 
 A published mixed segment can stage a fresh replacement from exact resource and
-version UUIDs. The selection is limited to 1,000 members and 16 MiB of selected
-frames. Every source frame is authenticated and decoded, including selected
-frames. Surviving frames retain their original bytes. An absent version, a
+version UUIDs. A batch contains at most 1,000 members. Each source rewrite
+accepts up to 16 MiB of selected frames. The worker authenticates and decodes
+every frame, including selected frames. Surviving frames retain their original
+bytes. An absent version, a
 survivor depending on a selected version, corruption or a depleted read budget
 stops staging. After a restart the same owned attempt can recover a sealed or
 published replacement. The worker verifies the destination and compares every
 surviving frame with the original source before returning its provider state.
-Catalog handoff, cross-segment dependency checks and retirement of
-the old copy still require the owning operation and its durable fences. See the
+Mixed and untouched segments can be checked against all versions in the batch.
+The owning operation must account for every source and fence the catalog
+generation before publishing the handoff and retiring the old copy. See the
 [local subset-rewrite measurements](performance/history_segment_prototype.md#local-mixed-segment-rewrite).
 
 Capture staging exhaustion preserves at most 4 KiB of encoded historical

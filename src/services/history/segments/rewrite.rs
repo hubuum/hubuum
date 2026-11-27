@@ -1,5 +1,6 @@
 //! Stage a replacement for a mixed segment. The published source stays intact.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use hubuum_artifacts::{
     ArtifactIdentity, ArtifactManifest, ArtifactReference, ArtifactWriter, OwnedArtifactPhase,
@@ -15,8 +16,11 @@ use super::{
     VersionIdentity, segment_header, segment_index,
 };
 
-/// Exact identities for one source segment. This carries no deletion authority.
-pub struct SegmentRewriteSelection(BTreeMap<VersionIdentity, ResourceIdentity>);
+/// Bounded exact identities for a rewrite batch and its expected members in one source.
+pub struct SegmentRewriteSelection {
+    members: Arc<BTreeMap<VersionIdentity, ResourceIdentity>>,
+    source_versions: BTreeSet<VersionIdentity>,
+}
 
 impl SegmentRewriteSelection {
     pub fn new(members: impl IntoIterator<Item = StorageRecordIdentity>) -> ArtifactResult<Self> {
@@ -41,18 +45,49 @@ impl SegmentRewriteSelection {
                 "Empty history rewrite selection".into(),
             ));
         }
-        Ok(Self(selected))
+        Ok(Self {
+            source_versions: selected.keys().copied().collect(),
+            members: Arc::new(selected),
+        })
+    }
+
+    /// Project the batch onto the source being rewritten. Every surviving frame
+    /// is still checked against dependency targets anywhere in the original batch.
+    pub fn for_source(
+        &self,
+        members: impl IntoIterator<Item = StorageRecordIdentity>,
+    ) -> ArtifactResult<Self> {
+        let mut source_versions = BTreeSet::new();
+        for member in members {
+            if self.members.get(&member.version()) != Some(&member.resource())
+                || !source_versions.insert(member.version())
+            {
+                return Err(ArtifactError::Invalid(
+                    "Source membership differs from the selected rewrite batch".into(),
+                ));
+            }
+        }
+        if source_versions.is_empty() {
+            return Err(ArtifactError::Invalid(
+                "A rewrite needs a selected source member".into(),
+            ));
+        }
+        Ok(Self {
+            members: Arc::clone(&self.members),
+            source_versions,
+        })
     }
 
     fn survivor_count(&self, source: &RetainedHistorySegment) -> ArtifactResult<usize> {
-        if self.0.len() >= source.entries.len() {
+        if self.source_versions.len() >= source.entries.len() {
             return Err(ArtifactError::Invalid(
                 "A subset rewrite needs surviving records".into(),
             ));
         }
         let mut removed_bytes =
             ByteLimit::new(HistoryExpiryInputBytes::MAX_BATCH_BYTES as usize).start();
-        for (&version, &resource) in &self.0 {
+        for &version in &self.source_versions {
+            let resource = self.members[&version];
             let entry = source
                 .versions
                 .get(&source.key_width.key(version))
@@ -67,7 +102,7 @@ impl SegmentRewriteSelection {
                 )
             })?;
         }
-        Ok(source.entries.len() - self.0.len())
+        Ok(source.entries.len() - self.source_versions.len())
     }
 }
 
@@ -99,13 +134,38 @@ impl RetainedHistorySegment {
     /// Bind an output intent to the exact published source and selected identities.
     pub fn rewrite_commitment(&self, selection: &SegmentRewriteSelection) -> [u8; 32] {
         let mut hash = Sha256::new();
-        hash.update(b"hubuum/history/subset-rewrite/v1\0");
+        let single_source = selection.source_versions.len() == selection.members.len();
+        if single_source {
+            // Preserve existing single-source intents across a worker upgrade.
+            hash.update(b"hubuum/history/subset-rewrite/v1\0");
+        } else {
+            hash.update(b"hubuum/history/subset-rewrite/v2\0");
+        }
         hash.update(self.manifest.manifest_digest());
-        for (version, resource) in &selection.0 {
+        for (version, resource) in selection.members.iter() {
+            if !single_source {
+                hash.update([u8::from(selection.source_versions.contains(version))]);
+            }
             hash.update(resource.as_bytes());
             hash.update(version.as_bytes());
         }
         hash.finalize().into()
+    }
+
+    /// Scan a published segment expected to stay intact. A matching target or
+    /// a surviving dependency on the selected batch invalidates that expectation.
+    pub async fn verify_unaffected_by_rewrite<S: ArtifactStore + ?Sized>(
+        &self,
+        source: &S,
+        selection: &SegmentRewriteSelection,
+        budget: &mut ByteBudget,
+    ) -> ArtifactResult<()> {
+        let unaffected = SegmentRewriteSelection {
+            members: Arc::clone(&selection.members),
+            source_versions: BTreeSet::new(),
+        };
+        self.visit_survivors(source, &unaffected, budget, async |_, _| Ok(()))
+            .await
     }
 
     /// Stage or recover the original owned attempt. On recovery, compare every
@@ -268,14 +328,21 @@ impl RetainedHistorySegment {
                 .range(u64::from(entry.offset), entry.length as usize)
                 .await?;
             let record = self.decode_frame(entry, &frame)?;
-            if selection.0.get(&record.interval.version) == Some(&record.interval.resource) {
+            if let Some(resource) = selection.members.get(&record.interval.version) {
+                if *resource != record.interval.resource
+                    || !selection.source_versions.contains(&record.interval.version)
+                {
+                    return Err(ArtifactError::Conflict(
+                        "Selected history appeared outside its expected source membership".into(),
+                    ));
+                }
                 removed += 1;
                 continue;
             }
             if record
                 .dependencies
                 .iter()
-                .any(|version| selection.0.contains_key(version))
+                .any(|version| selection.members.contains_key(version))
             {
                 return Err(ArtifactError::Conflict(
                     "Surviving history depends on a selected version".into(),
@@ -284,7 +351,7 @@ impl RetainedHistorySegment {
             visit(record, frame).await?;
         }
         // A shortened key can match a selected UUID absent from this segment.
-        if removed != selection.0.len() {
+        if removed != selection.source_versions.len() {
             return Err(ArtifactError::Conflict(
                 "History rewrite selection is stale".into(),
             ));

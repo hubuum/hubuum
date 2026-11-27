@@ -58,6 +58,19 @@ impl Fixture {
         SegmentRewriteSelection,
     ) {
         let selection = SegmentRewriteSelection::new([identity(&self.target)]).unwrap();
+        self.admit_selection(store, source, selection).await
+    }
+
+    async fn admit_selection(
+        &self,
+        store: &FilesystemArtifactStore,
+        source: &RetainedHistorySegment,
+        selection: SegmentRewriteSelection,
+    ) -> (
+        ArtifactCreationIntent,
+        OwnedArtifact,
+        SegmentRewriteSelection,
+    ) {
         let intent = ArtifactCreationIntent::new(
             ArtifactIdentity::new(self.source.identity().destination()),
             HistorySegment::write_limits().unwrap(),
@@ -438,4 +451,103 @@ async fn restart_resumes_only_an_identical_appended_block(#[case] matching: bool
     } else {
         assert!(matches!(result, Err(ArtifactError::Conflict(_))));
     }
+}
+
+#[derive(Clone, Copy)]
+enum BatchChange {
+    Reorder,
+    OtherResource,
+    OtherVersion,
+    SourceMembership,
+    ForgetOther,
+}
+
+#[rstest]
+#[case::same_batch_in_different_order(BatchChange::Reorder)]
+#[case::changed_remote_resource(BatchChange::OtherResource)]
+#[case::changed_remote_version(BatchChange::OtherVersion)]
+#[case::changed_source_membership(BatchChange::SourceMembership)]
+#[case::single_source_retry(BatchChange::ForgetOther)]
+#[tokio::test]
+async fn sealed_replacement_is_bound_to_its_whole_batch(#[case] change: BatchChange) {
+    let fixture = Fixture::new().await;
+    let local = identity(&fixture.target);
+    let other = local.next_version();
+    let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+    let intent = {
+        let store = FilesystemArtifactStore::open_existing(&fixture.root)
+            .await
+            .unwrap();
+        let source = RetainedHistorySegment::open(&store, &fixture.source, &mut budget)
+            .await
+            .unwrap();
+        let selection = SegmentRewriteSelection::new([local, other])
+            .unwrap()
+            .for_source([local])
+            .unwrap();
+        let (intent, owner, selection) = fixture.admit_selection(&store, &source, selection).await;
+        source
+            .prepare_owned_subset_rewrite(&store, &store, &owner, &selection, &mut budget)
+            .await
+            .unwrap();
+        intent
+    };
+
+    let store = FilesystemArtifactStore::open_existing(&fixture.root)
+        .await
+        .unwrap();
+    let source = RetainedHistorySegment::open(&store, &fixture.source, &mut budget)
+        .await
+        .unwrap();
+    let OwnedArtifactResolution::Established {
+        artifact,
+        phase: OwnedArtifactPhase::Sealed,
+    } = store.resolve_owned(&intent).await.unwrap()
+    else {
+        panic!("missing sealed output")
+    };
+    let external = match change {
+        BatchChange::OtherResource => {
+            StorageRecordIdentity::new(ResourceIdentity::generate(), other.version())
+        }
+        BatchChange::OtherVersion => other.next_version(),
+        _ => other,
+    };
+    let batch = SegmentRewriteSelection::new([external, local]).unwrap();
+    let selection = match change {
+        BatchChange::SourceMembership => batch.for_source([external]).unwrap(),
+        BatchChange::ForgetOther => SegmentRewriteSelection::new([local]).unwrap(),
+        _ => batch.for_source([local]).unwrap(),
+    };
+    let result = source
+        .prepare_owned_subset_rewrite(&store, &store, &artifact, &selection, &mut budget)
+        .await;
+    if matches!(change, BatchChange::Reorder) {
+        assert_eq!(result.unwrap().segment().record_count(), 1);
+    } else {
+        assert!(matches!(result, Err(ArtifactError::Conflict(_))));
+    }
+}
+
+#[tokio::test]
+async fn an_existing_single_source_intent_keeps_its_original_commitment() {
+    use sha2::{Digest, Sha256};
+    let fixture = Fixture::new().await;
+    let store = FilesystemArtifactStore::open_existing(&fixture.root)
+        .await
+        .unwrap();
+    let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+    let source = RetainedHistorySegment::open(&store, &fixture.source, &mut budget)
+        .await
+        .unwrap();
+    let target = identity(&fixture.target);
+    let mut original = Sha256::new();
+    original.update(b"hubuum/history/subset-rewrite/v1\0");
+    original.update(fixture.source.manifest_digest());
+    original.update(target.resource().as_bytes());
+    original.update(target.version().as_bytes());
+    assert_eq!(
+        source.rewrite_commitment(&SegmentRewriteSelection::new([target]).unwrap()),
+        <[u8; 32]>::from(original.finalize())
+    );
 }
