@@ -183,8 +183,15 @@ survives on the second replica. The fixture stops that replica, applies the
 documented operator settlement, and verifies the retained attempt count and a
 successful read from a restarted replica.
 
-Large-row and exact-boundary resource tests, logical-restore charge tests,
-consumer contract qualification and final integration checks remain open for #521.
+The fixture takes a history-inclusive backup before changing the policy. After
+the crash drill it stops the last replica and restores that older backup into
+the same disposable database using the packaged administrator. It checks that
+the application incarnation changed and both cumulative charges survived. A
+fresh login reads the retained policy revision and original history. That read
+adds one attempt and the duration from the retained policy.
+
+Large-row and exact-boundary resource tests, consumer contract qualification
+and final integration checks remain open for #521.
 
 ## Upgrade
 

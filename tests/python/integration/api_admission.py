@@ -4,11 +4,16 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.client import HTTPConnection
+from pathlib import Path
 import secrets
 import subprocess
+import tempfile
 from urllib.parse import urlsplit
 
 from integration.corpus import Api, Deployment, POSTGRES_IMAGE, require, wait_for
+
+
+CAPACITY = "/api/v1/admin/api-request-capacity"
 
 
 class AdmissionDeployment(Deployment):
@@ -64,7 +69,7 @@ class AdmissionDeployment(Deployment):
         ) == "0", timeout=10)
 
 
-def verify(deployment):
+def verify(deployment, backup_directory):
     deployment.admin("source", "--migrate")
     first = deployment.start_api("source")
     second = deployment.start_replica("source", "replica-two")
@@ -85,13 +90,13 @@ def verify(deployment):
     expected = reader.get(history)
     require(len(expected) == 1 and expected[0]["id"] == collection["id"], "Missing history fixture")
 
-    capacity = "/api/v1/admin/api-request-capacity"
-    current = admin.get(capacity)
-    updated, _ = admin.request("PUT", capacity, {
+    deployment.backup("source", backup_directory / "before-policy.json")
+    current = admin.get(CAPACITY)
+    updated, _ = admin.request("PUT", CAPACITY, {
         "expected_revision": current["revision"],
         "policy": {**current["policy"], "deployment": 1, "principal": 1, "duration": 30000},
     })
-    require(same_admin.get(capacity) == updated, "Replicas disagree on the committed policy")
+    require(same_admin.get(CAPACITY) == updated, "Replicas disagree on the committed policy")
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         with deployment.hold_history():
@@ -108,6 +113,7 @@ def verify(deployment):
     require(reader.get(history) == expected, "The second replica could not use the released slot")
     verify_disconnect(deployment, admin, reader, history, expected)
     verify_crash_recovery(deployment, admin, reader, history, expected)
+    verify_logical_restore(deployment, backup_directory, updated, history, expected)
 
 
 def verify_disconnect(deployment, admin, reader, history, expected):
@@ -151,11 +157,43 @@ def verify_crash_recovery(deployment, admin, reader, history, expected):
     require(Api(restarted.base, reader.token).get(history) == expected, "Restarted replica lost the history read")
 
 
+def verify_logical_restore(deployment, backup_directory, policy, history, expected):
+    deployment.wait_for_settlement()
+    deployment.docker("stop", deployment.name + "-recovered")
+
+    def accounting():
+        row = deployment.scalar(
+            "SELECT admitted_attempts, charged_milliseconds FROM hubuum_control.api_request_policy"
+        )
+        return tuple(map(int, row.split("|")))
+
+    before = accounting()
+    image = "SELECT incarnation FROM hubuum_control.application_control WHERE id = 1"
+    previous_image = deployment.scalar(image)
+    deployment.admin("source", "--restore", "/corpus/before-policy.json",
+                     "--restore-confirmation", "REPLACE ALL HUBUUM DATA", mount=backup_directory)
+    require(deployment.scalar(image) != previous_image, "Restore did not replace the application incarnation")
+    require(accounting() == before, "Logical restore changed physical request charges")
+
+    restored = deployment.start_replica("source", "after-restore")
+    admin = deployment.login(restored, "source", "admin")
+    require(admin.get(CAPACITY) == policy, "Restoring an older backup rolled back the shared policy")
+    require(admin.get(history) == expected, "The restored collection history differs from the original")
+    deployment.wait_for_settlement()
+    require(accounting() == (before[0] + 1, before[1] + policy["policy"]["duration"]),
+            "The first read after restore did not charge the retained policy exactly once")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", default="hubuum-server:verify")
     parser.add_argument("--postgres-image", default=POSTGRES_IMAGE)
     args = parser.parse_args(argv)
-    with AdmissionDeployment(args.image, args.postgres_image) as deployment:
-        verify(deployment)
-    print("Two replicas enforced shared capacity and recovered the abandoned reservation after a replica crash.")
+    with tempfile.TemporaryDirectory(prefix="hubuum-admission-") as temporary:
+        backup_directory = Path(temporary) / "backup"
+        backup_directory.mkdir()
+        backup_directory.chmod(0o755)
+        with AdmissionDeployment(args.image, args.postgres_image) as deployment:
+            verify(deployment, backup_directory)
+    print("Two replicas enforced shared capacity and recovered the abandoned reservation after a replica crash. "
+          "Logical restore preserved the newer policy and physical charges.")
