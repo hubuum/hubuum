@@ -2,7 +2,7 @@ use hubuum_storage_core::TaskOutputMetadata;
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use hubuum_storage_core::{StorageIdentityEvidence, StorageTaskCheckpoint};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use utoipa::{PartialSchema, ToSchema};
@@ -341,6 +341,60 @@ pub struct TaskProgress {
     pub processed_items: i32,
     pub success_items: i32,
     pub failed_items: i32,
+    /// Present on current servers. Older task responses contain only the item counters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation: Option<TaskProgressObservation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct TaskProgressObservation {
+    /// UTC time of the most recent persisted task-row update.
+    updated_at: DateTime<Utc>,
+    #[serde(flatten)]
+    activity: TaskActivity,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum TaskActivity {
+    Waiting {
+        wait_reason: TaskWaitReason,
+    },
+    Validating,
+    Processing,
+    /// A stop was requested and the task still holds an active status.
+    CancellationPending,
+    Finished,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskWaitReason {
+    AwaitingClaim,
+    /// The executor released its lease and a fenced continuation must resume it.
+    AwaitingResume,
+}
+
+impl TaskActivity {
+    fn from_status(status: TaskStatus, cancellation_requested: bool) -> Self {
+        match status {
+            TaskStatus::Queued => Self::Waiting {
+                wait_reason: TaskWaitReason::AwaitingClaim,
+            },
+            TaskStatus::Waiting => Self::Waiting {
+                wait_reason: TaskWaitReason::AwaitingResume,
+            },
+            TaskStatus::Validating | TaskStatus::Running if cancellation_requested => {
+                Self::CancellationPending
+            }
+            TaskStatus::Validating => Self::Validating,
+            TaskStatus::Running => Self::Processing,
+            TaskStatus::Succeeded
+            | TaskStatus::PartiallySucceeded
+            | TaskStatus::Failed
+            | TaskStatus::Cancelled => Self::Finished,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -1357,6 +1411,13 @@ impl TaskRecord {
                 processed_items: self.processed_items,
                 success_items: self.success_items,
                 failed_items: self.failed_items,
+                observation: Some(TaskProgressObservation {
+                    updated_at: self.updated_at.and_utc(),
+                    activity: TaskActivity::from_status(
+                        status,
+                        self.control.cancellation().is_some(),
+                    ),
+                }),
             },
             summary: self.summary.clone(),
             request_redacted_at: self.request_redacted_at,
@@ -1810,6 +1871,35 @@ mod discovery_tests {
         StorageTask, StorageTaskKind, StorageTaskMetadata, StorageTaskStatus,
     };
     use rstest::rstest;
+
+    #[rstest]
+    #[case(TaskStatus::Queued, false, serde_json::json!({"phase":"waiting","wait_reason":"awaiting_claim"}))]
+    #[case(TaskStatus::Waiting, false, serde_json::json!({"phase":"waiting","wait_reason":"awaiting_resume"}))]
+    #[case(TaskStatus::Validating, false, serde_json::json!({"phase":"validating"}))]
+    #[case(TaskStatus::Running, false, serde_json::json!({"phase":"processing"}))]
+    #[case(TaskStatus::Validating, true, serde_json::json!({"phase":"cancellation_pending"}))]
+    #[case(TaskStatus::Running, true, serde_json::json!({"phase":"cancellation_pending"}))]
+    #[case(TaskStatus::Cancelled, true, serde_json::json!({"phase":"finished"}))]
+    #[case(TaskStatus::Succeeded, false, serde_json::json!({"phase":"finished"}))]
+    fn public_progress_activity_matches_persisted_state(
+        #[case] status: TaskStatus,
+        #[case] cancellation: bool,
+        #[case] expected: serde_json::Value,
+    ) {
+        assert_eq!(
+            serde_json::to_value(TaskActivity::from_status(status, cancellation)).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn item_only_progress_from_an_older_server_roundtrips() {
+        let original = serde_json::json!({
+            "total_items": 0, "processed_items": 1, "success_items": 0, "failed_items": 1
+        });
+        let progress: TaskProgress = serde_json::from_value(original.clone()).unwrap();
+        assert_eq!(serde_json::to_value(progress).unwrap(), original);
+    }
 
     #[rstest]
     #[case(StorageTaskKind::Import, "import")]
