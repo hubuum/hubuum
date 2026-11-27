@@ -458,14 +458,19 @@ async fn renewal_distinguishes_github_rate_limits_from_rejection(
 }
 
 #[rstest]
-#[case::error_response(400, "application/json", json!({"error":"invalid_grant"}))]
-#[case::wrong_type(200, "text/html", json!({"access_token":"access", "token_type":"bearer"}))]
-#[case::other_json_format(200, "application/json-seq", json!({"access_token":"access", "token_type":"bearer"}))]
+#[case::error_response(400, "application/json", json!({"error":"invalid_grant"}), OAuthError::Denied)]
+#[case::temporary_failure(400, "application/json", json!({"error":"temporarily_unavailable"}), OAuthError::Unavailable)]
+#[case::error_in_success(200, "application/json", json!({"error":"server_error"}), OAuthError::Unavailable)]
+#[case::client_configuration(200, "application/json", json!({"error":"incorrect_client_credentials"}), OAuthError::Configuration)]
+#[case::contradictory_success(200, "application/json", json!({"error":"invalid_grant", "access_token":"access", "token_type":"bearer"}), OAuthError::InvalidResponse)]
+#[case::wrong_type(200, "text/html", json!({"access_token":"access", "token_type":"bearer"}), OAuthError::InvalidResponse)]
+#[case::other_json_format(200, "application/json-seq", json!({"access_token":"access", "token_type":"bearer"}), OAuthError::InvalidResponse)]
 #[tokio::test]
 async fn exchange_rejects_provider_failures(
     #[case] status: u16,
     #[case] content_type: &str,
     #[case] body: Value,
+    #[case] expected: OAuthError,
 ) {
     let (adapter, context) = fixture(true);
     let (_, pending) = adapter.begin(context.binding().id()).unwrap();
@@ -485,11 +490,12 @@ async fn exchange_rejects_provider_failures(
             .body(serde_json::to_vec(&body).unwrap())
             .unwrap()))
     };
-    assert!(
+    assert_eq!(
         adapter
             .exchange_using(accepted, &context, &client)
             .await
-            .is_err()
+            .err(),
+        Some(expected)
     );
 }
 

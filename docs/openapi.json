@@ -2205,7 +2205,7 @@
         },
         "responses": {
           "200": {
-            "description": "Single-use session issuance using the original client binding",
+            "description": "Returns a session, credential approval or provider verification result according to the interaction purpose",
             "content": {
               "application/json": {
                 "schema": {
@@ -2856,7 +2856,7 @@
         "operationId": "getApiV1AuthMethods",
         "responses": {
           "200": {
-            "description": "Public password methods; interaction protocol version 1",
+            "description": "Available password and browser authentication methods and their capabilities",
             "content": {
               "application/json": {
                 "schema": {

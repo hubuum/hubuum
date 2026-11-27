@@ -78,8 +78,10 @@ claims and do not substitute for group paths. Example non-secret definition:
 
 For `claim_source: "userinfo"`, enable the mapper's UserInfo output as well.
 Hubuum requests UserInfo only for that profile and requires its `sub` to match
-the validated ID token. Missing, malformed, partial or distributed group claims
-fail closed. An explicit empty group array removes provider-owned memberships;
+the validated ID token. UserInfo must return one `application/json` Content-Type
+header. Hubuum rejects duplicate fields in discovery documents and signing-key
+sets before using the endpoints or keys. Missing, malformed, partial or
+distributed group claims fail closed. An explicit empty group array removes provider-owned memberships;
 manual local assignments remain. Choose an admission policy deliberately;
 `provision_without_grants` creates the identity without granting local access.
 
@@ -97,9 +99,10 @@ the final group disappears. See Keycloak's
 Use the [security candidate workflow](../security_candidates.md). Candidate
 creation checks discovery and destinations. Start a `provider_verification`
 interaction with the candidate ID and selected provider ID, complete its real
-Keycloak sign-in and approve the displayed preview. This verifies the proposed
-identity/admission/group mapping without provisioning a principal, changing
-memberships or issuing a session. Activation still requires the existing local
+Keycloak sign-in and confirm the identity shown in the hosted browser. Complete
+the interaction in the initiating client to review the admission decision and
+mapped groups. Verification creates no principal, membership or session.
+Activation still requires the existing local
 recovery administrator and a fresh operation-bound approval.
 
 Live sign-in is selected through method discovery and the

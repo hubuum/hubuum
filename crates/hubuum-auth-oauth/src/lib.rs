@@ -15,7 +15,7 @@ use hubuum_secrets::SecretValue;
 use oauth2::{
     AsyncHttpClient, AuthType, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
     EndpointNotSet, EndpointSet, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, TokenUrl,
-    basic::{BasicClient, BasicTokenResponse},
+    basic::{BasicClient, BasicRequestTokenError, BasicTokenResponse},
     http,
 };
 use serde::{Deserialize, Serialize};
@@ -151,10 +151,8 @@ impl OAuthAdapter {
                 ))
                 .request_async(&|request| async {
                     let reply = client.call(request).await?;
-                    if reply.status() == http::StatusCode::OK
-                        && !profile::has_json_content_type(reply.headers())
-                    {
-                        return Err(OAuthError::InvalidResponse);
+                    if reply.status() == http::StatusCode::OK {
+                        validate_token_response(&reply)?;
                     }
                     Ok(reply)
                 })
@@ -519,12 +517,42 @@ fn serialize_secret(value: &impl Serialize) -> Result<SecretValue, OAuthError> {
     SecretValue::new(serde_json::to_vec(value).map_err(|_| OAuthError::InvalidResponse)?)
         .map_err(|_| OAuthError::InvalidResponse)
 }
-fn token_error<T: oauth2::ErrorResponse>(
-    error: oauth2::RequestTokenError<OAuthError, T>,
-) -> OAuthError {
+fn validate_token_response(reply: &oauth2::HttpResponse) -> Result<(), OAuthError> {
+    if !profile::has_json_content_type(reply.headers()) {
+        return Err(OAuthError::InvalidResponse);
+    }
+    let document = profile::parse(reply.body())?;
+    let Some(error) = document.get("error") else {
+        return Ok(());
+    };
+    if document.get("access_token").is_some() || document.get("refresh_token").is_some() {
+        return Err(OAuthError::InvalidResponse);
+    }
+    Err(token_endpoint_error(
+        error.as_str().ok_or(OAuthError::InvalidResponse)?,
+    ))
+}
+
+fn token_endpoint_error(code: &str) -> OAuthError {
+    match code {
+        "server_error" | "temporarily_unavailable" => OAuthError::Unavailable,
+        "invalid_client"
+        | "unauthorized_client"
+        | "invalid_scope"
+        | "unsupported_grant_type"
+        | "invalid_request"
+        | "incorrect_client_credentials"
+        | "redirect_uri_mismatch" => OAuthError::Configuration,
+        _ => OAuthError::Denied,
+    }
+}
+
+fn token_error(error: BasicRequestTokenError<OAuthError>) -> OAuthError {
     match error {
         oauth2::RequestTokenError::Request(error) => error,
-        oauth2::RequestTokenError::ServerResponse(_) => OAuthError::Denied,
+        oauth2::RequestTokenError::ServerResponse(response) => {
+            token_endpoint_error(response.error().as_ref())
+        }
         _ => OAuthError::InvalidResponse,
     }
 }

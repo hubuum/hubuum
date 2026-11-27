@@ -399,7 +399,7 @@ pub struct OutboundRequest {
     timeout: Duration,
     max_response_bytes: usize,
     require_complete_body: bool,
-    skip_body_status: Option<u16>,
+    skip_body_when: Option<fn(u16, &serde_json::Value) -> bool>,
     allow_private_targets: bool,
     dangerous_accept_invalid_certs: bool,
     dangerous_allow_localhost: bool,
@@ -415,7 +415,7 @@ impl OutboundRequest {
             timeout,
             max_response_bytes: 64 * 1024,
             require_complete_body: false,
-            skip_body_status: None,
+            skip_body_when: None,
             allow_private_targets: false,
             dangerous_accept_invalid_certs: false,
             dangerous_allow_localhost: false,
@@ -444,9 +444,9 @@ impl OutboundRequest {
         self
     }
 
-    /// Return headers immediately when this status alone decides the protocol outcome.
-    pub fn skip_body_for_status(mut self, status: u16) -> Self {
-        self.skip_body_status = Some(status);
+    /// Return headers immediately when the status and headers decide the protocol outcome.
+    pub fn skip_body_when(mut self, predicate: fn(u16, &serde_json::Value) -> bool) -> Self {
+        self.skip_body_when = Some(predicate);
         self
     }
 
@@ -607,12 +607,11 @@ where
         let response = request_builder.send().await.map_err(map_reqwest_error)?;
         let status = response.status();
         Span::current().record("http.response.status_code", status.as_u16());
-        let headers = headers_to_json(response.headers());
-        let body_preview = read_capped_body(
+        let (headers, body_preview) = read_response(
             response,
             request.max_response_bytes,
             request.require_complete_body,
-            request.skip_body_status,
+            request.skip_body_when,
         )
         .await?;
         Span::current().record("http.response.body.size", body_preview.len());
@@ -757,15 +756,16 @@ fn cached_client_or_insert_with(
     Ok(client)
 }
 
-async fn read_capped_body(
+async fn read_response(
     mut response: reqwest::Response,
     limit: usize,
     require_complete: bool,
-    skip_body_status: Option<u16>,
-) -> Result<String, OutboundHttpError> {
+    skip_body_when: Option<fn(u16, &serde_json::Value) -> bool>,
+) -> Result<(serde_json::Value, String), OutboundHttpError> {
     let status = response.status().as_u16();
-    if skip_body_status == Some(status) {
-        return Ok(String::new());
+    let headers = headers_to_json(response.headers());
+    if skip_body_when.is_some_and(|skip| skip(status, &headers)) {
+        return Ok((headers, String::new()));
     }
     let mut buffer: Vec<u8> = Vec::new();
     while require_complete || buffer.len() < limit {
@@ -787,11 +787,12 @@ async fn read_capped_body(
             None => break,
         }
     }
-    if require_complete {
-        String::from_utf8(buffer).map_err(|_| OutboundHttpError::InvalidResponseBody { status })
+    let body = if require_complete {
+        String::from_utf8(buffer).map_err(|_| OutboundHttpError::InvalidResponseBody { status })?
     } else {
-        Ok(String::from_utf8_lossy(&buffer).replace('\0', "\u{FFFD}"))
-    }
+        String::from_utf8_lossy(&buffer).replace('\0', "\u{FFFD}")
+    };
+    Ok((headers, body))
 }
 
 fn is_sensitive_response_header(name: &str) -> bool {
@@ -887,6 +888,7 @@ mod tests {
     #[case::over_limit(200, b"{} ", 3, 2, Some("invalid_response_body"))]
     #[case::truncated(200, b"{}", 3, 3, Some("response_read"))]
     #[case::unauthorized_truncated(401, b"{}", 3, 3, None)]
+    #[case::forbidden_with_retry_header(403, b"\xff", 1, 2, None)]
     #[case::invalid_utf8(200, b"\xff", 1, 2, Some("invalid_response_body"))]
     #[tokio::test]
     async fn complete_body_rejects_lossy_protocol_responses(
@@ -908,7 +910,7 @@ mod tests {
             assert!(stream.read(&mut request).unwrap() > 0);
             write!(
                 stream,
-                "HTTP/1.1 {status} Response\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n"
+                "HTTP/1.1 {status} Response\r\nContent-Length: {content_length}\r\nRetry-After: 60\r\nConnection: close\r\n\r\n"
             )
             .unwrap();
             stream.write_all(body).unwrap();
@@ -923,11 +925,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            read_capped_body(response, limit, true, Some(401))
-                .await
-                .err()
-                .as_ref()
-                .map(outbound_error_category),
+            read_response(
+                response,
+                limit,
+                true,
+                Some(|status, headers| status == 401
+                    || status == 403 && headers.get("retry-after").is_some())
+            )
+            .await
+            .err()
+            .as_ref()
+            .map(outbound_error_category),
             error
         );
         server.join().unwrap();

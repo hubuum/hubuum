@@ -661,6 +661,9 @@ fn userinfo_profile(
     if reply.status() != openidconnect::http::StatusCode::OK {
         return Err(OidcError::Denied);
     }
+    if !profile::has_json_content_type(reply.headers()) {
+        return Err(OidcError::InvalidResponse);
+    }
     let document = profile::parse(reply.body())?;
     if document.get("sub").and_then(Value::as_str) != Some(signed_subject) {
         return Err(OidcError::Denied);
@@ -669,7 +672,11 @@ fn userinfo_profile(
 }
 
 fn validate_metadata(value: &Value, definition: &OidcProviderDefinition) -> Result<(), OidcError> {
-    if value.get("issuer").and_then(Value::as_str) != Some(definition.issuer().as_str()) {
+    if value.get("issuer").and_then(Value::as_str) != Some(definition.issuer().as_str())
+        || value
+            .get("authorization_response_iss_parameter_supported")
+            .is_some_and(|supported| !supported.is_boolean())
+    {
         return Err(OidcError::InvalidResponse);
     }
     for name in ["authorization_endpoint", "token_endpoint", "jwks_uri"] {

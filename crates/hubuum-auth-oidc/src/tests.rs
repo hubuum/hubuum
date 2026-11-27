@@ -247,6 +247,7 @@ async fn rejects_untrusted_signature(
 
 #[rstest]
 #[case::issuer("issuer", json!("https://other.example/realm"))]
+#[case::malformed_issuer_capability("authorization_response_iss_parameter_supported", json!("true"))]
 #[case::http_token("token_endpoint", json!("http://id.example/token"))]
 #[case::fragment("jwks_uri", json!("https://id.example/certs#part"))]
 #[case::pkce_plain("code_challenge_methods_supported", json!(["plain"]))]
@@ -640,7 +641,28 @@ fn discovery_uses_defaults_only_for_optional_fields(#[case] field: &str, #[case]
 #[case::duplicate_subject(br#"{"sub":"other","sub":"stable-subject","groups":[]}"#)]
 #[case::duplicate_groups(br#"{"sub":"stable-subject","groups":["/team"],"groups":[]}"#)]
 fn userinfo_rejects_duplicate_members(#[case] body: &[u8]) {
-    let reply = openidconnect::http::Response::new(body.to_vec());
+    let reply = openidconnect::http::Response::builder()
+        .header("content-type", "application/json")
+        .body(body.to_vec())
+        .unwrap();
+    assert_eq!(
+        userinfo_profile(&reply, "stable-subject"),
+        Err(OidcError::InvalidResponse)
+    );
+}
+
+#[rstest]
+#[case::missing(&[])]
+#[case::incorrect(&["text/plain"])]
+#[case::ambiguous(&["application/json", "application/json"])]
+fn userinfo_requires_one_json_content_type(#[case] media_types: &[&str]) {
+    let mut reply = openidconnect::http::Response::builder();
+    for media_type in media_types {
+        reply = reply.header("content-type", *media_type);
+    }
+    let reply = reply
+        .body(br#"{"sub":"stable-subject","groups":[]}"#.to_vec())
+        .unwrap();
     assert_eq!(
         userinfo_profile(&reply, "stable-subject"),
         Err(OidcError::InvalidResponse)
@@ -650,6 +672,7 @@ fn userinfo_rejects_duplicate_members(#[case] body: &[u8]) {
 #[test]
 fn paginated_userinfo_cannot_supply_complete_memberships() {
     let reply = openidconnect::http::Response::builder()
+        .header("content-type", "application/json; charset=utf-8")
         .header("link", r#"</groups/2>; rel="next""#)
         .body(br#"{"sub":"stable-subject","groups":["/team"]}"#.to_vec())
         .unwrap();

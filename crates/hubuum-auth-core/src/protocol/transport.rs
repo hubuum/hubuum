@@ -4,7 +4,7 @@ use hubuum_outbound_http::{OutboundHeaders, OutboundHttpError, OutboundMethod, O
 use oauth2::{HttpRequest, HttpResponse, http};
 use tokio::sync::Semaphore;
 
-use super::ProtocolError;
+use super::{ProtocolError, profile};
 
 const RESPONSE_LIMIT: usize = 128 * 1024;
 static REQUESTS: Semaphore = Semaphore::const_new(32);
@@ -92,7 +92,7 @@ impl Transport {
             .require_complete_body()
             .allow_private_targets(self.allow_private_targets);
         let request = if method == OutboundMethod::Get {
-            request.skip_body_for_status(401)
+            request.skip_body_when(profile_status_decided_by_headers)
         } else {
             request
         };
@@ -142,17 +142,58 @@ impl Transport {
             .header(http::header::ACCEPT, "application/json")
             .body(Vec::new())
             .map_err(|_| ProtocolError::Configuration)?;
-        let response = self.send(request).await?;
+        Self::json_document(self.send(request).await?)
+    }
+
+    fn json_document(response: HttpResponse) -> Result<serde_json::Value, ProtocolError> {
         if response.status() != http::StatusCode::OK {
             return Err(ProtocolError::InvalidResponse);
         }
-        serde_json::from_slice(response.body()).map_err(|_| ProtocolError::InvalidResponse)
+        profile::parse(response.body())
     }
+}
+
+fn profile_status_decided_by_headers(status: u16, headers: &serde_json::Value) -> bool {
+    // Preserve a definitive bearer rejection or explicit rate-limit signal even
+    // when the error page is oversized or unreadable. Unmarked 403s still need
+    // their body for GitHub's secondary-rate-limit message.
+    status == 401
+        || status == 403
+            && (headers
+                .get("x-ratelimit-remaining")
+                .and_then(serde_json::Value::as_str)
+                == Some("0")
+                || headers.get("retry-after").is_some())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signing_key_documents_reject_duplicate_key_identifiers() {
+        let reply = HttpResponse::new(br#"{"keys":[{"kid":"a","kid":"b"}]}"#.to_vec());
+        assert_eq!(
+            Transport::json_document(reply),
+            Err(ProtocolError::InvalidResponse)
+        );
+    }
+
+    #[test]
+    fn exhausted_github_quota_is_decided_at_headers() {
+        assert!(profile_status_decided_by_headers(
+            403,
+            &serde_json::json!({"x-ratelimit-remaining":"0"})
+        ));
+    }
+
+    #[test]
+    fn unmarked_forbidden_responses_still_read_the_secondary_rate_limit_message() {
+        assert!(!profile_status_decided_by_headers(
+            403,
+            &serde_json::json!({})
+        ));
+    }
 
     #[test]
     fn provider_request_timeout_is_temporary() {
