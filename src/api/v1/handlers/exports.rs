@@ -34,7 +34,24 @@ fn render_export_task_output(output: ExportTaskOutput) -> Result<HttpResponse, A
                 })?)?;
             Ok(response.json(body))
         }
-        ExportContentType::TextPlain | ExportContentType::TextHtml | ExportContentType::TextCsv => {
+        ExportContentType::TextHtml => {
+            // Rendered templates contain author-controlled markup. Serve them in a
+            // sandboxed, script-free document so template content can never act with
+            // the API or frontend origin.
+            response
+                .content_type(content_type.as_mime())
+                .insert_header(("Content-Disposition", "inline"))
+                .insert_header(("Cache-Control", "private, no-store"))
+                .insert_header(("X-Content-Type-Options", "nosniff"))
+                .insert_header((
+                    "Content-Security-Policy",
+                    "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'",
+                ));
+            Ok(response.body(output.text_output.ok_or_else(|| {
+                ApiError::InternalServerError("Stored export text output is missing".to_string())
+            })?))
+        }
+        ExportContentType::TextPlain | ExportContentType::TextCsv => {
             response.content_type(content_type.as_mime());
             Ok(response.body(output.text_output.ok_or_else(|| {
                 ApiError::InternalServerError("Stored export text output is missing".to_string())
@@ -193,6 +210,47 @@ mod tests {
             warnings_json: serde_json::json!([]),
             truncated: output_truncated,
         }
+    }
+
+    fn html_export_output() -> ExportTaskOutput {
+        ExportTaskOutput {
+            content_type: ExportContentType::TextHtml.as_mime().to_string(),
+            json_output: None,
+            text_output: Some("<p>ok</p>".to_string()),
+            meta_json: serde_json::to_value(ExportMeta {
+                count: 1,
+                truncated: false,
+                scope: ExportScope {
+                    kind: ExportScopeKind::ObjectsInClass,
+                    class_id: Some(1),
+                    object_id: None,
+                },
+                content_type: ExportContentType::TextHtml,
+            })
+            .unwrap(),
+            warnings_json: serde_json::json!([]),
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn html_export_output_is_sandboxed_and_not_sniffed() {
+        let response = render_export_task_output(html_export_output()).unwrap();
+
+        let headers = response.headers();
+        assert_eq!(
+            headers.get("content-type").unwrap().to_str().unwrap(),
+            "text/html"
+        );
+        assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
+        assert_eq!(headers.get("content-disposition").unwrap(), "inline");
+        let csp = headers
+            .get("content-security-policy")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(csp.starts_with("sandbox;"));
+        assert!(csp.contains("default-src 'none'"));
     }
 
     #[test]

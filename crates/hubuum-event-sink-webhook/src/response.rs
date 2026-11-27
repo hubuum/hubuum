@@ -132,6 +132,13 @@ impl BodyCheck {
     }
 }
 
+/// Upper bound for a remote `Retry-After` hint.
+///
+/// A sink must not be able to park its delivery until the end of the
+/// subscription by advertising an arbitrary delay. Longer hints are clamped so
+/// the scheduler keeps retrying on a bounded cadence.
+const MAX_RETRY_DELAY_SECONDS: u64 = 60 * 60;
+
 fn retry_delay(header: Option<&str>, now: DateTime<Utc>) -> Duration {
     let delay = header
         .and_then(|value| {
@@ -142,7 +149,8 @@ fn retry_delay(header: Option<&str>, now: DateTime<Utc>) -> Duration {
             })
         })
         .filter(|seconds| *seconds > 0)
-        .unwrap_or(60);
+        .unwrap_or(60)
+        .min(MAX_RETRY_DELAY_SECONDS);
     Duration::from_secs(delay)
 }
 
@@ -174,7 +182,9 @@ mod tests {
     #[rstest]
     #[case(None, 60)]
     #[case(Some("5"), 5)]
-    #[case(Some("86401"), 86401)]
+    #[case(Some("3600"), 3600)]
+    #[case(Some("86401"), 3600)]
+    #[case(Some("4294967295"), 3600)]
     #[case(Some("bad"), 60)]
     #[case(Some("0"), 60)]
     #[case(Some("-1"), 60)]
