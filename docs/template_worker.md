@@ -17,6 +17,24 @@ a template error; it does not abort the server. The allocator budget does not
 claim to measure total resident memory: stack, executable pages, and allocator
 bookkeeping remain additional process overhead.
 
+## Operating-system isolation
+
+The worker installs its host policy before reading template input. A failure to
+establish that policy fails the render. Linux AMD64 and ARM64 require seccomp
+filters. The worker permits pipe input and output, clocks, random bytes and
+anonymous memory allocation. macOS uses a deny-by-default Seatbelt profile
+after the dynamic loader finishes. A host policy that prevents installation of
+the worker profile also prevents rendering.
+
+On Windows the worker starts a capability-free, less-privileged AppContainer
+named `Hubuum.TemplateWorker`. The broker pipes input to the isolated child
+under a kill-on-close job. Windows may grant access to resources explicitly
+assigned to that package. Keep deployment secrets in the service account's
+private storage. For a read-only installation, run
+`hubuum-template-worker.exe --prepare-sandbox` with permission to grant the
+package read and execute access to the worker executable during installation
+and after replacing the file.
+
 The server awaits worker admission, pipe I/O, and completion asynchronously.
 A dedicated runtime thread supervises children independently of HTTP runtimes.
 Cancellation removes queued work or kills an executing child; capacity is retained

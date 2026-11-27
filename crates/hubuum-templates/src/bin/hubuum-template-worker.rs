@@ -1,4 +1,6 @@
 //! Dedicated process: allocation failure must never terminate the server.
+mod sandbox;
+
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -73,6 +75,23 @@ fn main() {
             env!("CARGO_PKG_VERSION")
         );
         return;
+    }
+    #[cfg(windows)]
+    if std::env::args().nth(1).as_deref() == Some("--prepare-sandbox") {
+        if let Err(error) = sandbox::prepare() {
+            eprintln!("Could not provision template worker access: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    match sandbox::enter() {
+        Ok(sandbox::Worker::Render) => {}
+        #[cfg(windows)]
+        Ok(sandbox::Worker::BrokerFinished) => return,
+        Err(error) => {
+            eprintln!("Could not isolate template worker: {error}");
+            std::process::exit(1);
+        }
     }
     if hubuum_templates::serve_template_worker(|| PEAK.load(Ordering::Relaxed)).is_err() {
         std::process::exit(1);
