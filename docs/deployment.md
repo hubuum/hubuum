@@ -99,6 +99,10 @@ Caddy only forwards those paths to clients inside `--metrics-allow-cidr`
 listed explicitly and every other client receives `404`. Separate multiple CIDRs
 with commas. Updates preserve this setting. The generated API proxy also
 suppresses runtime-selected scrape paths for clients outside those networks.
+The allowlist uses Caddy's immediate connection peer. If another proxy or
+port forwarder rewrites client addresses, enforce the scraper allowlist there
+and configure Caddy to accept only the dedicated scraper peer. The bundled
+Prometheus scrapes each API container directly.
 
 The installer also creates an empty `/opt/hubuum/auth.toml` for local-only
 authentication. This empty placeholder is mode `0644` so the non-root API can
