@@ -2,6 +2,9 @@ use hubuum_storage_core::StorageRecordIdentity;
 
 use super::*;
 
+#[cfg(unix)]
+mod owned;
+
 fn identity(record: &SegmentRecord) -> StorageRecordIdentity {
     StorageRecordIdentity::new(record.interval.resource(), record.interval.version())
 }
@@ -44,9 +47,10 @@ async fn mixed_segment_stages_verified_survivors(#[case] case: u8) {
         .await
         .unwrap();
     let output = retained
-        .stage_subset_rewrite(
+        .rewrite_into(
             &store,
-            reference.identity().destination(),
+            &store,
+            ArtifactIdentity::new(reference.identity().destination()),
             &selection,
             &mut budget,
         )
@@ -127,9 +131,10 @@ async fn failed_rewrite_preserves_published_source(#[case] case: u8) {
         .unwrap();
     let mut scan = ByteLimit::new(if case == 3 { 0 } else { SEGMENT_BYTES }).start();
     let result = retained
-        .stage_subset_rewrite(
+        .rewrite_into(
             &store,
-            reference.identity().destination(),
+            &store,
+            ArtifactIdentity::new(reference.identity().destination()),
             &selection,
             &mut scan,
         )
@@ -167,9 +172,10 @@ async fn a_rewrite_checks_corruption_even_in_a_frame_selected_for_omission() {
         .unwrap();
     assert!(matches!(
         retained
-            .stage_subset_rewrite(
+            .rewrite_into(
                 &store,
-                reference.identity().destination(),
+                &store,
+                ArtifactIdentity::new(reference.identity().destination()),
                 &selection,
                 &mut budget
             )
@@ -199,9 +205,10 @@ async fn selected_frame_budget_is_enforced_before_source_payload_io() {
     .unwrap();
     let mut scan = ByteLimit::new(SEGMENT_BYTES).start();
     let result = retained
-        .stage_subset_rewrite(
+        .rewrite_into(
             &store,
-            reference.identity().destination(),
+            &store,
+            ArtifactIdentity::new(reference.identity().destination()),
             &selection,
             &mut scan,
         )
@@ -281,9 +288,10 @@ async fn one_percent_subset_rewrite_traffic(#[case] versions: usize) {
                 .unwrap();
             let open_bytes = source_read.used();
             let output = retained
-                .stage_subset_rewrite(
+                .rewrite_into(
                     &store,
-                    reference.identity().destination(),
+                    &store,
+                    ArtifactIdentity::new(reference.identity().destination()),
                     &selection,
                     &mut source_read,
                 )

@@ -194,6 +194,14 @@ pub struct RetainedHistorySegment {
 }
 
 impl HistorySegment {
+    /// Producer limits used for new segments and for an owned rewrite intent.
+    pub fn write_limits() -> ArtifactResult<ArtifactLimits> {
+        ArtifactLimits::builder()
+            .block_bytes(BLOCK_BYTES)
+            .artifact_bytes(SEGMENT_BYTES as u64)
+            .build()
+    }
+
     /// Stage and read back the entire segment without publishing it. The owner
     /// still owes catalog/claim/generation fencing before publication.
     pub async fn stage<S, I>(
@@ -206,10 +214,7 @@ impl HistorySegment {
         S: ArtifactStore + ?Sized,
         I: IntoIterator<Item = SegmentRecord> + Send + 'static,
     {
-        let limits = ArtifactLimits::builder()
-            .block_bytes(BLOCK_BYTES)
-            .artifact_bytes(SEGMENT_BYTES as u64)
-            .build()?;
+        let limits = Self::write_limits()?;
         let output_scope = scope;
         let (proof, ()) = stage_producer(store, identity, limits, move |output| {
             let mut output = LimitedWriter::new(output, ByteLimit::new(SEGMENT_BYTES));

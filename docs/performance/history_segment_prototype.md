@@ -343,3 +343,13 @@ The fixture uses the memory artifact adapter and excludes database/WAL,
 provider retries, process RSS, publication, superseded-copy cleanup and restore.
 The named deployment still needs those measurements. A staged replacement alone
 supplies no authority to switch catalogs or erase a source.
+
+The rewrite entry point takes an admitted output receipt. Its intent binds the
+exact source manifest digest and sorted resource/version pairs to the new
+attempt. A caller can retain that intent before writing and reconcile the same
+attempt after a restart. The provider checks its owner when staging, sealing
+and fencing the replacement. A different selection cannot use the receipt.
+After a failed scan the owner can retry or reconcile the recorded phase.
+Only the owner responsible for settlement can fence an abandoned attempt,
+so a failed writer cannot invalidate a concurrent successful write.
+Fencing prevents subsequent publication. Physical cleanup requires separate evidence.

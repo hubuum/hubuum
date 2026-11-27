@@ -1,13 +1,17 @@
 //! Stage a replacement for a mixed segment. The published source stays intact.
 use std::collections::BTreeMap;
 
-use hubuum_artifacts::{ArtifactIdentity, ArtifactLimits, ArtifactWriter, DestinationId, verify};
+use hubuum_artifacts::{
+    ArtifactIdentity, ArtifactWriter, OwnedArtifactReceipt, OwnedArtifactSession,
+    OwnedArtifactStore, verify,
+};
 use hubuum_storage_core::{HistoryExpiryInputBytes, HistoryExpiryManifest, StorageRecordIdentity};
+use sha2::{Digest, Sha256};
 
 use super::{
-    ArtifactError, ArtifactResult, ArtifactStore, BLOCK_BYTES, ByteBudget, ByteLimit, Entry,
-    HistorySegment, ResourceIdentity, RetainedHistorySegment, SEGMENT_BYTES, SegmentBlockReader,
-    VersionIdentity, segment_header, segment_index,
+    ArtifactError, ArtifactResult, ArtifactStore, ByteBudget, ByteLimit, Entry, HistorySegment,
+    ResourceIdentity, RetainedHistorySegment, SEGMENT_BYTES, SegmentBlockReader, VersionIdentity,
+    segment_header, segment_index,
 };
 
 /// Exact identities for one source segment. This carries no deletion authority.
@@ -59,13 +63,58 @@ impl StagedSegmentRewrite {
 }
 
 impl RetainedHistorySegment {
+    /// Bind an output intent to the exact published source and selected identities.
+    pub fn rewrite_commitment(&self, selection: &SegmentRewriteSelection) -> [u8; 32] {
+        let mut hash = Sha256::new();
+        hash.update(b"hubuum/history/subset-rewrite/v1\0");
+        hash.update(self.manifest.manifest_digest());
+        for (version, resource) in &selection.0 {
+            hash.update(resource.as_bytes());
+            hash.update(version.as_bytes());
+        }
+        hash.finalize().into()
+    }
+
     /// Verify all source frames and independently read back a fresh, unpublished
     /// replacement. Surviving frames are copied byte-for-byte, including their
-    /// logical identities, dependency lists and original time precision.
-    pub async fn stage_subset_rewrite<S: ArtifactStore + ?Sized>(
+    /// logical identities, dependency lists and original time precision. A failed
+    /// or concurrent writer leaves the durable owner responsible for reconciling
+    /// its attempt; fencing here could invalidate a successful sibling writer.
+    pub async fn stage_owned_subset_rewrite<
+        S: ArtifactStore + ?Sized,
+        D: OwnedArtifactStore + ?Sized,
+    >(
         &self,
-        store: &S,
-        destination: DestinationId,
+        source: &S,
+        destination: &D,
+        receipt: &D::Receipt,
+        selection: &SegmentRewriteSelection,
+        source_budget: &mut ByteBudget,
+    ) -> ArtifactResult<StagedSegmentRewrite> {
+        let intent = receipt.intent();
+        if intent.identity() == self.manifest.identity()
+            || intent.request_commitment() != &self.rewrite_commitment(selection)
+            || intent.limits() != HistorySegment::write_limits()?
+        {
+            return Err(ArtifactError::Conflict(
+                "History rewrite intent differs from its source, selection or limits".into(),
+            ));
+        }
+        self.rewrite_into(
+            source,
+            &OwnedArtifactSession::new(destination, receipt),
+            intent.identity().clone(),
+            selection,
+            source_budget,
+        )
+        .await
+    }
+
+    pub(super) async fn rewrite_into<S: ArtifactStore + ?Sized, D: ArtifactStore + ?Sized>(
+        &self,
+        source: &S,
+        destination: &D,
+        identity: ArtifactIdentity,
         selection: &SegmentRewriteSelection,
         source_budget: &mut ByteBudget,
     ) -> ArtifactResult<StagedSegmentRewrite> {
@@ -91,74 +140,57 @@ impl RetainedHistorySegment {
                 )
             })?;
         }
-        let identity = ArtifactIdentity::new(destination);
-        let limits = ArtifactLimits::builder()
-            .block_bytes(BLOCK_BYTES)
-            .artifact_bytes(SEGMENT_BYTES as u64)
-            .build()?;
-        let mut writer = ArtifactWriter::new(store, identity.clone(), limits).await?;
-        let result = async {
-            let header = segment_header(&self.scope)?;
-            writer.write(&header).await?;
-            let mut offset = header.len() as u32;
-            let mut entries = Vec::with_capacity(self.entries.len() - selection.0.len());
-            let mut removed = 0;
-            let mut reader = SegmentBlockReader::new(store, &self.manifest, source_budget);
-            reader.sequential = true;
-            for entry in &self.entries {
-                let frame = reader
-                    .range(u64::from(entry.offset), entry.length as usize)
-                    .await?;
-                let record = self.decode_frame(entry, &frame)?;
-                if selection.0.get(&record.interval.version) == Some(&record.interval.resource) {
-                    removed += 1;
-                    continue;
-                }
-                if record
-                    .dependencies
-                    .iter()
-                    .any(|version| selection.0.contains_key(version))
-                {
-                    return Err(ArtifactError::Conflict(
-                        "Surviving history depends on a selected version".into(),
-                    ));
-                }
-                writer.write(&frame).await?;
-                entries.push(Entry {
-                    interval: record.interval,
-                    offset,
-                    length: entry.length,
-                });
-                offset += entry.length; // Input and output are each bounded by SEGMENT_BYTES.
+        let mut writer =
+            ArtifactWriter::new(destination, identity, HistorySegment::write_limits()?).await?;
+        let header = segment_header(&self.scope)?;
+        writer.write(&header).await?;
+        let mut offset = header.len() as u32;
+        let mut entries = Vec::with_capacity(self.entries.len() - selection.0.len());
+        let mut removed = 0;
+        let mut reader = SegmentBlockReader::new(source, &self.manifest, source_budget);
+        reader.sequential = true;
+        for entry in &self.entries {
+            let frame = reader
+                .range(u64::from(entry.offset), entry.length as usize)
+                .await?;
+            let record = self.decode_frame(entry, &frame)?;
+            if selection.0.get(&record.interval.version) == Some(&record.interval.resource) {
+                removed += 1;
+                continue;
             }
-            // A shortened key can match a selected UUID absent from this segment.
-            if removed != selection.0.len() {
+            if record
+                .dependencies
+                .iter()
+                .any(|version| selection.0.contains_key(version))
+            {
                 return Err(ArtifactError::Conflict(
-                    "History rewrite selection is stale".into(),
+                    "Surviving history depends on a selected version".into(),
                 ));
             }
-            writer.write(&segment_index(&entries)?).await?;
-            let manifest = writer.seal().await?;
-            let proof = verify(store, &manifest).await?;
-            let mut reopen = ByteLimit::new(SEGMENT_BYTES).start();
-            let segment = HistorySegment::open_verified(store, proof, &mut reopen).await?;
-            Ok(StagedSegmentRewrite {
-                segment,
-                verification_bytes: manifest.encoded_len() as u64
-                    + manifest.byte_size()
-                    + reopen.used() as u64,
-            })
+            writer.write(&frame).await?;
+            entries.push(Entry {
+                interval: record.interval,
+                offset,
+                length: entry.length,
+            });
+            offset += entry.length; // Input and output are each bounded by SEGMENT_BYTES.
         }
-        .await;
-        match result {
-            Ok(segment) => Ok(segment),
-            Err(primary) => match store.abort(&identity).await {
-                Ok(()) => Err(primary),
-                Err(abort) => Err(ArtifactError::AbortFailed {
-                    primary: Box::new(primary),
-                    abort: Box::new(abort),
-                }),
-            },
+        // A shortened key can match a selected UUID absent from this segment.
+        if removed != selection.0.len() {
+            return Err(ArtifactError::Conflict(
+                "History rewrite selection is stale".into(),
+            ));
         }
+        writer.write(&segment_index(&entries)?).await?;
+        let manifest = writer.seal().await?;
+        let proof = verify(destination, &manifest).await?;
+        let mut reopen = ByteLimit::new(SEGMENT_BYTES).start();
+        let segment = HistorySegment::open_verified(destination, proof, &mut reopen).await?;
+        Ok(StagedSegmentRewrite {
+            segment,
+            verification_bytes: manifest.encoded_len() as u64
+                + manifest.byte_size()
+                + reopen.used() as u64,
+        })
     }
 }
