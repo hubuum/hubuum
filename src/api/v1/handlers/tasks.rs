@@ -210,7 +210,7 @@ pub async fn get_tasks(
     let is_admin = requestor.scopes().is_none() && backend.is_admin(&principal).await?;
     let submitted_by_filter = if is_admin {
         filters.submitted_by
-    } else if backend.supports_storage_visibility_filtering() {
+    } else if requestor.scopes().is_some() || backend.supports_storage_visibility_filtering() {
         Some(requestor.principal.id().id())
     } else {
         None

@@ -26,7 +26,10 @@ Authentication:
 Access rules:
 
 - the submitting user can view the task
-- admins can view any task
+- unscoped administrators can view any task under local authorization
+- a scoped token can read only tasks submitted by its principal, subject to
+  the configured policy backend and the separate restrictions on schema tasks
+  and output downloads
 
 ## Task kinds
 
@@ -244,7 +247,9 @@ This returns a paginated list of tasks visible to the caller.
 
 Visibility rules:
 
-- admins see all tasks
+- unscoped administrators see all tasks under local authorization
+- scoped credentials list only tasks submitted by their principal, including
+  when an external task-read policy grants broader access
 - non-admin users automatically see only their own tasks; no `submitted_by` parameter is needed or effective
 
 Example response:

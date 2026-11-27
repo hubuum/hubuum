@@ -543,22 +543,24 @@ where
         )));
     }
 
+    let is_schema_validation = task.kind == TaskKind::SchemaValidation.as_str();
+    if scopes.is_some()
+        && (is_schema_validation || task.submitted_by != Some(requestor.principal_id()))
+    {
+        return Err(ApiError::NotFound(format!("{label} not found")));
+    }
     let principal = PrincipalRef::load(backend, requestor).await?;
     let authorization_mode = backend.authorization_mode();
-    // Administrator fast paths apply only to unscoped tokens. A scoped token is
-    // a least-privilege boundary even for an administrator principal.
-    let unscoped_admin = if scopes.is_some() {
-        false
-    } else {
-        match &authorization_mode {
+    if is_schema_validation {
+        let is_admin = match &authorization_mode {
             AuthorizationMode::LocalStorage => requestor.is_admin(backend).await?,
             AuthorizationMode::Delegated(permission_backend) => {
                 permission_backend.is_admin(&principal).await?
             }
+        };
+        if !is_admin {
+            return Err(ApiError::NotFound(format!("{label} not found")));
         }
-    };
-    if task.kind == TaskKind::SchemaValidation.as_str() && !unscoped_admin {
-        return Err(ApiError::NotFound(format!("{label} not found")));
     }
     let local = matches!(authorization_mode, AuthorizationMode::LocalStorage);
     let allowed = match authorization_mode {
@@ -567,8 +569,8 @@ where
                 .get_authentication_identity(requestor.validated_principal_id()?)
                 .await?
                 .into_parts();
-            unscoped_admin
-                || task.submitted_by == Some(principal.user_id)
+            task.submitted_by == Some(principal.user_id)
+                || (scopes.is_none() && requestor.is_admin(backend).await?)
                 || (identity.is_human()
                     && submitter_owner_group_id
                         .is_some_and(|group_id| principal.group_ids.contains(&group_id.id())))
