@@ -612,7 +612,7 @@ async fn incomplete_archives_never_claim_complete(
                     HistoryArchiveDescriptor::new(
                         &row,
                         vec![],
-                        if kind == 3 { 3 } else { 1 },
+                        if kind == 3 { u16::MAX } else { 1 },
                         descriptor.location().clone(),
                     )
                     .unwrap()

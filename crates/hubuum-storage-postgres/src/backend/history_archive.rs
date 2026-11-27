@@ -2,6 +2,8 @@
 #[cfg(feature = "integration-test-support")]
 pub(crate) mod allocation;
 mod cleanup;
+#[cfg(feature = "integration-test-support")]
+mod packed;
 use super::*;
 use crate::PostgresConnection;
 use chrono::{DateTime, Utc};

@@ -6,7 +6,7 @@
 
 pub mod computed_lock_protocol;
 pub use crate::backend::history_archive::allocation::{
-    ArchiveCatalogAllocation, measure_archive_catalog_allocation,
+    ArchiveCatalogAllocation, ArchiveProviderAllocation, measure_archive_catalog_allocation,
 };
 
 // Adapter unit tests share the runner's isolated restore database. Other test
