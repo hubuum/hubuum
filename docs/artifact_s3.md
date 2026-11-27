@@ -145,6 +145,74 @@ empty listing is not a global erasure receipt. Control/ownership metadata and it
 historical S3 versions remain retained; this capability does not claim permanent
 erasure or bounded total metadata growth.
 
+## Cold retrieval qualification plan
+
+[#517](https://github.com/hubuum/hubuum/issues/517) requires separate evidence for
+asynchronous retrieval. The candidate for qualification is a private,
+version-enabled AWS general purpose bucket, the S3 Glacier Flexible Retrieval
+storage class (`GLACIER`), and the Standard retrieval tier. The warm adapter
+above remains the supported behavior for the qualified MinIO fixture. The
+project currently has no live AWS test environment. The cases below describe
+acceptance work for the cold implementation.
+
+### Fixture and identity
+
+Use a segment with two independently verified data blocks, including a short
+final block. Record the logical destination, artifact, attempt, immutable
+manifest and the exact S3 version of each block before transition. Keep control
+and manifest objects directly readable. Overwrite one test key with a different
+current version after verification. Every subsequent observation, restore
+request, read and cleanup must still name the original version. Verify that the
+selected lifecycle rule actually transitions small blocks. AWS's default
+excludes objects smaller than 128 KB.
+[AWS lifecycle transition constraints](https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-transition-general-considerations.html)
+
+AWS accepts a new `RestoreObject` request with HTTP 202. A repeated request may
+report `RestoreAlreadyInProgress`; a restore requested for an already-readable
+copy may return 200 and change the temporary-copy expiry. Reconcile the exact
+version with `HeadObject` after a lost response, notification or restart. Bind
+each observation to its stored intent. Only verified readable blocks can
+support publication of a ready result. The product's original expiry clock and
+the provider's temporary-copy clock have independent effects.
+[AWS RestoreObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_RestoreObject.html)
+and [AWS HeadObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html)
+
+### Deterministic server cases
+
+Exercise the real admission, checkpoint, worker, authorization and result paths
+with a delayed provider and a controllable clock. Persist its observations
+across API and worker restarts. A simulated response needs a matching durable
+server outcome for a case to pass.
+
+| Case | Required observation |
+| --- | --- |
+| Two consumers request the same version | Each principal can discover only its own authorized request. One set of physical block retrievals is charged. An unrelated queued task runs while both consumers wait. |
+| Logout, restart, next-day read | Submit, log out and restart the API and workers while the blocks are pending. Let both become readable. More than 24 hours after the server records readiness, read the same result from a new authorized login. With a 48-hour configuration and sufficient source and provider lifetime, access expires at the promised deadline. |
+| Partial readiness and ambiguous replies | Start one block restore, lose its reply, restart, and deliver a notification twice. Keep the second block pending. Reconcile the first exact version, retain the cumulative work charge, and publish once after both blocks verify. |
+| Temporary availability too short | Supply an earlier provider deadline for one block. A 48-hour promise requires a verified, reserved result copy covering the window. Without it, report the bounded outcome and actual availability. Preserve earlier source expiry and current erasure or access restrictions. |
+| Cancellation and authorization | Cancel one waiting consumer, then revoke another consumer while a block is becoming ready. Recheck access at publication and download. Account for a physical retrieval that finishes after its last consumer leaves. |
+| Corruption, locks and erasure | Substitute bytes from the newer version, hold an exact version, and race erasure with a late provider completion in separate runs. Corruption prevents complete coverage. A locked managed version retains a blocker. A late completion cannot republish an erased version. |
+| Directly readable or unsupported destination | An immediately readable warm segment proceeds through its normal path. A generic S3 endpoint or an unverified storage-class configuration cannot advertise the AWS cold profile. |
+
+### Live AWS evidence
+
+When an authorized test environment is available, run the named profile on
+disposable synthetic data. Keep a read-back digest for every staged block.
+Observe the transition and capture each exact version's storage class, pending
+state, temporary expiry, verified read and eventual loss of temporary access.
+Record actual request and retrieval counts, API/worker restart points, server
+release and region. The minimum temporary deadline across required blocks
+bounds provider-backed availability. An exact-version deletion rejected under
+Object Lock remains an outstanding obligation. A delete marker cannot close it.
+[AWS Object Lock behavior](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html)
+
+Attach a sanitized result to #517. Include the cases run, observed timestamps,
+outstanding locked versions and final cleanup evidence. Keep credentials,
+bucket names, object keys, provider version IDs and payloads out of public
+evidence. Until that provider run exists, record live AWS qualification as
+outstanding. The delayed fixture can establish the 48-hour and next-day server
+behavior independently.
+
 ## Verification and benchmarks
 
 Run the explicit fixture harness with Python 3.11+ and only its standard library:
