@@ -377,6 +377,16 @@ historical authorization facts and a SHA-256 commitment, so `hot()` returns
 `None` for that representation. Upgrade readers of persisted query pins before
 admitting compact pins. Publication continues to use full-row snapshots.
 
+For large collection descriptions, `retained_primary_descriptor` identifies
+the one supported entry for which a native projection is valid. The adapter
+can return a normal full row or pass a single snapshot's description digest,
+escaped UTF-8 byte count and projected row to `observe_primary_description`.
+The projected row has an empty description. The returned input preserves the
+bounded historical authorization facts for incomplete coverage, and only an
+observed match can create a verified read pin. Full captures and publication
+must still read the original row. Upgrade exhaustive matches on
+`HistoryArchiveInput` for `ObservedPrimary` and `CorruptPrimary`.
+
 Deploy migrations through `2026-11-19-000001_idle_task_scheduling` and refresh
 runtime function grants before running this server. The archive migrations
 install a protected fixed-true

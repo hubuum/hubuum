@@ -9,6 +9,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **Breaking archive catalog reader change.** Newly published collection
+  descriptors with descriptions of at least 1 MiB include
+  `primary_commitment_v1`. PostgreSQL can then verify the observed primary
+  without transferring the description to the server process. Upgrade archive
+  catalog, query-pin and recovery readers before publishing such versions.
+  Existing descriptors continue to use full-primary verification. Storage
+  adapters with exhaustive matches on `HistoryArchiveInput` must handle the
+  observed-primary and corrupt-primary outcomes.
 - Retained collection history reads now verify the closed primary once and
   reuse its identity, interval, historical authorization and content digest for
   later checks. **Breaking persisted archive pin format.** Upgrade processes

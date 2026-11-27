@@ -539,6 +539,58 @@ async fn catalog_persists_and_service_reads_retained_segment(#[case] as_of: bool
     }
 }
 
+#[cfg(feature = "integration-test-support")]
+#[rstest]
+#[case::with_primary_commitment(true)]
+#[case::legacy_full_primary(false)]
+#[actix_web::test]
+async fn retained_read_reconstructs_the_original_large_escaped_description(
+    #[case] has_commitment: bool,
+) {
+    with_overflow_backend(async |ctx| {
+        let description = "δ\n\"\\x".repeat(200_000);
+        ctx.storage
+            .collection_store()
+            .update_collection(
+                ctx.fixture.collection.id(),
+                StorageCollectionUpdate::new(None, Some(description)),
+                &EventContext::system(),
+            )
+            .await
+            .unwrap()
+            .into_value();
+        let row = ctx.closed().await;
+        let descriptor = ctx.descriptor(&row, false, Vec::new()).await;
+        let descriptor = if has_commitment {
+            descriptor
+        } else {
+            let mut legacy = serde_json::to_value(descriptor).unwrap();
+            legacy
+                .as_object_mut()
+                .unwrap()
+                .remove("primary_commitment_v1")
+                .unwrap();
+            serde_json::from_value(legacy).unwrap()
+        };
+        ctx.publish(descriptor).await;
+        let query = ctx
+            .query(HistoryArchivePoint::Exact {
+                version: row.identity().version(),
+            })
+            .await;
+        let result = query
+            .execute(&ctx.context, &ctx.subject, None)
+            .await
+            .unwrap();
+        let view = result
+            .access(&ctx.context, &ctx.subject, None)
+            .await
+            .unwrap();
+        assert_eq!(view.row(), Some(&row));
+    })
+    .await;
+}
+
 #[actix_web::test]
 async fn captured_open_version_is_unchanged_by_later_closure() {
     let _permit = postgres_permit().await;

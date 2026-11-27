@@ -113,6 +113,10 @@ impl HistoryArchiveSelection {
     pub const fn point(&self) -> &HistoryArchivePoint {
         &self.point
     }
+    fn covers_descriptor(&self, entry: &HistoryArchiveDescriptor) -> bool {
+        self.matches_interval(entry.identity, entry.valid_from, Some(entry.valid_to))
+    }
+
     pub fn matches(&self, row: &HistoryArchiveRow) -> bool {
         self.matches_interval(row.identity, row.valid_from, row.valid_to)
     }
@@ -257,6 +261,8 @@ pub struct HistoryArchiveDescriptor {
     valid_from: DateTime<Utc>,
     valid_to: DateTime<Utc>,
     payload_digest: [u8; 32],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    primary_commitment_v1: Option<[u8; 32]>,
     dependencies: Vec<VersionIdentity>,
     format_version: u16,
     location: ArtifactReference,
@@ -268,6 +274,7 @@ struct DescriptorInput {
     valid_from: DateTime<Utc>,
     valid_to: DateTime<Utc>,
     payload_digest: [u8; 32],
+    primary_commitment_v1: Option<[u8; 32]>,
     dependencies: Vec<VersionIdentity>,
     format_version: u16,
     location: ArtifactReference,
@@ -280,6 +287,7 @@ impl TryFrom<DescriptorInput> for HistoryArchiveDescriptor {
             valid_from: value.valid_from,
             valid_to: value.valid_to,
             payload_digest: value.payload_digest,
+            primary_commitment_v1: value.primary_commitment_v1,
             dependencies: value.dependencies,
             format_version: value.format_version,
             location: value.location,
@@ -301,6 +309,7 @@ impl HistoryArchiveDescriptor {
             valid_to: row
                 .valid_to
                 .ok_or_else(|| invalid("Only closed versions can be catalogued"))?,
+            primary_commitment_v1: Self::primary_commitment(row)?,
             payload_digest: Sha256::digest(history_archive_encoded_bytes(
                 &row.payload,
                 HISTORY_ARCHIVE_ROW_BYTES,
@@ -332,11 +341,12 @@ impl HistoryArchiveDescriptor {
     }
 
     fn matches_payload(&self, payload: &Value) -> Result<bool, StorageError> {
-        Ok(self.payload_digest
-            == <[u8; 32]>::from(Sha256::digest(history_archive_encoded_bytes(
-                payload,
-                HISTORY_ARCHIVE_ROW_BYTES,
-            )?)))
+        Ok(self.matches_primary_commitment(payload)?
+            && self.payload_digest
+                == <[u8; 32]>::from(Sha256::digest(history_archive_encoded_bytes(
+                    payload,
+                    HISTORY_ARCHIVE_ROW_BYTES,
+                )?)))
     }
     pub const fn identity(&self) -> StorageRecordIdentity {
         self.identity
@@ -541,6 +551,8 @@ impl HistoryArchiveAuthorization {
 
 /// Correlated source observations; an overflow retains only bounded auth facts.
 pub enum HistoryArchiveInput {
+    ObservedPrimary(HistoryArchiveObservedPrimary),
+    CorruptPrimary(HistoryArchiveAuthorization),
     Available(HistoryArchiveRow),
     CompleteEmpty,
     Unavailable,
@@ -576,6 +588,31 @@ impl HistoryArchiveCaptureRequest {
     pub const fn for_retained_read(mut self) -> Self {
         self.retained_read = true;
         self
+    }
+
+    /// A native adapter can project a large description only for the single
+    /// supported descriptor selected by this opted-in read. Legacy catalogs,
+    /// publication and ambiguous matches take the full source path.
+    pub fn retained_primary_descriptor<'a>(
+        &self,
+        catalog: &'a HistoryArchiveCatalog,
+    ) -> Option<&'a HistoryArchiveDescriptor> {
+        if !self.retained_read
+            || self.generation != catalog.generation
+            || self.selection.family != StorageBackupHistorySection::CollectionHistory
+        {
+            return None;
+        }
+        let mut matches = catalog
+            .versions
+            .iter()
+            .filter(|entry| self.selection.covers_descriptor(entry));
+        let entry = matches.next()?;
+        (matches.next().is_none()
+            && entry.primary_commitment_v1.is_some()
+            && entry.supported_format()
+            && entry.dependencies.is_empty())
+        .then_some(entry)
     }
 
     pub const fn principal(&self) -> PrincipalIdentity {
@@ -664,6 +701,13 @@ enum CapturedPrimary {
 }
 
 impl CapturedPrimary {
+    fn interval(&self) -> (DateTime<Utc>, Option<DateTime<Utc>>) {
+        match self {
+            Self::Full(row) => (row.valid_from, row.valid_to),
+            Self::Verified { proof } => (proof.valid_from, Some(proof.valid_to)),
+        }
+    }
+
     fn identity(&self) -> StorageRecordIdentity {
         match self {
             Self::Full(row) => row.identity(),
@@ -802,10 +846,33 @@ impl HistoryArchiveCapture {
                     row.collection().name(),
                 )?;
                 (
-                    Some(row),
+                    Some(CapturedPrimary::Full(row)),
                     Some(facts),
                     HistoryArchiveCoverageState::Complete,
                 )
+            }
+            HistoryArchiveInput::ObservedPrimary(observed) => {
+                let proof = observed.proof;
+                if request
+                    .retained_primary_descriptor(catalog)
+                    .is_none_or(|descriptor| {
+                        descriptor.primary_commitment_v1 != Some(observed.commitment)
+                            || !proof.matches(descriptor, &request.selection)
+                    })
+                {
+                    return Err(invalid(
+                        "Primary observation differs from the selected descriptor",
+                    ));
+                }
+                let facts = proof.authorization.clone();
+                (
+                    Some(CapturedPrimary::Verified { proof }),
+                    Some(facts),
+                    HistoryArchiveCoverageState::Complete,
+                )
+            }
+            HistoryArchiveInput::CorruptPrimary(facts) => {
+                (None, Some(facts), HistoryArchiveCoverageState::Corrupt)
             }
             HistoryArchiveInput::BudgetLimited(facts) => (
                 None,
@@ -819,44 +886,39 @@ impl HistoryArchiveCapture {
                 (None, None, HistoryArchiveCoverageState::Unavailable)
             }
         };
-        if hot
-            .as_ref()
-            .is_some_and(|row| !request.selection.matches(row))
-        {
+        if hot.as_ref().is_some_and(|primary| {
+            let (start, end) = primary.interval();
+            !request
+                .selection
+                .matches_interval(primary.identity(), start, end)
+        }) {
             return Err(invalid("Captured input differs from selection"));
         }
         // Resolve retained coverage from the immutable request, never from a
         // possibly older hot version supplied by a logical restore.
-        let mut candidates =
-            catalog
-                .versions
-                .iter()
-                .filter(|entry| match request.selection.point {
-                    HistoryArchivePoint::Exact { version } => entry.identity.version() == version,
-                    HistoryArchivePoint::AsOf { at } => {
-                        entry.valid_from <= at && at < entry.valid_to
-                    }
-                });
+        let mut candidates = catalog
+            .versions
+            .iter()
+            .filter(|entry| request.selection.covers_descriptor(entry));
         let candidate = candidates.next();
         let ambiguous = candidates.next().is_some();
         let missing_primary = candidate.is_some_and(|entry| {
             hot.as_ref()
-                .is_none_or(|row| row.identity != entry.identity)
+                .is_none_or(|primary| primary.identity() != entry.identity)
         });
         // A restored open primary can outlive its own retained closure even
         // when no descriptor covers the requested instant. That gap cannot
         // be filled by the older primary's payload.
-        let (hot_descriptor, retained_overlap) = hot.as_ref().map_or((None, false), |row| {
+        let (hot_descriptor, retained_overlap) = hot.as_ref().map_or((None, false), |primary| {
+            let (start, end) = primary.interval();
             let mut own = None;
             let mut overlap = false;
             // A second bounded catalog pass checks the source's whole original
             // interval, including newer retained intervals that already ended.
             for entry in &catalog.versions {
-                if entry.identity == row.identity {
+                if entry.identity == primary.identity() {
                     own = Some(entry);
-                } else if row.valid_from < entry.valid_to
-                    && row.valid_to.is_none_or(|end| entry.valid_from < end)
-                {
+                } else if start < entry.valid_to && end.is_none_or(|end| entry.valid_from < end) {
                     overlap = true;
                 }
             }
@@ -869,8 +931,16 @@ impl HistoryArchiveCapture {
         let verified = hot_descriptor
             .zip(hot.as_ref())
             .zip(authorization.as_ref())
-            .and_then(|((descriptor, row), facts)| {
-                VerifiedPrimary::from_observation(row, descriptor, facts)
+            .and_then(|((descriptor, primary), facts)| match primary {
+                CapturedPrimary::Full(row) => {
+                    VerifiedPrimary::from_observation(row, descriptor, facts)
+                }
+                CapturedPrimary::Verified { proof }
+                    if proof.matches(descriptor, &request.selection) =>
+                {
+                    Some(proof.clone())
+                }
+                CapturedPrimary::Verified { .. } => None,
             });
         let hot_content_changed = hot_descriptor.is_some() && verified.is_none();
         let archive = candidate
@@ -902,11 +972,12 @@ impl HistoryArchiveCapture {
         } else {
             HistoryArchiveCoverageState::Complete
         };
-        let hot = match (request.retained_read, coverage, archive.as_ref(), verified) {
-            (true, HistoryArchiveCoverageState::Complete, Some(_), Some(proof)) => {
-                Some(CapturedPrimary::Verified { proof })
+        let (hot, archive) = match (request.retained_read, coverage, archive, verified) {
+            (true, HistoryArchiveCoverageState::Complete, Some(entry), Some(proof)) => {
+                (Some(CapturedPrimary::Verified { proof }), Some(entry))
             }
-            _ => hot.map(CapturedPrimary::Full),
+            _ if matches!(hot, Some(CapturedPrimary::Verified { .. })) => (None, None),
+            (_, _, entry, _) => (hot, entry),
         };
         let capture = Self {
             id: Uuid::new_v4(),
@@ -1230,6 +1301,9 @@ pub trait HistoryArchiveStorage: Send + Sync {
 
 #[cfg(test)]
 mod tests;
+
+mod primary_observation;
+pub use primary_observation::HistoryArchiveObservedPrimary;
 
 mod execution;
 pub use execution::{
