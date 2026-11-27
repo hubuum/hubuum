@@ -256,7 +256,7 @@ async fn full_pipeline_resource_probe() {
             };
             let manifest = ArtifactManifest::decode(&storage.manifest(reference.identity()).await.unwrap(), reference.identity(), ArtifactLimits::format_ceiling()).unwrap();
             // The production response stream sees a slow consumer without retaining the output.
-            let mut download = Box::pin(crate::services::artifacts::download(&storage, reference.clone()));
+            let mut download = crate::services::artifacts::download(&storage, reference.clone()).await.unwrap().into_stream();
             let mut digest = Sha256::new(); let mut downloaded = 0;
             while let Some(block) = download.next().await {
                 let block = block.unwrap(); downloaded += block.len() as u64; digest.update(&block);

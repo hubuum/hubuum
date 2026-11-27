@@ -3,11 +3,11 @@ use std::future::ready;
 use std::io;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, OnceLock};
-use std::task::Poll;
 
 use actix_web::web::Bytes;
 use chrono::{DateTime, Utc};
-use futures_util::{FutureExt, Stream, stream};
+use futures_util::stream::LocalBoxStream;
+use futures_util::{FutureExt, StreamExt, stream};
 use hubuum_artifacts::{
     ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactReader, ArtifactReference,
     ArtifactReservation, Destination, DestinationId, TaskArtifactCleanup, TaskArtifactStore,
@@ -15,6 +15,7 @@ use hubuum_artifacts::{
 use hubuum_storage_core::{
     HistoryLifecycleStorage, HistoryPublicationKind, HistoryPublicationOwner,
 };
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::errors::ApiError;
@@ -240,54 +241,71 @@ async fn abort_output(
     }
 }
 
-/// Call only after live task/output authorization. Stream completion is withheld
-/// until the reader checks the last block, exact length and full-stream digest.
-pub(crate) fn download(
+/// The expected payload identity and the reader for those exact bytes.
+pub(crate) struct OutputDownload {
+    byte_size: u64,
+    sha256: [u8; 32],
+    body: LocalBoxStream<'static, io::Result<Bytes>>,
+}
+
+impl OutputDownload {
+    pub(crate) fn inline(bytes: Bytes) -> Self {
+        Self {
+            byte_size: bytes.len() as u64,
+            sha256: Sha256::digest(&bytes).into(),
+            body: stream::once(ready(Ok(bytes))).boxed_local(),
+        }
+    }
+
+    pub(crate) fn byte_size(&self) -> u64 {
+        self.byte_size
+    }
+
+    pub(crate) fn sha256(&self) -> &[u8; 32] {
+        &self.sha256
+    }
+
+    pub(crate) fn into_stream(self) -> LocalBoxStream<'static, io::Result<Bytes>> {
+        self.body
+    }
+}
+
+/// Call only after live task/output authorization. The response uses the same
+/// published manifest for its headers and every verified body block.
+pub(crate) async fn download(
     context: &impl StorageContext,
     reference: ArtifactReference,
-) -> impl Stream<Item = Result<Bytes, io::Error>> + 'static {
+) -> Result<OutputDownload, ApiError> {
     let storage = storage_handle(context);
     let scope = storage.current_execution_scope();
-    let store = storage.artifact_store();
-    // Poll the reader as part of the body, preserving its original scope even
-    // after the handler has returned. Dropping the body drops the reader future
-    // and its bounded queued block; no detached task can continue producing.
-    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
-    let reader = async move {
-        let result = storage
-            .run_in_scope(scope, async {
-                let mut reader = ArtifactReader::open(store.as_ref(), &reference)
-                    .await
-                    .map_err(error)?;
-                while let Some(block) = reader.next_block().await.map_err(error)? {
-                    if sender.send(Ok(Bytes::from(block))).await.is_err() {
-                        return Ok(());
-                    }
-                }
-                Ok::<_, ApiError>(())
-            })
-            .await;
-        if let Err(error) = result {
-            let _ = sender.send(Err(io::Error::other(error.to_string()))).await;
-        }
-    };
-    let mut reader = Some(Box::pin(AssertUnwindSafe(reader).catch_unwind()));
-    let mut failed = false;
-    stream::poll_fn(move |cx| {
-        if failed {
-            return Poll::Ready(None);
-        }
-        if let Some(work) = &mut reader
-            && let Poll::Ready(result) = work.as_mut().poll(cx)
-        {
-            reader = None;
-            if result.is_err() {
-                // As with a failed joined task, a panic must not become EOF.
-                failed = true;
-                receiver.close();
-                return Poll::Ready(Some(Err(io::Error::other("Artifact reader panicked"))));
-            }
-        }
-        receiver.poll_recv(cx)
+    let mut reader = ArtifactReader::open_shared(storage.artifact_store(), &reference)
+        .await
+        .map_err(error)?;
+    let byte_size = reader.manifest().byte_size();
+    let sha256 = *reader.manifest().stream_digest();
+    if byte_size == 0 {
+        // HTTP can finish a zero-length response without ever polling its body.
+        reader.next_block().await.map_err(error)?;
+    }
+
+    let body = stream::try_unfold(
+        (reader, storage, scope),
+        |(mut reader, storage, scope)| async move {
+            // Dropping the body cancels a pending read. Keep the original authorization
+            // and execution scope for each poll after the handler has returned.
+            let read = storage.run_in_scope(scope.clone(), reader.next_block());
+            let block = AssertUnwindSafe(read)
+                .catch_unwind()
+                .await
+                .map_err(|_| io::Error::other("Artifact reader panicked"))?
+                .map_err(io::Error::other)?;
+            Ok(block.map(|bytes| (Bytes::from(bytes), (reader, storage, scope))))
+        },
+    )
+    .boxed_local();
+    Ok(OutputDownload {
+        byte_size,
+        sha256,
+        body,
     })
 }

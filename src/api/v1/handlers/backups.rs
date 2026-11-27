@@ -1,8 +1,9 @@
 use crate::api::response::{ApiErrorResponse, ApiResponse};
 use crate::models::TaskDetailsExpiredResponse;
+use crate::services::artifacts::{OutputDownload, download};
 use crate::services::tasks::TaskSubmissionOperation;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
-use base64::Engine;
+use base64::{Engine, engine::general_purpose::STANDARD};
 
 use crate::api::locations as api_locations;
 use crate::errors::ApiError;
@@ -17,34 +18,37 @@ use crate::services::tasks::{
 };
 use crate::tasks::{idempotency_key_from_headers, request_hash};
 
-fn digest_header_from_sha256(sha256: &str) -> Result<String, ApiError> {
-    let encoded = sha256.as_bytes();
-    if encoded.len() != 64 {
-        return Err(invalid_stored_sha256());
+fn render_backup_download(
+    body: OutputDownload,
+    task_id: TaskID,
+    byte_size: i64,
+    sha256: &str,
+) -> Result<HttpResponse, ApiError> {
+    let hex: String = body
+        .sha256()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if u64::try_from(byte_size).ok() != Some(body.byte_size()) || !hex.eq_ignore_ascii_case(sha256)
+    {
+        return Err(ApiError::InternalServerError(
+            "Stored backup metadata differs from the output".into(),
+        ));
     }
-
-    let mut decoded = [0_u8; 32];
-    for (byte, pair) in decoded.iter_mut().zip(encoded.as_chunks::<2>().0) {
-        let high = decode_hex_nibble(pair[0]).ok_or_else(invalid_stored_sha256)?;
-        let low = decode_hex_nibble(pair[1]).ok_or_else(invalid_stored_sha256)?;
-        *byte = (high << 4) | low;
-    }
-
-    let digest = base64::engine::general_purpose::STANDARD.encode(decoded);
-    Ok(format!("sha-256={digest}"))
-}
-
-fn decode_hex_nibble(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn invalid_stored_sha256() -> ApiError {
-    ApiError::InternalServerError("Stored backup SHA-256 is invalid".to_string())
+    let digest = STANDARD.encode(body.sha256());
+    let mut response = HttpResponse::Ok();
+    response
+        .content_type("application/json")
+        .insert_header((
+            "Content-Disposition",
+            format!(
+                "attachment; filename=\"hubuum-backup-{}.json\"",
+                task_id.id()
+            ),
+        ))
+        .insert_header(("Digest", format!("sha-256={digest}")))
+        .insert_header(("X-Hubuum-Backup-SHA256", hex));
+    Ok(body.respond(&mut response))
 }
 
 #[utoipa::path(
@@ -145,6 +149,8 @@ pub async fn get_backup(
             headers(
                 ("Cache-Control" = String, description = "Always no-store for credential-bearing artifacts"),
                 ("Content-Disposition" = String, description = "Attachment filename for the backup document"),
+                ("Content-Length" = u64, description = "Exact byte count of the complete backup document"),
+                ("Content-Digest" = String, description = "RFC 9530 SHA-256 digest of the complete response content"),
                 ("Digest" = String, description = "Base64-encoded SHA-256 content digest"),
                 ("X-Hubuum-Backup-SHA256" = String, description = "Lowercase hexadecimal SHA-256 digest")
             )
@@ -165,27 +171,18 @@ pub async fn get_backup_output(
     load_authorized_backup(&context, admin.principal(), task_id).await?;
     match backup_output(&context, task_id).await? {
         BackupOutputLookup::Available(output) => {
-            let digest = digest_header_from_sha256(&output.sha256)?;
-            let mut response = HttpResponse::Ok();
-            response
-                .content_type("application/json")
-                .insert_header(("Cache-Control", "no-store"))
-                .insert_header((
-                    "Content-Disposition",
-                    format!(
-                        "attachment; filename=\"hubuum-backup-{}.json\"",
-                        task_id.id()
-                    ),
-                ))
-                .insert_header(("Digest", digest))
-                .insert_header(("X-Hubuum-Backup-SHA256", output.sha256));
-            if let Some(reference) = output.artifact_reference {
-                Ok(response.streaming(crate::services::artifacts::download(&context, reference)))
-            } else {
-                Ok(response.body(output.document.ok_or_else(|| {
-                    ApiError::InternalServerError("Missing backup document".into())
-                })?))
-            }
+            let body = match output.artifact_reference {
+                Some(reference) => download(&context, reference).await?,
+                None => OutputDownload::inline(
+                    output
+                        .document
+                        .ok_or_else(|| {
+                            ApiError::InternalServerError("Missing backup document".into())
+                        })?
+                        .into(),
+                ),
+            };
+            render_backup_download(body, task_id, output.byte_size, &output.sha256)
         }
         BackupOutputLookup::Expired { expires_at } => Err(ApiError::Gone(format!(
             "Backup output expired at {expires_at} UTC"
@@ -200,26 +197,39 @@ pub async fn get_backup_output(
 mod tests {
     use super::*;
 
-    #[test]
-    fn digest_header_decodes_stored_sha256_hex() {
-        let digest = digest_header_from_sha256(
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        )
-        .unwrap();
+    use rstest::rstest;
 
+    const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    #[test]
+    fn empty_backup_digest_headers_identify_the_same_bytes() {
+        let body = OutputDownload::inline(web::Bytes::new());
+        let response =
+            render_backup_download(body, TaskID::new(1).unwrap(), 0, EMPTY_SHA256).unwrap();
+        let digest = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
         assert_eq!(
-            digest,
-            "sha-256=47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+            response.headers().get("Digest").unwrap(),
+            &format!("sha-256={digest}")
         );
+        assert_eq!(
+            response.headers().get("Content-Digest").unwrap(),
+            &format!("sha-256=:{digest}:")
+        );
+        assert_eq!(response.headers().get("Content-Length").unwrap(), "0");
     }
 
-    #[test]
-    fn digest_header_rejects_invalid_stored_sha256() {
-        let error = digest_header_from_sha256(
-            "z3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        )
-        .unwrap_err();
-
-        assert!(matches!(error, ApiError::InternalServerError(_)));
+    #[rstest]
+    #[case::wrong_size(1, EMPTY_SHA256)]
+    #[case::wrong_digest(0, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    #[case::malformed_digest(0, "invalid")]
+    fn inconsistent_backup_metadata_fails_before_headers(
+        #[case] length: i64,
+        #[case] digest: &str,
+    ) {
+        let body = OutputDownload::inline(web::Bytes::new());
+        assert!(matches!(
+            render_backup_download(body, TaskID::new(1).unwrap(), length, digest),
+            Err(ApiError::InternalServerError(_))
+        ));
     }
 }

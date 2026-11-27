@@ -92,12 +92,33 @@ Readers validate the bounded manifest, identity, length and ordered blocks befor
 release. They hold the last block until full-stream SHA-256 and exact EOF pass.
 Truncation, extra blocks, reordered/substituted content and manifest corruption
 cannot finish successfully. A failed or panicking reader cannot become a clean
-EOF. Range reads are outside this contract.
+EOF. The server checks an empty artifact for unexpected blocks before sending
+headers because HTTP can complete a zero-length response immediately.
 
-Existing output authorization remains at the download boundary. Backups recheck
-administrator authorization before publication, and exports recheck template
-access. New downloads stream through a bounded channel and cancel further reads
-when the consumer disconnects.
+An authorized task's output URL identifies the retained backup or export. Its
+task details report availability and expiry. On a successful GET, `Content-Length`
+counts the exact response bytes, and `Content-Digest` carries their SHA-256 in
+the form `sha-256=:<base64>:` ([RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html#section-2)).
+The server sends the stored bytes without HTTP content coding. Hash JSON and text
+before decoding or reformatting them. Backups also include the legacy `Digest`
+and `X-Hubuum-Backup-SHA256` headers. A mismatch between the backup task's
+recorded size or digest and the output fails the request before headers.
+
+The server reads one verified block at a time and cancels pending reads when the
+consumer disconnects. If verification fails after headers, the stream ends with
+a transport error. Save to a temporary file and publish it only after a clean
+end of stream, the expected byte count and a matching digest. A `Range` request
+returns the full output with status 200. To retry while the task output remains
+available, discard the partial file and repeat the authorized GET from byte zero.
+
+Each download rechecks output authorization. A proxy forwarding these headers
+must preserve the response bytes, propagate stream errors and avoid compression
+or other transformations. The [frontend proxy header allowlist](https://github.com/hubuum/hubuum-frontend/blob/ca50d65f2e77c243fc773b5b8779f48616c7685e/src/lib/api/proxy-response-headers.ts)
+forwards the two legacy backup headers. A component check on that revision
+preserved complete bytes and propagated an upstream stream error after a partial
+read. The allowlist omitted `Content-Length` and `Content-Digest`.
+[Frontend #184](https://github.com/hubuum/hubuum-frontend/issues/184) tracks
+end-to-end browser verification.
 
 **Legacy exception:** outputs stored inline by older binaries remain readable
 through their existing JSON/text/byte readers. Those readers materialize the old

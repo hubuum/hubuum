@@ -104,6 +104,12 @@ GET /api/v1/exports/12/output
 - `details.export.warning_count`
 - `details.export.truncated`
 
+The output GET returns the complete JSON, text, HTML or CSV with its byte count
+in `Content-Length` and SHA-256 in `Content-Digest`. Check both against the
+downloaded bytes before decoding them. `X-Hubuum-Export-Truncated` describes a
+query or rendering limit. The digest still covers the entire stored output.
+See [download verification and retries](artifact_staging.md#integrity-and-downloads).
+
 ### Supported scopes
 
 - `collections`

@@ -965,6 +965,7 @@ fn export_output_from_storage(output: StorageExportOutput) -> ExportTaskOutput {
 fn backup_output_from_storage(output: StorageBackupOutput) -> BackupTaskOutput {
     BackupTaskOutput {
         artifact_reference: output.artifact_reference().cloned(),
+        byte_size: output.byte_size(),
         document: output.document().map(<[u8]>::to_vec),
         sha256: output.sha256().to_string(),
     }

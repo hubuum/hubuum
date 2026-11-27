@@ -1238,6 +1238,7 @@ pub struct BackupTaskOutputSummary {
 
 pub struct BackupTaskOutput {
     pub artifact_reference: Option<hubuum_storage_core::artifacts::ArtifactReference>,
+    pub byte_size: i64,
     pub document: Option<Vec<u8>>,
     pub sha256: String,
 }

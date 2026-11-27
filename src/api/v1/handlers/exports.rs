@@ -12,38 +12,53 @@ use crate::models::{
     ExportTaskOutput, ExportWarning, TaskID, TaskResponse, TokenID,
 };
 use crate::permissions::AppContext;
+use crate::services::artifacts::{OutputDownload, download};
 use crate::services::exports::{ExportTaskSubmission, submit_export_task};
 use crate::services::tasks::{export_output, export_output_summary, load_authorized_export};
+use crate::storage::StorageContext;
 use crate::tasks::{ensure_task_worker_running, idempotency_key_from_headers};
 
 const EXPORT_WARNINGS_HEADER: &str = "X-Hubuum-Export-Warnings";
 const EXPORT_TRUNCATED_HEADER: &str = "X-Hubuum-Export-Truncated";
 
-fn render_export_task_output(output: ExportTaskOutput) -> Result<HttpResponse, ApiError> {
+fn inline_export_bytes(output: ExportTaskOutput) -> Result<web::Bytes, ApiError> {
     let content_type = ExportContentType::from_mime(&output.content_type)?;
     let _meta: ExportMeta = serde_json::from_value(output.meta_json)?;
-    let warnings: Vec<ExportWarning> = serde_json::from_value(output.warnings_json)?;
-    let mut response = HttpResponse::build(StatusCode::OK);
-    response.insert_header((EXPORT_WARNINGS_HEADER, warnings.len().to_string()));
-    response.insert_header((EXPORT_TRUNCATED_HEADER, output.truncated.to_string()));
-
     match content_type {
         ExportContentType::ApplicationJson => {
             let body: ExportJsonResponse =
                 serde_json::from_value(output.json_output.ok_or_else(|| {
-                    ApiError::InternalServerError(
-                        "Stored export JSON output is missing".to_string(),
-                    )
+                    ApiError::InternalServerError("Stored export JSON output is missing".into())
                 })?)?;
-            Ok(response.json(body))
+            Ok(serde_json::to_vec(&body)?.into())
         }
         ExportContentType::TextPlain | ExportContentType::TextHtml | ExportContentType::TextCsv => {
-            response.content_type(content_type.as_mime());
-            Ok(response.body(output.text_output.ok_or_else(|| {
-                ApiError::InternalServerError("Stored export text output is missing".to_string())
-            })?))
+            Ok(output
+                .text_output
+                .ok_or_else(|| {
+                    ApiError::InternalServerError("Stored export text output is missing".into())
+                })?
+                .into())
         }
     }
+}
+
+async fn render_export_task_output(
+    context: &impl StorageContext,
+    mut output: ExportTaskOutput,
+) -> Result<HttpResponse, ApiError> {
+    let warnings: Vec<ExportWarning> =
+        serde_json::from_value(std::mem::take(&mut output.warnings_json))?;
+    let mut response = HttpResponse::Ok();
+    response
+        .content_type(output.content_type.as_str())
+        .insert_header((EXPORT_WARNINGS_HEADER, warnings.len().to_string()))
+        .insert_header((EXPORT_TRUNCATED_HEADER, output.truncated.to_string()));
+    let body = match output.artifact_reference.take() {
+        Some(reference) => download(context, reference).await?,
+        None => OutputDownload::inline(inline_export_bytes(output)?),
+    };
+    Ok(body.respond(&mut response))
 }
 
 #[utoipa::path(
@@ -156,6 +171,11 @@ pub async fn get_export(
                 (String = "text/plain"),
                 (String = "text/html"),
                 (String = "text/csv")
+            ),
+            headers(
+                ("Content-Length" = u64, description = "Exact byte count of the complete output"),
+                ("Content-Digest" = String, description = "RFC 9530 SHA-256 digest of the complete response content"),
+                ("Cache-Control" = String, description = "no-store")
             )
         ),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
@@ -178,24 +198,7 @@ pub async fn get_export_output(
         return Err(ApiError::NotFound("Export output not found".into()));
     }
     match export_output(&context, &task, requestor.scopes()).await? {
-        ExportOutputLookup::Available(output) => {
-            if let Some(reference) = output.artifact_reference {
-                let stream = crate::services::artifacts::download(&context, reference);
-                Ok(HttpResponse::Ok()
-                    .content_type(output.content_type)
-                    .insert_header((
-                        EXPORT_WARNINGS_HEADER,
-                        serde_json::from_value::<Vec<ExportWarning>>(output.warnings_json)?
-                            .len()
-                            .to_string(),
-                    ))
-                    .insert_header((EXPORT_TRUNCATED_HEADER, output.truncated.to_string()))
-                    .insert_header(("Cache-Control", "no-store"))
-                    .streaming(stream))
-            } else {
-                render_export_task_output(output)
-            }
-        }
+        ExportOutputLookup::Available(output) => render_export_task_output(&context, output).await,
         ExportOutputLookup::Expired { expires_at } => Err(ApiError::Gone(format!(
             "Export output expired at {expires_at} UTC"
         ))),
@@ -209,6 +212,10 @@ pub async fn get_export_output(
 mod tests {
     use super::*;
     use crate::models::{ExportScope, ExportScopeKind};
+    use crate::storage::StorageHandle;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use rstest::rstest;
+    use sha2::{Digest, Sha256};
 
     fn text_export_output(meta_truncated: bool, output_truncated: bool) -> ExportTaskOutput {
         ExportTaskOutput {
@@ -232,9 +239,59 @@ mod tests {
         }
     }
 
-    #[test]
-    fn text_export_output_headers_use_persisted_truncated_column() {
-        let response = render_export_task_output(text_export_output(false, true)).unwrap();
+    #[rstest]
+    #[case::json(ExportContentType::ApplicationJson)]
+    #[case::text(ExportContentType::TextPlain)]
+    #[actix_web::test]
+    async fn inline_digest_covers_the_exact_serialized_output(#[case] kind: ExportContentType) {
+        let mut output = text_export_output(false, false);
+        output.content_type = kind.as_mime().into();
+        let expected = if kind == ExportContentType::ApplicationJson {
+            let stored =
+                serde_json::json!({"warnings": [], "meta": output.meta_json, "items": ["é"]});
+            output.json_output = Some(stored.clone());
+            serde_json::to_vec(&serde_json::from_value::<ExportJsonResponse>(stored).unwrap())
+                .unwrap()
+        } else {
+            output.text_output = Some("é\n".into());
+            "é\n".as_bytes().to_vec()
+        };
+        let response = render_export_task_output(&StorageHandle::memory(), output)
+            .await
+            .unwrap();
+        assert_eq!(
+            response
+                .headers()
+                .get("Content-Digest")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            format!("sha-256=:{}:", STANDARD.encode(Sha256::digest(&expected)))
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("Content-Length")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            expected.len().to_string()
+        );
+        assert_eq!(
+            actix_web::body::to_bytes(response.into_body())
+                .await
+                .unwrap()
+                .as_ref(),
+            expected
+        );
+    }
+
+    #[actix_web::test]
+    async fn text_export_output_headers_use_persisted_truncated_column() {
+        let response =
+            render_export_task_output(&StorageHandle::memory(), text_export_output(false, true))
+                .await
+                .unwrap();
 
         assert_eq!(
             response

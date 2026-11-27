@@ -18,7 +18,9 @@ mod tests {
         NewHubuumObjectRelation, Permissions, TaskEventResponse, TaskKind, TaskResponse,
         TaskStatus, TokenResourceScope, UpdateExportTemplate,
     };
-    use crate::tests::api_operations::{get_request, post_request_with_headers};
+    use crate::tests::api_operations::{
+        get_request, get_request_with_headers, post_request_with_headers,
+    };
     use crate::tests::asserts::{assert_response_status, header_value};
     use crate::tests::{
         TestContext, TestMutex, cleanup_test_classes as cleanup, create_test_classes,
@@ -621,14 +623,20 @@ mod tests {
         assert_eq!(completed.status, TaskStatus::Succeeded);
         assert!(completed.request_redacted_at.is_some());
 
-        let resp = get_request(
+        let resp = get_request_with_headers(
             &context.pool,
             &context.admin_token,
             &format!("/api/v1/exports/{}/output", task.id),
+            vec![
+                (header::RANGE, "bytes=1-2".into()),
+                (header::ACCEPT_ENCODING, "gzip".into()),
+            ],
         )
         .await;
         let resp = assert_response_status(resp, StatusCode::OK).await;
-        let export: ExportJsonResponse = test::read_body_json(resp).await;
+        assert!(header_value(&resp, "Content-Range").is_none());
+        let bytes = super::super::read_verified_output(resp).await;
+        let export: ExportJsonResponse = serde_json::from_slice(&bytes).unwrap();
 
         assert_eq!(export.meta.count, created_objects.len());
         assert_eq!(export.meta.scope.kind, ExportScopeKind::ObjectsInClass);
@@ -1260,7 +1268,8 @@ mod tests {
             header_value(&output, "X-Hubuum-Export-Warnings"),
             Some("1".to_string())
         );
-        let body = String::from_utf8(test::read_body(output).await.to_vec()).unwrap();
+        let body =
+            String::from_utf8(super::super::read_verified_output(output).await.to_vec()).unwrap();
         assert_eq!(body, "export-app-01=\nexport-db-01=\n");
 
         let projection = get_request(

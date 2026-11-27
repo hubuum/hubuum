@@ -9,6 +9,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Backup and export downloads include the exact `Content-Length` and an RFC 9530
+  SHA-256 `Content-Digest`. Clients can verify the downloaded bytes before using
+  a file. Existing backup digest headers remain available.
+
 - Offline recovery can reconcile an interrupted filesystem archive publication
   against its original private root and committed v2 intent, including a crash
   while reserving IDs before staging begins. Signed reapplication

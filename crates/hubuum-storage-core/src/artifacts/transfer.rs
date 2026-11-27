@@ -1,3 +1,6 @@
+use std::ops::Deref;
+use std::sync::Arc;
+
 use super::manifest::ManifestVerifier;
 use super::{
     ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReference,
@@ -131,11 +134,27 @@ pub async fn verify<S: ArtifactStore + ?Sized>(
     verifier.finish()
 }
 
+enum ReaderStore<'a, S: ?Sized> {
+    Borrowed(&'a S),
+    Shared(Arc<S>),
+}
+
+impl<S: ?Sized> Deref for ReaderStore<'_, S> {
+    type Target = S;
+
+    fn deref(&self) -> &S {
+        match self {
+            Self::Borrowed(store) => store,
+            Self::Shared(store) => store,
+        }
+    }
+}
+
 /// A verified-block reader. `next_block` returns `None` only after the full
 /// digest and exact EOF are checked. A failure permanently poisons the reader.
 /// The last block is withheld until whole-stream verification succeeds.
 pub struct ArtifactReader<'a, S: ArtifactStore + ?Sized> {
-    store: &'a S,
+    store: ReaderStore<'a, S>,
     manifest: ArtifactManifest,
     verifier: Option<ManifestVerifier>,
     ordinal: u32,
@@ -144,6 +163,18 @@ pub struct ArtifactReader<'a, S: ArtifactStore + ?Sized> {
 
 impl<'a, S: ArtifactStore + ?Sized> ArtifactReader<'a, S> {
     pub async fn open(store: &'a S, reference: &ArtifactReference) -> ArtifactResult<Self> {
+        Self::from_store(ReaderStore::Borrowed(store), reference).await
+    }
+
+    /// Keep the same checked manifest and store while a response outlives its handler.
+    pub async fn open_shared(store: Arc<S>, reference: &ArtifactReference) -> ArtifactResult<Self> {
+        Self::from_store(ReaderStore::Shared(store), reference).await
+    }
+
+    async fn from_store(
+        store: ReaderStore<'a, S>,
+        reference: &ArtifactReference,
+    ) -> ArtifactResult<Self> {
         let bytes = store.published_manifest(reference).await?;
         let manifest = ArtifactManifest::decode(
             &bytes,
