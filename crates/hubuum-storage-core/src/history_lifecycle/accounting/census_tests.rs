@@ -120,16 +120,24 @@ fn every_family_counts_retained_versions_once_despite_protection(
 ) {
     let (snapshot, policy) = fixture(family);
     let mut census = HistorySizeCensus::new(snapshot, &policy).unwrap();
+    let (first, second) = if family == StorageIdentityHistoryKind::ClassSchema {
+        (
+            Some(HistoryRetentionAnchor::SchemaEvent(at(140))),
+            HistoryRetentionAnchor::SchemaEvent(at(150)),
+        )
+    } else {
+        (None, HistoryRetentionAnchor::Closed(at(150)))
+    };
     census
         .observe(
-            Some(&row(family, None)),
+            Some(&row(family, first)),
             HistoryLogicalBytes::new(60).unwrap(),
             10,
         )
         .unwrap();
     census
         .observe(
-            Some(&row(family, Some(HistoryRetentionAnchor::Closed(at(150))))),
+            Some(&row(family, Some(second))),
             HistoryLogicalBytes::new(60).unwrap(),
             10,
         )
