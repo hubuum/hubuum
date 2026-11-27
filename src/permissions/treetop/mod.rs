@@ -59,6 +59,75 @@ pub struct TreetopPermissionBackend {
 }
 
 impl TreetopPermissionBackend {
+    pub(crate) async fn connect_runtime(
+        connection: &hubuum_domain::AuthorizationConnection,
+        cfg: &AppConfig,
+        storage: StorageHandle,
+    ) -> Result<Self, ApiError> {
+        if connection.connect_timeout_ms() > cfg.treetop_connect_timeout_ms
+            || connection.request_timeout_ms() > cfg.treetop_request_timeout_ms
+        {
+            return Err(ApiError::BadRequest(
+                "Runtime Treetop timeouts exceed deployment ceilings".into(),
+            ));
+        }
+        let endpoint = hubuum_outbound_http::validate_outbound_url(connection.url().as_str())
+            .map_err(|_| ApiError::BadRequest("Invalid runtime Treetop URL".into()))?;
+        tokio::time::timeout(
+            Duration::from_millis(connection.connect_timeout_ms()),
+            hubuum_outbound_http::screen_host(
+                endpoint.host(),
+                endpoint.port(),
+                cfg.auth_runtime_allow_private_targets,
+                false,
+            ),
+        )
+        .await
+        .map_err(|_| ApiError::ServiceUnavailable("Treetop endpoint resolution timed out".into()))?
+        .map_err(|_| {
+            ApiError::BadRequest("Treetop destination prohibited by deployment policy".into())
+        })?;
+        let mut http = reqwest::Client::builder()
+            .https_only(true)
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_millis(connection.connect_timeout_ms()))
+            .timeout(Duration::from_millis(connection.request_timeout_ms()))
+            .dns_resolver(std::sync::Arc::new(RuntimeAuthorizationDns {
+                allow_private: cfg.auth_runtime_allow_private_targets,
+            }));
+        match connection.trust_profile_id() {
+            "system" => {}
+            "deployment" => {
+                let path = cfg.treetop_ca_cert.as_deref().ok_or_else(|| {
+                    ApiError::BadRequest("Deployment TLS trust profile is not registered".into())
+                })?;
+                for certificate in load_treetop_ca_certificates(Path::new(path))? {
+                    http = http.add_root_certificate(certificate);
+                }
+            }
+            _ => {
+                return Err(ApiError::BadRequest(
+                    "Unknown deployment TLS trust profile".into(),
+                ));
+            }
+        }
+        let http = http.build().map_err(|_| {
+            ApiError::ServiceUnavailable("Runtime Treetop transport unavailable".into())
+        })?;
+        let client = Client::builder(connection.url().as_str())
+            .with_reqwest_client(http)
+            .max_response_bytes(1024 * 1024)
+            .build()
+            .map_err(treetop_to_api_error)?;
+        if !client.readyz().await.map_err(treetop_to_api_error)? {
+            return Err(ApiError::PermissionBackendUnavailable(
+                "Treetop is not ready".into(),
+            ));
+        }
+        Ok(Self { client, storage })
+    }
+
     /// Connect to a Treetop server and perform a startup health check.
     ///
     /// Returns a fatal `ApiError` if the server is unreachable or unhealthy —
@@ -125,6 +194,20 @@ impl TreetopPermissionBackend {
             )));
         }
         Ok(decisions)
+    }
+}
+
+struct RuntimeAuthorizationDns {
+    allow_private: bool,
+}
+impl reqwest::dns::Resolve for RuntimeAuthorizationDns {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let allow_private = self.allow_private;
+        Box::pin(async move {
+            let addresses =
+                hubuum_outbound_http::screen_host(name.as_str(), 0, allow_private, false).await?;
+            Ok(Box::new(addresses.into_iter()) as reqwest::dns::Addrs)
+        })
     }
 }
 

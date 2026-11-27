@@ -237,6 +237,6 @@ if name == "python3" and args[:1] == ["-c"]:
                 application_name = restore_name.removesuffix("_restore")
                 sql = [call["args"][-1] for call in calls
                        if call["tool"] == "psql" and "-c" in call["args"]]
-                for name in (restore_name, application_name):
+                for name in (restore_name, application_name, f"{application_name}_drill"):
                     self.assertIn(f"DROP DATABASE IF EXISTS {name};", sql)
                 self.assertIn("DROP ROLE IF EXISTS", sql[-1])

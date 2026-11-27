@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>PR #591 browser verification</title>
+<style>
+body{font:16px system-ui;margin:36px auto;max-width:1050px;padding:0 24px;background:#f5f7fa;color:#182634}h1{margin-bottom:8px}p{line-height:1.5}.meta{font-size:13px;color:#526070}button{background:#244c79;color:white;border:0;border-radius:6px;padding:12px 24px;font:inherit;cursor:pointer}table{border-collapse:collapse;width:100%;background:white;margin:20px 0}td,th{text-align:left;padding:11px;border-bottom:1px solid #dae1e8}.pass{color:#176b3c}.fail{color:#ae2630}#summary{font-weight:700;font-size:22px}footer{font-size:14px;color:#526070}
+</style>
+<h1>PR #591 · Browser transport verification</h1>
+<p class="meta">Trusted HTTPS · production Secure cookies · Disposable PostgreSQL 17 · Local fixture</p>
+<p>This fixture sends real browser requests to the unmodified PR server. The proxy preserves Origin and Fetch Metadata headers. No real credentials or redemption secrets are placed in browser JavaScript.</p>
+<button id="run">Run browser checks</button>
+<p id="summary">Ready</p><p class="meta" id="agent"></p>
+<table><thead><tr><th>Check</th><th>Result</th><th>Observed response</th></tr></thead><tbody id="results"></tbody></table>
+<footer>Scope: public discovery and rejection of secret-bearing browser requests. Hosted login, approval, cookie/CSRF and BFF handoff are exercised separately through their actual HTML forms.</footer>
+<script>
+const rows=[];
+const id='11111111-1111-4111-8111-111111111111';
+const base='/api/v1/auth';
+const client_id='pr591-browser-qa';
+const begin={client_id,provider_id:'local',purpose:'login',delivery:'poll'};
+const guard='Use server-to-server interaction requests without query parameters';
+function record(name,pass,detail){rows.push({name,pass,detail});const tr=document.createElement('tr');for(const text of [name,pass?'PASS':'FAIL',detail]){const td=document.createElement('td');td.textContent=text;tr.append(td)}tr.children[1].className=pass?'pass':'fail';document.querySelector('#results').append(tr)}
+function protectedHeaders(response){return response.headers.get('cache-control')==='no-store'&&response.headers.get('referrer-policy')==='no-referrer'&&!response.headers.has('set-cookie')}
+async function check(name,path,body){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Hubuum-Interaction hai1.'+'0'.repeat(64)},body:JSON.stringify(body)});const text=await response.text();record(name,response.status===400&&text.includes(guard)&&protectedHeaders(response),`HTTP ${response.status}; no-store; no-referrer; transport rejected`)}
+document.querySelector('#run').onclick=async()=>{
+document.querySelector('#run').disabled=true;document.querySelector('#agent').textContent=navigator.userAgent;document.querySelector('#summary').textContent='Running…';
+try{
+ record('Validated secure browser context',window.isSecureContext&&location.protocol==='https:',location.origin);
+ record('Authentication cookies hidden from JavaScript',!document.cookie.includes('hubuum.auth.'),'No authentication cookie exposed by document.cookie');
+ const discovery=await fetch(base+'/methods');const data=await discovery.json();
+ const safeKeys=Object.keys(data).sort().join(',')==='interaction_version,methods'&&data.methods.every(m=>Object.keys(m).sort().join(',')==='browser_available,fresh_authentication,interaction,kind,name,provider_id');
+ record('Public method discovery',discovery.status===200&&data.interaction_version===1&&safeKeys&&data.methods.some(m=>m.provider_id==='local')&&protectedHeaders(discovery),`HTTP ${discovery.status}; protocol ${data.interaction_version}; sanitized local method; no-store; no-referrer`);
+ const legacy=await fetch(base+'/providers');const legacyData=await legacy.json();record('Legacy provider discovery',legacy.status===200&&Array.isArray(legacyData.providers)&&protectedHeaders(legacy),`HTTP ${legacy.status}; ${legacyData.providers.join(', ')}`);
+ await check('Browser begin rejected',base+'/interactions',begin);
+ await check('Browser credentials rejected',base+'/interactions/'+id+'/credentials',{client_id,name:'qa-nonexistent',password:'disposable-invalid-password'});
+ for(const action of ['status','complete','cancel','issued-session/revoke'])await check('Browser '+action+' rejected',base+'/interactions/'+id+'/'+action,{client_id});
+ const malformed=await fetch(base+'/interactions',{method:'POST',headers:{'Content-Type':'application/json'},body:'{'});record('Malformed JSON has protective headers',malformed.status===400&&protectedHeaders(malformed),`HTTP ${malformed.status}; no-store; no-referrer`);
+ const prior=(await(await fetch('/__qa/records')).json()).length;
+ const cross=await fetch('@@ATTACKER@@'+base+'/interactions',{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(begin)});
+ const seen=(await(await fetch('/__qa/records')).json()).slice(prior).find(r=>r.method==='POST'&&r.path===base+'/interactions');
+ record('Cross-origin simple POST rejected',cross.type==='opaque'&&seen?.status===400&&[location.origin,'null'].includes(seen.origin)&&seen.sec_fetch_site==='cross-site'&&seen.response_headers['cache-control']==='no-store'&&seen.response_headers['referrer-policy']==='no-referrer',`Browser response opaque; server HTTP ${seen?.status}; cross-site; Origin ${seen?.origin}`);
+ const hosted=await fetch(base+'/interactions/browser');record('Hosted browser entry available',hosted.status===200,`HTTP ${hosted.status}; hosted code-entry page`);
+}catch(error){record('Test execution',false,String(error))}
+const passed=rows.filter(r=>r.pass).length;document.querySelector('#summary').textContent=`${passed}/${rows.length} checks passed`;document.querySelector('#summary').className=passed===rows.length?'pass':'fail';
+await fetch('/__qa/results',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({commit:'PR591-HTTPS-qualification',user_agent:navigator.userAgent,origin:location.origin,results:rows})});
+};
+</script></html>

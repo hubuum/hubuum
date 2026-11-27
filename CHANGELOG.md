@@ -7,20 +7,184 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Server-owned OAuth authorization-code login with S256 PKCE, a pinned GitHub.com
+  OAuth App profile and bounded authenticated-user JSON profiles. Candidate
+  previews, CLI polling and BFF login share cookie-bound one-use callbacks and
+  local authorization. Encrypted access tokens support bounded eligibility
+  checks; GitHub logout attempts token revocation after local logout commits.
+  GitHub rate-limit responses preserve the bounded stale-authority window.
+  OAuth fresh credential approval explicitly returns `capability_unsupported`.
+  See [OAuth setup and qualification](docs/authentication/oauth.md) for provider
+  limitations, app registration and authorized live qualification.
+
+- OIDC authorization-code login with S256 PKCE, verified discovery/JWKS,
+  cookie-bound single-use callbacks, optional encrypted refresh credentials,
+  non-activating candidate previews and fresh credential approval. See the
+  [Keycloak setup](docs/authentication/keycloak.md).
+
+- Versioned local/LDAP login interactions provide safe method discovery,
+  secret-protected continuation, atomic session completion, polling backoff,
+  cancellation and exact-session cleanup after response loss. Opt-in hosted
+  browser forms provide cookie/CSRF-bound local and LDAP sign-in, explicit
+  approval and registered BFF handoff. Privileged interactions return existing
+  operation-bound credential approvals or LDAP candidate verification receipts
+  without exposing them to browser JavaScript.
+
+- Verified security configuration candidates, fresh local-administrator activation
+  approvals, immutable provider UUID/scope bindings, bounded runtime Treetop
+  profiles and explicit offline `hubuum-admin --recover-security` recovery.
+  LDAP test sign-ins return bounded identity/group previews without provisioning
+  or session effects. OAuth definitions support non-activating browser verification before approved
+  activation.
+
 ### Changed
 
 - PostgreSQL computed-field rebuild and read-repair workers now read only the
   task settings row when selecting the size of each batch.
 
-### Security
+- **Breaking (storage SDK and deployment):** when upgrading from Hubuum
+  v0.0.23 (storage SDK `0.7.0`), pin all ten SDK crates to exactly `0.11.0`.
+  Adapters must implement the complete encrypted upstream credential lifecycle
+  and the cumulative contract changes listed below.
+  Stop all API and worker replicas, take a verified backup, and apply all
+  pending migrations and role grants in order. Restart matching binaries and
+  begin fresh interactions. Restore the pre-upgrade snapshot before downgrading.
+  Regenerate OpenAPI clients for OIDC browser routes and configuration. See the
+  [adapter migration guide](docs/storage_adapter_sdk.md#upgrading-from-07-to-08)
+  for the contract changes from 0.7 through 0.11.
 
-- Remove the unused Actix Web cookie feature and its dependency on
-  `cookie` 0.16.2 (RUSTSEC-2026-0594).
+- **Breaking (external authentication, introduced in SDK 0.10):** implement
+  `AuthenticateExternal` in the existing interaction advance operation. Preserve
+  verified login and fresh authentication proofs, fence the provider revision
+  and claimed interaction,
+  and atomically reconcile stable subjects and provider-owned membership
+  sources. Raw password interaction evidence now accepts only local/LDAP
+  authentication. External adapters must supply an identity-bound,
+  policy-resolved browser session audit subject.
 
-- Require `url` 2.5.9 or later to fix a stack overflow during URL origin
-  calculation (RUSTSEC-2026-0592).
+- Authentication interactions use `ring` HKDF-SHA-256 for derived keys and
+  receipts, `subtle` for secret comparisons, and `governor` for continuously
+  replenishing per-IP admission limits. **Breaking for earlier #591 preview
+  deployments:** stop old replicas, allow pending interactions to expire (at
+  most ten minutes), then start matching updated binaries and begin fresh
+  interactions; previously derived approval/verification capabilities are
+  incompatible.
+
+- **Breaking (authentication interactions, introduced in SDK 0.9):** implement
+  durable authentication interactions, atomic purpose-bound completion and
+  exact-session cleanup. Use matching recovery and restore tools to discard
+  interaction authority during recovery. See the
+  [upgrade guide](docs/authentication_interactions.md#upgrade-and-recovery).
+
+- **Breaking (security candidates, introduced in SDK 0.8):** implement
+  candidate activation, recovery and provider-binding storage. Construct
+  external login evidence with its authentication revision.
+
+- **Breaking (deployment and administrator clients):** authentication preflight
+  writes and direct authorization/security-group edits now require the candidate
+  workflow. Stop all older replicas before the security-candidates migration,
+  upgrade OpenAPI clients and complete Rust storage adapters, and explicitly allow
+  private authentication targets when needed. Provider changes revoke affected
+  external credentials while retaining manual grants. See
+  [upgrade and recovery](docs/security_candidates.md#upgrade-and-recovery).
 
 ### Fixed
+
+- PostgreSQL records token revocations at or after issuance when password resets,
+  logouts and other revocations overlap token creation. The offline migration
+  repairs retained tokens whose revocation timestamp preceded issuance, so their
+  metadata can be read again. These tokens stay revoked.
+
+- GitHub rate-limit headers now preserve the cached-authority outage window
+  even when GitHub sends an unreadable error page. An interrupted HTTP 403
+  response from another provider still counts as an outage.
+- OAuth rejects token responses that contain both an error and a credential
+  on success and error HTTP statuses. It reports temporary token-endpoint
+  failures as provider outages.
+  OIDC rejects duplicate discovery and signing-key fields, checks the type
+  of the callback issuer capability, and requires a
+  single JSON media type before accepting UserInfo membership claims. A media
+  type error during renewal preserves the original cached-authority deadline.
+
+- External authentication renewal preserves other sessions and personal access
+  tokens when a replica cannot read a retained credential and uses an available
+  session grant when another is in retry backoff.
+- Bulk logout and provider disable capture retained upstream grants atomically
+  with local revocation. Hosted verification can persist large browser-provider
+  group previews without duplicating each group key.
+
+- Live browser sign-in invalidates cached authority when a verified subject fails
+  required membership checks. Local logout and orphan-session cleanup revoke the
+  presented session even during an upstream outage.
+- Changing another provider preserves retained OIDC and OAuth credentials.
+  Discovery and transport outages respect the stale window, and OIDC renewal
+  accepts an omitted authentication time. Disposable restore drills can replay
+  browser identity namespaces into an empty PostgreSQL database.
+- Browser callbacks honor the loopback HTTP development setting. Password
+  discovery excludes unavailable browser providers, and candidate creation
+  rejects oversized or duplicate selections before contacting providers.
+- **Breaking for storage adapter authors.** Implement verified membership
+  rejection, submission-aware renewal failures and atomic return of the issued
+  family's retained grant on orphan cleanup. Stop API and worker replicas,
+  back up the database, apply migration
+  `2026-11-18-000001_retain_unchanged_credentials` and restart matching binaries.
+
+- Authentication changes now fence in-flight LDAP updates and browser renewals.
+  Browser identity restores require matching source and destination namespaces.
+  Before restoring, configure the destination with the same issuer or OAuth
+  namespace. Older backups containing browser scopes need a new backup that
+  records their namespaces.
+- Provider verification checks deployment selections, LDAP refresh settings
+  and required browser credentials. Candidates can verify multiple browser
+  providers individually. Temporary DNS and OAuth profile outages respect the
+  configured stale window, and OIDC renewal supports non-rotating tokens.
+  **Breaking for storage adapter authors:** pass the selected authentication
+  revision to external user synchronization, failure recording, and upstream
+  credential claims. Check it in the transaction before changing state.
+- OIDC fresh credential approval now keeps the newly verified encrypted refresh
+  credential on an existing eligible session. Keycloak reauthentication no
+  longer causes the next due eligibility check to reject the older grant's
+  changed authentication time. Denying the protected operation still preserves
+  authenticated session continuity, without issuing another session or approval.
+  **Breaking for storage adapter authors:** the unreleased 0.11 SDK contract
+  requires `ExternalIdentityStorage::upstream_approval_session` and atomic
+  `ApprovalWithCredential` handling. Rebuild complete adapters together; existing
+  encrypted session records need no migration.
+- Runtime LDAP metadata edits preserve an existing write-only bind credential
+  reference when both credential inputs are omitted. Explicit replacement or
+  clearing still takes precedence, and stored aliases remain redacted.
+
+- Hosted LDAP interactions now display their password form after runtime provider
+  activation. Provider resolution preserves revision and immutable identity fences
+  without requiring an OIDC/OAuth adapter for LDAP sign-in or fresh approval.
+- Runtime authentication discovery now advertises OAuth activation alongside
+  LDAP and OIDC. Provider setup guides and production qualification use encrypted,
+  write-only runtime client secrets without per-provider deployment aliases;
+  local password recovery remains available after external-provider activation.
+
+- **Breaking (GitHub callback validation):** GitHub OAuth callbacks now require
+  the pinned RFC 9207 issuer `https://github.com/login/oauth`, allowing current
+  GitHub sign-in responses while rejecting issuer substitution and omission
+  before code exchange. Upgrade the API/worker replicas and begin fresh sign-ins
+  for failed or expired interactions. No database or encrypted-state migration
+  is required.
+
+- Authentication interactions consistently use application UTC for lifecycle
+  checks and cleanup, preserve ordered actor/target locks for approvals, and
+  report removed BFF registrations as changed configuration. Normalized return
+  URLs obey their stored size bound. IPv6 subnet and shared overflow quotas keep
+  admission bounded without rejecting every new address when the registry fills.
+- Restore draining now counts admitted HTTP requests until their handlers return,
+  preventing restore replay from overtaking active interaction requests.
+
+- Unregistered deployment LDAP providers no longer hide local interaction login.
+  Authentication settings activation and offline recovery now let the database
+  advance revoked token revisions, preserving the production revision guard.
+
+- Security activation and offline recovery acquire settings before principal locks,
+  avoiding a deadlock with concurrent authentication completion.
 
 - Best-effort imports can resolve a parent collection by name after an
   earlier item failed to find it and a later item planned its creation.
@@ -36,6 +200,81 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - On the memory backend, a failed event configuration change preserves the
   previous settings. Deleting a subscription in the wrong scope leaves the
   subscription and its pending deliveries intact.
+
+### Security
+
+- Users can log out all of their interactive sessions during an identity-provider
+  outage using a valid unscoped human bearer. A profile HTTP 401 retires the
+  affected OAuth bearer as soon as the headers arrive, even if the response body
+  is incomplete, and lets another session verify the same identity. Each request
+  checks up to eight OAuth grants within one 25-second deadline. Exhausting the
+  budget returns HTTP 503 and leaves the bearer eligible for immediate retry.
+  Only a recorded verification outage permits use of stale membership. OAuth
+  token and profile endpoints must return a single `application/json` media type
+  for successful responses.
+- OIDC renewal discards uninstalled grants locally so newer logins and other
+  provider scopes keep their shared upstream client session. Malformed ID tokens
+  and contradictory grant responses invalidate cached authority. Restore
+  maintenance waits for renewal finalization after a client disconnects.
+  A missing, ambiguous, or incorrect media type on a valid OIDC grant follows
+  the outage policy. Renewal counts database claim time against its deadline
+  and checks cancellation before sending the grant. Submitted exchanges finish
+  within their original deadline.
+- HTTP 408 responses during external identity verification preserve the last
+  successful verification within its configured freshness window. OAuth profile
+  reads retain their grant across unrelated provider edits. Logout uses the
+  original provider configuration for queued revocations.
+- Hosted LDAP verification preserves complete group previews at the supported
+  key and display name limits.
+- **Breaking for mixed-version preview deployments and external storage
+  adapters.** Stop API and worker replicas, back up the database, apply
+  all pending migrations through `2026-11-27-000001_token_revocation_order`,
+  and restart matching binaries. Keep OAuth bearers recoverable during profile reads and return
+  `AuthenticationRequired` when a session or claim fence rejects renewal.
+  **Breaking for external storage adapters on the unreleased 0.11 SDK.** Handle
+  the new `StorageUpstreamFailure::Interrupted` variant by releasing the fenced
+  claim for immediate retry and preserving the principal's sync timestamps.
+
+- Hosted browser interactions use `cookie` 0.18.3 or later in the 0.18 series.
+  This removes the older Actix cookie dependency flagged by RUSTSEC-2026-0594.
+  Hubuum uses opaque session cookies and does not enable private cookie jars.
+
+- Expiry of a retained OAuth access token retires that grant and lets another
+  session verify the same identity. Other sessions and personal tokens retain
+  their existing freshness requirements. Bulk logout attempts upstream
+  revocation for every retained grant. Admin logout by expired access token
+  captures the grant when it revokes the still-live refresh family.
+- Hosted sign-in supports concurrent entry forms. Large provider allowlists
+  can complete hosted verification, and expired-record cleanup runs
+  independently from security settings reconciliation.
+- **Breaking for storage adapters on the unreleased 0.11 SDK**. Return the
+  captured upstream grant from `revoke_token_by_hash` in the committed audit
+  outcome. Retire `CredentialExpired` grants without recording a principal
+  sync failure. Report deferred retries separately from missing credentials.
+  Apply hosted verification results to the locked candidate.
+  Return `StorageTokenRevocations` from session, named-token and principal
+  revocation, and `StorageSecurityCandidateActivationOutcome` from activation.
+  Capture the grants and their previous provider definitions in the transaction
+  that revokes local authority.
+
+- Require `url` 2.5.9 or later in the 2.x series to fix a stack overflow in
+  URL origin resolution. This also updates the standalone fuzz workspace.
+  [RustSec advisory RUSTSEC-2026-0592](https://rustsec.org/advisories/RUSTSEC-2026-0592.html)
+
+- Bind OAuth subjects to the configured profile headers, clear obsolete provider
+  grants on local-only activation, and reject incomplete membership observations.
+  OIDC client and provider failures preserve the last successful verification.
+  Browser verification receipts now bind the callback origin. Logical restore
+  reapplies the destination’s local-only membership policy. Offline recovery
+  requires the deployment’s effective administrator group to be local.
+- **Upgrade** — Stop API and worker replicas, take a backup, apply migration
+  `2026-11-19-000001_auth_interaction_admission`, and restart matching binaries.
+  The migration upgrades OAuth scopes with one recorded header configuration.
+  Create a new scope for bindings with missing or conflicting header history.
+  Affected providers refuse cached credentials and are omitted from login methods.
+  Other configured methods remain available.
+  Older OAuth backups carry no header identity and require a matching legacy
+  binding to restore. Restore the pre-upgrade snapshot to downgrade.
 
 ## [0.0.23] - 2026-11-21
 

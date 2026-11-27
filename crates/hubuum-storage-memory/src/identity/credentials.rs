@@ -2,6 +2,63 @@ use super::*;
 
 #[async_trait]
 impl AuthenticationStorage for MemoryStorage {
+    async fn create_auth_interaction(
+        &self,
+        request: StorageInteractionCreate,
+    ) -> Result<StorageInteractionView, StorageError> {
+        self.state.write().await.create_interaction(request)
+    }
+    async fn bind_auth_interaction_browser(
+        &self,
+        code: InteractionDigest,
+        browser: InteractionBrowserBinding,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        self.state.write().await.bind_interaction(code, browser)
+    }
+    async fn advance_auth_interaction(
+        &self,
+        command: StorageInteractionCommand,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        let mut live = self.state.write().await;
+        // Local transitions stage their record in advance_interaction. Only
+        // external observations can also mutate principals and credentials.
+        if !matches!(
+            command.action(),
+            StorageInteractionAction::AuthenticateExternal { .. }
+                | StorageInteractionAction::RejectMembership(_)
+        ) {
+            return live.advance_interaction(command);
+        }
+        let mut staged = live.clone();
+        let result = staged.advance_interaction(command)?;
+        *live = staged;
+        Ok(result)
+    }
+    async fn complete_auth_interaction(
+        &self,
+        request: StorageInteractionComplete,
+    ) -> Result<StorageInteractionCompletion, StorageError> {
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = staged.complete_interaction(request)?;
+        *live = staged;
+        Ok(result)
+    }
+    async fn revoke_auth_interaction_session(
+        &self,
+        access: StorageInteractionAccess,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<Option<StorageUpstreamSession>>, StorageError> {
+        let mut live = self.state.write().await;
+        let mut staged = live.clone();
+        let result = staged.revoke_interaction(access, context)?;
+        *live = staged;
+        Ok(result)
+    }
+    async fn purge_auth_interactions(&self, limit: usize) -> Result<usize, StorageError> {
+        self.state.write().await.purge_interactions(limit)
+    }
+
     async fn record_credential_creation(
         &self,
         token: TokenId,
@@ -64,7 +121,7 @@ impl AuthenticationStorage for MemoryStorage {
         &self,
         target: SessionRevocation,
         context: EventContext,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         let mut live = self.state.write().await;
         let mut staged = live.clone();
         let result = staged.revoke_sessions(target, context)?;
@@ -550,86 +607,40 @@ impl TokenStorage for MemoryStorage {
     async fn revoke_token(
         &self,
         request: StorageTokenRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
-        let (token_id, principal_id, context) = request.into_parts();
-        let mut state = self.state.write().await;
-        let token = state.tokens.get_mut(&token_id.id()).ok_or_else(|| {
-            StorageError::not_found(format!("Token {} was not found", token_id.id()))
-        })?;
-        if token.principal_id != principal_id {
-            return Err(StorageError::not_found(format!(
-                "Token {} was not found for principal {}",
-                token_id.id(),
-                principal_id.id()
-            )));
-        }
-        if token.revoked_at.is_some() {
-            return Ok(StorageMutationOutcome::unchanged(0));
-        }
-        if state.session_for_token(token_id).is_some() {
-            return state.revoke_sessions(SessionRevocation::Current(token_id), context);
-        }
-        let token = state
-            .tokens
-            .get_mut(&token_id.id())
-            .expect("validated token exists");
-        token.revoked_at = Some(Utc::now());
-        token.revision = token
-            .revision
-            .checked_advance()
-            .map_err(|error| StorageError::internal(error.to_string()))?;
-        let receipt = state.append_simple_event(
-            EntityType::Token,
-            token_id.id(),
-            None,
-            Action::Revoked,
-            &context,
-            format!("Token {} revoked", token_id.id()),
-        )?;
-        Ok(StorageMutationOutcome::committed(1, receipt))
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
+        self.state.write().await.revoke_owned_token(request)
     }
 
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<Option<StorageUpstreamSession>>, StorageError> {
         let (principal_id, credentials, context) = request.into_parts();
-        let token_id = self
-            .state
-            .read()
-            .await
-            .tokens
-            .values()
-            .find(|token| {
-                credentials
+        let mut state = self.state.write().await;
+        let Some(token) = state.tokens.values().find(|token| {
+            token.revoked_at.is_none()
+                && principal_id.is_none_or(|owner| token.principal_id == owner)
+                && credentials
                     .iter()
                     .any(|credential| token.matches_credential(credential))
-                    && principal_id.is_none_or(|id| token.principal_id == id)
-            })
-            .map(|token| token.id);
-        let Some(token_id) = token_id else {
-            return Ok(StorageMutationOutcome::unchanged(0));
+        }) else {
+            return Ok(StorageMutationOutcome::unchanged(None));
         };
-        let owner = self
-            .state
-            .read()
-            .await
-            .tokens
-            .get(&token_id.id())
-            .expect("token selected by id exists")
-            .principal_id;
-        self.revoke_token(StorageTokenRevoke::new(token_id, owner, context))
-            .await
+        let request = StorageTokenRevoke::new(token.id, token.principal_id, context);
+        Ok(state
+            .revoke_owned_token(request)?
+            .map(|result| result.into_grants().pop()))
     }
 
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         let (principal_id, context) = request.into_parts();
         let mut state = self.state.write().await;
         let now = Utc::now();
         let mut revoked = Vec::new();
+        let grants = state.logout_grants(SessionRevocation::All(principal_id).into());
         state.invalidate_principal_sessions(principal_id.id());
         for token in state.tokens.values_mut() {
             if token.principal_id == principal_id && token.revoked_at.is_none() {
@@ -642,7 +653,9 @@ impl TokenStorage for MemoryStorage {
             }
         }
         if revoked.is_empty() {
-            return Ok(StorageMutationOutcome::unchanged(0));
+            return Ok(StorageMutationOutcome::unchanged(
+                StorageTokenRevocations::new(0, grants),
+            ));
         }
         let receipts = revoked
             .into_iter()
@@ -660,6 +673,9 @@ impl TokenStorage for MemoryStorage {
         let count = receipts.len();
         let audits = StorageAuditReceipts::try_from_vec(receipts)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        Ok(StorageMutationOutcome::committed_with_audits(count, audits))
+        Ok(StorageMutationOutcome::committed_with_audits(
+            StorageTokenRevocations::new(count, grants),
+            audits,
+        ))
     }
 }

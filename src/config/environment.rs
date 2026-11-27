@@ -200,6 +200,7 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_REMOTE_CALL_ALLOW_PRIVATE_TARGETS", RemoteCalls),
     option!("HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER", RemoteCalls),
     option!("HUBUUM_CREDENTIAL_ACTIVITY_ENABLED", Authentication),
+    option!("HUBUUM_AUTH_BROWSER", Authentication),
     option!("HUBUUM_CREDENTIAL_ACTIVITY_RETENTION_DAYS", Authentication),
     option!("HUBUUM_CREDENTIAL_ACTIVITY_SOURCE_CAP", Authentication),
     option!("HUBUUM_SESSION_ACCESS_SECONDS", Authentication),
@@ -254,6 +255,8 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_ADMIN_GROUPNAME", Authentication),
     option!("HUBUUM_ADMIN_IDENTITY_SCOPE", Authentication),
     option!("HUBUUM_AUTH_CONFIG_PATH", Authentication, metadata),
+    option!("HUBUUM_AUTH_RUNTIME_ALLOW_PRIVATE_TARGETS", Authentication),
+    option!("HUBUUM_AUTH_RUNTIME_LOCKED_PROVIDERS", Authentication),
     option!(
         "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",
         Authentication,
@@ -284,6 +287,11 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
 pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_MIGRATION_DATABASE_URL", Database, sensitive),
     option!("HUBUUM_DATABASE_ROLE_TESTS", Operations),
+    option!(
+        "HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL",
+        Restores,
+        sensitive
+    ),
     option!("HUBUUM_TOKEN_HASH_KEY", Authentication, sensitive),
     option!("HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID", Authentication),
     option!("HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS", Authentication),
@@ -309,6 +317,8 @@ pub const DYNAMIC_SECRET_PREFIXES: &[(&str, EnvironmentOwner)] = &[
     ("HUBUUM_REMOTE_SECRET_", EnvironmentOwner::RemoteCalls),
     ("HUBUUM_EVENT_SINK_SECRET_", EnvironmentOwner::Events),
     ("HUBUUM_LDAP_SECRET_", EnvironmentOwner::Authentication),
+    ("HUBUUM_OIDC_SECRET_", EnvironmentOwner::Authentication),
+    ("HUBUUM_OAUTH_SECRET_", EnvironmentOwner::Authentication),
 ];
 
 /// A numeric configuration bound together with the runtime value it validates.

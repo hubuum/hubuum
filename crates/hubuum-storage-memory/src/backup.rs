@@ -117,13 +117,26 @@ pub(super) fn capture(
         .map_err(invalid_contract_value)
 }
 
-pub(super) fn restore(snapshot: StorageBackupSnapshot) -> Result<MemoryState, StorageError> {
+pub(super) fn restore(
+    runtime_settings: crate::runtime_settings::MemoryRuntimeSettings,
+    snapshot: StorageBackupSnapshot,
+) -> Result<MemoryState, StorageError> {
     let schema_limits = snapshot.schema_limits();
     let (sections, history) = snapshot.into_parts();
     let mut state = MemoryState::new();
+    state.runtime_settings = runtime_settings;
     resources::restore(&sections, &mut state)?;
     schemas::restore(&sections, &mut state, schema_limits)?;
     identity::restore(&sections, &mut state)?;
+    let local_only: Vec<_> = state
+        .runtime_settings
+        .authentication_assignment()
+        .local_only_provider_names()
+        .filter_map(|name| state.identity_scope_by_name(name).map(|scope| scope.id()))
+        .collect();
+    for scope in local_only {
+        state.clear_provider_memberships(scope);
+    }
     workflows::restore(&sections, &mut state)?;
     workflows::restore_history(
         history.ok_or_else(|| invalid("prepared history"))?,

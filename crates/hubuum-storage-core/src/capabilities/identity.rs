@@ -1,10 +1,12 @@
 use crate::{StorageError, StorageMutationOutcome, StoragePage};
 use async_trait::async_trait;
+use hubuum_domain::ResourceRevision;
 use hubuum_domain::{GroupId, IdentityScopeId, PrincipalId, ServiceAccountId, TokenId, UserId};
 use hubuum_events_core::EventContext;
 use hubuum_query::QueryOptions;
 
 pub use crate::IdentityStorage;
+pub use crate::auth_interactions::*;
 pub use crate::auth_sessions::*;
 pub use crate::authorization::*;
 pub use crate::authorization_resources::*;
@@ -16,6 +18,7 @@ pub use crate::identity_operations::*;
 pub use crate::identity_resources::*;
 pub use crate::identity_tokens::*;
 pub use crate::identity_users::*;
+pub use crate::upstream_authentication::*;
 
 /// Authentication data every selectable storage backend must provide.
 ///
@@ -23,6 +26,30 @@ pub use crate::identity_users::*;
 /// only the projections required to build application authentication state.
 #[async_trait]
 pub trait AuthenticationStorage: Send + Sync {
+    async fn create_auth_interaction(
+        &self,
+        request: crate::StorageInteractionCreate,
+    ) -> Result<crate::StorageInteractionView, StorageError>;
+    async fn bind_auth_interaction_browser(
+        &self,
+        code: hubuum_domain::InteractionDigest,
+        browser: hubuum_domain::InteractionBrowserBinding,
+    ) -> Result<crate::StorageInteractionOutcome, StorageError>;
+    async fn advance_auth_interaction(
+        &self,
+        command: crate::StorageInteractionCommand,
+    ) -> Result<crate::StorageInteractionOutcome, StorageError>;
+    async fn complete_auth_interaction(
+        &self,
+        request: crate::StorageInteractionComplete,
+    ) -> Result<crate::StorageInteractionCompletion, StorageError>;
+    async fn revoke_auth_interaction_session(
+        &self,
+        access: crate::StorageInteractionAccess,
+        context: hubuum_events_core::EventContext,
+    ) -> Result<crate::StorageMutationOutcome<Option<crate::StorageUpstreamSession>>, StorageError>;
+    async fn purge_auth_interactions(&self, limit: usize) -> Result<usize, StorageError>;
+
     async fn record_credential_creation(
         &self,
         token: TokenId,
@@ -60,7 +87,7 @@ pub trait AuthenticationStorage: Send + Sync {
         &self,
         target: crate::SessionRevocation,
         context: hubuum_events_core::EventContext,
-    ) -> Result<crate::StorageMutationOutcome<usize>, StorageError>;
+    ) -> Result<crate::StorageMutationOutcome<crate::StorageTokenRevocations>, StorageError>;
     async fn purge_auth_sessions(&self, limit: usize) -> Result<usize, StorageError>;
 
     /// Validate one presented bearer credential and return its minimal
@@ -359,6 +386,42 @@ pub trait ServiceAccountStorage: Send + Sync {
 /// External-provider identity refresh and reconciliation.
 #[async_trait]
 pub trait ExternalIdentityStorage: Send + Sync {
+    /// Resolve an eligible retained session for this fresh proof without leasing
+    /// or exposing its old credential. Replacement commits with the interaction.
+    async fn upstream_approval_session(
+        &self,
+        proof: hubuum_domain::FreshExternalAuthentication,
+    ) -> Result<Option<crate::StorageUpstreamApproval>, StorageError>;
+    /// Atomically lease one renewal attempt. Take a rotating OIDC grant before
+    /// submission. Keep a read-only OAuth bearer recoverable for logout or a later claim.
+    async fn claim_upstream_credential(
+        &self,
+        revision: ResourceRevision,
+        principal: PrincipalId,
+    ) -> Result<crate::StorageUpstreamClaimOutcome, StorageError>;
+    /// Reconcile current identity/memberships and replace the rotated encrypted token atomically.
+    /// Return AuthenticationRequired when the session or claim fence refused the write.
+    async fn finish_upstream_renewal(
+        &self,
+        request: crate::StorageUpstreamRenewal,
+    ) -> Result<(), StorageError>;
+    async fn fail_upstream_renewal(
+        &self,
+        claim: crate::StorageUpstreamClaim,
+        failure: crate::StorageUpstreamFailure,
+    ) -> Result<(), StorageError>;
+    /// Capture credentials for best-effort revocation, after the caller authorizes logout.
+    /// Local session revocation must destroy the stored copies before outbound calls.
+    async fn upstream_logout_credentials(
+        &self,
+        target: crate::StorageUpstreamRevocation,
+    ) -> Result<Vec<crate::StorageUpstreamSession>, StorageError>;
+    /// Resolve only the immutable provider scope and subject, never a profile name or email.
+    async fn find_external_identity(
+        &self,
+        identity: hubuum_domain::ExternalIdentity,
+    ) -> Result<Option<PrincipalId>, StorageError>;
+
     /// Return refresh state only for a provider-managed external human.
     ///
     /// Missing, local, and unmanaged principals return `None`; inconsistent
@@ -372,6 +435,7 @@ pub trait ExternalIdentityStorage: Send + Sync {
     /// pending login evidence, and active tokens; an outage preserves the last success.
     async fn record_external_sync_failure(
         &self,
+        revision: ResourceRevision,
         principal_id: PrincipalId,
         failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError>;
@@ -380,6 +444,7 @@ pub trait ExternalIdentityStorage: Send + Sync {
     /// group memberships, synchronization timestamps, and lifecycle events.
     async fn sync_external_user(
         &self,
+        revision: ResourceRevision,
         request: StorageExternalUserSync,
     ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError>;
 }
@@ -441,15 +506,15 @@ pub trait TokenStorage: Send + Sync {
     async fn revoke_token(
         &self,
         request: StorageTokenRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError>;
 
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
+    ) -> Result<StorageMutationOutcome<Option<crate::StorageUpstreamSession>>, StorageError>;
 
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError>;
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError>;
 }

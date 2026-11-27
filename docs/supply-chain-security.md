@@ -24,7 +24,7 @@ vulnerability exception must be present in both the tool-specific policy and
 owner, and ISO 8601 expiry date. CI rejects expired or unmatched entries.
 
 The main workspace audit also rejects unused advisory exceptions. The separate
-fuzz workspace shares this policy, but permits the `advisory-not-detected` lint
+fuzz workspace shares this policy, but reports the `advisory-not-detected` lint as a warning
 because root-only exceptions can fall outside its workspace dependency scope.
 Matching advisory errors remain blocking in both audits.
 
@@ -39,6 +39,23 @@ An exception has this shape:
   "expires": "2026-09-01"
 }
 ```
+
+### OIDC public-key verification exception
+
+The OIDC adapter's `openidconnect` 4.1 dependency requires `rsa` 0.9, which is
+covered by [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071/).
+The advisory concerns timing leakage during RSA private-key operations.
+Production OIDC code only verifies provider signatures using public keys; it
+does not sign or decrypt with RSA private keys. Test-only signing uses a public,
+disposable fixture under `cfg(test)`.
+
+The matching policy exception is owned by `@terjekv` and expires on 2027-02-12.
+It must be removed when `openidconnect` supports the fixed `rsa` 0.10 series,
+or reassessed before adding any production RSA private-key operation. The
+exception does not suppress other RSA advisories or dependency checks.
+The root dependency audit rejects unused exceptions. The standalone fuzz graph
+omits OIDC and reports unused root exceptions as warnings while retaining all
+other advisory, license, source and ban checks.
 
 ### Temporary Chrono maintenance exception
 

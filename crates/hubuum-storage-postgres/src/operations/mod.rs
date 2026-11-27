@@ -60,12 +60,16 @@ pub mod token;
 pub mod token_retention;
 mod token_scope;
 pub mod unified_search;
+pub mod upstream_authentication;
 pub mod user;
 mod user_row;
 pub(crate) mod visibility;
 
 pub mod credential_approval;
 
+pub mod auth_interactions;
 pub mod auth_sessions;
 
 pub mod credential_activity;
+
+pub mod security_candidates;

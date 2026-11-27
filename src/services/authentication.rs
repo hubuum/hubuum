@@ -35,8 +35,13 @@ pub(crate) async fn login_evidence(
         is_admin,
     )
     .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
-    StorageLogin::try_new(subject, authenticated.credential().clone())
-        .map_err(|_| ApiError::Unauthorized("Authentication failed".into()))
+    match authenticated.authentication_revision() {
+        Some(revision) => {
+            StorageLogin::external(subject, authenticated.credential().clone(), revision)
+        }
+        None => StorageLogin::try_new(subject, authenticated.credential().clone()),
+    }
+    .map_err(|_| ApiError::Unauthorized("Authentication failed".into()))
 }
 
 /// Validate one presented bearer token through the selected complete storage
@@ -196,6 +201,7 @@ mod tests {
         let scope = context.scoped_name("unconfigured_execution_provider");
         let principal = storage
             .sync_external_user(
+                hubuum_domain::ResourceRevision::INITIAL,
                 StorageExternalUserSync::builder(
                     &scope,
                     "ldap",

@@ -17,6 +17,35 @@ use hubuum_storage_postgres::{PostgresPool, with_connection};
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
 
+#[rstest::rstest]
+#[case::external_scope("directory", "operators", "HUBUUM_ADMIN_IDENTITY_SCOPE=local")]
+#[case::group_override("local", "admin", "must match the deployment administrator group")]
+fn offline_recovery_requires_the_effective_deployment_administrator(
+    #[case] scope: &str,
+    #[case] requested_group: &str,
+    #[case] expected: &str,
+) {
+    let output = Command::new(admin_binary())
+        .args([
+            "--recover-security",
+            "--recovery-administrator-id",
+            "1",
+            "--writes-quiesced",
+            "--recovery-admin-group",
+            requested_group,
+        ])
+        .env("HUBUUM_ADMIN_IDENTITY_SCOPE", scope)
+        .env("HUBUUM_ADMIN_GROUPNAME", "operators")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(expected),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn admin_binary() -> &'static str {
     env!("CARGO_BIN_EXE_hubuum-admin")
 }

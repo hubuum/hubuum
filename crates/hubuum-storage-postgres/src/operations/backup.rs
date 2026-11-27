@@ -425,6 +425,9 @@ pub(crate) fn state_row_to_postgres(
     let object = row.as_object_mut().ok_or_else(|| {
         PostgresStorageError::invalid_input("Logical backup state row is not a JSON object")
     })?;
+    if section == StorageBackupStateSection::IdentityScopes {
+        object.remove("identity_namespace");
+    }
     reject_physical_fields(object, state_field_mappings(section))?;
     if section == StorageBackupStateSection::Users && object.contains_key("password") {
         return Err(PostgresStorageError::invalid_input(
@@ -621,6 +624,11 @@ async fn stream_capture_rows(
 ) -> Result<(), PostgresStorageError> {
     let key = snapshot_key(table)?;
     let predicate = filter.sql(table)?.unwrap_or("TRUE");
+    let projection = if table == "identity_scopes" {
+        "to_jsonb(snapshot_row) || COALESCE((SELECT jsonb_build_object('identity_namespace', b.namespace) FROM authentication_provider_bindings b WHERE b.name=snapshot_row.name AND b.kind=snapshot_row.provider_kind AND b.kind IN ('oidc','oauth')), '{}'::jsonb)"
+    } else {
+        "to_jsonb(snapshot_row)"
+    };
     // Evaluate eligibility per source row so excluded rows also consume work.
     // A NO SCROLL, WITHOUT HOLD cursor cannot materialize a held snapshot.
     let max_chars = progress
@@ -629,7 +637,7 @@ async fn stream_capture_rows(
         .min(i32::MAX as usize);
     diesel::sql_query(format!(
         "DECLARE hubuum_backup_rows NO SCROLL CURSOR WITHOUT HOLD FOR \
-         SELECT CASE WHEN {predicate} THEN left(to_jsonb(snapshot_row)::text, {max_chars}) \
+         SELECT CASE WHEN {predicate} THEN left(({projection})::text, {max_chars}) \
          ELSE NULL END AS row FROM {table} snapshot_row ORDER BY {key}"
     ))
     .execute(conn)
@@ -730,68 +738,77 @@ pub async fn capture_backup_replay(
     include_history: bool,
     budget: StorageBackupBudget,
 ) -> Result<StorageBackupReplay, PostgresStorageError> {
-    use hubuum_storage_core::StorageBackupReplayBuilder;
     runtime
-        .with_read_only_snapshot(async |conn| -> Result<_, PostgresStorageError> {
-            diesel::sql_query("SET LOCAL enable_sort = off")
-                .execute(conn)
-                .await?;
-            let mut builder =
-                StorageBackupReplayBuilder::new(budget, runtime.schema_limits(), include_history)?;
-            let mut progress = StorageBackupCaptureProgress::new(budget);
-            for &section in StorageBackupStateSection::ALL {
-                builder.begin_state(section)?;
-                stream_capture_rows(
-                    conn,
-                    state_table(section),
-                    SnapshotFilter::All,
-                    &mut progress,
-                    |row| state_row_to_logical(section, row),
-                    |row| builder.push(row).map_err(Into::into),
-                )
-                .await?;
-            }
-            if include_history {
-                for &section in StorageBackupHistorySection::ALL {
-                    builder.begin_history(section)?;
-                    let filter = match section {
-                        StorageBackupHistorySection::TerminalTasks => SnapshotFilter::TerminalTasks,
-                        StorageBackupHistorySection::ImportResults
-                        | StorageBackupHistorySection::ExportOutputs
-                        | StorageBackupHistorySection::RemoteCallResults => {
-                            SnapshotFilter::TerminalTaskResults
-                        }
-                        StorageBackupHistorySection::AuditEvents => SnapshotFilter::HistoryEvents,
-                        StorageBackupHistorySection::TerminalEventDeliveries => {
-                            SnapshotFilter::TerminalDeliveries
-                        }
-                        _ => SnapshotFilter::All,
-                    };
-                    stream_capture_rows(
-                        conn,
-                        history_table(section),
-                        filter,
-                        &mut progress,
-                        |row| {
-                            if section == StorageBackupHistorySection::AuditEvents
-                                && let Some(object) = row.as_object_mut()
-                                && object.get("dispatched_at").is_none_or(Value::is_null)
-                            {
-                                object.insert(
-                                    "dispatched_at".into(),
-                                    object.get("occurred_at").cloned().unwrap_or(Value::Null),
-                                );
-                            }
-                            history_row_to_logical(section, row)
-                        },
-                        |row| builder.push(row).map_err(Into::into),
-                    )
-                    .await?;
-                }
-            }
-            builder.finish().map_err(Into::into)
+        .with_read_only_snapshot(async |connection| {
+            capture_on_connection(connection, include_history, budget, runtime.schema_limits())
+                .await
         })
         .await
+}
+
+pub(super) async fn capture_on_connection(
+    conn: &mut PostgresConnection,
+    include_history: bool,
+    budget: StorageBackupBudget,
+    schema_limits: hubuum_domain::JsonSchemaLimits,
+) -> Result<StorageBackupReplay, PostgresStorageError> {
+    use hubuum_storage_core::StorageBackupReplayBuilder;
+    diesel::sql_query("SET LOCAL enable_sort = off")
+        .execute(conn)
+        .await?;
+    let mut builder = StorageBackupReplayBuilder::new(budget, schema_limits, include_history)?;
+    let mut progress = StorageBackupCaptureProgress::new(budget);
+    for &section in StorageBackupStateSection::ALL {
+        builder.begin_state(section)?;
+        stream_capture_rows(
+            conn,
+            state_table(section),
+            SnapshotFilter::All,
+            &mut progress,
+            |row| state_row_to_logical(section, row),
+            |row| builder.push(row).map_err(Into::into),
+        )
+        .await?;
+    }
+    if include_history {
+        for &section in StorageBackupHistorySection::ALL {
+            builder.begin_history(section)?;
+            let filter = match section {
+                StorageBackupHistorySection::TerminalTasks => SnapshotFilter::TerminalTasks,
+                StorageBackupHistorySection::ImportResults
+                | StorageBackupHistorySection::ExportOutputs
+                | StorageBackupHistorySection::RemoteCallResults => {
+                    SnapshotFilter::TerminalTaskResults
+                }
+                StorageBackupHistorySection::AuditEvents => SnapshotFilter::HistoryEvents,
+                StorageBackupHistorySection::TerminalEventDeliveries => {
+                    SnapshotFilter::TerminalDeliveries
+                }
+                _ => SnapshotFilter::All,
+            };
+            stream_capture_rows(
+                conn,
+                history_table(section),
+                filter,
+                &mut progress,
+                |row| {
+                    if section == StorageBackupHistorySection::AuditEvents
+                        && let Some(object) = row.as_object_mut()
+                        && object.get("dispatched_at").is_none_or(Value::is_null)
+                    {
+                        object.insert(
+                            "dispatched_at".into(),
+                            object.get("occurred_at").cloned().unwrap_or(Value::Null),
+                        );
+                    }
+                    history_row_to_logical(section, row)
+                },
+                |row| builder.push(row).map_err(Into::into),
+            )
+            .await?;
+        }
+    }
+    builder.finish().map_err(Into::into)
 }
 
 #[cfg(test)]

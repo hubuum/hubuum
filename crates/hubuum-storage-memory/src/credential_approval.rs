@@ -30,10 +30,20 @@ impl CredentialApprovals {
 
     pub(super) fn invalidated_for_restore(&self, at: DateTime<Utc>) -> Self {
         let mut restored = self.clone();
-        for (_, metadata) in restored.records.values_mut() {
-            metadata.invalidate(at);
-        }
+        restored.invalidate_matching(at, |_| true);
         restored
+    }
+
+    pub(super) fn invalidate_matching(
+        &mut self,
+        at: DateTime<Utc>,
+        matches: impl Fn(PrincipalId) -> bool,
+    ) {
+        for (claim, metadata) in self.records.values_mut() {
+            if matches(claim.actor_id()) {
+                metadata.invalidate(at);
+            }
+        }
     }
 
     fn create(
@@ -70,6 +80,7 @@ impl CredentialApprovals {
             || stored.operation() != claim.operation()
             || stored.target_id() != claim.target_id()
             || stored.restore_job_id() != claim.restore_job_id()
+            || stored.security_candidate_id() != claim.security_candidate_id()
             || stored.request_digest() != claim.request_digest()
         {
             return Err(denied());

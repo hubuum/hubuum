@@ -65,6 +65,13 @@ impl RequestProvenance {
         self
     }
 
+    /// Transport provenance for a capability request whose actor is resolved in storage.
+    pub(crate) fn system_event_context(&self) -> EventContext {
+        EventContext::system()
+            .with_request(self.request_id, self.correlation_id.clone())
+            .with_trace_link(self.trace_link.clone())
+    }
+
     pub fn user_event_context(&self, actor_user_id: i32) -> EventContext {
         EventContext::user(
             PrincipalId::new(actor_user_id).expect("authenticated principal id must be positive"),

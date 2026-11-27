@@ -1,6 +1,7 @@
 use super::credential_approvals::approve_request;
 use crate::api::response::{ApiErrorResponse, ApiResponse, LoginResponse};
 use crate::models::credential_approval::CredentialOperation;
+use crate::services::auth_interactions::oidc;
 use crate::services::credential_approvals;
 use actix_web::{HttpRequest, Responder, delete, get, http::StatusCode, patch, post, put, web};
 use serde::{Deserialize, Serialize};
@@ -394,11 +395,12 @@ pub async fn revoke_token(
         ),
     )
     .await?;
-    if revoked == 0 {
+    if revoked.count() == 0 {
         return Err(ApiError::NotFound(
             "Token not found for this principal".to_string(),
         ));
     }
+    oidc::revoke_best_effort(revoked.into_grants(), context.clone());
     let updated = PrincipalTokenMetadata::load_for_principal_token(
         &context,
         path.principal_id,

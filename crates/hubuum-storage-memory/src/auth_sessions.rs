@@ -1,4 +1,6 @@
 use super::*;
+use hubuum_storage_core::StorageTokenRevocations;
+use hubuum_storage_core::StorageUpstreamSession;
 
 #[derive(Clone)]
 pub(super) struct MemorySession {
@@ -25,7 +27,38 @@ fn denied() -> StorageError {
     StorageError::authentication_required("Authentication failed")
 }
 impl MemoryState {
+    pub(super) fn upstream_eligible(
+        &self,
+        record: &StorageUpstreamSession,
+        now: DateTime<Utc>,
+    ) -> bool {
+        record.current_revision() == self.runtime_settings.authentication_revision()
+            && self
+                .sessions
+                .get(&record.session().value())
+                .is_some_and(|session| {
+                    session.active(now) && session.principal_id() == record.principal()
+                })
+            && self
+                .users
+                .get(&record.principal().id())
+                .is_some_and(|user| {
+                    user.provider_managed
+                        && user.user.clone().into_parts().anonymized_at().is_none()
+                        && user.last_sync_success_at.is_some()
+                        && user.external_subject.as_deref() == Some(record.subject())
+                })
+            && self
+                .runtime_settings
+                .provider_binding(record.scope())
+                .is_some_and(|provider| {
+                    Some(provider.id()) == record.binding().provider().external_id()
+                        && provider.namespace() == record.namespace()
+                })
+    }
     pub(super) fn invalidate_principal_sessions(&mut self, principal: i32) {
+        self.upstream_sessions
+            .retain(|_, session| session.principal().id() != principal);
         for session in self.sessions.values_mut() {
             if session.principal_id().id() == principal {
                 session.revoked = true;
@@ -244,21 +277,30 @@ impl MemoryState {
         &mut self,
         target: SessionRevocation,
         context: EventContext,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         let ids: Vec<_> = self
             .sessions
             .iter()
-            .filter(|(_, s)| {
+            .filter(|(session_id, s)| {
                 !s.revoked
                     && match target {
                         SessionRevocation::All(id) => s.principal_id() == id,
                         SessionRevocation::Current(id) => s.access_ids.contains(&id),
+                        SessionRevocation::Session(id) => **session_id == id.value(),
                     }
             })
             .map(|(id, _)| *id)
             .collect();
         let mut audits = Vec::new();
+        let mut grants = Vec::new();
         for id in &ids {
+            if let Some(grant) = self
+                .upstream_sessions
+                .remove(id)
+                .filter(|record| record.credential().is_some())
+            {
+                grants.push(grant);
+            }
             let mut session = self.sessions.get(id).cloned().ok_or_else(denied)?;
             self.revoke_family(&mut session)?;
             audits.push(self.append_simple_event(
@@ -272,10 +314,12 @@ impl MemoryState {
             self.sessions.insert(*id, session);
         }
         if audits.is_empty() {
-            return Ok(StorageMutationOutcome::unchanged(0));
+            return Ok(StorageMutationOutcome::unchanged(
+                StorageTokenRevocations::default(),
+            ));
         }
         Ok(StorageMutationOutcome::committed_with_audits(
-            ids.len(),
+            StorageTokenRevocations::new(ids.len(), grants),
             StorageAuditReceipts::try_from_vec(audits).map_err(invalid_contract_value)?,
         ))
     }
@@ -301,6 +345,7 @@ impl MemoryState {
             .collect();
         for id in &ids {
             if let Some(session) = self.sessions.remove(id) {
+                self.upstream_sessions.remove(id);
                 for token in session.access_ids {
                     self.tokens.remove(&token.id());
                 }

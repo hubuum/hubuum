@@ -134,11 +134,24 @@ pub struct LdapIdentityProvider {
     rules: Vec<GroupMappingRule>,
     starttls: bool,
     secret_source: Option<std::sync::Arc<dyn LdapSecretSource>>,
+    transport: Option<std::sync::Arc<dyn LdapTransport>>,
 }
 
 #[async_trait::async_trait]
 pub trait LdapSecretSource: Send + Sync {
     async fn resolve(&self, alias: &str) -> Result<ResolvedSecret, SecretError>;
+}
+
+/// Application-owned egress boundary. The adapter still performs verified TLS
+/// against the original URL; the supplied stream pins the screened destination.
+#[async_trait::async_trait]
+pub trait LdapTransport: Send + Sync {
+    async fn connect(
+        &self,
+        host: &str,
+        port: u16,
+        timeout: Duration,
+    ) -> Result<std::net::TcpStream, AuthProviderError>;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -184,6 +197,11 @@ impl LdapIdentityProvider {
         let scope_name = IdentityScopeName::new(config.scope.clone())?;
         let parsed_url = Url::parse(&config.url)
             .map_err(|e| AuthProviderError::Config(format!("invalid ldap url: {e}")))?;
+        if parsed_url.query().is_some() || parsed_url.fragment().is_some() {
+            return Err(AuthProviderError::Config(
+                "LDAP endpoint must not contain a query or fragment".into(),
+            ));
+        }
         if parsed_url.host_str().is_none() {
             return Err(AuthProviderError::Config(
                 "ldap url must include a host".to_string(),
@@ -276,7 +294,14 @@ impl LdapIdentityProvider {
             rules,
             starttls,
             secret_source,
+            transport: None,
         })
+    }
+
+    #[must_use]
+    pub fn with_transport(mut self, transport: std::sync::Arc<dyn LdapTransport>) -> Self {
+        self.transport = Some(transport);
+        self
     }
 
     pub async fn test_connection(&self) -> Result<(), AuthProviderError> {
@@ -289,9 +314,23 @@ impl LdapIdentityProvider {
     }
 
     async fn ldap(&self) -> Result<ldap3::Ldap, AuthProviderError> {
-        let settings = LdapConnSettings::new()
+        let mut settings = LdapConnSettings::new()
             .set_conn_timeout(self.connect_timeout())
             .set_starttls(self.starttls);
+        if let Some(transport) = &self.transport {
+            let url = Url::parse(&self.config.url)
+                .map_err(|_| AuthProviderError::Config("Invalid LDAP endpoint".into()))?;
+            let host = url
+                .host_str()
+                .ok_or_else(|| AuthProviderError::Config("LDAP host required".into()))?;
+            let port = url
+                .port()
+                .unwrap_or(if url.scheme() == "ldaps" { 636 } else { 389 });
+            let stream = transport
+                .connect(host, port, self.connect_timeout())
+                .await?;
+            settings = settings.set_std_stream(ldap3::StdStream::Tcp(stream));
+        }
         let (conn, ldap) = LdapConnAsync::with_settings(settings, &self.config.url)
             .await
             .map_err(|e| AuthProviderError::Unavailable(e.to_string()))?;

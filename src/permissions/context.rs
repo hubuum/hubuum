@@ -377,8 +377,11 @@ impl AppContext {
             && !applied_authentication_revision
                 .is_some_and(|revision| revision >= authentication_revision)
         {
-            match crate::auth::apply_runtime_authentication_settings(snapshot.authentication())
-                .await
+            match crate::auth::apply_runtime_authentication_settings(
+                snapshot.authentication(),
+                authentication_revision,
+            )
+            .await
             {
                 Ok(true) => {
                     *self
@@ -436,19 +439,14 @@ impl AppContext {
         {
             return;
         }
-        let backend = match selected {
-            Some(selected) => {
-                crate::permissions::build_permission_backend_for_runtime(
-                    &config,
-                    self.backend.clone(),
-                    selected,
-                )
-                .await
-            }
-            None => {
-                crate::permissions::build_permission_backend(&config, self.backend.clone()).await
-            }
-        };
+        let backend = crate::permissions::build_permission_backend_for_assignment(
+            &config,
+            self.backend.clone(),
+            snapshot
+                .record(hubuum_storage_core::StorageRuntimeSettingsGroup::Authorization)
+                .assignment(),
+        )
+        .await;
         match backend {
             Ok(backend) => {
                 self.replace_permission_backend(backend);

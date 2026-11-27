@@ -69,8 +69,11 @@ for path in "$@"; do
 
   case "$path" in
     src/api/openapi.rs | src/api/openapi/* | src/api/response.rs | \
+    src/models/security_candidate.rs | src/api/v1/handlers/security_candidates.rs | \
+      crates/hubuum-domain/src/authentication_configuration.rs | \
       src/models/class_fields.rs | src/models/class_fields/* | src/api/v1/handlers/classes/field_discovery.rs | \
       src/api/v1/handlers/auth.rs | src/models/auth_session.rs | src/models/credential_activity.rs | \
+      src/api/v1/handlers/auth_interactions.rs | src/api/v1/handlers/auth_interactions/* | src/models/auth_interaction.rs | src/models/auth_interaction/* | src/config/auth_browser.rs | \
       src/models/history/computed.rs | src/api/v1/handlers/classes/history_computed.rs | src/api/v1/handlers/classes/history_population.rs | src/api/v1/handlers/classes/history_relations.rs | \
       src/config/running.rs | src/api/v1/handlers/runtime_config.rs | src/models/query_usage.rs | src/models/credential_approval.rs | \
       src/models/runtime_settings.rs | src/models/runtime_settings/* | src/api/v1/handlers/client_config.rs | \
@@ -118,6 +121,12 @@ for path in "$@"; do
   esac
 
   case "$path" in
+    tests/python/integration/keycloak.py | tests/python/unit/tooling/test_keycloak_fixture.py | \
+      tests/python/integration/oauth.py | tests/python/unit/tooling/test_oauth_fixture.py)
+      code=true
+      container=true
+      artifacts=true
+      ;;
     fuzz/* | .github/workflows/regex-fuzz.yml)
       # The standalone fuzz workflow owns these tests and lint checks.
       code=true
@@ -148,7 +157,13 @@ for path in "$@"; do
       operational_contract=true
       ;;
     docs/openapi.json)
+      code=true
       openapi=true
+      ;;
+    docs/authentication/openapi.proposed.json | docs/authentication/fixtures.json | \
+      docs/authentication/ecosystem-source.json | tests/python/integration/ecosystem.py)
+      # Dynamic Python wire/consumer inputs, separate from production OpenAPI.
+      code=true
       ;;
     docs/export_template_guide.md | crates/hubuum-schema-diagnostics/README.md)
       code=true

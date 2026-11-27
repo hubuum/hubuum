@@ -169,7 +169,24 @@ for an exception.
   `ExternalIdentityStorage::sync_external_user` is an
   identity-provider reconciliation operation that emits a system-attributed
   audit event and returns its `StorageMutationOutcome`.
+- Authentication interactions: `AuthenticationStorage::create_auth_interaction`,
+  `AuthenticationStorage::bind_auth_interaction_browser`, and
+  `AuthenticationStorage::advance_auth_interaction` maintain bounded ephemeral
+  authority, including committed polling backoff and terminal rejection.
+  `AuthenticationStorage::complete_auth_interaction` atomically consumes that
+  authority with the purpose-specific result. Its session and approval variants
+  require event context and return the existing audited mutation outcomes;
+  provider verification only updates the bound candidate and issues no credential.
+  `AuthenticationStorage::purge_auth_interactions` removes eligible expired rows
+  in bounded batches, preserving consumed-session cleanup metadata for one hour.
 - Workflow state machines:
+  `ExternalIdentityStorage::claim_upstream_credential` consumes an encrypted
+  upstream credential before network I/O and assigns a bounded lease.
+  `ExternalIdentityStorage::finish_upstream_renewal` validates the lease, live
+  session, immutable subject and provider revision before atomically updating
+  memberships and replacing the credential.
+  `ExternalIdentityStorage::fail_upstream_renewal` destroys the consumed credential
+  and records bounded outage or definitive rejection without reviving old authority.
   `ComputedFieldStorage::request_computed_field_rebuild`,
   `ComputedFieldStorage::execute_computed_field_rebuild`, and
   `TaskQueueStorage::create_task` create or advance durable work whose task row,
@@ -395,3 +412,16 @@ revision; requesting the current assignment returns `Unchanged` without a
 revision, audit record, or notification. These records are separate from the
 domain event stream. Logical restores preserve settings and their audit
 records, and portable backups exclude them.
+
+`RuntimeSettingsStorage::create_security_candidate` and
+`RuntimeSettingsStorage::verify_security_candidate` write only short-lived
+verification state, never domain identity, membership or sessions. Their typed
+owner and verification revision fence competing updates.
+`RuntimeSettingsStorage::purge_security_candidates` removes expired authority.
+These are context-free workflow writes. Candidate activation is an audited
+settings mutation: consume candidate and operation-bound approval, recheck local
+recovery authority, commit the expected revision and audit, preserve provider
+namespace bindings, and revoke affected external credentials in one transaction.
+Offline recovery updates both security groups and records explicit recovery
+evidence atomically. Logical restore discards candidate authority and preserves
+installation-owned provider bindings.

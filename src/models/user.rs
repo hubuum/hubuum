@@ -1,4 +1,5 @@
 use hubuum_domain::PlaintextPassword;
+use hubuum_storage_core::StorageTokenRevocations;
 use hubuum_storage_core::StorageUserDetails;
 use std::fmt;
 
@@ -278,7 +279,10 @@ impl User {
             .await
     }
 
-    pub async fn delete_all_tokens<C>(&self, backend: &C) -> Result<usize, ApiError>
+    pub async fn delete_all_tokens<C>(
+        &self,
+        backend: &C,
+    ) -> Result<StorageTokenRevocations, ApiError>
     where
         C: StorageContext,
     {
@@ -559,6 +563,12 @@ pub struct ValidatedLogin {
 }
 
 impl ValidatedLogin {
+    /// Retain validated account/password values while selecting the server-owned scope.
+    pub(crate) fn with_identity_scope(mut self, scope: hubuum_domain::IdentityScopeName) -> Self {
+        self.identity_scope = scope.as_str().to_owned();
+        self
+    }
+
     pub fn identity_scope(&self) -> &str {
         &self.identity_scope
     }

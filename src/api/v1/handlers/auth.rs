@@ -4,7 +4,7 @@ use std::fmt;
 use crate::errors::ApiError;
 use crate::events::{EventContext, RequestProvenance};
 use crate::extractors::AccessEventContext;
-use crate::extractors::{AdminAccess, Authenticated, ManagementAccess};
+use crate::extractors::{AdminAccess, Authenticated, LogoutCredential};
 use crate::middlewares::rate_limit::{
     LoginAttemptOutcome, begin_login_attempt, client_ip_for_request, finish_login_attempt,
 };
@@ -12,6 +12,7 @@ use crate::models::auth_session::{SessionLoginRequest, SessionRefreshRequest, Se
 use crate::models::{REDACTED_DEBUG_VALUE, Token, UserID};
 use crate::observability::metrics;
 use crate::permissions::AppContext;
+use crate::services::auth_interactions::oidc;
 use crate::services::auth_sessions;
 use crate::storage::{AuthenticationStorage, storage_handle};
 use actix_web::http::StatusCode;
@@ -170,14 +171,17 @@ pub async fn login(
 #[post("/logout")]
 pub async fn logout(
     context: AppContext,
-    requestor: Authenticated,
+    requestor: LogoutCredential,
 ) -> Result<impl Responder, ApiError> {
     debug!(message = "token logout requested");
 
     let result = requestor.token.delete(&context).await;
 
     match result {
-        Ok(_) => Ok(ApiResponse::message("Logout successful.")),
+        Ok(upstream) => {
+            oidc::revoke_best_effort(upstream.into_iter().collect(), context);
+            Ok(ApiResponse::message("Logout successful."))
+        }
         Err(e) => {
             warn!(message = "Logout failed", error = e.to_string());
             Err(ApiError::InternalServerError(
@@ -201,27 +205,30 @@ pub async fn logout(
 #[post("/logout_all")]
 pub async fn logout_all(
     context: AppContext,
-    user_access: ManagementAccess,
+    credential: LogoutCredential,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
+    let owner = credential.all_sessions_owner(&context).await?;
     debug!(
-        message = "Logging out all tokens for {}.",
-        user_access.user.id
+        principal_id = owner.id(),
+        "Logging out all interactive sessions"
     );
-
     let delete_result = storage_handle(&context)
         .revoke_auth_sessions(
-            SessionRevocation::All(crate::models::PrincipalID::new(user_access.user.id)?),
-            user_access.event_context(&req),
+            SessionRevocation::All(owner),
+            credential.event_context(&req),
         )
         .await;
 
     match delete_result {
-        Ok(_) => Ok(ApiResponse::message("Logout of all sessions successful.")),
+        Ok(outcome) => {
+            oidc::revoke_best_effort(outcome.into_value().into_grants(), context);
+            Ok(ApiResponse::message("Logout of all sessions successful."))
+        }
         Err(e) => {
             warn!(
-                message = "Logout of all tokens failed",
-                user_id = user_access.user.id,
+                message = "Logout of all sessions failed",
+                user_id = owner.id(),
                 error = e.to_string()
             );
             Err(ApiError::InternalServerError(
@@ -255,7 +262,10 @@ pub async fn logout_token(
     let result = token.delete(&context).await;
 
     match result {
-        Ok(_) => Ok(ApiResponse::message("Logout of token successful.")),
+        Ok(upstream) => {
+            oidc::revoke_best_effort(upstream.into_iter().collect(), context);
+            Ok(ApiResponse::message("Logout of token successful."))
+        }
         Err(e) => {
             warn!(
                 message = "Logout of token failed",
@@ -304,10 +314,13 @@ pub async fn logout_other(
         .await;
 
     match delete_result {
-        Ok(_) => Ok(ApiResponse::message(format!(
-            "Logout of tokens for {} successful.",
-            user_id.id()
-        ))),
+        Ok(result) => {
+            oidc::revoke_best_effort(result.into_grants(), context);
+            Ok(ApiResponse::message(format!(
+                "Logout of tokens for {} successful.",
+                user_id.id()
+            )))
+        }
         Err(e) => {
             warn!(
                 message = "Logout of other tokens failed",
@@ -385,7 +398,8 @@ pub async fn refresh(
 }
 
 pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg.service(get_auth_providers)
+    cfg.configure(super::auth_interactions::config)
+        .service(get_auth_providers)
         .service(login)
         .service(logout)
         .service(logout_all)
@@ -404,5 +418,16 @@ pub async fn no_store(
         actix_web::http::header::CACHE_CONTROL,
         actix_web::http::header::HeaderValue::from_static("no-store"),
     );
+    // Hosted native forms set same-origin so POSTs retain their Origin header.
+    // JSON, redirects and extractor errors keep the restrictive default.
+    if !response
+        .headers()
+        .contains_key(actix_web::http::header::REFERRER_POLICY)
+    {
+        response.headers_mut().insert(
+            actix_web::http::header::REFERRER_POLICY,
+            actix_web::http::header::HeaderValue::from_static("no-referrer"),
+        );
+    }
     Ok(response)
 }

@@ -353,6 +353,7 @@ pub enum StorageSessionRotation {
 pub enum SessionRevocation {
     Current(TokenId),
     All(PrincipalId),
+    Session(AuthSessionId),
 }
 
 #[cfg(test)]

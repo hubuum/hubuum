@@ -72,6 +72,30 @@ struct AdminCli {
     #[command(flatten)]
     secrets: SecretSourceOptions,
 
+    /// Offline recovery: select local authorization and local-only authentication
+    #[arg(long, conflicts_with_all = ["backup", "restore", "restore_executor", "verify_backup", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges", "reset_password", "audit_templates", "export_template_health", "database_ready", "token_key_status", "reconcile_query_usage"])]
+    recover_security: bool,
+
+    /// Existing password-capable local administrator whose grants must survive recovery
+    #[arg(
+        long,
+        requires = "recover_security",
+        required_if_eq("recover_security", "true")
+    )]
+    recovery_administrator_id: Option<i32>,
+
+    /// Deployment-owned local administrator group
+    #[arg(long, env = "HUBUUM_ADMIN_GROUPNAME", default_value = crate::config::DEFAULT_ADMIN_GROUPNAME)]
+    recovery_admin_group: String,
+
+    /// Confirm every replica's privileged writes have been stopped for offline recovery
+    #[arg(
+        long,
+        requires = "recover_security",
+        required_if_eq("recover_security", "true")
+    )]
+    writes_quiesced: bool,
+
     /// Run one bounded privileged pass preparing and cleaning up query usage resources
     #[arg(long, default_value_t = false, conflicts_with_all = ["backup", "restore", "restore_executor", "verify_backup", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges", "reset_password", "audit_templates", "export_template_health", "database_ready", "token_key_status"])]
     reconcile_query_usage: bool,
@@ -292,6 +316,31 @@ enum DatabasePrivilegeRole {
     Runtime,
 }
 
+fn deployment_recovery_group(requested: &str) -> Result<String, ApiError> {
+    let setting = |name, default: &str| match std::env::var(name) {
+        Ok(value) => Ok(value),
+        Err(std::env::VarError::NotPresent) => Ok(default.to_owned()),
+        Err(_) => Err(ApiError::BadRequest(format!("{name} must be valid UTF-8"))),
+    };
+    let scope = setting(
+        "HUBUUM_ADMIN_IDENTITY_SCOPE",
+        hubuum_domain::LOCAL_IDENTITY_SCOPE,
+    )?;
+    let group = setting(
+        "HUBUUM_ADMIN_GROUPNAME",
+        crate::config::DEFAULT_ADMIN_GROUPNAME,
+    )?;
+    if scope != hubuum_domain::LOCAL_IDENTITY_SCOPE {
+        return Err(ApiError::BadRequest(
+            "Offline recovery requires HUBUUM_ADMIN_IDENTITY_SCOPE=local".into(),
+        ));
+    }
+    if requested != group {
+        return Err(ApiError::BadRequest("--recovery-admin-group must match the deployment administrator group (HUBUUM_ADMIN_GROUPNAME)".into()));
+    }
+    Ok(group)
+}
+
 /// Parse and execute one Hubuum administration command.
 ///
 /// This is the workspace-internal boundary used by `hubuum-admin`; callers
@@ -299,11 +348,18 @@ enum DatabasePrivilegeRole {
 pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let matches = AdminCli::command().get_matches();
     let admin_cli = AdminCli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    let recovery_group = admin_cli
+        .recover_security
+        .then(|| deployment_recovery_group(&admin_cli.recovery_admin_group))
+        .transpose()?;
     let schema_limits = admin_cli.schema_validation.validate()?;
     let database_url_override = CommandLineDatabaseUrl::from_matches(&matches, "database_url");
     let migration_url_override =
         CommandLineDatabaseUrl::from_matches(&matches, "migration_database_url");
-    init_logging(&admin_cli.log_level, admin_cli.reconcile_query_usage);
+    init_logging(
+        &admin_cli.log_level,
+        admin_cli.reconcile_query_usage || admin_cli.json,
+    );
 
     if let Some(path) = admin_cli.verify_backup.as_deref() {
         verify_backup_file(BackupVerificationOptions {
@@ -355,7 +411,7 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let database_role_mode = effective_database_role_mode(&admin_cli)?;
     #[cfg(not(feature = "embedded-migrations"))]
     let database_role_mode = admin_cli.database_role_mode;
-    if migration_requested && admin_cli.reconcile_query_usage {
+    if migration_requested && (admin_cli.reconcile_query_usage || admin_cli.recover_security) {
         return Err(ApiError::BadRequest(
             "Query usage reconciliation must run separately from migrations".into(),
         ));
@@ -363,7 +419,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
     let privileged_database_operation = migration_requested
         || admin_cli.restore.is_some()
         || admin_cli.restore_executor
-        || admin_cli.reconcile_query_usage;
+        || admin_cli.reconcile_query_usage
+        || admin_cli.recover_security;
     secrets::initialize(&admin_cli.secrets)
         .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
     let database_url = if admin_cli.storage_backend == StorageBackendKind::Postgres {
@@ -487,6 +544,30 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
 
     let storage = initialize_storage(&storage_settings)?;
     ensure_storage_schema_ready(&storage).await?;
+
+    if let Some(group) = recovery_group {
+        use hubuum_storage_core::{RuntimeSettingsStorage, StorageSecurityRecovery};
+        if !admin_cli.writes_quiesced {
+            return Err(ApiError::BadRequest(
+                "Stop privileged writes on every replica and explicitly pass --writes-quiesced"
+                    .into(),
+            ));
+        }
+        let administrator =
+            hubuum_domain::PrincipalId::new(admin_cli.recovery_administrator_id.ok_or_else(
+                || ApiError::BadRequest("--recovery-administrator-id is required".into()),
+            )?)?;
+        let snapshot = storage.load_runtime_settings().await?;
+        let request = StorageSecurityRecovery::try_new(administrator, group, &snapshot)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        let outcomes = storage.recover_security_settings(request).await?;
+        println!(
+            "Security recovery committed: authentication revision {}, authorization revision {}. Reconcile every replica and verify local administrator login before resuming writes.",
+            outcomes[0].record().revision(),
+            outcomes[1].record().revision()
+        );
+        return Ok(());
+    }
 
     if admin_cli.reconcile_query_usage {
         let roles = database_role_mode
@@ -914,7 +995,12 @@ async fn verify_backup_restore(
     keep_restore_test_database: bool,
     capture_budget: StorageBackupBudget,
 ) -> Result<BackupVerificationReport, ApiError> {
-    let migrations_applied = prepare_disposable_restore_database(&target)?;
+    let (source, _, _) = crate::restores::replay::parse(
+        artifact.reader(),
+        artifact.summary().byte_size() as usize,
+        target.schema_limits(),
+    )?;
+    let migrations_applied = prepare_disposable_restore_database(&target, &source.snapshot)?;
     let verification = async {
         let storage = initialize_storage(&target)?;
         let started_at = std::time::Instant::now();
@@ -927,11 +1013,6 @@ async fn verify_backup_restore(
                 "Restored disposable database did not pass storage readiness".to_string(),
             ));
         }
-        let (source, _, _) = crate::restores::replay::parse(
-            artifact.reader(),
-            artifact.summary().byte_size() as usize,
-            storage.schema_limits(),
-        )?;
         drop(artifact);
         let restored = crate::restores::replay::capture(
             &storage,
@@ -1481,6 +1562,34 @@ mod tests {
         DEFAULT_DATABASE_RUNTIME_ROLE, DatabaseRoleMode, StorageBackendKind,
         StorageDatabaseRoleNames, resolve_database_roles,
     };
+
+    #[rstest::rstest]
+    #[case::missing_administrator(vec!["--recover-security", "--writes-quiesced"])]
+    #[case::missing_quiescence(vec!["--recover-security", "--recovery-administrator-id", "1"])]
+    #[case::without_recovery(vec!["--writes-quiesced"])]
+    fn security_recovery_requires_explicit_operator_inputs(#[case] arguments: Vec<&str>) {
+        let error = AdminCli::try_parse_from(std::iter::once("hubuum-admin").chain(arguments))
+            .err()
+            .expect("incomplete recovery must fail");
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
+
+    #[test]
+    fn security_recovery_accepts_complete_operator_inputs() {
+        let cli = AdminCli::try_parse_from([
+            "hubuum-admin",
+            "--recover-security",
+            "--writes-quiesced",
+            "--recovery-administrator-id",
+            "1",
+        ])
+        .unwrap();
+        assert!(cli.recover_security && cli.writes_quiesced);
+        assert_eq!(cli.recovery_administrator_id, Some(1));
+    }
 
     #[test]
     fn failed_streaming_backup_preserves_the_destination_and_removes_partial_output() {

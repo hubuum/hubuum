@@ -221,75 +221,6 @@ async fn runtime_settings_require_an_unscoped_administrator(
     );
 }
 
-#[cfg(not(feature = "permissions-treetop"))]
-#[actix_web::test]
-async fn unsupported_authorization_backend_is_not_committed() {
-    let backend = StorageHandle::memory();
-    let user = admin(&backend).await;
-    let response = send(
-        &backend,
-        Some(&user.raw_token),
-        put(
-            "/api/v1/admin/runtime-settings/authorization",
-            json!({"expected_revision": 1, "backend": "treetop"}),
-        ),
-    )
-    .await;
-
-    assert_eq!(response.status(), http::StatusCode::BAD_REQUEST);
-    assert_eq!(
-        current_revision(&backend, StorageRuntimeSettingsGroup::Authorization).await,
-        ResourceRevision::INITIAL
-    );
-    assert_eq!(
-        history_len(&backend, StorageRuntimeSettingsGroup::Authorization).await,
-        0
-    );
-}
-
-#[cfg(not(feature = "permissions-treetop"))]
-#[actix_web::test]
-async fn stale_authorization_update_is_rejected_before_backend_preflight() {
-    let backend = StorageHandle::memory();
-    let user = admin(&backend).await;
-    let response = send(
-        &backend,
-        Some(&user.raw_token),
-        put(
-            "/api/v1/admin/runtime-settings/authorization",
-            json!({"expected_revision": 2, "backend": "treetop"}),
-        ),
-    )
-    .await;
-
-    assert_eq!(response.status(), http::StatusCode::PRECONDITION_FAILED);
-    assert_eq!(
-        history_len(&backend, StorageRuntimeSettingsGroup::Authorization).await,
-        0
-    );
-}
-
-#[actix_web::test]
-async fn supported_authorization_backend_is_committed() {
-    let backend = StorageHandle::memory();
-    let user = admin(&backend).await;
-    let response = send(
-        &backend,
-        Some(&user.raw_token),
-        put(
-            "/api/v1/admin/runtime-settings/authorization",
-            json!({"expected_revision": 1, "backend": "local"}),
-        ),
-    )
-    .await;
-
-    assert_eq!(response.status(), http::StatusCode::OK);
-    assert_eq!(
-        current_revision(&backend, StorageRuntimeSettingsGroup::Authorization).await,
-        revision(2)
-    );
-}
-
 #[rstest::rstest]
 #[case::select(false)]
 #[case::release(true)]
@@ -334,7 +265,7 @@ async fn authorization_change_cannot_remove_the_callers_administrator_access(
     )
     .await;
     assert!(
-        matches!(result, Err(ApiError::BadRequest(message)) if message.contains("retain administrator access"))
+        matches!(result, Err(ApiError::Forbidden(message)) if message.contains("local recovery grants"))
     );
     assert_eq!(
         history_len(&backend, StorageRuntimeSettingsGroup::Authorization).await,
@@ -352,6 +283,7 @@ async fn external_administrators_cannot_change_security_settings(
     let backend = StorageHandle::memory();
     let user = backend
         .sync_external_user(
+            ResourceRevision::INITIAL,
             hubuum_storage_core::StorageExternalUserSync::builder(
                 "corporate",
                 "ldap",
@@ -391,10 +323,12 @@ async fn local_authentication_cannot_be_disabled_through_the_api() {
         &backend,
         &user.raw_token,
         test::TestRequest::post()
-            .uri("/api/v1/admin/runtime-settings/authentication/preflight")
-            .set_json(json!({"expected_revision": 1, "providers": [
-                {"source": "deployment", "name": "local", "kind": "ldap", "enabled": false}
-            ]})),
+            .uri("/api/v1/admin/runtime-settings/security-candidates")
+            .set_json(
+                json!({"group": "authentication", "expected_revision": 1, "providers": [
+                    {"source": "deployment", "name": "local", "kind": "ldap", "enabled": false}
+                ]}),
+            ),
     )
     .await;
     assert_eq!(
@@ -411,41 +345,27 @@ async fn local_authentication_cannot_be_disabled_through_the_api() {
 #[case::dotted("corp.example.org")]
 #[case::unicode("Bedrift Øst")]
 #[actix_web::test]
-async fn disabled_deployment_provider_is_audited_without_connectivity(#[case] name: &str) {
+async fn disabled_deployment_provider_can_be_staged_without_connectivity(#[case] name: &str) {
     let backend = StorageHandle::memory();
     let user = admin(&backend).await;
-    let (status, _) = send_json(
+    let (status, candidate) = send_json(
         &backend,
         &user.raw_token,
         test::TestRequest::post()
-            .uri("/api/v1/admin/runtime-settings/authentication/preflight")
-            .set_json(json!({"expected_revision": 1, "providers": [
-                {"source": "deployment", "name": name, "kind": "ldap", "enabled": false}
-            ]})),
+            .uri("/api/v1/admin/runtime-settings/security-candidates")
+            .set_json(
+                json!({"group": "authentication", "expected_revision": 1, "providers": [
+                    {"source": "deployment", "name": name, "kind": "ldap", "enabled": false}
+                ]}),
+            ),
     )
     .await;
-    assert_eq!(status, http::StatusCode::OK);
-    let changes = backend
-        .list_runtime_settings_changes(
-            StorageRuntimeSettingsHistoryQuery::try_new(
-                StorageRuntimeSettingsGroup::Authentication,
-                None,
-                10,
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap();
-    let document = changes[0].current().to_document().unwrap();
-    assert_eq!(
-        document["providers"],
-        json!([
-            {"source": "deployment", "name": name, "kind": "ldap", "enabled": false}
-        ])
-    );
+    assert_eq!(status, http::StatusCode::CREATED, "{candidate}");
+    assert_eq!(candidate["state"], "verified");
+    assert_eq!(candidate["providers"][0]["name"], name);
     assert_eq!(
         history_len(&backend, StorageRuntimeSettingsGroup::Authentication).await,
-        1
+        0
     );
 }
 
@@ -747,16 +667,16 @@ async fn query_observation_limits_are_clamped_and_reported_per_replica() {
 }
 
 #[actix_web::test]
-async fn failed_authentication_preflight_does_not_persist_the_candidate() {
+async fn invalid_authentication_candidate_does_not_change_live_settings() {
     let backend = StorageHandle::memory();
     let user = admin(&backend).await;
     let (status, _) = send_json(
         &backend,
         &user.raw_token,
         test::TestRequest::post()
-            .uri("/api/v1/admin/runtime-settings/authentication/preflight")
+            .uri("/api/v1/admin/runtime-settings/security-candidates")
             .set_json(json!({
-                "expected_revision": 1,
+                "group": "authentication", "expected_revision": 1,
                 "providers": [{
                     "name": "corporate",
                     "kind": "ldap",
@@ -793,7 +713,7 @@ async fn failed_authentication_preflight_does_not_persist_the_candidate() {
     "group_rules": [{"pattern": "admins", "name": "admins", "unexpected": true}]
 }))]
 #[actix_web::test]
-async fn authentication_preflight_does_not_persist_unknown_fields(
+async fn authentication_candidate_rejects_unknown_fields(
     #[case] extra: Value,
     #[values(true, false)] enabled: bool,
 ) {
@@ -813,9 +733,9 @@ async fn authentication_preflight_does_not_persist_unknown_fields(
         &backend,
         &user.raw_token,
         test::TestRequest::post()
-            .uri("/api/v1/admin/runtime-settings/authentication/preflight")
+            .uri("/api/v1/admin/runtime-settings/security-candidates")
             .set_json(json!({
-                "expected_revision": 1,
+                "group": "authentication", "expected_revision": 1,
                 "providers": [{
                     "name": "corporate",
                     "kind": "ldap",
@@ -1230,6 +1150,34 @@ async fn discovery_documents_every_advertised_field_and_enum_choice() {
     }
 }
 
+#[rstest::rstest]
+#[case::ldap("ldap")]
+#[case::oidc("oidc")]
+#[case::oauth("oauth")]
+#[actix_web::test]
+async fn discovery_advertises_runtime_setup_and_activation_for_supported_authentication(
+    #[case] kind: &str,
+) {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let (status, catalogue) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::get().uri("/api/v1/admin/runtime-settings/schema"),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::OK);
+    for capability in ["configurable_provider_kinds", "activatable_provider_kinds"] {
+        assert!(
+            catalogue["security"][capability]
+                .as_array()
+                .unwrap()
+                .contains(&json!(kind)),
+            "{kind} must be discoverable for runtime {capability}"
+        );
+    }
+}
+
 #[actix_web::test]
 async fn generic_patch_preserves_unedited_requested_settings() {
     let backend = StorageHandle::memory();
@@ -1322,7 +1270,7 @@ async fn invalid_generic_patch_is_not_audited(#[case] changes: Value) {
 }
 
 #[actix_web::test]
-async fn generic_patch_cannot_bypass_authentication_preflight() {
+async fn generic_patch_cannot_bypass_security_candidate_activation() {
     let backend = StorageHandle::memory();
     let user = admin(&backend).await;
     let response = send(
@@ -1333,7 +1281,7 @@ async fn generic_patch_cannot_bypass_authentication_preflight() {
             .set_json(json!({"expected_revision": 1, "changes": {"providers": []}})),
     )
     .await;
-    assert_eq!(response.status(), http::StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), http::StatusCode::CONFLICT);
     assert_eq!(
         history_len(&backend, StorageRuntimeSettingsGroup::Authentication).await,
         0
@@ -1384,3 +1332,4 @@ async fn group_state_exposes_requested_and_effective_values_separately(#[case] w
 
 mod operational_policy;
 mod replica_paging;
+mod security_candidates;

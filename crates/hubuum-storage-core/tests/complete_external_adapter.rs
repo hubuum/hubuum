@@ -6,6 +6,17 @@
 
 #![allow(unused_variables)]
 
+use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
+use hubuum_storage_core::StorageSecurityCandidateActivationOutcome;
+use hubuum_storage_core::StorageTokenRevocations;
+use hubuum_storage_core::StorageUpstreamRevocation;
+use hubuum_storage_core::{
+    StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
+    StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionOutcome,
+    StorageInteractionView, StorageUpstreamClaim, StorageUpstreamClaimOutcome,
+    StorageUpstreamRenewal, StorageUpstreamSession,
+};
+
 use hubuum_storage_core::StorageExternalSyncFailure;
 use std::future::Future;
 use std::pin::Pin;
@@ -270,6 +281,45 @@ impl ObjectRelationStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl AuthenticationStorage for CompleteExternalAdapter {
+    async fn create_auth_interaction(
+        &self,
+        request: StorageInteractionCreate,
+    ) -> Result<StorageInteractionView, StorageError> {
+        fixture_result()
+    }
+    async fn bind_auth_interaction_browser(
+        &self,
+        code: InteractionDigest,
+        browser: InteractionBrowserBinding,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        fixture_result()
+    }
+    async fn advance_auth_interaction(
+        &self,
+        command: StorageInteractionCommand,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        fixture_result()
+    }
+    async fn complete_auth_interaction(
+        &self,
+        request: StorageInteractionComplete,
+    ) -> Result<StorageInteractionCompletion, StorageError> {
+        fixture_result()
+    }
+    async fn revoke_auth_interaction_session(
+        &self,
+        access: StorageInteractionAccess,
+        context: EventContext,
+    ) -> Result<
+        StorageMutationOutcome<Option<hubuum_storage_core::StorageUpstreamSession>>,
+        StorageError,
+    > {
+        fixture_result()
+    }
+    async fn purge_auth_interactions(&self, limit: usize) -> Result<usize, StorageError> {
+        fixture_result()
+    }
+
     async fn record_credential_creation(
         &self,
         token: TokenId,
@@ -327,7 +377,10 @@ impl AuthenticationStorage for CompleteExternalAdapter {
         &self,
         target: hubuum_storage_core::SessionRevocation,
         context: hubuum_events_core::EventContext,
-    ) -> Result<hubuum_storage_core::StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<
+        hubuum_storage_core::StorageMutationOutcome<hubuum_storage_core::StorageTokenRevocations>,
+        StorageError,
+    > {
         fixture_result()
     }
     async fn purge_auth_sessions(&self, limit: usize) -> Result<usize, StorageError> {
@@ -521,6 +574,45 @@ impl ServiceAccountStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl ExternalIdentityStorage for CompleteExternalAdapter {
+    async fn upstream_approval_session(
+        &self,
+        proof: FreshExternalAuthentication,
+    ) -> Result<Option<hubuum_storage_core::StorageUpstreamApproval>, StorageError> {
+        fixture_result()
+    }
+    async fn fail_upstream_renewal(
+        &self,
+        claim: StorageUpstreamClaim,
+        failure: hubuum_storage_core::StorageUpstreamFailure,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn claim_upstream_credential(
+        &self,
+        revision: ResourceRevision,
+        principal: PrincipalId,
+    ) -> Result<StorageUpstreamClaimOutcome, StorageError> {
+        fixture_result()
+    }
+    async fn finish_upstream_renewal(
+        &self,
+        request: StorageUpstreamRenewal,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn upstream_logout_credentials(
+        &self,
+        target: StorageUpstreamRevocation,
+    ) -> Result<Vec<StorageUpstreamSession>, StorageError> {
+        fixture_result()
+    }
+    async fn find_external_identity(
+        &self,
+        identity: hubuum_domain::ExternalIdentity,
+    ) -> Result<Option<PrincipalId>, StorageError> {
+        fixture_result()
+    }
+
     async fn get_external_principal_state(
         &self,
         principal_id: PrincipalId,
@@ -530,6 +622,7 @@ impl ExternalIdentityStorage for CompleteExternalAdapter {
 
     async fn record_external_sync_failure(
         &self,
+        revision: ResourceRevision,
         principal_id: PrincipalId,
         failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError> {
@@ -538,6 +631,7 @@ impl ExternalIdentityStorage for CompleteExternalAdapter {
 
     async fn sync_external_user(
         &self,
+        revision: ResourceRevision,
         request: StorageExternalUserSync,
     ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError> {
         fixture_result()
@@ -668,21 +762,24 @@ impl TokenStorage for CompleteExternalAdapter {
     async fn revoke_token(
         &self,
         request: StorageTokenRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         fixture_result()
     }
 
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<
+        StorageMutationOutcome<Option<hubuum_storage_core::StorageUpstreamSession>>,
+        StorageError,
+    > {
         fixture_result()
     }
 
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         fixture_result()
     }
 }
@@ -2265,6 +2362,47 @@ impl StorageBackend for CompleteExternalAdapter {}
 
 #[async_trait]
 impl RuntimeSettingsStorage for CompleteExternalAdapter {
+    async fn recover_security_settings(
+        &self,
+        request: StorageSecurityRecovery,
+    ) -> Result<[StorageRuntimeSettingsUpdateOutcome; 2], StorageError> {
+        fixture_result()
+    }
+    async fn purge_security_candidates(&self) -> Result<usize, StorageError> {
+        fixture_result()
+    }
+    async fn authentication_provider_binding(
+        &self,
+        name: IdentityScopeName,
+    ) -> Result<Option<StorageProviderIdentityBinding>, StorageError> {
+        fixture_result()
+    }
+    async fn create_security_candidate(
+        &self,
+        candidate: StorageSecurityCandidate,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn get_security_candidate(
+        &self,
+        id: Uuid,
+        owner: StorageSecurityCandidateOwner,
+    ) -> Result<StorageSecurityCandidate, StorageError> {
+        fixture_result()
+    }
+    async fn verify_security_candidate(
+        &self,
+        candidate: StorageSecurityCandidate,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn activate_security_candidate(
+        &self,
+        request: StorageSecurityCandidateActivation,
+    ) -> Result<StorageSecurityCandidateActivationOutcome, StorageError> {
+        fixture_result()
+    }
+
     async fn load_runtime_settings(&self) -> Result<StorageRuntimeSettingsSnapshot, StorageError> {
         unimplemented!("compile-only adapter")
     }

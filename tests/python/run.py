@@ -22,6 +22,9 @@ from support import SCRIPTS, SUITE
 sys.path.insert(1, str(SCRIPTS))
 
 INTEGRATION = {
+    "ecosystem": "integration.ecosystem",
+    "oauth": "integration.oauth",
+    "auth-browser-fixture": "integration.auth_browser_fixture",
     "monitoring": "integration.monitoring",
     "monitoring-fixture": "integration.monitoring_fixture",
     "event-transports": "integration.event_transports",

@@ -134,6 +134,8 @@ impl MemoryState {
             authorization_revisions: BTreeMap::new(),
             tokens: BTreeMap::new(),
             sessions: BTreeMap::new(),
+            auth_interactions: BTreeMap::new(),
+            upstream_sessions: BTreeMap::new(),
             credential_activity: BTreeMap::new(),
             credential_approvals: Default::default(),
             service_accounts: BTreeMap::new(),

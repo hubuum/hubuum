@@ -14,7 +14,7 @@ use hubuum_storage_core::{
     StorageRestoreCoordinatorSnapshot, StorageRestoreDrainState, StorageRestoreFailure,
     StorageRestoreInitiator, StorageRestoreInstance, StorageRestoreJobStatus,
     StorageRestoreJobSummary, StorageRestoreReplayApply, StorageRestoreStageArtifact,
-    StorageRestoreStatus, StorageRestoreTimestamps,
+    StorageRestoreStatus, StorageRestoreTimestamps, StorageRuntimeSettingsGroup,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -610,6 +610,9 @@ async fn apply_restore_replay_parts(
 
                 let started_at = Utc::now().naive_utc();
                 diesel::sql_query("UPDATE credential_approvals SET invalidated_at=timezone('UTC', clock_timestamp()) WHERE consumed_at IS NULL AND invalidated_at IS NULL").execute(connection).await?;
+                diesel::sql_query("DELETE FROM security_candidates").execute(connection).await?;
+                diesel::sql_query("DELETE FROM auth_interactions").execute(connection).await?;
+                diesel::sql_query("DELETE FROM auth_upstream_credentials").execute(connection).await?;
                 enable_restore_session_settings(connection).await?;
                 replace_backend_replay(connection, snapshot)
                     .await?;
@@ -682,6 +685,27 @@ async fn replace_backend_replay(
     connection: &mut PostgresConnection,
     snapshot: StorageBackupReplay,
 ) -> Result<(), PostgresStorageError> {
+    // Fence activation before locking and replacing portable identity state.
+    let security = super::security_candidates::locked_assignment(
+        connection,
+        StorageRuntimeSettingsGroup::Authentication,
+    )
+    .await?;
+    for row in snapshot.state_rows(StorageBackupStateSection::IdentityScopes) {
+        let row = row?;
+        if matches!(
+            row.get("provider_kind").and_then(Value::as_str),
+            Some("oidc" | "oauth")
+        ) {
+            let name = row.get("name").and_then(Value::as_str).ok_or_else(|| {
+                PostgresStorageError::invalid_input("Invalid identity scope name")
+            })?;
+            let destination =
+                super::security_candidates::binding_on_connection(connection, name).await?;
+            row.verify_identity_namespace(destination.as_ref())
+                .map_err(|error| PostgresStorageError::invalid_input(error.to_string()))?;
+        }
+    }
     for table in TRUNCATE_TABLES {
         validate_restore_identifier(table, None)?;
     }
@@ -702,6 +726,8 @@ async fn replace_backend_replay(
             .map(|row| state_row_to_postgres(section, row?.into_value()));
         insert_restore_rows(connection, table, rows).await?;
     }
+    let local_only: Vec<_> = security.local_only_provider_names().collect();
+    super::security_candidates::clear_provider_memberships(connection, &local_only).await?;
     if snapshot.includes_history() {
         for section in StorageBackupHistorySection::ALL.iter().copied() {
             let table = history_table(section);
@@ -1412,4 +1438,49 @@ mod tests {
             assert!(restore_json_row(json!({})).await.is_err());
         }
     }
+}
+
+#[cfg(all(test, feature = "integration-test-support"))]
+#[tokio::test]
+async fn restore_reconciles_external_sources_with_the_destination_policy() {
+    use diesel_async::{AsyncConnection, SimpleAsyncConnection};
+    use hubuum_storage_core::StorageBackupBudget;
+
+    let url = crate::test_support::integration_test_restore_migration_url();
+    let mut conn = PostgresConnection::establish(&url).await.unwrap();
+    conn.test_transaction::<_, PostgresStorageError, _>(async |conn| {
+        conn.batch_execute(r#"
+            INSERT INTO authentication_provider_bindings(name,provider_id,kind,namespace)
+                VALUES ('restore_oidc', gen_random_uuid(),'oidc','https://restore.example');
+            INSERT INTO identity_scopes(name,provider_kind) VALUES ('restore_oidc','oidc'),('restore_ldap','ldap');
+            INSERT INTO principals(name,kind) VALUES ('restore_member','human');
+            INSERT INTO users(id,password) SELECT id,'test' FROM principals WHERE name='restore_member';
+            INSERT INTO groups(groupname,description) VALUES ('restore_removed',''),('restore_manual',''),('restore_shared','');
+            INSERT INTO group_memberships(principal_id,group_id)
+                SELECT p.id,g.id FROM principals p CROSS JOIN groups g WHERE p.name='restore_member' AND g.groupname IN ('restore_removed','restore_manual','restore_shared');
+            INSERT INTO group_membership_sources(principal_id,group_id,source,source_scope_id,source_key)
+                SELECT m.principal_id,m.group_id,'external',s.id,'team' FROM group_memberships m JOIN principals p ON p.id=m.principal_id
+                CROSS JOIN identity_scopes s WHERE p.name='restore_member' AND s.name='restore_oidc'
+                UNION ALL SELECT p.id,g.id,'manual',1,'' FROM principals p CROSS JOIN groups g WHERE p.name='restore_member' AND g.groupname='restore_manual'
+                UNION ALL SELECT p.id,g.id,'external',s.id,'shared' FROM principals p CROSS JOIN groups g CROSS JOIN identity_scopes s
+                    WHERE p.name='restore_member' AND g.groupname='restore_shared' AND s.name='restore_ldap';
+        "#).await.unwrap();
+        let snapshot = super::backup::capture_on_connection(conn, true, StorageBackupBudget::new(32*1024*1024, 100000).unwrap(), Default::default()).await.unwrap();
+        conn.batch_execute(r#"
+            UPDATE runtime_settings SET value=jsonb_build_object('providers',jsonb_build_array(jsonb_build_object(
+                'name','restore_oidc','provider_id',(SELECT provider_id FROM authentication_provider_bindings WHERE name='restore_oidc'),'kind','oidc',
+                'configuration','{"issuer":"https://restore.example","client_id":"hubuum","client_authentication":"client_secret_basic","scopes":["openid"],
+                    "signing_algorithms":["RS256"],"membership":{"mode":"local_only","refresh_interval_seconds":300,"max_stale_seconds":900},
+                    "admission":{"mode":"existing_only"}}'::jsonb))) WHERE setting_group='authentication';
+        "#).await.unwrap();
+        enable_restore_session_settings(conn).await.unwrap();
+        replace_backend_replay(conn, snapshot).await.unwrap();
+        conn.batch_execute(r#"DO $$ BEGIN
+            IF EXISTS(SELECT FROM group_membership_sources s JOIN identity_scopes i ON i.id=s.source_scope_id WHERE i.name='restore_oidc')
+                OR (SELECT array_agg(g.groupname ORDER BY g.groupname) FROM group_memberships m JOIN groups g ON m.group_id=g.id
+                    JOIN principals p ON p.id=m.principal_id WHERE p.name='restore_member') IS DISTINCT FROM ARRAY['restore_manual','restore_shared']::varchar[]
+            THEN RAISE EXCEPTION 'restore retained obsolete grants or removed independent grants'; END IF;
+        END $$"#).await.unwrap();
+        Ok(())
+    }).await;
 }

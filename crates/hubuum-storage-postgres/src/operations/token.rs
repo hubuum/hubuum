@@ -1,8 +1,11 @@
 //! PostgreSQL implementation of retained bearer-token lifecycle contracts.
 
+use hubuum_storage_core::StorageTokenRevocations;
 use std::collections::HashMap;
 
 use chrono::NaiveDateTime;
+use diesel::dsl::sql;
+use diesel::expression::SqlLiteral;
 use diesel::pg::Pg;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::sql_types::{BigInt, Nullable, Text, Timestamp};
@@ -188,6 +191,11 @@ struct NewTokenObjectScope {
     object_id: i32,
 }
 
+// A revoking transaction can start before a token that it later locks.
+fn revocation_time() -> SqlLiteral<Nullable<Timestamp>> {
+    sql("GREATEST(issued, clock_timestamp() AT TIME ZONE 'UTC')")
+}
+
 type TokenQuery<'query> = crate::schema::tokens::BoxedQuery<'query, Pg>;
 
 macro_rules! apply_token_filters {
@@ -295,6 +303,7 @@ pub async fn create_token(
                 PostgresStorageError,
             > {
                 if let Some(login) = &login {
+                    super::security_candidates::fence_login(connection, login).await?;
                     // Password changes/anonymization take this same lock before
                     // updating the user and revoking tokens. Either issuance wins
                     // and is revoked, or it observes the changed credential.
@@ -576,7 +585,7 @@ pub async fn load_token_metadata_by_ids(
 pub async fn revoke_token(
     runtime: &PostgresRuntime,
     request: StorageTokenRevoke,
-) -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageTokenRevocations>, PostgresStorageError> {
     let (token_id, principal_id, event_context) = request.into_parts();
     let token_id = token_id.id();
     let principal_id = principal_id.id();
@@ -584,14 +593,17 @@ pub async fn revoke_token(
     validate_positive_id(principal_id, "principal id")?;
     runtime
         .with_transaction(
-            async move |connection| -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
+            async move |connection| -> Result<
+                StorageMutationOutcome<StorageTokenRevocations>,
+                PostgresStorageError,
+            > {
                 crate::schema::principals::table
                     .find(principal_id)
                     .for_update()
                     .select(crate::schema::principals::id)
                     .first::<i32>(connection)
                     .await?;
-                if let Some(audit) = super::auth_sessions::revoke_access(
+                if let Some((audit, grant)) = super::auth_sessions::revoke_access(
                     connection,
                     token_id,
                     principal_id,
@@ -599,7 +611,10 @@ pub async fn revoke_token(
                 )
                 .await?
                 {
-                    return Ok(StorageMutationOutcome::committed(1, audit));
+                    return Ok(StorageMutationOutcome::committed(
+                        StorageTokenRevocations::new(1, grant.into_iter().collect()),
+                        audit,
+                    ));
                 }
                 let before = crate::schema::tokens::table
                     .filter(crate::schema::tokens::id.eq(token_id))
@@ -610,7 +625,9 @@ pub async fn revoke_token(
                     .await
                     .optional()?;
                 let Some(before) = before else {
-                    return Ok(StorageMutationOutcome::unchanged(0));
+                    return Ok(StorageMutationOutcome::unchanged(
+                        StorageTokenRevocations::default(),
+                    ));
                 };
                 assert_locked_revision_precondition(
                     connection,
@@ -619,7 +636,9 @@ pub async fn revoke_token(
                 )
                 .await?;
                 if before.revoked_at.is_some() {
-                    return Ok(StorageMutationOutcome::unchanged(1));
+                    return Ok(StorageMutationOutcome::unchanged(
+                        StorageTokenRevocations::new(1, Vec::new()),
+                    ));
                 }
                 let scope = load_token_scope(
                     connection,
@@ -636,13 +655,15 @@ pub async fn revoke_token(
                         .filter(crate::schema::tokens::principal_id.eq(principal_id))
                         .filter(crate::schema::tokens::revoked_at.is_null()),
                 )
-                .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
+                .set(crate::schema::tokens::revoked_at.eq(revocation_time()))
                 .returning(TokenRow::as_returning())
                 .get_result::<TokenRow>(connection)
                 .await
                 .optional()?;
                 let Some(after) = after else {
-                    return Ok(StorageMutationOutcome::unchanged(0));
+                    return Ok(StorageMutationOutcome::unchanged(
+                        StorageTokenRevocations::default(),
+                    ));
                 };
                 let event = token_event(
                     &after,
@@ -657,7 +678,10 @@ pub async fn revoke_token(
                     Some(after.snapshot(scope.as_ref())),
                 )?;
                 let audit = append_event(connection, &event).await?.into_audit_receipt();
-                Ok(StorageMutationOutcome::committed(1, audit))
+                Ok(StorageMutationOutcome::committed(
+                    StorageTokenRevocations::new(1, Vec::new()),
+                    audit,
+                ))
             },
         )
         .await
@@ -666,7 +690,10 @@ pub async fn revoke_token(
 pub async fn revoke_token_by_hash(
     runtime: &PostgresRuntime,
     request: StorageTokenHashRevoke,
-) -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
+) -> Result<
+    StorageMutationOutcome<Option<hubuum_storage_core::StorageUpstreamSession>>,
+    PostgresStorageError,
+> {
     let (principal_id, credentials, event_context) = request.into_parts();
     let principal_id = principal_id.map(|principal_id| principal_id.id());
     if let Some(principal_id) = principal_id {
@@ -718,15 +745,15 @@ pub async fn revoke_token_by_hash(
                 ));
             }
             let Some(token_id) = candidates.pop() else {
-                return Ok(StorageMutationOutcome::unchanged(0));
+                return Ok(StorageMutationOutcome::unchanged(None));
             };
             let before = crate::schema::tokens::table
-                .filter(crate::schema::tokens::id.eq(token_id))
+                .find(token_id)
                 .select(TokenRow::as_select())
                 .first::<TokenRow>(connection)
                 .await?;
             if principal_id.is_some_and(|principal_id| principal_id != before.principal_id) {
-                return Ok(StorageMutationOutcome::unchanged(0));
+                return Ok(StorageMutationOutcome::unchanged(None));
             }
             crate::schema::principals::table
                 .find(before.principal_id)
@@ -734,7 +761,7 @@ pub async fn revoke_token_by_hash(
                 .select(crate::schema::principals::id)
                 .first::<i32>(connection)
                 .await?;
-            if let Some(audit) = super::auth_sessions::revoke_access(
+            if let Some((audit, upstream)) = super::auth_sessions::revoke_access(
                 connection,
                 token_id,
                 before.principal_id,
@@ -742,7 +769,7 @@ pub async fn revoke_token_by_hash(
             )
             .await?
             {
-                return Ok(StorageMutationOutcome::committed(1, audit));
+                return Ok(StorageMutationOutcome::committed(upstream, audit));
             }
             let before = crate::schema::tokens::table
                 .find(token_id)
@@ -751,7 +778,7 @@ pub async fn revoke_token_by_hash(
                 .first::<TokenRow>(connection)
                 .await?;
             if before.revoked_at.is_some() {
-                return Ok(StorageMutationOutcome::unchanged(0));
+                return Ok(StorageMutationOutcome::unchanged(None));
             }
             let scope = load_token_scope(
                 connection,
@@ -765,7 +792,7 @@ pub async fn revoke_token_by_hash(
             let after = diesel::update(
                 crate::schema::tokens::table.filter(crate::schema::tokens::id.eq(before.id)),
             )
-            .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
+            .set(crate::schema::tokens::revoked_at.eq(revocation_time()))
             .returning(TokenRow::as_returning())
             .get_result::<TokenRow>(connection)
             .await?;
@@ -782,7 +809,7 @@ pub async fn revoke_token_by_hash(
                 Some(after.snapshot(scope.as_ref())),
             )?;
             let audit = append_event(connection, &event).await?.into_audit_receipt();
-            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(1, audit))
+            Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed(None, audit))
         })
         .await
 }
@@ -790,7 +817,7 @@ pub async fn revoke_token_by_hash(
 pub async fn revoke_all_principal_tokens(
     runtime: &PostgresRuntime,
     request: StoragePrincipalTokensRevoke,
-) -> Result<StorageMutationOutcome<usize>, PostgresStorageError> {
+) -> Result<StorageMutationOutcome<StorageTokenRevocations>, PostgresStorageError> {
     let (principal_id, event_context) = request.into_parts();
     let principal_id = principal_id.id();
     validate_positive_id(principal_id, "principal id")?;
@@ -802,6 +829,14 @@ pub async fn revoke_all_principal_tokens(
                 .select(crate::schema::principals::id)
                 .first::<i32>(connection)
                 .await?;
+            let grants = super::upstream_authentication::logout_on_connection(
+                connection,
+                hubuum_storage_core::SessionRevocation::All(hubuum_domain::PrincipalId::new(
+                    principal_id,
+                )?)
+                .into(),
+            )
+            .await?;
             super::auth_sessions::revoke_principal(connection, principal_id).await?;
             let before = crate::schema::tokens::table
                 .filter(crate::schema::tokens::principal_id.eq(principal_id))
@@ -811,7 +846,9 @@ pub async fn revoke_all_principal_tokens(
                 .load::<TokenRow>(connection)
                 .await?;
             if before.is_empty() {
-                return Ok(StorageMutationOutcome::unchanged(0));
+                return Ok(StorageMutationOutcome::unchanged(
+                    StorageTokenRevocations::new(0, grants),
+                ));
             }
             let mut scopes = HashMap::with_capacity(before.len());
             for token in &before {
@@ -830,7 +867,7 @@ pub async fn revoke_all_principal_tokens(
             let mut after = diesel::update(
                 crate::schema::tokens::table.filter(crate::schema::tokens::id.eq_any(token_ids)),
             )
-            .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
+            .set(crate::schema::tokens::revoked_at.eq(revocation_time()))
             .returning(TokenRow::as_returning())
             .get_results::<TokenRow>(connection)
             .await?;
@@ -860,7 +897,7 @@ pub async fn revoke_all_principal_tokens(
                 audits.push(append_event(connection, &event).await?.into_audit_receipt());
             }
             Ok::<_, PostgresStorageError>(StorageMutationOutcome::committed_with_audits(
-                after.len(),
+                StorageTokenRevocations::new(after.len(), grants),
                 crate::validate_persisted(
                     "token revocation audit receipts",
                     StorageAuditReceipts::try_from_vec(audits),
@@ -880,7 +917,7 @@ pub async fn revoke_all_principal_tokens_on_connection(
             .filter(crate::schema::tokens::principal_id.eq(principal_id))
             .filter(crate::schema::tokens::revoked_at.is_null()),
     )
-    .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
+    .set(crate::schema::tokens::revoked_at.eq(revocation_time()))
     .execute(connection)
     .await
     .map_err(PostgresStorageError::from)

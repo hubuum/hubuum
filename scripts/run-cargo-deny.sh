@@ -42,7 +42,7 @@ unused_exception_lint="$(
 from pathlib import Path
 import sys
 
-print("--allow" if Path(sys.argv[1]).resolve() == Path(sys.argv[2]).resolve() else "--deny")
+print("--warn" if Path(sys.argv[1]).resolve() == Path(sys.argv[2]).resolve() else "--deny")
 PY
 )"
 

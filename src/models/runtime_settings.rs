@@ -200,11 +200,13 @@ impl From<RuntimeAuthenticationProviderKind> for StorageAuthenticationProviderKi
 pub enum RuntimeAuthenticationProviderRequest {
     /// Deployment configuration stays read-only; only activation is persisted.
     Deployment {
+        provider_id: Option<Uuid>,
         name: String,
         kind: RuntimeAuthenticationProviderKind,
         enabled: bool,
     },
     Runtime {
+        provider_id: Option<Uuid>,
         name: String,
         kind: RuntimeAuthenticationProviderKind,
         enabled: bool,
@@ -534,11 +536,39 @@ pub struct PaginationSettingsReport {
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct RuntimeAuthenticationProviderStatus {
+    pub provider_id: Option<Uuid>,
+    pub kind: String,
     pub name: String,
     pub source: RuntimeSettingsSource,
     pub enabled: bool,
     pub definition_mutable: bool,
+    /// Requested runtime definition with credential material removed.
+    #[schema(value_type = Option<Object>)]
+    pub runtime_definition: Option<Value>,
+    pub credential_configured: bool,
     pub available: bool,
+}
+
+impl RuntimeAuthenticationProviderStatus {
+    pub(crate) fn with_runtime_definition(
+        &mut self,
+        provider: &hubuum_storage_core::StorageAuthenticationProvider,
+    ) {
+        self.runtime_definition = provider.configuration().cloned().map(|mut definition| {
+            if let Some(fields) = definition.as_object_mut() {
+                for key in [
+                    "bind_password",
+                    "bind_password_ref",
+                    "runtime_bind_password_envelope",
+                    "protected_credential",
+                ] {
+                    self.credential_configured |=
+                        fields.remove(key).is_some_and(|value| !value.is_null());
+                }
+            }
+            definition
+        });
+    }
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -554,6 +584,8 @@ pub struct AuthorizationSettingsReport {
     pub ownership: RuntimeSettingsOwnership,
     pub effective_backend: String,
     pub runtime_backend: Option<String>,
+    /// Requested non-secret runtime connection, applied only when available is true.
+    pub runtime_connection: Option<hubuum_domain::AuthorizationConnection>,
     pub deployment_backend: String,
     pub available: bool,
 }
@@ -661,6 +693,9 @@ impl RuntimeSettingsReport {
                 runtime_backend: snapshot
                     .and_then(|snapshot| snapshot.authorization())
                     .map(|backend| backend.as_str().to_string()),
+                runtime_connection: snapshot
+                    .and_then(|snapshot| snapshot.authorization_connection())
+                    .cloned(),
                 deployment_backend: deployment.authorization_backend.as_str().to_string(),
                 available: authorization_ready,
             },
@@ -776,6 +811,12 @@ fn redact_authentication_document(mut document: Value) -> Value {
         else {
             continue;
         };
+        if let Some(credential) = configuration.remove("protected_credential") {
+            configuration.insert(
+                "credential_configured".into(),
+                Value::Bool(!credential.is_null()),
+            );
+        }
         let envelope_configured = configuration
             .remove(hubuum_storage_core::RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD)
             .is_some();
@@ -980,5 +1021,42 @@ mod tests {
                 .into_update(deployment, EventContext::system())
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod provider_reports {
+    use super::*;
+    use rstest::rstest;
+    use serde_json::json;
+
+    #[rstest]
+    #[case("bind_password_ref")]
+    #[case("runtime_bind_password_envelope")]
+    fn runtime_provider_metadata_never_exposes_credential_material(#[case] secret_field: &str) {
+        let mut config = json!({"scope":"directory","url":"ldaps://directory.example"});
+        config[secret_field] = json!("hidden-credential-material");
+        let provider = hubuum_storage_core::StorageAuthenticationProvider::try_new(
+            "directory",
+            StorageAuthenticationProviderKind::Ldap,
+            config,
+        )
+        .unwrap();
+        let mut report = RuntimeAuthenticationProviderStatus {
+            provider_id: None,
+            kind: "ldap".into(),
+            name: "directory".into(),
+            source: RuntimeSettingsSource::Runtime,
+            enabled: false,
+            definition_mutable: true,
+            runtime_definition: None,
+            credential_configured: false,
+            available: false,
+        };
+        report.with_runtime_definition(&provider);
+        assert!(report.credential_configured);
+        let report = serde_json::to_string(&report).unwrap();
+        assert!(report.contains("ldaps://directory.example"));
+        assert!(!report.contains("hidden-credential-material"));
     }
 }

@@ -1,6 +1,27 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    auth_interaction_capacity (singleton) {
+        singleton -> Bool,
+        retained -> Int8,
+    }
+}
+
+diesel::table! {
+    auth_interactions (id) {
+        id -> Uuid,
+        client_id -> Text,
+        actor_id -> Nullable<Int4>,
+        user_code_digest -> Nullable<Text>,
+        created_at -> Timestamptz,
+        expires_at -> Timestamptz,
+        retain_until -> Timestamptz,
+        document -> Jsonb,
+        active_until -> Nullable<Timestamptz>,
+    }
+}
+
+diesel::table! {
     auth_sessions (id) {
         id -> Uuid,
         principal_id -> Int4,
@@ -15,6 +36,25 @@ diesel::table! {
         retain_until -> Timestamp,
         revoked_at -> Nullable<Timestamp>,
         revocation_reason -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    auth_upstream_credentials (session_id) {
+        session_id -> Uuid,
+        principal_id -> Int4,
+        provider_id -> Uuid,
+        revision -> Int8,
+        document -> Jsonb,
+    }
+}
+
+diesel::table! {
+    authentication_provider_bindings (name) {
+        name -> Text,
+        provider_id -> Uuid,
+        kind -> Text,
+        namespace -> Text,
     }
 }
 
@@ -187,6 +227,7 @@ diesel::table! {
         authenticated_at -> Timestamp,
         expires_at -> Timestamp,
         consumed_at -> Nullable<Timestamp>,
+        security_candidate_id -> Nullable<Uuid>,
     }
 }
 
@@ -948,6 +989,16 @@ diesel::table! {
 }
 
 diesel::table! {
+    security_candidates (id) {
+        id -> Uuid,
+        actor_id -> Int4,
+        token_id -> Int4,
+        expires_at -> Timestamptz,
+        document -> Jsonb,
+    }
+}
+
+diesel::table! {
     server_instances (instance_id) {
         instance_id -> Uuid,
         maintenance_generation -> Int8,
@@ -1092,6 +1143,7 @@ diesel::table! {
 }
 
 diesel::joinable!(auth_sessions -> users (principal_id));
+diesel::joinable!(auth_upstream_credentials -> principals (principal_id));
 diesel::joinable!(backup_task_outputs -> tasks (task_id));
 diesel::joinable!(class_computation_state -> hubuumclass (class_id));
 diesel::joinable!(class_computation_state -> tasks (active_task_id));
@@ -1161,7 +1213,11 @@ diesel::joinable!(token_scopes -> tokens (token_id));
 diesel::joinable!(tokens -> principals (principal_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    auth_interaction_capacity,
+    auth_interactions,
     auth_sessions,
+    auth_upstream_credentials,
+    authentication_provider_bindings,
     backup_task_outputs,
     class_computation_state,
     class_schema_history,
@@ -1223,6 +1279,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     schema_profile_outputs,
     schema_repair_reports,
     schema_validation_work,
+    security_candidates,
     server_instances,
     service_accounts,
     system_maintenance,

@@ -1,0 +1,494 @@
+use super::*;
+use hubuum_storage_core::StorageUserCreate;
+use std::sync::LazyLock;
+
+const CANDIDATES: &str = "/api/v1/admin/runtime-settings/security-candidates";
+const PASSWORD: &str = "candidate-test-password";
+
+async fn password_admin(backend: &StorageHandle) -> BackendUserFixture {
+    static HASH: LazyLock<String> =
+        LazyLock::new(|| crate::utilities::auth::hash_password(PASSWORD).unwrap());
+    let name = prefix("candidate_admin");
+    let user = backend
+        .create_user(StorageUserCreate::new(
+            None,
+            name,
+            HASH.clone(),
+            None,
+            None,
+            EventContext::system(),
+        ))
+        .await
+        .unwrap()
+        .into_value();
+    let id = user.into_parts().id();
+    let principal_id = principal_id(id.id());
+    let _ = backend
+        .add_group_member(principal_id, group_id(1), &EventContext::system())
+        .await
+        .unwrap();
+    let raw_token = prefix("candidate_token");
+    let token_hash = crate::models::Token::storage_hash_from_raw(&raw_token);
+    let _ = backend
+        .create_token(StorageTokenCreate::new(
+            principal_id,
+            StorageTokenDigest::legacy_unidentified(&token_hash),
+            StorageTokenIssuancePolicy::try_new(24, 24).unwrap(),
+            EventContext::system(),
+        ))
+        .await
+        .unwrap();
+    BackendUserFixture {
+        id,
+        principal_id,
+        raw_token,
+        token_hash,
+    }
+}
+
+async fn local_candidate(backend: &StorageHandle, user: &BackendUserFixture) -> Value {
+    let (status, candidate)=send_json(backend,&user.raw_token,test::TestRequest::post().uri(CANDIDATES).set_json(json!({"group":"authorization","expected_revision":1,"backend":"local","source":"runtime"}))).await;
+    assert_eq!(status, http::StatusCode::CREATED, "{candidate}");
+    candidate
+}
+
+#[actix_web::test]
+async fn verified_candidate_does_not_change_live_settings() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let candidate = local_candidate(&backend, &user).await;
+    assert_eq!(candidate["state"], "verified");
+    assert_eq!(
+        current_revision(&backend, StorageRuntimeSettingsGroup::Authorization).await,
+        ResourceRevision::INITIAL
+    );
+}
+
+#[actix_web::test]
+async fn verification_receipt_is_never_redisclosed() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let candidate = local_candidate(&backend, &user).await;
+    let response = send(
+        &backend,
+        Some(&user.raw_token),
+        test::TestRequest::get().uri(&format!(
+            "{CANDIDATES}/{}",
+            candidate["id"].as_str().unwrap()
+        )),
+    )
+    .await;
+    assert_eq!(
+        response.headers().get(http::header::CACHE_CONTROL).unwrap(),
+        "no-store"
+    );
+    let status: Value = test::read_body_json(response).await;
+    assert!(status.get("verification_receipt").is_none());
+}
+
+#[actix_web::test]
+async fn verified_candidate_still_requires_fresh_approval() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let candidate = local_candidate(&backend, &user).await;
+    let response=send(&backend,Some(&user.raw_token),test::TestRequest::post().uri(&format!("{CANDIDATES}/{}/activate",candidate["id"].as_str().unwrap())).set_json(json!({"expected_revision":1,"verification_receipt":candidate["verification_receipt"]}))).await;
+    assert_eq!(response.status(), http::StatusCode::FORBIDDEN);
+}
+
+#[actix_web::test]
+async fn activation_with_real_password_approval_is_single_use() {
+    let backend = StorageHandle::memory();
+    let user = password_admin(&backend).await;
+    let candidate = local_candidate(&backend, &user).await;
+    let (status,approval)=send_json(&backend,&user.raw_token,test::TestRequest::post().uri("/api/v1/iam/credential-approvals").set_json(json!({"password":PASSWORD,"operation":{"kind":"activate_security_candidate","candidate_id":candidate["id"],"group":"authorization","expected_revision":1}}))).await;
+    assert_eq!(status, http::StatusCode::CREATED, "{approval}");
+    let path = format!(
+        "{CANDIDATES}/{}/activate",
+        candidate["id"].as_str().unwrap()
+    );
+    let request = || {
+        test::TestRequest::post().uri(&path).insert_header(("X-Hubuum-Credential-Approval",approval["approval"].as_str().unwrap())).set_json(json!({"expected_revision":1,"verification_receipt":candidate["verification_receipt"]}))
+    };
+    let (status, body) = send_json(&backend, &user.raw_token, request()).await;
+    assert_eq!(status, http::StatusCode::OK, "{body}");
+    let response = send(&backend, Some(&user.raw_token), request()).await;
+    assert_eq!(response.status(), http::StatusCode::CONFLICT);
+}
+
+async fn activate_disabled_providers(
+    backend: &StorageHandle,
+    user: &BackendUserFixture,
+    providers: Value,
+) -> Value {
+    let (status, candidate) = send_json(
+        backend,
+        &user.raw_token,
+        test::TestRequest::post().uri(CANDIDATES).set_json(json!({
+            "group": "authentication", "expected_revision": 1,
+            "providers": providers
+        })),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::CREATED, "{candidate}");
+    let (status, approval) = send_json(backend, &user.raw_token,
+        test::TestRequest::post().uri("/api/v1/iam/credential-approvals").set_json(json!({
+            "password": PASSWORD, "operation": {"kind": "activate_security_candidate",
+                "candidate_id": candidate["id"], "group": "authentication", "expected_revision": 1}
+        }))).await;
+    assert_eq!(status, http::StatusCode::CREATED, "{approval}");
+    let (status, activated) = send_json(backend, &user.raw_token,
+        test::TestRequest::post().uri(&format!("{CANDIDATES}/{}/activate", candidate["id"].as_str().unwrap()))
+            .insert_header(("X-Hubuum-Credential-Approval", approval["approval"].as_str().unwrap()))
+            .set_json(json!({"expected_revision": 1, "verification_receipt": candidate["verification_receipt"]}))).await;
+    assert_eq!(status, http::StatusCode::OK, "{activated}");
+    candidate
+}
+
+#[actix_web::test]
+async fn activated_ldap_uses_hosted_passwords_instead_of_a_browser_adapter() {
+    use hubuum_domain::{
+        InteractionAuthority, InteractionBinding, InteractionClientId, InteractionId,
+        InteractionProviderId,
+    };
+    use hubuum_storage_core::StorageAuthenticationProviders;
+
+    let backend = StorageHandle::memory();
+    let user = password_admin(&backend).await;
+    // Disabled definitions can be activated without contacting an LDAP server.
+    // Activation still establishes the same immutable namespace as a live test.
+    let candidate = activate_disabled_providers(
+        &backend,
+        &user,
+        json!([{"name": "hosted_directory", "kind": "ldap", "source": "runtime", "enabled": false,
+                "configuration": {"scope": "hosted_directory", "url": "ldaps://directory.example",
+                    "user_base_dn": "ou=people,dc=example", "user_filter": "(uid={username})",
+                    "subject_attribute": "entryUUID", "group_attributes": [], "group_rules": []}}]),
+    )
+    .await;
+    let providers = backend
+        .load_runtime_settings()
+        .await
+        .unwrap()
+        .authentication()
+        .unwrap()
+        .providers()
+        .iter()
+        .cloned()
+        .map(|provider| provider.with_enabled(true))
+        .collect();
+    let revision = commit(
+        &backend,
+        StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authentication(
+            StorageAuthenticationProviders::try_new(providers).unwrap(),
+        )),
+    )
+    .await;
+    let binding = InteractionBinding::try_new(
+        InteractionId::new(uuid::Uuid::new_v4()).unwrap(),
+        InteractionProviderId::external(
+            candidate["providers"][0]["provider_id"]
+                .as_str()
+                .unwrap()
+                .parse()
+                .unwrap(),
+        )
+        .unwrap(),
+        InteractionClientId::new("hosted-password-test").unwrap(),
+        revision,
+        InteractionAuthority::login(),
+    )
+    .unwrap();
+
+    assert!(
+        !crate::services::auth_interactions::oidc::available(context(&backend).get_ref(), &binding)
+            .await
+            .unwrap()
+    );
+}
+
+#[actix_web::test]
+async fn candidate_status_is_bound_to_the_initiating_credential() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let candidate = local_candidate(&backend, &user).await;
+    let other = admin(&backend).await;
+    let response = send(
+        &backend,
+        Some(&other.raw_token),
+        test::TestRequest::get().uri(&format!(
+            "{CANDIDATES}/{}",
+            candidate["id"].as_str().unwrap()
+        )),
+    )
+    .await;
+    assert_eq!(response.status(), http::StatusCode::NOT_FOUND);
+}
+
+#[actix_web::test]
+async fn stale_candidate_revision_is_rejected_before_provider_work() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let response=send(&backend,Some(&user.raw_token),test::TestRequest::post().uri(CANDIDATES).set_json(json!({"group":"authorization","expected_revision":2,"backend":"treetop","source":"deployment"}))).await;
+    assert_eq!(response.status(), http::StatusCode::PRECONDITION_FAILED);
+}
+
+#[rstest::rstest]
+#[case::put("PUT","/api/v1/admin/runtime-settings/authorization",json!({"expected_revision":1,"backend":"local"}))]
+#[case::patch("PATCH","/api/v1/admin/runtime-settings/authorization",json!({"expected_revision":1,"changes":{"backend":"local"}}))]
+#[case::delete("DELETE","/api/v1/admin/runtime-settings/authorization?expected_revision=1",json!(null))]
+#[case::legacy_preflight("POST","/api/v1/admin/runtime-settings/authentication/preflight",json!({"expected_revision":1,"providers":[]}))]
+#[actix_web::test]
+async fn direct_security_writes_require_the_candidate_workflow(
+    #[case] method: &str,
+    #[case] path: &str,
+    #[case] body: Value,
+) {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let response = send(
+        &backend,
+        Some(&user.raw_token),
+        test::TestRequest::default()
+            .method(method.parse().unwrap())
+            .uri(path)
+            .set_json(body),
+    )
+    .await;
+    assert_eq!(response.status(), http::StatusCode::CONFLICT);
+}
+
+fn disabled_oidc() -> Value {
+    json!({
+        "name": "staged_oidc", "kind": "oidc", "source": "runtime", "enabled": false,
+        "configuration": {
+            "issuer": "https://identity.example/tenant", "client_id": "hubuum",
+            "client_authentication": "client_secret_basic", "scopes": ["openid"],
+            "signing_algorithms": ["RS256"],
+            "membership": {"mode": "local_only", "refresh_interval_seconds": 300, "max_stale_seconds": 900},
+            "admission": {"mode": "existing_only"}, "credential": {"action": "clear"}
+        }
+    })
+}
+
+fn disabled_oauth() -> Value {
+    json!({
+        "name": "staged_oauth", "kind": "oauth", "source": "runtime", "enabled": false,
+        "configuration": {
+            "profile": "json_user",
+            "authorization_endpoint": "https://identity.example/authorize",
+            "token_endpoint": "https://identity.example/token",
+            "profile_endpoint": "https://identity.example/user",
+            "client_id": "hubuum", "client_authentication": "client_secret_basic",
+            "scopes": ["profile"], "subject_pointer": "/id", "subject_type": "string",
+            "name_pointer": "/name",
+            "membership": {"mode": "local_only", "refresh_interval_seconds": 300, "max_stale_seconds": 900},
+            "admission": {"mode": "existing_only"}, "credential": {"action": "clear"}
+        }
+    })
+}
+
+// Model upgraded settings with a retained binding for the previous header set.
+async fn conflicting_oauth_binding() -> (StorageHandle, BackendUserFixture) {
+    use hubuum_storage_core::{
+        StorageAuthenticationProvider, StorageAuthenticationProviderKind,
+        StorageAuthenticationProviders,
+    };
+    let backend = StorageHandle::memory();
+    let user = password_admin(&backend).await;
+    activate_disabled_providers(&backend, &user, json!([disabled_oauth(), disabled_oidc()])).await;
+    let current = backend.load_runtime_settings().await.unwrap();
+    let providers = current
+        .authentication()
+        .unwrap()
+        .providers()
+        .iter()
+        .map(|provider| {
+            if provider.kind() == StorageAuthenticationProviderKind::Oauth {
+                let mut configuration = provider.configuration().unwrap().clone();
+                configuration["profile_headers"] = json!({"x-tenant-id":"new-tenant"});
+                StorageAuthenticationProvider::try_new(
+                    provider.name(),
+                    provider.kind(),
+                    configuration,
+                )
+                .unwrap()
+                .with_id(provider.id().unwrap())
+                .unwrap()
+            } else {
+                provider.clone().with_enabled(true)
+            }
+        })
+        .collect();
+    commit(
+        &backend,
+        StorageRuntimeSettingsAssignment::Managed(StorageRuntimeSettingsValue::Authentication(
+            StorageAuthenticationProviders::try_new(providers).unwrap(),
+        )),
+    )
+    .await;
+    (backend, user)
+}
+
+#[actix_web::test]
+async fn conflicting_browser_namespace_only_removes_that_method() {
+    let (backend, _) = conflicting_oauth_binding().await;
+    let methods = crate::services::auth_interactions::methods(context(&backend).get_ref())
+        .await
+        .unwrap();
+    let names: Vec<_> = methods
+        .methods
+        .iter()
+        .map(|method| method.name.as_str())
+        .collect();
+    assert_eq!(names, ["local", "staged_oidc"]);
+}
+
+#[actix_web::test]
+async fn conflicting_browser_namespace_refuses_fresh_cached_authority() {
+    use hubuum_storage_core::StorageExternalPrincipalState;
+    let (backend, user) = conflicting_oauth_binding().await;
+    let now = chrono::Utc::now();
+    let state = StorageExternalPrincipalState::try_new(
+        "staged_oauth",
+        "display",
+        "subject",
+        Some(now),
+        Some(now),
+    )
+    .unwrap();
+    assert!(matches!(
+        crate::services::auth_interactions::external::check_existing_authority(
+            &backend,
+            user.principal_id,
+            &state
+        )
+        .await,
+        Err(crate::errors::ApiError::Unauthorized(_))
+    ));
+}
+
+#[actix_web::test]
+async fn oauth_namespace_cannot_be_repointed_with_ambiguous_delimiters() {
+    let backend = StorageHandle::memory();
+    let user = password_admin(&backend).await;
+    let mut provider = disabled_oauth();
+    provider["configuration"]["subject_pointer"] = json!("/nested:/id");
+    let (status, candidate) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post().uri(CANDIDATES).set_json(json!({
+            "group": "authentication", "expected_revision": 1, "providers": [provider]
+        })),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::CREATED, "{candidate}");
+    let (status, approval) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post()
+            .uri("/api/v1/iam/credential-approvals")
+            .set_json(json!({"password": PASSWORD, "operation": {
+                "kind": "activate_security_candidate", "candidate_id": candidate["id"],
+                "group": "authentication", "expected_revision": 1
+            }})),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::CREATED, "{approval}");
+    let (status, activated) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post()
+            .uri(&format!("{CANDIDATES}/{}/activate", candidate["id"].as_str().unwrap()))
+            .insert_header(("X-Hubuum-Credential-Approval", approval["approval"].as_str().unwrap()))
+            .set_json(json!({"expected_revision": 1, "verification_receipt": candidate["verification_receipt"]})),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::OK, "{activated}");
+
+    // Moving a colon-delimited component from the pointer to the endpoint must
+    // not preserve the identity binding for a different upstream subject.
+    provider["provider_id"] = candidate["providers"][0]["provider_id"].clone();
+    provider["configuration"]["profile_endpoint"] = json!("https://identity.example/user:/nested");
+    provider["configuration"]["subject_pointer"] = json!("/id");
+    let (status, body) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post().uri(CANDIDATES).set_json(json!({
+            "group": "authentication", "expected_revision": activated["revision"], "providers": [provider]
+        })),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::CONFLICT, "{body}");
+}
+
+#[rstest::rstest]
+#[case::oidc(disabled_oidc())]
+#[case::oauth(disabled_oauth())]
+#[actix_web::test]
+async fn disabled_browser_definition_can_be_staged_without_contacting_the_provider(
+    #[case] provider: Value,
+) {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let (status, candidate) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post().uri(CANDIDATES).set_json(json!({
+            "group": "authentication", "expected_revision": 1, "providers": [provider]
+        })),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::CREATED, "{candidate}");
+    assert_eq!(candidate["state"], "verified");
+    assert!(candidate["providers"][0]["provider_id"].as_str().is_some());
+    assert_eq!(
+        current_revision(&backend, StorageRuntimeSettingsGroup::Authentication).await,
+        ResourceRevision::INITIAL
+    );
+}
+
+#[rstest::rstest]
+#[case::plaintext_oidc_secret(disabled_oidc(), "client_secret", json!("must-not-be-accepted"))]
+#[case::reserved_oidc_envelope(disabled_oidc(), "protected_credential", json!({"alias": "injected"}))]
+#[case::plaintext_oauth_secret(disabled_oauth(), "client_secret", json!("must-not-be-accepted"))]
+#[case::reserved_oauth_envelope(disabled_oauth(), "protected_credential", json!({"alias": "injected"}))]
+#[case::invalid_algorithm(disabled_oidc(), "signing_algorithms", json!(["none"]))]
+#[actix_web::test]
+async fn invalid_browser_fields_fail_at_the_request_boundary(
+    #[case] mut provider: Value,
+    #[case] field: &str,
+    #[case] value: Value,
+) {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    provider["configuration"][field] = value;
+    let response = send(
+        &backend,
+        Some(&user.raw_token),
+        test::TestRequest::post().uri(CANDIDATES).set_json(
+            json!({"group":"authentication","expected_revision":1,"providers":[provider]}),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), http::StatusCode::BAD_REQUEST);
+}
+
+#[actix_web::test]
+async fn invalid_ldap_refresh_window_rejects_candidate_before_connection() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let (status, body) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::post().uri(CANDIDATES).set_json(json!({
+            "group": "authentication", "expected_revision": 1,
+            "providers": [{"name": "directory", "kind": "ldap", "source": "runtime", "enabled": true,
+                "configuration": {"scope": "directory", "url": "ldaps://directory.example",
+                    "user_base_dn": "ou=people,dc=example", "user_filter": "(uid={username})",
+                    "subject_attribute": "entryUUID", "group_attributes": [], "group_rules": [],
+                    "refresh_ttl_seconds": 600, "max_stale_seconds": 60}}]
+        })),
+    ).await;
+    assert_eq!(status, http::StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.to_string().contains("max_stale_seconds"), "{body}");
+}

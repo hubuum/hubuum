@@ -1,0 +1,1 @@
+ALTER TABLE tokens DROP CONSTRAINT tokens_revocation_after_issuance;

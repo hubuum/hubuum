@@ -59,6 +59,8 @@ File paths below are relative to `HUBUUM_SECRET_FILE_ROOT` (or
 | Token key-ring ID `primary` | `HUBUUM_TOKEN_HASH_KEY_PRIMARY` | `token/primary` | None |
 | Event sink alias `inventory-api` | `HUBUUM_EVENT_SINK_SECRET_INVENTORY_API` | `event-sink/inventory-api` | None |
 | Remote-target alias `inventory-api` | `HUBUUM_REMOTE_SECRET_INVENTORY_API` | `remote/inventory-api` | None |
+| OIDC alias `client_secret` | `HUBUUM_OIDC_SECRET_CLIENT_SECRET` | `oidc/client_secret` | None |
+| OAuth alias `client_secret` | `HUBUUM_OAUTH_SECRET_CLIENT_SECRET` | `oauth/client_secret` | None |
 | LDAP alias `readonly_password` | `HUBUUM_LDAP_SECRET_READONLY_PASSWORD` | `ldap/readonly_password` | None |
 
 Aliases contain 1-128 ASCII letters, numbers, underscores, or hyphens. For
@@ -239,10 +241,15 @@ next operation after its five-minute cache entry expires reads the new value.
 Changing a container's environment configuration also requires recreating or
 restarting it; cache expiry cannot update an existing process's environment.
 
-The login rate-limit Valkey URL, Treetop URL, TLS private-key passphrase, and
+The login rate-limit Valkey URL, deployment-referenced Treetop URL, TLS private-key passphrase, and
 other certificate paths continue to use their existing configuration adapters
 and require restart after changes. They are intentionally listed here so those
 consumers are not mistaken for live-rotating integrations.
+
+Security-candidate verification, approval and activation explicitly refresh LDAP,
+OIDC/OAuth and runtime encryption-key caches before comparing their secret binding.
+A rotated source invalidates an older receipt. Runtime Treetop profiles use the
+[verified candidate workflow](security_candidates.md).
 
 ## Diagnostics
 

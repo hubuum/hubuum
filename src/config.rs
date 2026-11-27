@@ -1,4 +1,5 @@
 use hubuum_storage_core::{StorageBackupBudget, StorageRuntimeSettingsGroup};
+pub mod auth_browser;
 pub mod environment;
 pub mod running;
 pub(crate) mod runtime;
@@ -1103,7 +1104,7 @@ pub struct AppConfig {
     pub max_transitive_depth: i32,
 
     /// The name of the admin group
-    #[clap(long, env = "HUBUUM_ADMIN_GROUPNAME", default_value = "admin")]
+    #[clap(long, env = "HUBUUM_ADMIN_GROUPNAME", default_value = DEFAULT_ADMIN_GROUPNAME)]
     pub admin_groupname: String,
 
     /// Identity scope that contains the admin group.
@@ -1113,6 +1114,26 @@ pub struct AppConfig {
     /// Optional path to TOML auth provider configuration.
     #[clap(long, env = "HUBUUM_AUTH_CONFIG_PATH", default_value = None)]
     pub auth_config_path: Option<String>,
+
+    /// Browser origin and exact client-bound BFF return targets as JSON; disabled by default.
+    #[clap(long, env = "HUBUUM_AUTH_BROWSER", default_value = "{}")]
+    pub auth_browser: auth_browser::BrowserSettings,
+
+    /// Permit private destinations for runtime authentication and authorization profiles.
+    #[clap(
+        long,
+        env = "HUBUUM_AUTH_RUNTIME_ALLOW_PRIVATE_TARGETS",
+        default_value_t = false
+    )]
+    pub auth_runtime_allow_private_targets: bool,
+
+    /// Comma-separated provider scope names whose definitions and activation are deployment-locked.
+    #[clap(
+        long,
+        env = "HUBUUM_AUTH_RUNTIME_LOCKED_PROVIDERS",
+        value_delimiter = ','
+    )]
+    pub auth_runtime_locked_providers: Vec<String>,
 
     /// Secret-source name of the active key for runtime-stored credentials.
     #[clap(

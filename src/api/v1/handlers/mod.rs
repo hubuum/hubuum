@@ -36,3 +36,7 @@ pub mod query_usage;
 pub mod auth;
 
 pub(crate) mod schema_profiling;
+
+pub mod security_candidates;
+
+pub mod auth_interactions;

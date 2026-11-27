@@ -99,6 +99,13 @@ impl EventSubject {
         self.is_admin
     }
 
+    /// Attach the application's selected authorization-policy result to this
+    /// event snapshot. This does not grant authority or change identity facts.
+    pub fn with_administrator_status(mut self, is_admin: bool) -> Self {
+        self.is_admin = is_admin;
+        self
+    }
+
     /// Safe, credential-free document shared by every token-issuance adapter.
     pub fn successful_login_document(&self) -> AuditDocument {
         AuditDocument::builder(format!(

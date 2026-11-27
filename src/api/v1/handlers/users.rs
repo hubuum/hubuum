@@ -245,17 +245,13 @@ pub async fn delete_user(
     let precondition = revision_precondition_for_tag(&req, &etag)?;
 
     let event_context = requestor.event_context(&req);
-    let delete_result = with_revision_precondition(
+    with_revision_precondition(
         &context,
         precondition,
         user_id.delete(&context, &event_context),
     )
-    .await;
-
-    match delete_result {
-        Ok(_) => Ok(ApiResponse::no_content_with_etag(etag)),
-        Err(e) => Err(e),
-    }
+    .await?;
+    Ok(ApiResponse::no_content_with_etag(etag))
 }
 
 #[utoipa::path(

@@ -812,10 +812,10 @@ jobs:
     if: needs.changes.outputs.run_default_suite == 'true'
     runs-on: ubuntu-24.04
     env:
-      CARGO_BIN_EXE_hubuum-template-worker: ${{ github.workspace }}/target/release/hubuum-template-worker
       # Match the platform test jobs' faster release compilation settings.
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
       CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_BIN_EXE_hubuum-template-worker: ${{ github.workspace }}/target/release/hubuum-template-worker
     strategy:
       fail-fast: false
       matrix:
@@ -865,6 +865,8 @@ jobs:
       - name: Test PostgreSQL adapter-native contracts
         if: matrix.feature.name == 'default' && needs.changes.outputs.run_rust_ci == 'true'
         run: >-
+          python3 tests/python/run.py integration rust-tests
+          --admin-binary "$RUNNER_TEMP/hubuum-admin-migrate" --
           cargo test -p hubuum-storage-postgres
           -F integration-test-support,scale-benchmark-support,embedded-migrations --locked --release
       - name: Test workspace package contracts
@@ -999,10 +1001,14 @@ jobs:
     if: needs.changes.outputs.run_rust_ci == 'true'
     runs-on: ${{ matrix.platform.os }}
     env:
-      CARGO_BIN_EXE_hubuum-template-worker: ${{ github.workspace }}/target/${{ contains(matrix.platform.os, 'windows') && format('{0}/release/hubuum-template-worker.exe', matrix.platform.target) || 'release/hubuum-template-worker' }}
       # Production artifact jobs retain the exact fat-LTO release profile.
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
       CARGO_PROFILE_RELEASE_LTO: "off"
+      # Unit tests do not receive Cargo's integration-test executable variables.
+      CARGO_BIN_EXE_hubuum-template-worker: >-
+        ${{ contains(matrix.platform.os, 'windows') &&
+            format('{0}/target/{1}/release/hubuum-template-worker.exe', github.workspace, matrix.platform.target) ||
+            format('{0}/target/release/hubuum-template-worker', github.workspace) }}
     strategy:
       fail-fast: false
       matrix:
@@ -1325,6 +1331,26 @@ jobs:
             HUBUUM_BUILD_GIT_SHA=${{ github.sha }}
           cache-from: type=gha,scope=container-amd64-production
           cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max,scope=container-amd64-production' || '' }}
+      - name: Qualify Keycloak OIDC against the production image
+        run: |
+          python3 -I -S tests/python/integration/keycloak.py --image hubuum-server:ci --group-source id_token --evidence target/keycloak-evidence/id-token
+          python3 -I -S tests/python/integration/keycloak.py --image hubuum-server:ci --group-source userinfo --evidence target/keycloak-evidence/userinfo
+      - name: Retain Keycloak qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: keycloak-qualification
+          path: target/keycloak-evidence
+          if-no-files-found: ignore
+      - name: Qualify synthetic OAuth against the production image
+        run: python3 -I -S tests/python/integration/oauth.py --image hubuum-server:ci --evidence target/oauth-evidence/synthetic
+      - name: Retain OAuth qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oauth-qualification
+          path: target/oauth-evidence
+          if-no-files-found: ignore
       - name: Export static release binaries
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -1448,6 +1474,29 @@ jobs:
           retention-days: 7
           overwrite: true
           if-no-files-found: error
+
+
+      - name: Prepare authentication candidate
+        if: github.ref == 'refs/heads/project/auth-support' || github.base_ref == 'project/auth-support'
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/auth-candidate"
+          cp "$RUNNER_TEMP/production-container.tar" "$RUNNER_TEMP/auth-candidate/"
+          git archive --format=tar.gz --output="$RUNNER_TEMP/auth-candidate/source.tar.gz" HEAD
+          git rev-parse HEAD > "$RUNNER_TEMP/auth-candidate/TESTED_COMMIT"
+          printf '%s\n' "$SOURCE_SHA" > "$RUNNER_TEMP/auth-candidate/SOURCE_COMMIT"
+          printf '%s/actions/runs/%s/attempts/%s\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/auth-candidate/WORKFLOW_RUN"
+          (cd "$RUNNER_TEMP/auth-candidate" && sha256sum ./* > SHA256SUMS)
+      - name: Retain authentication candidate
+        if: github.ref == 'refs/heads/project/auth-support' || github.base_ref == 'project/auth-support'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: auth-candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/auth-candidate/
+          if-no-files-found: error
+          retention-days: 30
 
   container-monitoring:
     name: Container monitoring acceptance

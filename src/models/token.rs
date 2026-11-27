@@ -1,6 +1,7 @@
 use std::{fmt, str::FromStr};
 
 use chrono::NaiveDateTime;
+use hubuum_storage_core::StorageTokenRevocations;
 
 use hubuum_auth_core::{BearerCredential, keyed_digest};
 use serde::{Deserialize, Serialize};
@@ -485,7 +486,10 @@ impl Token {
         }
     }
 
-    pub async fn delete<C>(&self, backend: &C) -> Result<(), ApiError>
+    pub async fn delete<C>(
+        &self,
+        backend: &C,
+    ) -> Result<Option<hubuum_storage_core::StorageUpstreamSession>, ApiError>
     where
         C: StorageContext,
     {
@@ -495,8 +499,7 @@ impl Token {
             self.credentials()?.credentials,
             &EventContext::system(),
         )
-        .await?;
-        Ok(())
+        .await
     }
 
     pub fn storage_hash(&self) -> Result<String, ApiError> {
@@ -638,7 +641,7 @@ pub async fn revoke_token_by_id_for_principal<C>(
     token_id: TokenID,
     principal_id: PrincipalID,
     context: &EventContext,
-) -> Result<usize, ApiError>
+) -> Result<StorageTokenRevocations, ApiError>
 where
     C: StorageContext,
 {

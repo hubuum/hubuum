@@ -1,5 +1,6 @@
 //! PostgreSQL implementation of the human-user storage contract.
 
+use super::token::revoke_all_principal_tokens_on_connection;
 use super::user_row::UserRow;
 use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
@@ -384,7 +385,7 @@ pub async fn update_user(
             .get_result::<UserRow>(connection)
             .await?;
             if password_changed {
-                revoke_all_tokens(connection, user_id).await?;
+                revoke_all_principal_tokens_on_connection(connection, user_id).await?;
             }
             let after_revision = principal_revision(connection, user_id).await?;
             let document = AuditDocument::try_new(
@@ -433,7 +434,7 @@ pub(crate) async fn set_user_password_on_connection(
         .set(crate::schema::users::password.eq(Some(password_hash)))
         .execute(connection)
         .await?;
-    let revoked = revoke_all_tokens(connection, user_id).await?;
+    let revoked = revoke_all_principal_tokens_on_connection(connection, user_id).await?;
     let after = load_user_row(connection, user_id).await?;
     let after_revision = principal_revision(connection, user_id).await?;
     let document = AuditDocument::try_new(
@@ -527,7 +528,7 @@ pub async fn anonymize_user(
             .set(crate::schema::principals::name.eq(format!("anonymized-{user_id}")))
             .execute(connection)
             .await?;
-            revoke_all_tokens(connection, user_id).await?;
+            revoke_all_principal_tokens_on_connection(connection, user_id).await?;
             let after = load_user_row(connection, user_id).await?;
             let anonymized_name = principal_name(connection, user_id).await?;
             let after_revision = principal_revision(connection, user_id).await?;
@@ -637,22 +638,6 @@ async fn ensure_user_allows_local_write(
     } else {
         Ok(())
     }
-}
-
-async fn revoke_all_tokens(
-    connection: &mut PostgresConnection,
-    principal_id: i32,
-) -> Result<usize, PostgresStorageError> {
-    super::auth_sessions::revoke_principal(connection, principal_id).await?;
-    diesel::update(
-        crate::schema::tokens::table
-            .filter(crate::schema::tokens::principal_id.eq(principal_id))
-            .filter(crate::schema::tokens::revoked_at.is_null()),
-    )
-    .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
-    .execute(connection)
-    .await
-    .map_err(PostgresStorageError::from)
 }
 
 fn user_cursor_field(field: &FilterField) -> Result<CursorSqlField, PostgresStorageError> {

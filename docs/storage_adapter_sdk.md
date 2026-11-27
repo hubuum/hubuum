@@ -1,6 +1,6 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.7`.
+Status: accepted; current experimental release train is `0.11`.
 
 ## Supported Crate Graph
 
@@ -446,3 +446,156 @@ override as an audited revision. Upgrade all API and worker replicas together
 before accepting runtime-setting changes. Run the shared runtime-settings and
 restore conformance tests, plus adapter-native atomicity, stale-revision, audit,
 and notification coverage. The SDK retains its Rust 1.88 minimum version.
+
+## Upgrading from 0.7 to 0.8
+
+Update all ten SDK dependencies to exactly `0.8.0` together. The closed runtime
+configuration vocabulary adds browser provider kinds and a validated remote
+authorization connection. Runtime snapshots also include all operational policy
+groups described in the [runtime settings guide](runtime_settings.md).
+
+Implement the complete candidate, provider-binding, expiry-cleanup and offline
+recovery methods in `RuntimeSettingsStorage`. Candidates are short-lived,
+credential-owned verification state, separate from the authoritative settings.
+Use their typed verification revision to reject concurrent stale check updates.
+Activation consumes the exact candidate and fresh approval, rechecks local
+recovery grants, updates the expected settings revision and audit, records
+immutable provider bindings, and revokes affected external credentials atomically.
+A failed transaction must preserve both approval and receipt authority.
+
+Use `StorageLogin::try_new` for local login evidence and `StorageLogin::external`
+with the authenticated configuration revision for external evidence. Fence that
+revision against configuration activation before issuing tokens or sessions.
+Preserve runtime settings, audit and provider bindings across logical restore;
+discard candidates and unused approvals. Offline recovery atomically selects
+local-only authentication and local authorization, revokes external credentials,
+and records recovery evidence without calling remote policy.
+
+Run the shared API/storage contracts and adapter-native activation race,
+transaction rollback, recovery restart and login fencing tests. PostgreSQL
+requires the coordinated offline migration documented in
+[security candidates](security_candidates.md#upgrade-and-recovery).
+
+## Upgrading from 0.8 to 0.9
+
+Update all ten SDK dependencies to exactly `0.9.0` together. This breaking
+release adds six required `AuthenticationStorage` operations: interaction
+creation, browser binding, transition, atomic completion, issued-session cleanup,
+and bounded retention. It also adds `SessionRevocation::Session` and the
+`ConfigurationChanged` interaction rejection.
+
+Implement the complete [interaction contract](authentication_interactions.md),
+including committed rejection outcomes, actor/configuration fences and atomic
+issuance with consumption. Session cleanup targets the exact family even after
+its initial access token is gone. Recovery and logical restore must discard
+interaction authority. Do not provide unsupported default implementations.
+
+`StorageInteractionRecord::to_document` and `from_document` are trusted adapter
+persistence interfaces. Their documents include private correlation and subject
+evidence; never deserialize them from HTTP requests or expose them in responses.
+Only generated secret hashes enter storage. Run the shared interaction scenarios
+and native concurrency, rollback, restart and recovery tests for each adapter.
+
+## Upgrading from 0.9 to 0.10
+
+Update all ten SDK dependencies to exactly `0.10.0` together. The closed
+`StorageInteractionAction` enum adds `AuthenticateExternal`, carrying a
+non-deserializable verified login or fresh approval proof. Implement it in
+`advance_auth_interaction`; treating it as an unsupported action is not a complete
+adapter implementation. `StorageInteractionAuthentication::login` now accepts
+only local/LDAP password evidence. Browser adapters use the new proof path.
+
+`StorageInteractionIssuance::Session` also carries `audit_subject`. For browser
+logins, resolve administrator status through the application's configured
+authorization backend after synchronization, using the authenticated subject in
+`StorageInteractionView`. Supply that snapshot at completion and call
+`StorageInteractionLogin::session_login` after restoring the login evidence.
+Reject missing or mismatched browser snapshots; only administrator status may
+differ from the authenticated identity/profile. Local/LDAP completion supplies
+`None` and retains the authorization snapshot captured during password login.
+
+Hold the authentication revision, claimed interaction and immutable provider
+binding fences. Call `prepare` before identity writes, serialize absent-row
+provisioning by stable scope/subject, and check admission inside that transaction.
+Carry `StorageAdmittedExternalIdentity` through reconciliation and create the
+resulting durable login evidence from that same proof. Persist the observed
+upstream verification time, not the callback commit or session rotation time.
+Reject older observations and callbacks that predate a definitive rejection.
+
+Reconcile only the owning provider's membership sources. Preserve independent
+manual and other-provider sources, including in backup/restore. Local-only
+membership evidence preserves grants; an authoritative empty provider set removes
+only the owning provider's grants. Names and emails never link principals.
+
+Fresh approval requires the same existing actor, original token, exact operation,
+provider/revision and persisted interaction start. Complete through the existing
+atomic approval path and repeat authorization at the final mutation. OAuth without
+verified authentication-time capability remains unsupported. No new database
+migration accompanies this increment; the 0.9 interaction migration is still
+required. Rebuild complete adapters and applications together.
+
+## Upgrading from 0.10 to 0.11
+
+Update all ten SDK dependencies to exactly `0.11.0` together. This is a breaking
+adapter contract: `ExternalIdentityStorage` now owns lookup of immutable external
+identities and the complete retained upstream credential lifecycle. Implement
+`find_external_identity`, `claim_upstream_credential`, `finish_upstream_renewal`,
+`fail_upstream_renewal`, `upstream_logout_credentials` and
+`upstream_approval_session` on every backend.
+
+Persist encrypted `StorageRetainedAuthentication` with an authenticated login,
+then transfer it atomically to the issued session as `StorageUpstreamSession`.
+Handle `LoginWithCredential`, `PrepareProtocol`, `ClaimProtocol`, `Fail` and the
+new protocol-claim outcome. Browser protocol state must be single-use and subject
+to the existing cookie, revision, expiry and authentication-lease fences.
+
+Claiming an upstream credential grants one 30-second lease. Remove an OIDC
+refresh token before network I/O. Keep the OAuth bearer recoverable during
+read-only profile checks. Commit a `StorageUpstreamRenewal` only against that lease, the
+same live session/principal/provider revision and immutable external identity.
+Membership reconciliation and replacement credentials must commit atomically.
+Resolve fresh OIDC proofs with `upstream_approval_session` into a private-fielded
+`StorageUpstreamApproval` before encrypting the new grant against the original
+login binding. Handle `ApprovalWithCredential` in the fenced external
+authentication transaction: recheck the eligible session and provider revision,
+reconcile the verified identity, then call `StorageUpstreamSession::reauthenticated`
+and save the replacement atomically. Its cleared lease must fence both successful
+and rejected late renewals of the old grant. Do not issue a new ordinary session
+or operation approval at this stage. Keep the original login binding for
+ciphertext. The user decides separately whether to approve the protected operation. This required capability is part of the unreleased
+0.11 breaking adapter contract.
+Never retry an ambiguous refresh with a consumed token. Reject stale failures
+that arrive after a newer successful login. Preserve a bounded last-success
+snapshot on temporary failure; definitive rejection invalidates external
+authority and sessions. For `RejectMembership`, check the live interaction
+claim and immutable identity under the current revision before invalidating the
+subject. Candidate previews never invalidate authority. When authentication
+settings change, advance the effective revision only for unchanged enabled
+providers, clear superseded leases and keep the original login binding for
+decryption. An in-flight OIDC grant from the previous revision stays consumed.
+An unchanged OAuth provider can immediately claim the retained bearer at the
+new revision. Return `AuthenticationRequired` when a session or claim fence
+rejects renewal. Failed renewal finalizes local state. Dropping the uninstalled
+credential preserves shared upstream sessions across scopes and later logins.
+On `UnavailableBeforeSubmission`, restore the claimed grant with bounded backoff.
+Handle `StorageUpstreamFailure::Interrupted` for a locally interrupted OAuth read
+or an OIDC exchange stopped before submission. Fence the claim as usual, release
+its lease, make the same grant immediately eligible, and preserve both principal
+sync timestamps. Adapters can use `defer_credential_retry` and `sync_failure`
+to apply these rules.
+Return the issued family's retained grant from `revoke_auth_interaction_session`
+in the local revocation transaction so the server can revoke it after commit.
+For `revoke_auth_sessions`, `revoke_token` and `revoke_all_principal_tokens`,
+return the local count and the grants in `StorageTokenRevocations`. Serialize
+grant selection with issuance and renewal. On candidate activation, return
+each removed provider's grants paired with its previous trusted definition in
+`StorageSecurityCandidateActivationOutcome`. Dispatch after commit. For renewal,
+honor a live claim first, then prefer a ready grant over a deferred retry.
+Logout, affected provider changes, deletion, security recovery and logical
+restore destroy retained credentials. Portable backups
+exclude both interaction protocol state and upstream credentials.
+
+OIDC definitions add `retain_refresh_tokens`, defaulting to `false`. This setting
+does not enable an incomplete backend or relax the mandatory lifecycle contract.
+See the [Keycloak upgrade procedure](authentication/keycloak.md#upgrade-and-recovery)
+and PostgreSQL regression tests for transaction, concurrency and rollback cases.

@@ -18,6 +18,7 @@ pub enum StorageCredentialOperation {
     UpdateUser,
     ImportCredentials,
     ConfirmRestore,
+    ActivateSecurityCandidate,
 }
 
 impl StorageCredentialOperation {
@@ -30,6 +31,7 @@ impl StorageCredentialOperation {
             Self::UpdateUser => "update_user",
             Self::ImportCredentials => "import_credentials",
             Self::ConfirmRestore => "confirm_restore",
+            Self::ActivateSecurityCandidate => "activate_security_candidate",
         }
     }
 }
@@ -69,6 +71,7 @@ pub struct StorageCredentialClaim {
     operation: StorageCredentialOperation,
     target_id: Option<PrincipalId>,
     restore_job_id: Option<RestoreJobId>,
+    security_candidate_id: Option<uuid::Uuid>,
     secret_digest: StorageCredentialFingerprint,
     request_digest: StorageCredentialFingerprint,
     legacy_valid_after: DateTime<Utc>,
@@ -89,10 +92,16 @@ impl StorageCredentialClaim {
             operation,
             target_id: None,
             restore_job_id: None,
+            security_candidate_id: None,
             secret_digest,
             request_digest,
             legacy_valid_after,
         }
+    }
+    #[must_use]
+    pub const fn security_candidate(mut self, id: uuid::Uuid) -> Self {
+        self.security_candidate_id = Some(id);
+        self
     }
     #[must_use]
     pub const fn restore_job(mut self, id: RestoreJobId) -> Self {
@@ -115,6 +124,10 @@ impl StorageCredentialClaim {
     #[must_use]
     pub const fn operation(&self) -> StorageCredentialOperation {
         self.operation
+    }
+    #[must_use]
+    pub const fn security_candidate_id(&self) -> Option<uuid::Uuid> {
+        self.security_candidate_id
     }
     #[must_use]
     pub const fn restore_job_id(&self) -> Option<RestoreJobId> {
@@ -172,6 +185,7 @@ pub struct StorageCredentialApprovalMetadata {
     operation: StorageCredentialOperation,
     target_id: Option<PrincipalId>,
     restore_job_id: Option<RestoreJobId>,
+    security_candidate_id: Option<uuid::Uuid>,
     authenticated_at: DateTime<Utc>,
     expires_at: DateTime<Utc>,
     consumed_at: Option<DateTime<Utc>>,
@@ -193,12 +207,16 @@ impl StorageCredentialApprovalMetadata {
             StorageCredentialOperation::ConfirmRestore => {
                 claim.target_id.is_none() && claim.restore_job_id.is_some()
             }
-            StorageCredentialOperation::CreateUser
+            StorageCredentialOperation::ActivateSecurityCandidate
+            | StorageCredentialOperation::CreateUser
             | StorageCredentialOperation::ImportCredentials => {
                 claim.target_id.is_none() && claim.restore_job_id.is_none()
             }
         };
-        if !valid_target
+        if (claim.operation == StorageCredentialOperation::ActivateSecurityCandidate)
+            != claim.security_candidate_id.is_some()
+            || claim.security_candidate_id.is_some_and(|id| id.is_nil())
+            || !valid_target
             || id <= 0
             || expires_at <= authenticated_at
             || expires_at.signed_duration_since(authenticated_at)
@@ -215,6 +233,7 @@ impl StorageCredentialApprovalMetadata {
             operation: claim.operation,
             target_id: claim.target_id,
             restore_job_id: claim.restore_job_id,
+            security_candidate_id: claim.security_candidate_id,
             authenticated_at,
             expires_at,
             consumed_at: None,
@@ -258,6 +277,10 @@ impl StorageCredentialApprovalMetadata {
     #[must_use]
     pub const fn operation(&self) -> StorageCredentialOperation {
         self.operation
+    }
+    #[must_use]
+    pub const fn security_candidate_id(&self) -> Option<uuid::Uuid> {
+        self.security_candidate_id
     }
     #[must_use]
     pub const fn restore_job_id(&self) -> Option<RestoreJobId> {

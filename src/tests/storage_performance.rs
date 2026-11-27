@@ -3,6 +3,7 @@
 //! These are deliberately model/storage-level checks rather than HTTP tests:
 //! authentication and routing should not hide an extra pool checkout or an
 //! N+1 introduced while storage capabilities are extracted.
+use hubuum_domain::ResourceRevision;
 use hubuum_domain::{ClassId, TemplateAlias};
 use hubuum_storage_core::StorageObjectCreate;
 
@@ -1137,12 +1138,15 @@ async fn external_identity_sync_query_count_is_constant_with_group_count() {
     };
 
     let (small_result, small_queries) =
-        capture_queries(backend.sync_external_user(request("small", 1))).await;
+        capture_queries(backend.sync_external_user(ResourceRevision::INITIAL, request("small", 1)))
+            .await;
     small_result
         .expect("one-group external sync should succeed")
         .into_value();
-    let (large_result, large_queries) =
-        capture_queries(backend.sync_external_user(request("large", 20))).await;
+    let (large_result, large_queries) = capture_queries(
+        backend.sync_external_user(ResourceRevision::INITIAL, request("large", 20)),
+    )
+    .await;
     large_result
         .expect("twenty-group external sync should succeed")
         .into_value();
@@ -1162,11 +1166,11 @@ async fn external_identity_sync_query_count_is_constant_with_group_count() {
     );
     assert_eq!(
         small_queries.total_queries(),
-        16,
+        17,
         "{:#?}",
         small_queries.query_counts()
     );
-    assert_eq!(small_queries.domain_queries(), 14);
+    assert_eq!(small_queries.domain_queries(), 15);
     assert_eq!(small_queries.control_queries(), 2);
     assert_eq!(small_queries.connection_checkouts(), 1);
     for statement in [

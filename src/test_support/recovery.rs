@@ -314,6 +314,63 @@ impl RestoreContractFixture {
 }
 
 impl RestoreContractFixture {
+    pub async fn seed_auth_interaction(&self) -> Result<StorageInteractionAccess, ApiError> {
+        use hubuum_domain::{
+            InteractionAuthority, InteractionBinding, InteractionClientId, InteractionDigest,
+            InteractionId, InteractionLifecycle, InteractionMode, InteractionProviderId,
+        };
+        let revision = self
+            .storage
+            .load_runtime_settings()
+            .await?
+            .record(StorageRuntimeSettingsGroup::Authentication)
+            .revision();
+        let binding = InteractionBinding::try_new(
+            InteractionId::new(uuid::Uuid::new_v4()).unwrap(),
+            InteractionProviderId::local(),
+            InteractionClientId::new("restore-contract").unwrap(),
+            revision,
+            InteractionAuthority::login(),
+        )
+        .unwrap();
+        let secret = InteractionDigest::new("a".repeat(64)).unwrap();
+        let access =
+            StorageInteractionAccess::new(binding.id(), binding.client().clone(), secret.clone());
+        let now = Utc::now();
+        let lifecycle = InteractionLifecycle::try_new(
+            binding,
+            InteractionMode::Credentials,
+            now,
+            now + chrono::Duration::minutes(5),
+        )
+        .unwrap();
+        self.storage
+            .create_auth_interaction(
+                StorageInteractionCreate::builder(lifecycle, secret)
+                    .try_build()
+                    .unwrap(),
+            )
+            .await?;
+        Ok(access)
+    }
+    pub async fn auth_interaction_exists(
+        &self,
+        access: StorageInteractionAccess,
+    ) -> Result<bool, ApiError> {
+        match self
+            .storage
+            .advance_auth_interaction(StorageInteractionCommand::new(
+                StorageInteractionAuthorization::Redemption(access),
+                StorageInteractionAction::Poll,
+            ))
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == StorageErrorKind::AuthenticationRequired => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     pub async fn restore_original(&self) -> Result<(), ApiError> {
         restore_snapshot(&self.storage, self.original.clone()).await
     }

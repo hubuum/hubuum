@@ -140,3 +140,7 @@ pub mod credential_activity;
 pub(crate) mod exports;
 
 pub(crate) mod schema_profiling;
+
+pub mod security_candidates;
+
+pub mod auth_interactions;

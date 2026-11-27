@@ -8,6 +8,14 @@ impl MemoryState {
         let claim = request.take_credential_claim();
         let request = request.into_parts();
         if let Some(login) = request.login() {
+            if login
+                .authentication_revision()
+                .is_some_and(|expected| expected != self.runtime_settings.authentication_revision())
+            {
+                return Err(StorageError::authentication_required(
+                    "Authentication configuration changed; sign in again",
+                ));
+            }
             let matches = self
                 .users
                 .get(&request.principal_id().id())

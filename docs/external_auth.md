@@ -1,5 +1,10 @@
 # External Authentication
 
+The proposed [external authentication contract](authentication/contract.md)
+extends the auth crates for OIDC/OAuth and runtime configure, test and activate
+workflows. It is a Project 6 design under review; the behavior below describes
+the implemented local/LDAP baseline.
+
 Hubuum supports local users and provider-backed identity scopes. An identity scope
 is a principal namespace backed by one provider configuration. The same provider
 driver can be used more than once, so multiple LDAP directories or LDAP search

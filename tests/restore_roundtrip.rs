@@ -32,6 +32,7 @@ use hubuum::tests::TestScope;
 use hubuum::traits::CanSave;
 use hubuum_storage_core::{RestoreStorage, StorageBackupBudget, StorageRestoreArtifact};
 use hubuum_storage_postgres::diesel_async_prelude::*;
+use hubuum_storage_postgres::test_support::integration_test_restore_migration_url as database_url;
 use hubuum_storage_postgres::{PostgresStorage, with_connection, with_transaction};
 use rstest::rstest;
 use tokio::sync::Mutex;
@@ -42,14 +43,81 @@ use uuid::Uuid;
 // These tests replace the whole runner-owned database, so they must not overlap.
 static RESTORE_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
-fn database_url() -> String {
-    std::env::var("HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL")
-        .expect("The test runner must provide isolated destructive restore authority")
-}
-
 fn runtime_database_url() -> String {
     std::env::var("HUBUUM_RESTORE_TEST_DATABASE_URL")
         .expect("The test runner must provide isolated runtime restore-coordination authority")
+}
+
+#[cfg(feature = "embedded-migrations")]
+#[tokio::test]
+async fn disposable_restore_verifies_browser_identity_namespaces() {
+    use hubuum::models::{BackupDocument, BackupManifest};
+    use hubuum_storage_core::{StorageBackupRow, StorageBackupStateSection};
+    use serde_json::json;
+    use std::process::Command;
+
+    let _guard = RESTORE_TEST_LOCK.lock().await;
+    let source = database_url();
+    let target =
+        std::env::var("HUBUUM_RESTORE_DRILL_DATABASE_URL").expect("empty restore drill database");
+    let path = std::env::temp_dir().join(format!("hubuum-browser-drill-{}.json", Uuid::new_v4()));
+    let captured = Command::new(env!("CARGO_BIN_EXE_hubuum-admin"))
+        .args(["--database-url", &source, "--backup"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        captured.status.success(),
+        "{}",
+        String::from_utf8_lossy(&captured.stderr)
+    );
+    let mut document: BackupDocument =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let scopes = document
+        .state
+        .sections
+        .get_mut(&StorageBackupStateSection::IdentityScopes)
+        .unwrap();
+    let base_id = scopes
+        .iter()
+        .map(|row| row.get("id").unwrap().as_i64().unwrap())
+        .max()
+        .unwrap();
+    let template = scopes[0].clone().into_value();
+    for (index, (kind, namespace)) in [
+        ("oidc", "https://issuer.example/realm"),
+        (
+            "oauth",
+            r#"["https://issuer.example/profile","/id","string"]"#,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut row = template.clone();
+        row["id"] = json!(base_id + 1 + index as i64);
+        row["name"] = json!(format!("drill_{kind}"));
+        row["provider_kind"] = json!(kind);
+        row["identity_namespace"] = json!(namespace);
+        scopes.push(StorageBackupRow::try_from_value(row).unwrap());
+    }
+    document.manifest = BackupManifest::from_sections(&document.state, document.history.as_ref());
+    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_hubuum-admin"))
+        .arg("--verify-backup")
+        .arg(&path)
+        .args(["--restore-test-database-url", &target, "--json"])
+        .output()
+        .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["result"], "passed");
+    assert_eq!(report["mode"], "isolated_restore");
 }
 
 #[tokio::test]

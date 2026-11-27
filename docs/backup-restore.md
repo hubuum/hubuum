@@ -78,6 +78,13 @@ relations, objects, export templates, remote targets, event sinks, sink collecti
 grants, and event subscriptions. History sections describe resource history, terminal tasks and results, audit events,
 and terminal event deliveries.
 
+OIDC and OAuth identity scope rows include their non-secret identity namespace.
+Before restoring those scopes, configure each destination binding with the source
+scope name, provider kind and namespace. The destination provider ID can differ.
+Restore rejects a browser scope if its source namespace is missing or differs
+from the destination. Take a fresh backup on the source installation after
+upgrading if an older backup contains browser scopes.
+
 Schema state additionally includes retained revisions, active identities,
 allocation and population state, and object validation evidence. History includes
 schema lifecycle snapshots, including deleted classes. Restore checks these

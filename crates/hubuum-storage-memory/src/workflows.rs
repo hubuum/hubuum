@@ -1181,6 +1181,7 @@ impl RestoreStorage for MemoryStorage {
         }
         let started_at = Utc::now();
         let mut replacement = crate::backup::restore(
+            state.runtime_settings.clone(),
             snapshot
                 .with_schema_limits(self.schema_limits)?
                 .materialize()?,
@@ -1188,8 +1189,7 @@ impl RestoreStorage for MemoryStorage {
         replacement.credential_approvals = state
             .credential_approvals
             .invalidated_for_restore(started_at);
-        // Runtime settings are deployment configuration and survive restores.
-        replacement.runtime_settings = state.runtime_settings.clone();
+        replacement.runtime_settings.discard_candidates();
         crate::backup::append_restore_event(
             &mut replacement,
             &current,

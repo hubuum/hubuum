@@ -1,7 +1,9 @@
 use crate::models::ServiceAccountPointResponse;
 use hubuum_domain::PlaintextPassword;
+use hubuum_domain::ResourceRevision;
 use hubuum_domain::{GroupId, PrincipalId, TokenId};
 use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_storage_core::StorageTokenRevocations;
 use std::collections::HashMap;
 
 use chrono::SubsecRound;
@@ -383,7 +385,7 @@ pub async fn revoke_token(
     token_id: TokenId,
     principal_id: PrincipalId,
     event_context: &EventContext,
-) -> Result<usize, ApiError> {
+) -> Result<StorageTokenRevocations, ApiError> {
     Ok(storage_handle(context)
         .revoke_token(StorageTokenRevoke::new(
             token_id,
@@ -399,7 +401,7 @@ pub async fn revoke_token_by_hash(
     principal_id: Option<i32>,
     credentials: Vec<crate::storage::StorageAuthenticationCredential>,
     event_context: &EventContext,
-) -> Result<usize, ApiError> {
+) -> Result<Option<hubuum_storage_core::StorageUpstreamSession>, ApiError> {
     let request = StorageTokenHashRevoke::try_candidates(
         principal_id.map(PrincipalId::new).transpose()?,
         credentials,
@@ -416,7 +418,7 @@ pub async fn revoke_all_principal_tokens(
     context: &impl StorageContext,
     principal_id: i32,
     event_context: &EventContext,
-) -> Result<usize, ApiError> {
+) -> Result<StorageTokenRevocations, ApiError> {
     Ok(storage_handle(context)
         .revoke_all_principal_tokens(StoragePrincipalTokensRevoke::new(
             PrincipalId::new(principal_id)?,
@@ -701,7 +703,9 @@ pub struct ExternalPrincipalState {
     pub last_sync_success_at: Option<chrono::NaiveDateTime>,
 }
 
-fn external_state_from_storage(state: StorageExternalPrincipalState) -> ExternalPrincipalState {
+pub(crate) fn external_state_from_storage(
+    state: StorageExternalPrincipalState,
+) -> ExternalPrincipalState {
     ExternalPrincipalState {
         identity_scope: state.identity_scope().to_string(),
         username: state.username().to_string(),
@@ -727,11 +731,12 @@ pub async fn get_external_principal_state(
 
 pub async fn record_external_sync_failure(
     context: &impl StorageContext,
+    revision: ResourceRevision,
     principal_id: i32,
     failure: StorageExternalSyncFailure,
 ) -> Result<(), ApiError> {
     Ok(storage_handle(context)
-        .record_external_sync_failure(PrincipalId::new(principal_id)?, failure)
+        .record_external_sync_failure(revision, PrincipalId::new(principal_id)?, failure)
         .await?)
 }
 
@@ -756,17 +761,20 @@ fn external_sync_request(
 
 pub async fn sync_external_user(
     context: &impl StorageContext,
+    revision: ResourceRevision,
     scope_name: &str,
     provider_kind: &str,
     authenticated: AuthenticatedExternalUser,
 ) -> Result<crate::models::User, ApiError> {
     Ok(user_from_storage(
-        sync_external_credential(context, scope_name, provider_kind, authenticated).await?,
+        sync_external_credential(context, revision, scope_name, provider_kind, authenticated)
+            .await?,
     ))
 }
 
 pub(crate) async fn sync_external_credential(
     context: &impl StorageContext,
+    revision: ResourceRevision,
     scope_name: &str,
     provider_kind: &str,
     authenticated: AuthenticatedExternalUser,
@@ -774,7 +782,7 @@ pub(crate) async fn sync_external_credential(
     let request = external_sync_request(scope_name, provider_kind, authenticated);
     Ok(StorageUser::from(
         storage_handle(context)
-            .sync_external_user(request)
+            .sync_external_user(revision, request)
             .await?
             .into_value(),
     ))

@@ -391,6 +391,11 @@ enum StorageAdapterSettings {
 }
 
 impl StorageSettings {
+    #[cfg(feature = "embedded-migrations")]
+    pub(crate) fn schema_limits(&self) -> JsonSchemaLimits {
+        self.schema_limits
+    }
+
     pub(crate) fn with_schema_limits(mut self, limits: JsonSchemaLimits) -> Self {
         self.schema_limits = limits;
         self
@@ -680,10 +685,14 @@ pub(crate) fn run_storage_migrations(
 #[cfg(feature = "embedded-migrations")]
 pub(crate) fn prepare_disposable_restore_database(
     settings: &StorageSettings,
+    source: &hubuum_storage_core::StorageBackupReplay,
 ) -> Result<usize, StorageError> {
     match &settings.adapter {
         StorageAdapterSettings::Postgres(settings) => {
-            hubuum_storage_postgres::prepare_disposable_restore_database(settings.connection_url())
+            hubuum_storage_postgres::prepare_disposable_restore_database(
+                settings.connection_url(),
+                source,
+            )
         }
         StorageAdapterSettings::Memory => Err(StorageError::invalid_input(
             "Isolated restore verification requires the PostgreSQL storage backend",

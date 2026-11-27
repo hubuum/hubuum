@@ -96,6 +96,7 @@ impl AuthProviderBackend for FailingDirectory {
     fn authenticate<'a>(
         &'a self,
         _storage: &'a crate::storage::StorageHandle,
+        _revision: ResourceRevision,
         _login: ValidatedLogin,
     ) -> AuthProviderFuture<'a, StorageUser> {
         Box::pin(async { Err(auth_failure()) })
@@ -104,6 +105,7 @@ impl AuthProviderBackend for FailingDirectory {
     fn refresh<'a>(
         &'a self,
         _storage: &'a crate::storage::StorageHandle,
+        _revision: ResourceRevision,
         _state: &'a ExternalUserState,
     ) -> AuthProviderRefreshFuture<'a> {
         Box::pin(async move {
@@ -137,6 +139,7 @@ async fn only_temporary_outages_allow_cached_authority(
     let scope = context.scoped_name("refresh_denial");
     let user = storage
         .sync_external_user(
+            ResourceRevision::INITIAL,
             StorageExternalUserSync::builder(&scope, "ldap", "subject", "alice").build(),
         )
         .await
@@ -145,6 +148,7 @@ async fn only_temporary_outages_allow_cached_authority(
     let calls = Arc::new(AtomicUsize::new(0));
     let mut registry =
         AuthProviderRegistry::from_config(AuthProvidersConfig { ldap: vec![] }).unwrap();
+    registry.revision = Some(ResourceRevision::INITIAL);
     registry
         .register(RegisteredAuthProvider {
             name: scope.clone(),
@@ -196,4 +200,79 @@ async fn only_temporary_outages_allow_cached_authority(
     })
     .await
     .unwrap();
+}
+
+#[rstest]
+#[case::current("/api/v1/auth/logout", false)]
+#[case::all("/api/v1/auth/logout_all", true)]
+#[actix_web::test]
+async fn local_logout_revokes_session_when_provider_authority_is_unavailable(
+    #[case] path: &str,
+    #[case] revoke_other: bool,
+) {
+    use crate::tests::api_operations::post_request;
+    use actix_web::http::StatusCode;
+    let context = TestContext::new().await;
+    let app = app_context(&context.pool);
+    let scope = context.scoped_name("logout_offline");
+    let credential = StorageUser::from(
+        storage_handle(&context.pool)
+            .sync_external_user(
+                ResourceRevision::INITIAL,
+                StorageExternalUserSync::builder(&scope, "ldap", "subject", "alice").build(),
+            )
+            .await
+            .unwrap()
+            .into_value(),
+    );
+    let login = AuthenticatedLogin {
+        user: crate::services::identity::user_from_storage(credential.clone()),
+        credential,
+        identity_scope: scope.clone(),
+        provider_kind: "ldap".into(),
+        authentication_revision: Some(ResourceRevision::INITIAL),
+    };
+    let event = EventContext::system();
+    let issued = issue_login_token(app.get_ref(), &login, event.clone())
+        .await
+        .unwrap();
+    let other = issue_login_token(app.get_ref(), &login, event)
+        .await
+        .unwrap();
+    assert!(
+        refresh_principal_if_needed(&context.pool, login.user.id)
+            .await
+            .is_err()
+    );
+    let result = post_request(
+        &context.pool,
+        issued.token().as_str(),
+        path,
+        &serde_json::json!({}),
+    )
+    .await;
+    let revoked =
+        crate::services::authentication::authenticate_bearer_token(&context.pool, issued.token())
+            .await
+            .is_err();
+    let other_revoked =
+        crate::services::authentication::authenticate_bearer_token(&context.pool, other.token())
+            .await
+            .is_err();
+    with_transaction(&context.pool, async |connection| {
+        diesel::sql_query("DELETE FROM principals WHERE id=$1")
+            .bind::<diesel::sql_types::Integer, _>(login.user.id)
+            .execute(connection)
+            .await?;
+        diesel::sql_query("DELETE FROM identity_scopes WHERE name=$1")
+            .bind::<diesel::sql_types::Text, _>(&scope)
+            .execute(connection)
+            .await?;
+        Ok::<_, diesel::result::Error>(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(result.status(), StatusCode::OK);
+    assert!(revoked);
+    assert_eq!(other_revoked, revoke_other);
 }

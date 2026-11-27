@@ -61,6 +61,15 @@ class FixtureFailureTests(unittest.TestCase):
                          ["second", "first", "network"])
         self.assertNotIn("fixture-secret", errors.getvalue())
 
+    def test_missing_worker_artifact_fails_before_starting_fixtures(self):
+        success = subprocess.CompletedProcess([], 0, stdout="")
+        with patch.object(runner.sys, "platform", "linux"), \
+                patch.object(runner.subprocess, "run", return_value=success), \
+                patch.object(runner, "run") as fixtures:
+            with self.assertRaisesRegex(RuntimeError, "exactly one template worker"):
+                runner.main()
+            fixtures.assert_not_called()
+
     def test_unsupported_platform_fails_before_building_or_provisioning(self):
         for platform in ("darwin", "win32"):
             with self.subTest(platform=platform), \

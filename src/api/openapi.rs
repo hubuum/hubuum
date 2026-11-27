@@ -1,13 +1,14 @@
 use crate::api::handlers::{meta, probes};
 use crate::api::response::{ApiErrorResponse, CountsResponse, LoginResponse, MessageResponse};
-use crate::api::v1::handlers::auth;
 use crate::api::v1::handlers::collection_event_sinks;
 use crate::api::v1::handlers::history::HistoryResponse;
+use crate::api::v1::handlers::{auth, auth_interactions};
 use crate::api::v1::handlers::{
     backups, classes, client_config, collections, computed_fields, credential_approvals,
     event_deliveries, event_sinks, event_subscriptions, events, export_templates, exports, groups,
     imports, me, principals, query_usage, relations, remote_targets, restores, runtime_config,
-    schema_evolution, search, service_accounts, system_event_subscriptions, tasks, users,
+    schema_evolution, search, security_candidates, service_accounts, system_event_subscriptions,
+    tasks, users,
 };
 use crate::config::running::{
     AuthenticationConfig, BackupConfig, ClientAllowlistStatus, ClientConfig,
@@ -101,6 +102,10 @@ use utoipa::{Modify, OpenApi};
     ),
     servers((url = "/", description = "Current deployment base URL")),
     paths(
+        security_candidates::create_candidate,
+        security_candidates::candidate_status,
+        security_candidates::verify_ldap,
+        security_candidates::activate_candidate,
         probes::healthz,
         probes::readyz,
         client_config::get_client_config,
@@ -125,6 +130,20 @@ use utoipa::{Modify, OpenApi};
         meta::get_login_rate_limit_state,
         meta::release_login_rate_limit_entry,
         meta::clear_login_rate_limit,
+        auth_interactions::methods,
+        auth_interactions::browser::entry,
+        auth_interactions::browser::attach,
+        auth_interactions::browser::resume,
+        auth_interactions::browser::provider_start,
+        auth_interactions::browser::oidc_callback,
+        auth_interactions::browser::credentials,
+        auth_interactions::browser::decide,
+        auth_interactions::begin,
+        auth_interactions::credentials,
+        auth_interactions::status,
+        auth_interactions::complete,
+        auth_interactions::cancel,
+        auth_interactions::revoke,
         auth::get_auth_providers,
         auth::login,
         auth::refresh,
@@ -669,6 +688,13 @@ impl Modify for SecurityAddon {
         components.add_security_scheme(
             "bearer_auth",
             SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
+        );
+        components.add_security_scheme(
+            "interaction_secret",
+            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::with_description(
+                "Authorization",
+                "Hubuum-Interaction <redemption_secret>; never a normal API bearer token",
+            ))),
         );
         components.add_security_scheme(
             "restore_capability",

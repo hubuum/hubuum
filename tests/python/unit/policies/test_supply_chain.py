@@ -124,9 +124,9 @@ class CargoDenyWorkspaceTests(unittest.TestCase):
             with self.subTest(manifest=manifest):
                 result, arguments = self.run_manifest(manifest)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual("--allow" in arguments, standalone)
+                self.assertEqual("--warn" in arguments, standalone)
                 if standalone:
-                    self.assertEqual(arguments[-2:], ["--allow", "advisory-not-detected"])
+                    self.assertEqual(arguments[-2:], ["--warn", "advisory-not-detected"])
 
     def test_fuzz_audit_preserves_scanner_failure_status(self):
         result, _ = self.run_manifest("fuzz/Cargo.toml", status=23)
@@ -209,3 +209,41 @@ class SemverChecksInstallerTests(unittest.TestCase):
                 f"- cargo-semver-checks: `{version_label}`\n"
                 f"- cargo-semver-checks executable: `sha256:{digest}`\n",
             )
+
+
+class CargoDenyRunnerTests(unittest.TestCase):
+    def test_only_standalone_fuzz_graph_warns_about_unused_root_exceptions(self) -> None:
+        version = POLICY.parse_tool_manifest(
+            SCRIPT.parent.parent / ".github" / "supply-chain-tools.env"
+        )["CARGO_DENY_VERSION"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments = root / "arguments"
+            cargo = root / "cargo"
+            cargo.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ $* == 'deny --version' ]]; then\n"
+                f"  echo 'cargo-deny {version}'\n"
+                "else\n"
+                "  printf '%s\\n' \"$@\" > \"$CAPTURE_DENY_ARGS\"\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            cargo.chmod(0o755)
+            (root / "cargo-deny").symlink_to(cargo)
+            environment = os.environ.copy()
+            environment["PATH"] = f"{root}{os.pathsep}{environment['PATH']}"
+            environment["CAPTURE_DENY_ARGS"] = str(arguments)
+            environment.pop("GITHUB_STEP_SUMMARY", None)
+            for manifest in (None, "Cargo.toml", "fuzz/Cargo.toml", str(SCRIPTS.parent / "fuzz/Cargo.toml")):
+                with self.subTest(manifest=manifest):
+                    command = ["bash", str(SCRIPTS / "run-cargo-deny.sh"), str(root / "report")]
+                    if manifest is not None:
+                        command.append(manifest)
+                    result = subprocess.run(command, env=environment, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    values = arguments.read_text(encoding="utf-8").splitlines()
+                    self.assertEqual("--warn" in values, manifest is not None and "fuzz/" in manifest)
+                    self.assertNotIn("--allow", values)
+                    self.assertIn("--locked", values)
+                    self.assertIn("--all-features", values)

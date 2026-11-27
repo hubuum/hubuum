@@ -37,6 +37,17 @@ impl PrincipalIdAccessor for CredentialActor {
 }
 
 impl CredentialActor {
+    pub(crate) async fn from_interaction(
+        context: &AppContext,
+        actor: hubuum_domain::InteractionActor,
+    ) -> Result<Self, ApiError> {
+        Ok(Self {
+            principal_id: identity::get_user(context, actor.principal_id().id())
+                .await?
+                .validated_principal_id()?,
+            token_id: actor.token_id(),
+        })
+    }
     pub async fn resolve(
         context: &AppContext,
         authenticated: &Authenticated,
@@ -59,8 +70,12 @@ impl CredentialActor {
     pub fn id(&self) -> i32 {
         self.principal_id.id()
     }
-    fn claim(
+    pub(crate) fn owner(&self) -> hubuum_storage_core::StorageSecurityCandidateOwner {
+        hubuum_storage_core::StorageSecurityCandidateOwner::new(self.principal_id, self.token_id)
+    }
+    pub(crate) async fn claim(
         &self,
+        context: &AppContext,
         secret: &CredentialApprovalSecret,
         operation: &CredentialOperation,
     ) -> Result<StorageCredentialClaim, ApiError> {
@@ -71,23 +86,32 @@ impl CredentialActor {
             self.token_id,
             operation.kind(),
             secret.digest(),
-            secret.bind(operation)?,
+            match super::security_candidates::approval_binding(context, self, operation).await? {
+                Some(binding) => secret.bind_value(
+                    &serde_json::json!({"operation": operation, "candidate": binding}),
+                )?,
+                None => secret.bind(operation)?,
+            },
             cutoff,
         )
         .target(operation.target());
+        if let CredentialOperation::ActivateSecurityCandidate { candidate_id, .. } = operation {
+            claim = claim.security_candidate(*candidate_id);
+        }
         if let CredentialOperation::ConfirmRestore { restore_id, .. } = operation {
             claim = claim.restore_job(*restore_id);
         }
         Ok(claim)
     }
-    async fn authorize(
+    pub(crate) async fn authorize(
         &self,
         context: &AppContext,
         operation: &CredentialOperation,
     ) -> Result<(), ApiError> {
         let admin = context.is_admin(self).await?;
         match operation {
-            CredentialOperation::CreateUser { .. }
+            CredentialOperation::ActivateSecurityCandidate { .. }
+            | CredentialOperation::CreateUser { .. }
             | CredentialOperation::UpdateUser { .. }
             | CredentialOperation::ImportCredentials { .. }
             | CredentialOperation::ConfirmRestore { .. } => {
@@ -141,6 +165,16 @@ impl CredentialActor {
     }
 }
 
+pub(crate) async fn interaction_operation_digest(
+    context: &AppContext,
+    actor: &CredentialActor,
+    operation: &CredentialOperation,
+    secret: &crate::models::auth_interaction::InteractionSecret,
+) -> Result<hubuum_domain::InteractionDigest, ApiError> {
+    let binding = super::security_candidates::approval_binding(context, actor, operation).await?;
+    secret.bind_operation(&serde_json::json!({"operation": operation, "candidate": binding}))
+}
+
 /// Cannot be constructed without checking current authority and binding the
 /// exact request to an approval. Durable single use remains adapter-owned.
 pub struct ApprovedCredentialOperation {
@@ -188,7 +222,7 @@ pub async fn issue(
         token.clone().into_create_request(*principal_id)?;
     }
     let secret = CredentialApprovalSecret::generate();
-    let claim = actor.claim(&secret, &operation)?;
+    let claim = actor.claim(context, &secret, &operation).await?;
     let authenticated_at = proof.authenticated_at;
     let metadata = storage_handle(context)
         .create_credential_approval(StorageCredentialApprovalCreate::new(
@@ -220,7 +254,7 @@ pub async fn approve(
     actor.authorize(context, &operation).await?;
     // Defaults were resolved when approving. Omitting expiry now changes the
     // fingerprint and cannot silently extend a previously authorized lifetime.
-    let claim = actor.claim(&secret, &operation)?;
+    let claim = actor.claim(context, &secret, &operation).await?;
     Ok(ApprovedCredentialOperation { operation, claim })
 }
 
@@ -429,4 +463,16 @@ pub(crate) async fn confirm_restore(
             "Invalid approved restore operation".into(),
         )),
     }
+}
+
+pub(crate) fn approved_security_candidate(
+    approved: ApprovedCredentialOperation,
+) -> Result<StorageCredentialClaim, ApiError> {
+    if !matches!(
+        approved.operation,
+        CredentialOperation::ActivateSecurityCandidate { .. }
+    ) {
+        return Err(ApiError::ReauthenticationRequired);
+    }
+    Ok(approved.claim)
 }

@@ -1,0 +1,63 @@
+{
+  "qualified_at": "2026-11-21T13:51:07.055113+00:00",
+  "project": 6,
+  "issue": 581,
+  "native_github_result": "passed",
+  "run_report_sha256": "edbb8cb4b2b6fc11819ff9d1ec0d61be3ef0b0761250d0e8e845edac81856797",
+  "controller_sha256": "b157c6528d8ace9c851c074f0c453cf48aea1060fb78af638e491be57af77798",
+  "candidates": {
+    "server": {
+      "source": "bb5f376544d45343c83e29037eb9c2164ccc97fa",
+      "tested_commit": "365312c2bf060a3b7901e01725aba57decb9b44a",
+      "artifact_id": 14557941746,
+      "archive_sha256": "debcc91ae7e5696b69e7f2cf45338ae8aeb96c104612aaee578d4d6edb3407db",
+      "workflow": "https://github.com/hubuum/hubuum/actions/runs/44561165697/attempts/1",
+      "image": {
+        "manifest": "sha256:19d66a9f084b18448872ec330dd7f90f943a348e4cfbef940c11a794ca524d75",
+        "config": "sha256:c67cb2e68fa9c92eb503eb801d3ad2e32094675598f330ccacc8cb6a97e9bf4d",
+        "platform": "linux/amd64"
+      }
+    },
+    "frontend": {
+      "source": "760665ada7e5a7e25f2538fcb5e1df454969a6ba",
+      "tested_commit": "20de4b271673b78d0d2f5decdc24e03ff8659832",
+      "artifact_id": 14290821518,
+      "archive_sha256": "ba20e9eed6fac1fb783b734f3f6a6e4ed6f99f75089c7595dbdf891b06b0ff02",
+      "workflow": "https://github.com/hubuum/hubuum-frontend/actions/runs/43997215996/attempts/1",
+      "image": {
+        "manifest": "sha256:3db55d2fb5e45a0f6a3887a328544beb7d3c50f15f3bdcdaaeb7cb26caa65c49",
+        "config": "sha256:d267136fada380ae71d4d243153b5e448502b81c2ef7f4784d67d4b4cd12614d",
+        "platform": "linux/amd64"
+      }
+    },
+    "cli": {
+      "source": "ffb4e6f25b462e413609367225e64673a3814449",
+      "tested_commit": "3bd6733345f96905b173da858d51dc307bc85fd9",
+      "artifact_id": 14245812751,
+      "archive_sha256": "089236967b61bcaa6f668bdc6993140c6b879b6b111c1bf39079456bf02e15c3",
+      "workflow": "https://github.com/hubuum/hubuum-cli/actions/runs/43905515676",
+      "executable_sha256": "445e507e7e2450530e4c754aa807f86614363cac3e401d4a8b1a28f4f28d3f32"
+    }
+  },
+  "fixtures": {
+    "postgres": "postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722",
+    "valkey": "valkey:9.1.2-alpine3.24@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11",
+    "server_fixture_sha256": "d2005551b591f09e4d9dcbbc3c4b9dca26403e3e1ef07fbaeef1081478d38d49",
+    "frontend_fixture_sha256": "21381bfc4a8a62cf1f77a88200f04b48634f2c0ee42c2a7fa804e02969701085"
+  },
+  "observations": [
+    "GitHub consent displayed public data only. Candidate preview completed with no access token. Fresh local approval activated the exact verified candidate.",
+    "The accepted Linux arm64 CLI completed the browser handoff through GitHub and used the saved session for a second successful whoami.",
+    "The accepted web frontend initiated the sign-in, accepted the hosted return and displayed the authenticated workspace after a fresh page load.",
+    "The server recorded one active external session for each native client, both for the same principal.",
+    "Disposable Docker containers and network were removed at the end of the run."
+  ],
+  "prior_evidence": [
+    "PR #595 independently counted identity, membership, session and credential rows before and after candidate preview and qualified the server provider path.",
+    "PR #600 contains the separate 255-check automated native matrix. Its original source and image pins continue to identify that run."
+  ],
+  "limits": [
+    "Local invalidation and credential removal were observed previously. Independent GitHub-side per-token invalidation was not probed.",
+    "This run was the two required native sign-ins plus their provider setup. It did not rerun all automated profiles on server #608."
+  ]
+}

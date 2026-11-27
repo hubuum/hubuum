@@ -87,14 +87,17 @@ async fn every_backend_preserves_subject_binding(#[case] subject: &str) {
         // Repeated authentication, including simultaneous first logins, may reuse
         // an account only when the configured subject agrees.
         let (first, second) = tokio::join!(
-            backend.sync_external_user(request(subject, "alice")),
-            backend.sync_external_user(request(subject, "alice"))
+            backend.sync_external_user(ResourceRevision::INITIAL, request(subject, "alice")),
+            backend.sync_external_user(ResourceRevision::INITIAL, request(subject, "alice"))
         );
         let original = first.unwrap().into_value();
         let id = principal_id(original.id().id());
         assert_eq!(second.unwrap().into_value().id(), original.id());
         let error = backend
-            .sync_external_user(request("replacement-subject", "alice"))
+            .sync_external_user(
+                ResourceRevision::INITIAL,
+                request("replacement-subject", "alice"),
+            )
             .await
             .err()
             .unwrap();
@@ -119,6 +122,7 @@ async fn every_backend_allows_rename_only_for_the_same_external_subject() {
         let scope = prefix("subject_rename");
         let original = backend
             .sync_external_user(
+                ResourceRevision::INITIAL,
                 StorageExternalUserSync::builder(&scope, "ldap", "stable-subject", "old-name")
                     .build(),
             )
@@ -127,6 +131,7 @@ async fn every_backend_allows_rename_only_for_the_same_external_subject() {
             .into_value();
         let renamed = backend
             .sync_external_user(
+                ResourceRevision::INITIAL,
                 StorageExternalUserSync::builder(&scope, "ldap", "stable-subject", "new-name")
                     .build(),
             )
@@ -155,7 +160,7 @@ async fn every_backend_preserves_pending_logins_across_unchanged_external_sync(
                 .build()
         };
         let external = backend
-            .sync_external_user(request())
+            .sync_external_user(ResourceRevision::INITIAL, request())
             .await
             .unwrap()
             .into_value();
@@ -168,13 +173,14 @@ async fn every_backend_preserves_pending_logins_across_unchanged_external_sync(
         if recover {
             backend
                 .record_external_sync_failure(
+                    ResourceRevision::INITIAL,
                     fixture.principal_id,
                     StorageExternalSyncFailure::Rejected,
                 )
                 .await
                 .unwrap();
             backend
-                .sync_external_user(request())
+                .sync_external_user(ResourceRevision::INITIAL, request())
                 .await
                 .unwrap()
                 .into_value();
@@ -191,7 +197,7 @@ async fn every_backend_preserves_pending_logins_across_unchanged_external_sync(
         );
         let first = login_request(&backend, &fixture, &prefix("first_external_login")).await;
         backend
-            .sync_external_user(request())
+            .sync_external_user(ResourceRevision::INITIAL, request())
             .await
             .unwrap()
             .into_value();
@@ -215,6 +221,7 @@ async fn every_backend_invalidates_rejected_identity_even_during_later_outage() 
         let scope = prefix("rejected_identity");
         let external = backend
             .sync_external_user(
+                ResourceRevision::INITIAL,
                 StorageExternalUserSync::builder(&scope, "ldap", "subject", "alice").build(),
             )
             .await
@@ -234,11 +241,19 @@ async fn every_backend_invalidates_rejected_identity_even_during_later_outage() 
             .unwrap()
             .into_value();
         backend
-            .record_external_sync_failure(id, StorageExternalSyncFailure::Rejected)
+            .record_external_sync_failure(
+                ResourceRevision::INITIAL,
+                id,
+                StorageExternalSyncFailure::Rejected,
+            )
             .await
             .unwrap();
         backend
-            .record_external_sync_failure(id, StorageExternalSyncFailure::Unavailable)
+            .record_external_sync_failure(
+                ResourceRevision::INITIAL,
+                id,
+                StorageExternalSyncFailure::Unavailable,
+            )
             .await
             .unwrap();
         assert!(
@@ -287,7 +302,7 @@ async fn every_backend_rejects_pending_login_after_external_identity_recovers(
                 .build()
         };
         let external = backend
-            .sync_external_user(request())
+            .sync_external_user(ResourceRevision::INITIAL, request())
             .await
             .unwrap()
             .into_value();
@@ -301,6 +316,7 @@ async fn every_backend_rejects_pending_login_after_external_identity_recovers(
         for _ in 0..rejections {
             backend
                 .record_external_sync_failure(
+                    ResourceRevision::INITIAL,
                     fixture.principal_id,
                     StorageExternalSyncFailure::Rejected,
                 )
@@ -308,7 +324,7 @@ async fn every_backend_rejects_pending_login_after_external_identity_recovers(
                 .unwrap();
         }
         backend
-            .sync_external_user(request())
+            .sync_external_user(ResourceRevision::INITIAL, request())
             .await
             .unwrap()
             .into_value();

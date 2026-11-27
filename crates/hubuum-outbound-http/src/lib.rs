@@ -64,13 +64,24 @@ pub enum OutboundHttpError {
     EmptyDnsResolution { host: String },
     DisallowedAddress { host: String, address: IpAddr },
     ClientBuild,
+    DispatchCancelled,
     ResponseRead,
+    InvalidResponseBody { status: u16 },
     Timeout,
     Connect,
     Request,
     InvalidHeaderName { name: String },
     TransportControlledHeader { name: String },
     InvalidHeaderValue { name: String },
+}
+
+impl OutboundHttpError {
+    pub fn is_dns_failure(&self) -> bool {
+        matches!(
+            self,
+            Self::DnsResolution { .. } | Self::EmptyDnsResolution { .. }
+        )
+    }
 }
 
 impl fmt::Display for OutboundHttpError {
@@ -91,7 +102,9 @@ impl fmt::Display for OutboundHttpError {
                 f,
                 "outbound host '{host}' resolves to a disallowed address ({address})"
             ),
+            Self::DispatchCancelled => write!(f, "outbound request cancelled before dispatch"),
             Self::ClientBuild => write!(f, "HTTP client initialization failed"),
+            Self::InvalidResponseBody { .. } => write!(f, "invalid outbound response body"),
             Self::ResponseRead => write!(f, "failed reading outbound response"),
             Self::Timeout => write!(f, "outbound call timed out"),
             Self::Connect => write!(f, "outbound connection failed"),
@@ -385,6 +398,8 @@ pub struct OutboundRequest {
     body: Option<String>,
     timeout: Duration,
     max_response_bytes: usize,
+    require_complete_body: bool,
+    skip_body_when: Option<fn(u16, &serde_json::Value) -> bool>,
     allow_private_targets: bool,
     dangerous_accept_invalid_certs: bool,
     dangerous_allow_localhost: bool,
@@ -399,6 +414,8 @@ impl OutboundRequest {
             body: None,
             timeout,
             max_response_bytes: 64 * 1024,
+            require_complete_body: false,
+            skip_body_when: None,
             allow_private_targets: false,
             dangerous_accept_invalid_certs: false,
             dangerous_allow_localhost: false,
@@ -420,6 +437,19 @@ impl OutboundRequest {
         self
     }
 
+    /// Protocol consumers must reject truncation and malformed UTF-8 instead of
+    /// interpreting the lossy preview used by diagnostic/task consumers.
+    pub fn require_complete_body(mut self) -> Self {
+        self.require_complete_body = true;
+        self
+    }
+
+    /// Return headers immediately when the status and headers decide the protocol outcome.
+    pub fn skip_body_when(mut self, predicate: fn(u16, &serde_json::Value) -> bool) -> Self {
+        self.skip_body_when = Some(predicate);
+        self
+    }
+
     pub fn allow_private_targets(mut self, allow_private_targets: bool) -> Self {
         self.allow_private_targets = allow_private_targets;
         self
@@ -436,6 +466,14 @@ impl OutboundRequest {
     }
 
     pub async fn send(self) -> Result<OutboundResponse, OutboundHttpError> {
+        self.send_with_dispatch(|| true).await
+    }
+
+    /// After destination screening, send only if the caller still admits the request.
+    pub async fn send_with_dispatch(
+        self,
+        dispatch: impl FnOnce() -> bool,
+    ) -> Result<OutboundResponse, OutboundHttpError> {
         let span = info_span!(
             "http.client.request",
             otel.kind = "client",
@@ -445,7 +483,7 @@ impl OutboundRequest {
             server.address.category = "screened",
             error.type = tracing::field::Empty,
         );
-        let result = execute(self).instrument(span.clone()).await;
+        let result = execute(self, dispatch).instrument(span.clone()).await;
         if let Err(error) = &result {
             span.record("error.type", outbound_error_category(error));
         }
@@ -508,15 +546,23 @@ impl OutboundResponse {
     }
 }
 
-async fn execute(request: OutboundRequest) -> Result<OutboundResponse, OutboundHttpError> {
-    execute_with_screen(request, |host, port, private, localhost| async move {
-        screen_host(&host, port, private, localhost).await
-    })
+async fn execute(
+    request: OutboundRequest,
+    dispatch: impl FnOnce() -> bool,
+) -> Result<OutboundResponse, OutboundHttpError> {
+    execute_with_screen(
+        request,
+        dispatch,
+        |host, port, private, localhost| async move {
+            screen_host(&host, port, private, localhost).await
+        },
+    )
     .await
 }
 
 async fn execute_with_screen<Screen, Screening>(
     request: OutboundRequest,
+    dispatch: impl FnOnce() -> bool,
     screen: Screen,
 ) -> Result<OutboundResponse, OutboundHttpError>
 where
@@ -555,11 +601,19 @@ where
             request_builder = request_builder.body(body);
         }
 
+        if !dispatch() {
+            return Err(OutboundHttpError::DispatchCancelled);
+        }
         let response = request_builder.send().await.map_err(map_reqwest_error)?;
         let status = response.status();
         Span::current().record("http.response.status_code", status.as_u16());
-        let headers = headers_to_json(response.headers());
-        let body_preview = read_capped_body(response, request.max_response_bytes).await?;
+        let (headers, body_preview) = read_response(
+            response,
+            request.max_response_bytes,
+            request.require_complete_body,
+            request.skip_body_when,
+        )
+        .await?;
         Span::current().record("http.response.body.size", body_preview.len());
         let duration_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
 
@@ -591,7 +645,9 @@ fn outbound_error_category(error: &OutboundHttpError) -> &'static str {
             "dns"
         }
         OutboundHttpError::DisallowedAddress { .. } => "address_policy",
+        OutboundHttpError::DispatchCancelled => "cancelled",
         OutboundHttpError::ClientBuild => "client",
+        OutboundHttpError::InvalidResponseBody { .. } => "invalid_response_body",
         OutboundHttpError::ResponseRead => "response_read",
         OutboundHttpError::Timeout => "timeout",
         OutboundHttpError::Connect => "connect",
@@ -700,12 +756,19 @@ fn cached_client_or_insert_with(
     Ok(client)
 }
 
-async fn read_capped_body(
+async fn read_response(
     mut response: reqwest::Response,
     limit: usize,
-) -> Result<String, OutboundHttpError> {
+    require_complete: bool,
+    skip_body_when: Option<fn(u16, &serde_json::Value) -> bool>,
+) -> Result<(serde_json::Value, String), OutboundHttpError> {
+    let status = response.status().as_u16();
+    let headers = headers_to_json(response.headers());
+    if skip_body_when.is_some_and(|skip| skip(status, &headers)) {
+        return Ok((headers, String::new()));
+    }
     let mut buffer: Vec<u8> = Vec::new();
-    while buffer.len() < limit {
+    while require_complete || buffer.len() < limit {
         match response.chunk().await.map_err(|error| {
             warn!(
                 message = "Failed reading outbound HTTP response",
@@ -715,13 +778,21 @@ async fn read_capped_body(
         })? {
             Some(chunk) => {
                 let remaining = limit - buffer.len();
+                if require_complete && chunk.len() > remaining {
+                    return Err(OutboundHttpError::InvalidResponseBody { status });
+                }
                 let take = remaining.min(chunk.len());
                 buffer.extend_from_slice(&chunk[..take]);
             }
             None => break,
         }
     }
-    Ok(String::from_utf8_lossy(&buffer).replace('\0', "\u{FFFD}"))
+    let body = if require_complete {
+        String::from_utf8(buffer).map_err(|_| OutboundHttpError::InvalidResponseBody { status })?
+    } else {
+        String::from_utf8_lossy(&buffer).replace('\0', "\u{FFFD}")
+    };
+    Ok((headers, body))
 }
 
 fn is_sensitive_response_header(name: &str) -> bool {
@@ -739,6 +810,31 @@ fn is_sensitive_response_header(name: &str) -> bool {
 fn headers_to_json(headers: &HeaderMap) -> serde_json::Value {
     let mut object = serde_json::Map::new();
     for (name, value) in headers {
+        // Content-Type is a singleton. Preserve ambiguity instead of letting the
+        // last value silently replace an earlier one in the protocol response.
+        if name == reqwest::header::CONTENT_TYPE {
+            let content_type = if object.contains_key(name.as_str()) {
+                "[multiple content-type values]"
+            } else {
+                value.to_str().unwrap_or("[invalid content-type]")
+            };
+            object.insert(name.to_string(), content_type.into());
+            continue;
+        }
+        if name == reqwest::header::LINK {
+            // Link is list-valued. A later header must not hide an earlier page.
+            object.entry(name.to_string()).or_insert_with(|| {
+                serde_json::Value::String(
+                    headers
+                        .get_all(name)
+                        .iter()
+                        .map(|v| v.to_str().unwrap_or("[invalid link]"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                )
+            });
+            continue;
+        }
         if is_sensitive_response_header(name.as_str()) {
             object.insert(
                 name.to_string(),
@@ -787,6 +883,64 @@ mod tests {
 
     static CLIENT_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+    #[rstest::rstest]
+    #[case::exact_limit(200, b"{}", 2, 2, None)]
+    #[case::over_limit(200, b"{} ", 3, 2, Some("invalid_response_body"))]
+    #[case::truncated(200, b"{}", 3, 3, Some("response_read"))]
+    #[case::unauthorized_truncated(401, b"{}", 3, 3, None)]
+    #[case::forbidden_with_retry_header(403, b"\xff", 1, 2, None)]
+    #[case::invalid_utf8(200, b"\xff", 1, 2, Some("invalid_response_body"))]
+    #[tokio::test]
+    async fn complete_body_rejects_lossy_protocol_responses(
+        #[case] status: u16,
+        #[case] body: &'static [u8],
+        #[case] content_length: usize,
+        #[case] limit: usize,
+        #[case] error: Option<&str>,
+    ) {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = [0; 4096];
+            assert!(stream.read(&mut request).unwrap() > 0);
+            write!(
+                stream,
+                "HTTP/1.1 {status} Response\r\nContent-Length: {content_length}\r\nRetry-After: 60\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            stream.write_all(body).unwrap();
+        });
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap()
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            read_response(
+                response,
+                limit,
+                true,
+                Some(|status, headers| status == 401
+                    || status == 403 && headers.get("retry-after").is_some())
+            )
+            .await
+            .err()
+            .as_ref()
+            .map(outbound_error_category),
+            error
+        );
+        server.join().unwrap();
+    }
+
     #[test]
     fn outbound_requests_ignore_proxy_environment() {
         const SCREENED_ADDRESS_ENV: &str = "OUTBOUND_HTTP_TEST_SCREENED_ADDRESS";
@@ -805,6 +959,7 @@ mod tests {
                     ),
                     Duration::from_secs(2),
                 ),
+                || true,
                 |_, _, _, _| async move { Ok(vec![address]) },
             ));
             // Neither listener completes TLS; the deadline ends the request.
@@ -863,12 +1018,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn caller_can_cancel_after_destination_screening() {
+        let screened = std::cell::Cell::new(false);
+        let _test_guard = CLIENT_CACHE_TEST_LOCK.lock().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(execute_with_screen(
+            OutboundRequest::new(
+                OutboundMethod::Get,
+                "https://example.com/",
+                Duration::from_secs(5),
+            ),
+            || {
+                assert!(screened.get());
+                false
+            },
+            |_, _, _, _| {
+                screened.set(true);
+                std::future::ready(Ok(vec!["192.0.2.1:443".parse().unwrap()]))
+            },
+        ));
+        assert!(matches!(result, Err(OutboundHttpError::DispatchCancelled)));
+    }
+
     #[tokio::test(start_paused = true)]
     async fn request_deadline_includes_dns_screening() {
         let timeout = Duration::from_secs(2);
         let started = tokio::time::Instant::now();
         let result = execute_with_screen(
             OutboundRequest::new(OutboundMethod::Get, "https://example.com/", timeout),
+            || panic!("request dispatched before screening finished"),
             |_, _, _, _| std::future::pending(),
         )
         .await;
@@ -939,6 +1121,28 @@ mod tests {
         assert!(!ip_blocked(
             "2606:4700:4700::1111".parse::<IpAddr>().unwrap()
         ));
+    }
+
+    #[test]
+    fn repeated_link_headers_preserve_all_relations() {
+        let mut headers = HeaderMap::new();
+        headers.append("link", HeaderValue::from_static("</second>; rel=next"));
+        headers.append("link", HeaderValue::from_static("</user>; rel=self"));
+        assert_eq!(
+            headers_to_json(&headers)["link"],
+            "</second>; rel=next, </user>; rel=self"
+        );
+    }
+
+    #[test]
+    fn repeated_content_type_is_ambiguous() {
+        let mut headers = HeaderMap::new();
+        headers.append("content-type", HeaderValue::from_static("text/plain"));
+        headers.append("content-type", HeaderValue::from_static("application/json"));
+        assert_eq!(
+            headers_to_json(&headers)["content-type"],
+            "[multiple content-type values]"
+        );
     }
 
     #[test]

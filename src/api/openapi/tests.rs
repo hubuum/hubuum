@@ -7,7 +7,7 @@ use actix_web::{
     http::{Method, StatusCode},
 };
 use rstest::rstest;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashSet};
 
 fn openapi_json() -> Value {
@@ -149,6 +149,19 @@ fn openapi_paths_match_mounted_routes() {
         "/api/v1/auth/login",
         "/api/v1/auth/refresh",
         "/api/v1/auth/providers",
+        "/api/v1/auth/methods",
+        "/api/v1/auth/interactions",
+        "/api/v1/auth/interactions/browser",
+        "/api/v1/auth/interactions/browser/{id}",
+        "/api/v1/auth/interactions/browser/{id}/credentials",
+        "/api/v1/auth/interactions/browser/{id}/provider",
+        "/api/v1/auth/interactions/browser/{id}/decision",
+        "/api/v1/auth/callbacks/{provider_id}",
+        "/api/v1/auth/interactions/{id}/credentials",
+        "/api/v1/auth/interactions/{id}/status",
+        "/api/v1/auth/interactions/{id}/complete",
+        "/api/v1/auth/interactions/{id}/cancel",
+        "/api/v1/auth/interactions/{id}/issued-session/revoke",
         "/api/v1/auth/logout",
         "/api/v1/auth/logout_all",
         "/api/v1/auth/logout/token",
@@ -166,6 +179,10 @@ fn openapi_paths_match_mounted_routes() {
         "/api/v1/admin/runtime-settings/{group}",
         "/api/v1/admin/runtime-settings/authentication",
         "/api/v1/admin/runtime-settings/authentication/preflight",
+        "/api/v1/admin/runtime-settings/security-candidates",
+        "/api/v1/admin/runtime-settings/security-candidates/{id}",
+        "/api/v1/admin/runtime-settings/security-candidates/{id}/verify-ldap",
+        "/api/v1/admin/runtime-settings/security-candidates/{id}/activate",
         "/api/v1/admin/runtime-settings/authorization",
         "/api/v1/admin/runtime-settings/pagination",
         "/api/v1/admin/runtime-settings/query_observations",
@@ -914,13 +931,44 @@ fn openapi_operations_have_metadata_unique_operation_ids_and_security() {
 
             let is_public_probe =
                 matches!(path.as_str(), "/healthz" | "/readyz") && method == "get";
-            let is_login = matches!(path.as_str(), "/api/v1/auth/login" | "/api/v1/auth/refresh")
-                && method == "post";
-            let is_provider_discovery = path == "/api/v1/auth/providers" && method == "get";
+            let is_login = matches!(
+                path.as_str(),
+                "/api/v1/auth/login" | "/api/v1/auth/refresh" | "/api/v1/auth/interactions"
+            ) && method == "post";
+            let is_provider_discovery = matches!(
+                path.as_str(),
+                "/api/v1/auth/providers" | "/api/v1/auth/methods"
+            ) && method == "get";
+            // Hosted forms authenticate through per-interaction cookies and CSRF, not bearer headers.
+            let is_hosted_browser = path.starts_with("/api/v1/auth/interactions/browser")
+                || path == "/api/v1/auth/callbacks/{provider_id}";
             let is_client_config = path == "/api/v1/config" && method == "get";
             let is_restore_status =
                 path == "/api/v1/restores/{restore_id}/status" && method == "get";
-            if is_restore_status {
+            if path == "/api/v1/auth/interactions" && method == "post" {
+                assert_eq!(
+                    operation.get("security"),
+                    Some(&json!([{}, {"bearer_auth": []}])),
+                    "begin must document anonymous login and privileged bearer authentication"
+                );
+            } else if path.starts_with("/api/v1/auth/interactions/{id}/") {
+                let security = operation
+                    .get("security")
+                    .and_then(Value::as_array)
+                    .expect("protected interaction security");
+                assert!(
+                    security
+                        .iter()
+                        .any(|entry| entry.get("interaction_secret").is_some()),
+                    "missing interaction_secret for {path}"
+                );
+                assert!(
+                    !security
+                        .iter()
+                        .any(|entry| entry.get("bearer_auth").is_some()),
+                    "interaction secrets are not bearer tokens"
+                );
+            } else if is_restore_status {
                 let security = operation
                     .get("security")
                     .and_then(Value::as_array)
@@ -935,7 +983,12 @@ fn openapi_operations_have_metadata_unique_operation_ids_and_security() {
                     has_capability,
                     "missing restore_capability security for {method} {path}"
                 );
-            } else if !is_login && !is_provider_discovery && !is_client_config && !is_public_probe {
+            } else if !is_login
+                && !is_hosted_browser
+                && !is_provider_discovery
+                && !is_client_config
+                && !is_public_probe
+            {
                 let security = operation
                     .get("security")
                     .and_then(Value::as_array)

@@ -384,6 +384,7 @@ fn runtime_request(
     adopt_deployment: bool,
 ) -> RuntimeAuthenticationProviderRequest {
     RuntimeAuthenticationProviderRequest::Runtime {
+        provider_id: None,
         name: "corporate".to_string(),
         kind: crate::models::runtime_settings::RuntimeAuthenticationProviderKind::Ldap,
         enabled,
@@ -441,6 +442,7 @@ async fn deployment_and_runtime_share_provider_validation(
     let deployment_accepted = AuthProviderRegistry::from_config(deployment.clone()).is_ok();
     let runtime_accepted = protect_runtime_authentication_settings(
         vec![RuntimeAuthenticationProviderRequest::Runtime {
+            provider_id: None,
             name,
             kind: crate::models::runtime_settings::RuntimeAuthenticationProviderKind::Ldap,
             enabled: false,
@@ -507,6 +509,7 @@ async fn deployment_definition_requires_explicit_adoption(
     };
     let result = protect_runtime_authentication_settings(
         vec![RuntimeAuthenticationProviderRequest::Runtime {
+            provider_id: None,
             name: name.to_string(),
             kind: crate::models::runtime_settings::RuntimeAuthenticationProviderKind::Ldap,
             enabled: false,
@@ -589,7 +592,7 @@ async fn disabled_runtime_provider_does_not_require_its_encryption_key() {
     )
     .await
     .unwrap();
-    registry.preflight().await.unwrap();
+    assert!(registry.unavailable.is_empty());
     assert_eq!(registry.provider_names(), vec![LOCAL_IDENTITY_SCOPE]);
 }
 
@@ -690,5 +693,85 @@ async fn explicit_null_runtime_password_clears_the_existing_envelope() {
                 |configuration| configuration.get(RUNTIME_AUTHENTICATION_PASSWORD_ENVELOPE_FIELD)
             )
             .is_none()
+    );
+}
+
+#[rstest]
+#[case::oidc(true)]
+#[case::oauth(false)]
+#[tokio::test]
+async fn unresolved_browser_secret_marks_enabled_provider_unavailable(#[case] oidc: bool) {
+    let mut configuration = if oidc {
+        serde_json::json!({"issuer":"https://identity.example/realm", "client_id":"hubuum", "client_authentication":"client_secret_basic", "scopes":["openid"], "signing_algorithms":["RS256"]})
+    } else {
+        serde_json::json!({"profile":"json_user", "authorization_endpoint":"https://identity.example/authorize", "token_endpoint":"https://identity.example/token", "profile_endpoint":"https://identity.example/user", "client_id":"hubuum", "client_authentication":"client_secret_post", "scopes":[], "subject_pointer":"/id", "subject_type":"string", "name_pointer":"/name"})
+    };
+    configuration["membership"] = serde_json::json!({"mode":"local_only", "refresh_interval_seconds":300, "max_stale_seconds":900});
+    configuration["admission"] = serde_json::json!({"mode":"existing_only"});
+    configuration["protected_credential"] = serde_json::json!({"alias":"company"});
+    let provider = StorageAuthenticationProvider::try_new(
+        "company",
+        if oidc {
+            StorageAuthenticationProviderKind::Oidc
+        } else {
+            StorageAuthenticationProviderKind::Oauth
+        },
+        configuration,
+    )
+    .unwrap()
+    .with_id(uuid::Uuid::new_v4())
+    .unwrap();
+    let registry = AuthProviderRegistry::from_runtime_providers(
+        &StorageAuthenticationProviders::try_new(vec![provider]).unwrap(),
+        &AuthProvidersConfig { ldap: Vec::new() },
+    )
+    .await
+    .unwrap();
+    assert!(registry.unavailable.contains_key("company"));
+    assert_eq!(registry.provider_names(), vec![LOCAL_IDENTITY_SCOPE]);
+    assert!(registry.provider("company").is_err());
+    assert!(
+        registry
+            .provider_statuses()
+            .iter()
+            .any(|status| status.name == "company"
+                && status.enabled
+                && status.credential_configured
+                && !status.available)
+    );
+}
+
+#[rstest]
+#[case::omitted(serde_json::json!({"scope":"corporate"}), Some("directory_bind"))]
+#[case::new_reference(serde_json::json!({"scope":"corporate", "bind_password":null, "bind_password_ref":"replacement_bind"}), Some("replacement_bind"))]
+#[case::clear_reference(serde_json::json!({"scope":"corporate", "bind_password_ref":null}), None)]
+#[case::clear_password(serde_json::json!({"scope":"corporate", "bind_password":null}), None)]
+#[tokio::test]
+async fn runtime_ldap_credential_edits_preserve_explicit_intent(
+    #[case] configuration: serde_json::Value,
+    #[case] expected: Option<&str>,
+) {
+    let current = StorageAuthenticationProviders::try_new(vec![
+        StorageAuthenticationProvider::try_new(
+            "corporate",
+            StorageAuthenticationProviderKind::Ldap,
+            serde_json::json!({"scope":"corporate", "bind_password_ref":"directory_bind"}),
+        )
+        .unwrap(),
+    ])
+    .unwrap();
+    let providers = protect_runtime_authentication_settings(
+        vec![runtime_request(configuration, true, false)],
+        Some(&current),
+        &AuthProvidersConfig { ldap: Vec::new() },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        providers.providers()[0]
+            .configuration()
+            .and_then(|configuration| configuration.get("bind_password_ref"))
+            .and_then(serde_json::Value::as_str),
+        expected
     );
 }

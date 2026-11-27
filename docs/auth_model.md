@@ -257,8 +257,9 @@ rotation to a client identity, but are not client secrets or device authenticati
 
 `POST /api/v1/auth/logout` revokes the current session family; when called with a
 durable token it revokes that token. `POST /api/v1/auth/logout_all` revokes all of
-the caller's interactive families and **preserves PATs**. Administrative
-`POST /api/v1/auth/logout/uid/{user_id}` continues to revoke all credentials,
+the caller's interactive families and **preserves PATs**. A valid unscoped human
+bearer can perform this logout even when its identity provider is unavailable.
+Administrative `POST /api/v1/auth/logout/uid/{user_id}` continues to revoke all credentials,
 including PATs. Explicit revocation of a session access token also revokes its
 family. Session access tokens cannot be renewed as PATs. Password changes and
 resets (including imports), anonymization, deletion, provider deprovisioning, and

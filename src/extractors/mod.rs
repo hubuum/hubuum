@@ -15,7 +15,7 @@ use crate::storage::{
     StorageAuthenticationTokenScope, StorageAuthenticationTokenScopeQuery, StorageContext,
     storage_handle,
 };
-use hubuum_domain::TokenId;
+use hubuum_domain::{PrincipalId, TokenId};
 
 use actix_web::{
     FromRequest, HttpMessage, HttpRequest, dev::Payload, error::JsonPayloadError, web::JsonBody,
@@ -414,19 +414,29 @@ async fn human_unscoped_user_from_meta(
     backend: &impl StorageContext,
     token_meta: StorageAuthenticatedToken,
 ) -> Result<User, ApiError> {
-    if token_meta.is_scoped() {
+    require_unscoped(&token_meta)?;
+    let principal = token_meta.principal_id();
+    crate::auth::refresh_principal_if_needed(backend, principal.id()).await?;
+    local_human_user(backend, principal)
+        .await
+        .map(authentication_human_to_user)
+}
+
+fn require_unscoped(token: &StorageAuthenticatedToken) -> Result<(), ApiError> {
+    if token.is_scoped() {
         return Err(ApiError::Forbidden(
             "Scoped tokens cannot be used on human/management endpoints".to_string(),
         ));
     }
+    Ok(())
+}
 
-    crate::auth::refresh_principal_if_needed(backend, token_meta.principal_id().id()).await?;
-
-    // Single round trip: fetch the backend-neutral principal projection and,
-    // when human, a password-free human projection from the same snapshot.
-    let storage = storage_handle(backend);
-    let identity = storage
-        .get_authentication_identity(token_meta.principal_id())
+async fn local_human_user(
+    backend: &impl StorageContext,
+    owner: PrincipalId,
+) -> Result<StorageAuthenticationHuman, ApiError> {
+    let identity = storage_handle(backend)
+        .get_authentication_identity(owner)
         .await?;
     let (principal, human) = identity.into_parts();
     if !principal.is_human() {
@@ -435,9 +445,7 @@ async fn human_unscoped_user_from_meta(
         ));
     }
 
-    human
-        .map(authentication_human_to_user)
-        .ok_or_else(|| ApiError::Unauthorized("Invalid token".to_string()))
+    human.ok_or_else(|| ApiError::Unauthorized("Invalid token".to_string()))
 }
 
 fn authentication_human_to_user(human: StorageAuthenticationHuman) -> User {
@@ -512,6 +520,58 @@ fn self_target_id(path: &actix_web::dev::Path<actix_web::dev::Url>) -> Result<i3
     path.query("user_id")
         .parse::<i32>()
         .map_err(|_| ApiError::InternalServerError("Failed to parse principal id".into()))
+}
+
+/// A valid local bearer credential authorizes revocation of its own family.
+pub struct LogoutCredential {
+    pub token: Token,
+    metadata: StorageAuthenticatedToken,
+}
+
+impl LogoutCredential {
+    /// Only an unscoped human bearer can revoke the owner's other session families.
+    pub(crate) async fn all_sessions_owner(
+        &self,
+        backend: &impl StorageContext,
+    ) -> Result<PrincipalId, ApiError> {
+        require_unscoped(&self.metadata)?;
+        Ok(local_human_user(backend, self.metadata.principal_id())
+            .await?
+            .id()
+            .into())
+    }
+}
+
+impl AccessEventContext for LogoutCredential {
+    fn event_context(&self, req: &HttpRequest) -> EventContext {
+        user_event_context(req, self.metadata.principal_id().id())
+    }
+}
+
+impl FromRequest for LogoutCredential {
+    type Error = ApiError;
+    type Future = Pin<Box<dyn future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
+        let backend = backend_from_req(req);
+        let token = extract_token(req);
+        let cached = token
+            .as_ref()
+            .ok()
+            .and_then(|token| resolved_auth(req, token));
+        async move {
+            let token = token?;
+            let metadata = match cached.transpose()? {
+                Some(metadata) => metadata,
+                None => {
+                    crate::services::authentication::authenticate_bearer_token(&backend?, &token)
+                        .await?
+                }
+            };
+            Ok(Self { token, metadata })
+        }
+        .boxed_local()
+    }
 }
 
 impl FromRequest for Authenticated {

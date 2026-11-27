@@ -19,6 +19,9 @@ use crate::models::TokenPolicyError;
 use crate::observability::metrics;
 use crate::storage::{StorageError, StorageErrorKind};
 
+mod interaction;
+pub use interaction::InteractionError;
+
 const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
 const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
 const PUBLIC_PERMISSION_BACKEND_UNAVAILABLE: &str = "Permission backend temporarily unavailable";
@@ -67,6 +70,7 @@ pub fn fatal_error(message: &str, exit_code: i32) -> ! {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum ApiError {
+    AuthenticationInteraction(InteractionError),
     TaskStopped(#[serde(serialize_with = "serialize_task_stop_reason")] TaskStopReason),
     Unauthorized(String),
     ReauthenticationRequired,
@@ -96,6 +100,7 @@ pub enum ApiError {
 impl ApiError {
     pub fn class(&self) -> &'static str {
         match self {
+            ApiError::AuthenticationInteraction(error) => error.reason(),
             ApiError::TaskStopped(reason) => reason.as_str(),
             ApiError::Unauthorized(_) => "unauthorized",
             ApiError::ReauthenticationRequired => "reauthentication_required",
@@ -147,6 +152,7 @@ impl ApiError {
     /// bodies and streaming events.
     pub fn public_message(&self) -> &str {
         match self {
+            ApiError::AuthenticationInteraction(error) => error.message(),
             ApiError::ReauthenticationRequired => hubuum_storage_core::CREDENTIAL_APPROVAL_REQUIRED,
             ApiError::TaskStopped(TaskStopReason::Cancelled) => "Task execution was cancelled",
             ApiError::TaskStopped(TaskStopReason::DeadlineExceeded) => {
@@ -264,7 +270,9 @@ impl From<PositiveIdError> for ApiError {
 impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ApiError::TaskStopped(_) => f.write_str(self.public_message()),
+            ApiError::AuthenticationInteraction(_) | ApiError::TaskStopped(_) => {
+                f.write_str(self.public_message())
+            }
             ApiError::HashError(message) => write!(f, "{message}"),
             ApiError::NotFound(message) => write!(f, "{message}"),
             ApiError::Gone(message) => write!(f, "{message}"),
@@ -296,6 +304,13 @@ impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         metrics::api_error(self.class());
         match self {
+            ApiError::AuthenticationInteraction(error) => {
+                let mut response = HttpResponse::build(error.status());
+                response.insert_header(("Cache-Control", "no-store"));
+                response.insert_header(("Referrer-Policy", "no-referrer"));
+                if let Some(seconds) = error.retry_after() { response.insert_header(("Retry-After", seconds.to_string())); }
+                response.json(json!({"error": error.status().canonical_reason().unwrap_or("Authentication error"), "reason":error.reason(), "message":error.message()}))
+            }
             ApiError::ReauthenticationRequired => HttpResponse::Forbidden()
                 .insert_header(("Cache-Control", "no-store"))
                 .json(json!({"error":"Forbidden", "reason":"reauthentication_required", "message":self.public_message()})),
@@ -377,6 +392,7 @@ impl ResponseError for ApiError {
 
     fn status_code(&self) -> StatusCode {
         match self {
+            ApiError::AuthenticationInteraction(error) => error.status(),
             ApiError::TaskStopped(_) => StatusCode::CONFLICT,
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::PreconditionFailed(_, _) => StatusCode::PRECONDITION_FAILED,

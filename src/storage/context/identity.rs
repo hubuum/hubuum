@@ -1,5 +1,12 @@
 use super::*;
+use hubuum_domain::ExternalIdentity;
+use hubuum_domain::ResourceRevision;
+use hubuum_domain::{InteractionBrowserBinding, InteractionDigest};
 use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_storage_core::StorageTokenRevocations;
+use hubuum_storage_core::StorageUpstreamClaim;
+use hubuum_storage_core::StorageUpstreamClaimOutcome;
+use hubuum_storage_core::StorageUpstreamRenewal;
 use hubuum_storage_core::{
     CredentialActivityPolicy, ObservedSource, StorageActivityQuery, StorageCredentialActivity,
     StorageCredentialCreation,
@@ -9,9 +16,111 @@ use hubuum_storage_core::{
     StorageSessionRotate, StorageSessionRotation,
 };
 use hubuum_storage_core::{StorageAuthorizationResource, StorageAuthorizationResourcesQuery};
+use hubuum_storage_core::{
+    StorageInteractionAccess, StorageInteractionCommand, StorageInteractionComplete,
+    StorageInteractionCompletion, StorageInteractionCreate, StorageInteractionOutcome,
+    StorageInteractionView,
+};
+use hubuum_storage_core::{
+    StorageUpstreamFailure, StorageUpstreamRevocation, StorageUpstreamSession,
+};
 
 #[async_trait]
 impl AuthenticationStorage for StorageHandle {
+    async fn create_auth_interaction(
+        &self,
+        request: StorageInteractionCreate,
+    ) -> Result<StorageInteractionView, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "create_auth_interaction",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .create_auth_interaction(request)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn bind_auth_interaction_browser(
+        &self,
+        code: InteractionDigest,
+        browser: InteractionBrowserBinding,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "bind_auth_interaction_browser",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .bind_auth_interaction_browser(code, browser)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn advance_auth_interaction(
+        &self,
+        command: StorageInteractionCommand,
+    ) -> Result<StorageInteractionOutcome, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "advance_auth_interaction",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .advance_auth_interaction(command)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn complete_auth_interaction(
+        &self,
+        request: StorageInteractionComplete,
+    ) -> Result<StorageInteractionCompletion, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "complete_auth_interaction",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .complete_auth_interaction(request)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn revoke_auth_interaction_session(
+        &self,
+        access: StorageInteractionAccess,
+        context: EventContext,
+    ) -> Result<StorageMutationOutcome<Option<StorageUpstreamSession>>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "revoke_auth_interaction_session",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .revoke_auth_interaction_session(access, context)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn purge_auth_interactions(&self, limit: usize) -> Result<usize, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::Authentication,
+            "purge_auth_interactions",
+            async {
+                dispatch_backend!(self, |backend| backend.purge_auth_interactions(limit).await)
+            },
+        )
+        .await
+    }
+
     async fn record_credential_creation(
         &self,
         token: TokenId,
@@ -119,7 +228,7 @@ impl AuthenticationStorage for StorageHandle {
         &self,
         target: SessionRevocation,
         context: EventContext,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Authentication,
@@ -577,6 +686,105 @@ impl ServiceAccountStorage for StorageHandle {
 
 #[async_trait]
 impl ExternalIdentityStorage for StorageHandle {
+    async fn upstream_approval_session(
+        &self,
+        proof: hubuum_domain::FreshExternalAuthentication,
+    ) -> Result<Option<hubuum_storage_core::StorageUpstreamApproval>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExternalIdentity,
+            "upstream_approval_session",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .upstream_approval_session(proof)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn fail_upstream_renewal(
+        &self,
+        claim: StorageUpstreamClaim,
+        failure: StorageUpstreamFailure,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExternalIdentity,
+            "fail_upstream_renewal",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.fail_upstream_renewal(claim, failure).await
+                })
+            },
+        )
+        .await
+    }
+    async fn claim_upstream_credential(
+        &self,
+        revision: ResourceRevision,
+        principal: PrincipalId,
+    ) -> Result<StorageUpstreamClaimOutcome, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExternalIdentity,
+            "claim_upstream_credential",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.claim_upstream_credential(revision, principal).await
+                })
+            },
+        )
+        .await
+    }
+    async fn finish_upstream_renewal(
+        &self,
+        request: StorageUpstreamRenewal,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExternalIdentity,
+            "finish_upstream_renewal",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.finish_upstream_renewal(request).await
+                })
+            },
+        )
+        .await
+    }
+    async fn upstream_logout_credentials(
+        &self,
+        target: StorageUpstreamRevocation,
+    ) -> Result<Vec<StorageUpstreamSession>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExternalIdentity,
+            "upstream_logout_credentials",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.upstream_logout_credentials(target).await
+                })
+            },
+        )
+        .await
+    }
+    async fn find_external_identity(
+        &self,
+        identity: ExternalIdentity,
+    ) -> Result<Option<PrincipalId>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::ExternalIdentity,
+            "find_external_identity",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.find_external_identity(identity).await
+                })
+            },
+        )
+        .await
+    }
+
     async fn get_external_principal_state(
         &self,
         principal_id: PrincipalId,
@@ -596,6 +804,7 @@ impl ExternalIdentityStorage for StorageHandle {
 
     async fn record_external_sync_failure(
         &self,
+        revision: ResourceRevision,
         principal_id: PrincipalId,
         failure: StorageExternalSyncFailure,
     ) -> Result<(), StorageError> {
@@ -607,7 +816,7 @@ impl ExternalIdentityStorage for StorageHandle {
             async {
                 dispatch_backend!(self, |backend| {
                     backend
-                        .record_external_sync_failure(principal_id, failure)
+                        .record_external_sync_failure(revision, principal_id, failure)
                         .await
                 })
             },
@@ -617,6 +826,7 @@ impl ExternalIdentityStorage for StorageHandle {
 
     async fn sync_external_user(
         &self,
+        revision: ResourceRevision,
         request: StorageExternalUserSync,
     ) -> Result<StorageMutationOutcome<StorageSyncedHuman>, StorageError> {
         self.observe_storage_call(
@@ -625,7 +835,7 @@ impl ExternalIdentityStorage for StorageHandle {
             "sync_external_user",
             async {
                 dispatch_backend!(self, |backend| {
-                    backend.sync_external_user(request).await
+                    backend.sync_external_user(revision, request).await
                 })
             },
         )
@@ -885,7 +1095,7 @@ impl TokenStorage for StorageHandle {
     async fn revoke_token(
         &self,
         request: StorageTokenRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Token,
@@ -898,7 +1108,7 @@ impl TokenStorage for StorageHandle {
     async fn revoke_token_by_hash(
         &self,
         request: StorageTokenHashRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<Option<StorageUpstreamSession>>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Token,
@@ -915,7 +1125,7 @@ impl TokenStorage for StorageHandle {
     async fn revoke_all_principal_tokens(
         &self,
         request: StoragePrincipalTokensRevoke,
-    ) -> Result<StorageMutationOutcome<usize>, StorageError> {
+    ) -> Result<StorageMutationOutcome<StorageTokenRevocations>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
             StorageCapability::Token,

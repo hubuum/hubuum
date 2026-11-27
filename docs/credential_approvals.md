@@ -120,6 +120,12 @@ retain their existing authorization behavior. The password inside `user` is the
 new account password; the top-level `password` authenticates the acting human.
 Neither password is stored in the approval record or audit event.
 
+Security configuration activation also requires exact-operation approval:
+`activate_security_candidate` binds `candidate_id`, `group`, `expected_revision`
+and the verified candidate digests. Only a local recovery administrator may
+approve it. See [security candidates](security_candidates.md) for verification,
+receipt handling and the activation request.
+
 ### Imports and restores
 
 An import needs approval if any human principal carries `password` or

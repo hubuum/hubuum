@@ -44,6 +44,24 @@ assert_literal_include_is_code() {
   assert_flag "$output" rust true
 }
 
+for auth_contract_input in docs/authentication/openapi.proposed.json docs/authentication/fixtures.json; do
+  auth_contract_output="$(bash "$classifier" "$auth_contract_input")"
+  assert_flag "$auth_contract_output" code true
+  assert_flag "$auth_contract_output" documentation true
+  assert_flag "$auth_contract_output" rust false
+  assert_flag "$auth_contract_output" container false
+  assert_flag "$auth_contract_output" openapi false
+done
+
+for oidc_input in tests/python/integration/keycloak.py tests/python/unit/tooling/test_keycloak_fixture.py \
+  tests/python/integration/oauth.py tests/python/unit/tooling/test_oauth_fixture.py \
+  crates/hubuum-auth-oauth/src/lib.rs crates/hubuum-auth-core/src/protocol/transport.rs \
+  crates/hubuum-auth-oidc/tests/fixtures/signing.pem; do
+  oidc_output="$(bash "$classifier" "$oidc_input")"
+  assert_flag "$oidc_output" code true
+  assert_flag "$oidc_output" container true
+done
+
 for operator_path in observability/prometheus/alerts.json observability/prometheus/tests.json \
   observability/dashboards/overview.json scripts/observability.py; do
   operator_output="$(bash "$classifier" "$operator_path")"
@@ -323,7 +341,7 @@ assert_flag "$rust_api_policy_output" benchmarks false
 openapi_output="$(bash "$classifier" docs/openapi.json)"
 assert_flag "$openapi_output" openapi true
 assert_flag "$openapi_output" operational_contract false
-assert_flag "$openapi_output" code false
+assert_flag "$openapi_output" code true
 
 openapi_policy_output="$(bash "$classifier" \
   .github/openapi-breaking-exceptions.json \
@@ -765,7 +783,8 @@ assert_flag "$label_output" openapi true
 budget_projection="$(bash "$classifier" src/config/running.rs)"
 assert_flag "$budget_projection" openapi true
 
-for observation_input in src/api/v1/handlers/runtime_config.rs src/models/query_usage.rs \
+for observation_input in src/models/security_candidate.rs src/api/v1/handlers/security_candidates.rs \
+  crates/hubuum-domain/src/authentication_configuration.rs src/api/v1/handlers/runtime_config.rs src/models/query_usage.rs \
   src/models/runtime_settings.rs src/api/v1/handlers/client_config.rs; do
   observation_output="$(bash "$classifier" "$observation_input")"
   assert_flag "$observation_output" rust true
@@ -810,6 +829,7 @@ assert_flag "$unknown_document" code true
 # New tests are discovered automatically; their changed paths still need the right CI jobs.
 for python_container_input in tests/python/run.py tests/python/support/__init__.py \
   tests/python/support/installer.py tests/python/integration/__init__.py \
+  tests/python/integration/auth_browser_fixture.py tests/python/support/auth_browser/harness.html \
   tests/python/integration/monitoring.py tests/python/integration/monitoring_fixture.py \
   tests/python/unit/deployment/test_new_installer_case.py \
   tests/python/unit/monitoring/test_new_panel_case.py; do
@@ -930,12 +950,14 @@ for repair_path in tests/computed_read_repair.rs crates/hubuum-storage-postgres/
   assert_flag "$repair_output" rust true
 done
 
-# Shared HTTP responses, registration, and interactive auth schemas feed the public contract.
-for schema_path in src/api/openapi.rs src/api/response.rs src/api/v1/handlers/auth.rs src/models/auth_session.rs src/models/credential_activity.rs; do
-  schema_output="$(bash "$classifier" "$schema_path")"
-  assert_flag "$schema_output" rust true
-  assert_flag "$schema_output" openapi true
-  assert_flag "$schema_output" container true
+# Interactive auth and activity schemas must regenerate the public contract.
+for session_schema in src/api/openapi.rs src/api/response.rs src/api/v1/handlers/auth.rs src/models/auth_session.rs src/models/credential_activity.rs \
+  src/api/v1/handlers/auth_interactions.rs src/models/auth_interaction.rs \
+  src/api/v1/handlers/auth_interactions/browser/browser.html src/models/auth_interaction/browser.rs src/config/auth_browser.rs; do
+  session_output="$(bash "$classifier" "$session_schema")"
+  assert_flag "$session_output" rust true
+  assert_flag "$session_output" openapi true
+  assert_flag "$session_output" container true
 done
 for session_input in src/services/auth_sessions.rs src/services/credential_activity.rs \
   src/tests/storage_contract/auth_sessions.rs tests/api_identity_suite/sessions.rs \
@@ -960,7 +982,13 @@ for extracted_input in src/services/exports/execution.rs src/services/exports/hy
   crates/hubuum-storage-memory/src/id_sequence.rs crates/hubuum-storage-memory/src/restore_coordinator.rs \
   crates/hubuum-storage-memory/src/history.rs crates/hubuum-storage-memory/src/identity/authorization.rs \
   crates/hubuum-storage-memory/src/identity/credentials.rs crates/hubuum-storage-memory/src/token_issuance.rs \
-  crates/hubuum-auth-core/src/credential.rs; do
+  crates/hubuum-auth-core/src/credential.rs \
+  crates/hubuum-domain/src/external_authentication.rs crates/hubuum-domain/src/external_authentication/tests.rs \
+  crates/hubuum-domain/src/external_freshness.rs crates/hubuum-domain/src/external_freshness/tests.rs \
+  crates/hubuum-storage-core/src/auth_interactions/external.rs \
+  crates/hubuum-storage-memory/src/runtime_settings/external_identity_tests.rs \
+  crates/hubuum-storage-postgres/tests/auth_interactions/external.rs \
+  src/services/auth_interactions/external.rs; do
   extracted_output="$(bash "$classifier" "$extracted_input")"
   assert_flag "$extracted_output" rust true
   assert_flag "$extracted_output" container true
@@ -1022,3 +1050,15 @@ done
 restore_fixture_output="$(bash "$classifier" tests/python/integration/rust_tests.py)"
 assert_flag "$restore_fixture_output" code true
 assert_flag "$restore_fixture_output" rust true
+
+# Explicit native consumers use accepted external artifacts; Python owns their
+# source/image/contract guards. Their manifest is a dynamic test input.
+for ecosystem_input in tests/python/integration/ecosystem.py \
+  docs/authentication/ecosystem-source.json \
+  tests/python/unit/tooling/test_authentication_ecosystem.py; do
+  ecosystem_output="$(bash "$classifier" "$ecosystem_input")"
+  assert_flag "$ecosystem_output" code true
+  assert_flag "$ecosystem_output" rust false
+  assert_flag "$ecosystem_output" container false
+  assert_flag "$ecosystem_output" benchmarks false
+done

@@ -541,9 +541,24 @@ pub(super) fn get_config_from_env() -> Result<AppConfig, ApiError> {
         max_transitive_depth: env_or_default("HUBUUM_MAX_TRANSITIVE_DEPTH", "100")
             .parse()
             .unwrap_or(DEFAULT_MAX_TRANSITIVE_DEPTH),
-        admin_groupname: env_or_default("HUBUUM_ADMIN_GROUPNAME", "admin"),
+        admin_groupname: env_or_default("HUBUUM_ADMIN_GROUPNAME", DEFAULT_ADMIN_GROUPNAME),
         admin_identity_scope: Some(env_or_default("HUBUUM_ADMIN_IDENTITY_SCOPE", "local")),
         auth_config_path: env_or_default_opt("HUBUUM_AUTH_CONFIG_PATH", None),
+        auth_browser: env_or_default("HUBUUM_AUTH_BROWSER", "{}")
+            .parse()
+            .unwrap_or_default(),
+        auth_runtime_allow_private_targets: env_or_default(
+            "HUBUUM_AUTH_RUNTIME_ALLOW_PRIVATE_TARGETS",
+            "false",
+        )
+        .parse()
+        .unwrap(),
+        auth_runtime_locked_providers: env_or_default_opt(
+            "HUBUUM_AUTH_RUNTIME_LOCKED_PROVIDERS",
+            None,
+        )
+        .map(|value| value.split(',').map(str::to_owned).collect())
+        .unwrap_or_default(),
         runtime_settings_encryption_key_ref: env_or_default_opt(
             "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",
             None,

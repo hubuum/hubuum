@@ -1,10 +1,13 @@
+use hubuum_storage_core::StorageSecurityCandidateActivationOutcome;
 use std::{sync::Arc, time::Duration};
 
 use futures_util::future::BoxFuture;
 use hubuum_storage_core::{
-    RuntimeSettingsStorage, StorageQueryObservationSettings, StorageRuntimeSettingsChange,
-    StorageRuntimeSettingsHistoryQuery, StorageRuntimeSettingsSnapshot,
-    StorageRuntimeSettingsUpdate, StorageRuntimeSettingsUpdateOutcome,
+    RuntimeSettingsStorage, StorageProviderIdentityBinding, StorageQueryObservationSettings,
+    StorageRuntimeSettingsChange, StorageRuntimeSettingsHistoryQuery,
+    StorageRuntimeSettingsSnapshot, StorageRuntimeSettingsUpdate,
+    StorageRuntimeSettingsUpdateOutcome, StorageSecurityCandidate,
+    StorageSecurityCandidateActivation, StorageSecurityCandidateOwner, StorageSecurityRecovery,
 };
 use tokio::sync::Notify;
 
@@ -16,6 +19,119 @@ use crate::storage::runtime_settings::{
 
 #[async_trait]
 impl RuntimeSettingsStorage for StorageHandle {
+    async fn recover_security_settings(
+        &self,
+        request: StorageSecurityRecovery,
+    ) -> Result<[StorageRuntimeSettingsUpdateOutcome; 2], StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "recover_security_settings",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .recover_security_settings(request)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn purge_security_candidates(&self) -> Result<usize, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "purge_security_candidates",
+            async { dispatch_backend!(self, |backend| backend.purge_security_candidates().await) },
+        )
+        .await
+    }
+
+    async fn authentication_provider_binding(
+        &self,
+        name: hubuum_domain::IdentityScopeName,
+    ) -> Result<Option<StorageProviderIdentityBinding>, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "authentication_provider_binding",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .authentication_provider_binding(name)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn create_security_candidate(
+        &self,
+        candidate: StorageSecurityCandidate,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "create_security_candidate",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .create_security_candidate(candidate)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn get_security_candidate(
+        &self,
+        id: uuid::Uuid,
+        owner: StorageSecurityCandidateOwner,
+    ) -> Result<StorageSecurityCandidate, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "get_security_candidate",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .get_security_candidate(id, owner)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn verify_security_candidate(
+        &self,
+        candidate: StorageSecurityCandidate,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "verify_security_candidate",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .verify_security_candidate(candidate)
+                    .await)
+            },
+        )
+        .await
+    }
+
+    async fn activate_security_candidate(
+        &self,
+        request: StorageSecurityCandidateActivation,
+    ) -> Result<StorageSecurityCandidateActivationOutcome, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::RuntimeSettings,
+            "activate_security_candidate",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .activate_security_candidate(request)
+                    .await)
+            },
+        )
+        .await
+    }
+
     async fn load_runtime_settings(&self) -> Result<StorageRuntimeSettingsSnapshot, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -170,11 +286,48 @@ impl StorageHandle {
                 }
             }
         };
-        if let Some(listener) = listener {
-            tokio::join!(listener, refresh);
-        } else {
-            refresh.await;
-        }
+        let cleanup = async {
+            let mut interval = tokio::time::interval_at(
+                tokio::time::Instant::now() + refresh_interval,
+                refresh_interval,
+            );
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                // Use at most one pool slot and release it promptly for authoritative reads.
+                const CLEANUP_TIMEOUT: Duration = Duration::from_secs(1);
+                let candidates =
+                    tokio::time::timeout(CLEANUP_TIMEOUT, self.purge_security_candidates()).await;
+                let interactions =
+                    tokio::time::timeout(CLEANUP_TIMEOUT, self.purge_auth_interactions(128)).await;
+                for (scope, result) in [
+                    ("security candidates", candidates),
+                    ("authentication interactions", interactions),
+                ] {
+                    match result {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(error)) => {
+                            tracing::warn!(%scope, %error, "Authentication cleanup failed")
+                        }
+                        Err(_) => tracing::warn!(%scope, "Authentication cleanup timed out"),
+                    }
+                }
+            }
+        };
+        let cleanup_until_shutdown = async {
+            tokio::select! {
+                () = shutdown.requested() => {},
+                () = cleanup => {},
+            }
+        };
+        let reconcile = async {
+            if let Some(listener) = listener {
+                tokio::join!(listener, refresh);
+            } else {
+                refresh.await;
+            }
+        };
+        tokio::join!(reconcile, cleanup_until_shutdown);
     }
 }
 
@@ -219,6 +372,27 @@ mod tests {
                 }
             })
         }
+    }
+
+    #[tokio::test]
+    async fn authoritative_refresh_does_not_depend_on_cleanup_writes() {
+        let observer = Arc::new(hubuum_storage_conformance::RecordingStorageObserver::default());
+        let storage = StorageHandle::from_registered_backend_with_observer(
+            MemoryStorage::new(),
+            observer.clone(),
+        );
+        storage
+            .refresh_runtime_settings()
+            .await
+            .unwrap()
+            .ensure_security_current()
+            .unwrap();
+        let operations: Vec<_> = observer
+            .observations()
+            .iter()
+            .map(|o| o.operation())
+            .collect();
+        assert_eq!(operations, ["load_runtime_settings"]);
     }
 
     async fn set_page_limit(storage: &StorageHandle, limit: u64) {
