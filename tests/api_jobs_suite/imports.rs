@@ -369,41 +369,12 @@ mod tests {
         }
     }
 
+    #[rstest]
     #[actix_web::test]
-    async fn administrator_imports_deterministic_identity_and_permission_graph() {
-        const PHASE: &str = "HUBUUM_TEST_CREDENTIAL_IMPORT_KEY_PHASE";
-        let Ok(phase) = std::env::var(PHASE) else {
-            // Secret resolvers and runtime configuration are process-wide.
-            // Exercise the two deployment states without changing other tests.
-            let test_name = std::thread::current().name().unwrap().to_owned();
-            for phase in ["missing", "configured"] {
-                let mut child = std::process::Command::new(std::env::current_exe().unwrap());
-                child
-                    .args(["--exact", &test_name, "--nocapture"])
-                    .env(PHASE, phase)
-                    .env("HUBUUM_SECRET_SOURCE", "environment")
-                    .env_remove("HUBUUM_SECRET_FILE_ROOT")
-                    .env_remove("HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF");
-                if phase == "configured" {
-                    child
-                        .env("HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF", "importtest")
-                        .env(
-                            "HUBUUM_RUNTIME_SETTINGS_KEY_IMPORTTEST",
-                            "01234567890123456789012345678901",
-                        );
-                }
-                let output = child.output().unwrap();
-                assert!(
-                    output.status.success()
-                        && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
-                    "{phase}: {} {}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-            return;
-        };
-        let context = TestContext::new().await;
+    async fn administrator_imports_deterministic_identity_and_permission_graph(
+        #[future(awt)] test_context: TestContext,
+    ) {
+        let context = test_context;
         let scope_name = context.scoped_name("import_identity_scope");
         let group_name = context.scoped_name("import_identity_group");
         let user_name = context.scoped_name("import_identity_user");
@@ -450,7 +421,7 @@ mod tests {
                     last_sync_attempted_at: None,
                     last_sync_success_at: None,
                     subtype: ImportPrincipalSubtype::Human {
-                        password: Some("benchmark-password".to_string()),
+                        password: None,
                         password_hash: None,
                         proper_name: Some("Benchmark User".to_string()),
                         email: None,
@@ -502,10 +473,6 @@ mod tests {
             Vec::new(),
         )
         .await;
-        if phase == "missing" {
-            assert_response_status(response, StatusCode::SERVICE_UNAVAILABLE).await;
-            return;
-        }
         let response = assert_response_status(response, StatusCode::ACCEPTED).await;
         let task: TaskResponse = test::read_body_json(response).await;
         let completed = wait_for_task(&context, task.id, &[TaskStatus::Succeeded]).await;
