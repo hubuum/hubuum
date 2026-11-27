@@ -6,6 +6,7 @@ use super::*;
 
 #[cfg(unix)]
 mod owned;
+mod whole;
 
 fn identity(record: &SegmentRecord) -> StorageRecordIdentity {
     StorageRecordIdentity::new(record.interval.resource(), record.interval.version())
@@ -155,13 +156,19 @@ async fn failed_rewrite_preserves_published_source(#[case] case: u8) {
     );
 }
 
+#[rstest]
+#[case::mixed(false)]
+#[case::whole(true)]
 #[tokio::test]
-async fn a_rewrite_checks_corruption_even_in_a_frame_selected_for_omission() {
+async fn a_rewrite_checks_corruption_even_in_a_frame_selected_for_omission(#[case] whole: bool) {
     let scope = scope();
     let target = record(scope.clone(), ResourceIdentity::generate(), 1, 2);
-    let survivor = record(scope.clone(), ResourceIdentity::generate(), 1, 2);
     let selection = SegmentRewriteSelection::new([identity(&target)]).unwrap();
-    let (store, original) = fixture(vec![target, survivor], scope).await.unwrap();
+    let mut records = vec![target];
+    if !whole {
+        records.push(record(scope.clone(), ResourceIdentity::generate(), 1, 2));
+    }
+    let (store, original) = fixture(records, scope).await.unwrap();
     let mut bytes = staged_bytes(&store, &original).await;
     // Keep the authenticated artifact and its retained index internally valid
     // while making the first JSON frame undecodable.
@@ -172,30 +179,43 @@ async fn a_rewrite_checks_corruption_even_in_a_frame_selected_for_omission() {
     let retained = RetainedHistorySegment::open(&store, &reference, &mut budget)
         .await
         .unwrap();
-    assert!(matches!(
+    let result = if whole {
+        retained
+            .verify_fully_selected(&store, &selection, &mut budget)
+            .await
+            .map(|_| ())
+    } else {
         retained
             .rewrite_into(
                 &store,
                 &store,
                 ArtifactIdentity::new(reference.identity().destination()),
                 &selection,
-                &mut budget
+                &mut budget,
             )
-            .await,
-        Err(ArtifactError::Corrupt(_))
-    ));
+            .await
+            .map(|_| ())
+    };
+    assert!(matches!(result, Err(ArtifactError::Corrupt(_))));
 }
 
+#[rstest]
+#[case::mixed(false)]
+#[case::whole(true)]
 #[tokio::test]
-async fn selected_frame_budget_is_enforced_before_source_payload_io() {
+async fn selected_frame_budget_is_enforced_before_source_payload_io(#[case] whole: bool) {
     let scope = scope();
-    let mut rows: Vec<_> = (0..6)
-        .map(|_| record(scope.clone(), ResourceIdentity::generate(), 1, 2))
+    let mut rows: Vec<_> = (0..5)
+        .map(|_| {
+            let mut row = record(scope.clone(), ResourceIdentity::generate(), 1, 2);
+            row.payload = json!("x".repeat(3_500_000));
+            row
+        })
         .collect();
-    for row in &mut rows[..5] {
-        row.payload = json!("x".repeat(3_500_000));
+    let selection = SegmentRewriteSelection::new(rows.iter().map(identity)).unwrap();
+    if !whole {
+        rows.push(record(scope.clone(), ResourceIdentity::generate(), 1, 2));
     }
-    let selection = SegmentRewriteSelection::new(rows[..5].iter().map(identity)).unwrap();
     let (store, source) = fixture(rows, scope).await.unwrap();
     let reference = store.publish(source.proof()).await.unwrap();
     let retained = RetainedHistorySegment::open(
@@ -206,15 +226,23 @@ async fn selected_frame_budget_is_enforced_before_source_payload_io() {
     .await
     .unwrap();
     let mut scan = ByteLimit::new(SEGMENT_BYTES).start();
-    let result = retained
-        .rewrite_into(
-            &store,
-            &store,
-            ArtifactIdentity::new(reference.identity().destination()),
-            &selection,
-            &mut scan,
-        )
-        .await;
+    let result = if whole {
+        retained
+            .verify_fully_selected(&store, &selection, &mut scan)
+            .await
+            .map(|_| ())
+    } else {
+        retained
+            .rewrite_into(
+                &store,
+                &store,
+                ArtifactIdentity::new(reference.identity().destination()),
+                &selection,
+                &mut scan,
+            )
+            .await
+            .map(|_| ())
+    };
     assert!(matches!(result, Err(ArtifactError::Limit(_))));
     assert_eq!(scan.used(), 0);
 }

@@ -84,6 +84,11 @@ impl SegmentRewriteSelection {
                 "A subset rewrite needs surviving records".into(),
             ));
         }
+        self.check_source_entries(source)?;
+        Ok(source.entries.len() - self.source_versions.len())
+    }
+
+    fn check_source_entries(&self, source: &RetainedHistorySegment) -> ArtifactResult<()> {
         let mut removed_bytes =
             ByteLimit::new(HistoryExpiryInputBytes::MAX_BATCH_BYTES as usize).start();
         for &version in &self.source_versions {
@@ -102,7 +107,24 @@ impl SegmentRewriteSelection {
                 )
             })?;
         }
-        Ok(source.entries.len() - self.source_versions.len())
+        Ok(())
+    }
+}
+
+/// Exact membership evidence for a source with no surviving frames. A catalog
+/// handoff must independently check the current generation and deletion authority.
+pub struct FullySelectedHistorySegment {
+    source: ArtifactReference,
+    selection_commitment: [u8; 32],
+}
+
+impl FullySelectedHistorySegment {
+    pub fn source(&self) -> &ArtifactReference {
+        &self.source
+    }
+
+    pub fn selection_commitment(&self) -> &[u8; 32] {
+        &self.selection_commitment
     }
 }
 
@@ -166,6 +188,35 @@ impl RetainedHistorySegment {
         };
         self.visit_survivors(source, &unaffected, budget, async |_, _| Ok(()))
             .await
+    }
+
+    /// Verify a whole-source selection before planning a handoff with no
+    /// replacement. Decode every authenticated frame to check its full UUID.
+    pub async fn verify_fully_selected<S: ArtifactStore + ?Sized>(
+        &self,
+        source: &S,
+        selection: &SegmentRewriteSelection,
+        budget: &mut ByteBudget,
+    ) -> ArtifactResult<FullySelectedHistorySegment> {
+        if selection.source_versions.len() != self.entries.len() {
+            return Err(ArtifactError::Conflict(
+                "The selected versions do not cover the entire history segment".into(),
+            ));
+        }
+        selection.check_source_entries(self)?;
+        self.visit_survivors(source, selection, budget, async |_, _| {
+            Err(ArtifactError::Conflict(
+                "The history segment contains an unselected record".into(),
+            ))
+        })
+        .await?;
+        Ok(FullySelectedHistorySegment {
+            source: ArtifactReference::from_catalog(
+                self.manifest.identity().clone(),
+                self.manifest.manifest_digest(),
+            ),
+            selection_commitment: self.rewrite_commitment(selection),
+        })
     }
 
     /// Stage or recover the original owned attempt. On recovery, compare every

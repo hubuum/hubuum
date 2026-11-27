@@ -139,6 +139,10 @@ stops staging. After a restart the same owned attempt can recover a sealed or
 published replacement. The worker verifies the destination and compares every
 surviving frame with the original source before returning its provider state.
 Mixed and untouched segments can be checked against all versions in the batch.
+When every frame in a segment is selected, the worker verifies the complete
+resource and version UUID in each authenticated frame and returns the original
+artifact reference and selection commitment. This produces no replacement.
+The same 16 MiB selected-frame limit applies before reading the frames.
 The owning operation must account for every source and fence the catalog
 generation before publishing the handoff and retiring the old copy. See the
 [local subset-rewrite measurements](performance/history_segment_prototype.md#local-mixed-segment-rewrite).
