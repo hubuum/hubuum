@@ -31,52 +31,65 @@ static ARCHIVE_METRICS: LazyLock<()> =
 // rather than the database later used for destructive restore certification.
 #[cfg(feature = "integration-test-support")]
 async fn with_overflow_backend(test: impl for<'a> AsyncFn(&'a mut TestContext)) {
-    let _guard = crate::test_support::RESTORE_TEST_LOCK.lock().await;
+    let runtime_url = crate::test_support::archive_test_runtime_database_url();
     for kind in [StorageBackendKind::Memory, StorageBackendKind::Postgres] {
-        let owner_url = crate::test_support::archive_test_migration_database_url();
-        let target = hubuum_storage_postgres::test_support::IsolatedRestoreTarget::new(
-            &owner_url,
-            &hubuum_storage_postgres::test_support::integration_test_database_url(),
-        )
+        with_isolated_archive_backend(kind, &runtime_url, &test).await;
+    }
+}
+
+#[cfg(feature = "integration-test-support")]
+async fn with_isolated_archive_backend(
+    kind: StorageBackendKind,
+    runtime_url: &str,
+    test: impl for<'a> AsyncFnOnce(&'a mut TestContext),
+) {
+    let _guard = crate::test_support::RESTORE_TEST_LOCK.lock().await;
+    let owner_url = crate::test_support::archive_test_migration_database_url();
+    let target = hubuum_storage_postgres::test_support::IsolatedRestoreTarget::new(
+        &owner_url,
+        &hubuum_storage_postgres::test_support::integration_test_database_url(),
+    )
+    .unwrap();
+    let owner_pool = crate::test_support::postgres_test_pool_with_timeout(
+        &owner_url,
+        8,
+        crate::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS,
+    );
+    let fixture = crate::test_support::RestoreContractFixture::new(kind, owner_pool.clone())
+        .await
         .unwrap();
-        let owner_pool = crate::test_support::postgres_test_pool_with_timeout(
-            &owner_url,
-            8,
-            crate::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS,
-        );
-        let fixture = crate::test_support::RestoreContractFixture::new(kind, owner_pool.clone())
+    let backend = match kind {
+        StorageBackendKind::Memory => fixture.storage().clone(),
+        StorageBackendKind::Postgres => {
+            let pool = crate::test_support::postgres_test_pool_with_timeout(
+                runtime_url,
+                8,
+                crate::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS,
+            );
+            crate::storage::StorageHandle::postgres(pool)
+        }
+    };
+    let result = AssertUnwindSafe(TestContext::run(backend, async |ctx| {
+        let outcome = AssertUnwindSafe(test(ctx)).catch_unwind().await;
+        if kind == StorageBackendKind::Postgres {
+            hubuum_storage_postgres::test_support::delete_isolated_history_archive_captures(
+                &owner_pool,
+                &target,
+                ctx.permit.owner().unwrap().id(),
+                ctx.resource,
+            )
             .await
             .unwrap();
-        let backend = match kind {
-            StorageBackendKind::Memory => fixture.storage().clone(),
-            StorageBackendKind::Postgres => {
-                let runtime_url = crate::test_support::archive_test_runtime_database_url();
-                let pool = crate::test_support::postgres_test_pool_with_timeout(
-                    &runtime_url,
-                    8,
-                    crate::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS,
-                );
-                crate::storage::StorageHandle::postgres(pool)
-            }
-        };
-        let result =
-            AssertUnwindSafe(TestContext::run(backend, async |ctx| {
-                let outcome = AssertUnwindSafe(test(ctx)).catch_unwind().await;
-                if kind == StorageBackendKind::Postgres {
-                    hubuum_storage_postgres::test_support::delete_isolated_history_archive_captures(
-                    &owner_pool, &target, ctx.permit.owner().unwrap().id(), ctx.resource,
-                ).await.unwrap();
-                }
-                if let Err(panic) = outcome {
-                    resume_unwind(panic);
-                }
-            }))
-            .catch_unwind()
-            .await;
-        fixture.restore_original().await.unwrap();
-        if let Err(panic) = result {
+        }
+        if let Err(panic) = outcome {
             resume_unwind(panic);
         }
+    }))
+    .catch_unwind()
+    .await;
+    fixture.restore_original().await.unwrap();
+    if let Err(panic) = result {
+        resume_unwind(panic);
     }
 }
 
@@ -1312,3 +1325,6 @@ mod allocation;
 
 #[cfg(all(unix, feature = "integration-test-support"))]
 mod claim_crash;
+
+#[cfg(feature = "integration-test-support")]
+mod read_traffic;
