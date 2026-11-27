@@ -24,3 +24,12 @@ fn unclaimed_commitments_fail_validation(#[case] extra: usize) {
     bytes.resize(bytes.len() + extra, 1);
     assert!(decode(&bytes).is_err());
 }
+
+#[rstest]
+#[case::dictionary(0x01)]
+#[case::unbounded_window(0x20)]
+fn only_a_single_dictionary_free_segment_can_supply_catalog_metadata(#[case] toggle: u8) {
+    let mut bytes = encode(&HistoryArchiveCatalog::empty(ResourceIdentity::generate())).unwrap();
+    bytes[PREFIX_BYTES + ZSTD_MAGIC.len()] ^= toggle;
+    assert!(decode(&bytes).is_err());
+}
