@@ -1247,6 +1247,7 @@ mod scan_tests {
     #[case::unretired_publication("publication", true)]
     #[case::missing_projection("missing_projection", false)]
     #[case::conflicting_projection("conflicting_projection", true)]
+    #[case::unbounded_projection("unbounded_projection", true)]
     #[case::paged_clean("paged_clean", false)]
     #[case::paged_current("paged_current", true)]
     #[case::paged_open("paged_open", true)]
@@ -1261,6 +1262,8 @@ mod scan_tests {
         #[case] mode: &str,
         #[case] blocked: bool,
     ) {
+        use chrono::Duration;
+
         let metadata = mode.starts_with("metadata_");
         let paged = mode.starts_with("paged_");
         let mode = mode.strip_prefix("paged_").unwrap_or(mode);
@@ -1354,7 +1357,7 @@ mod scan_tests {
             let closed = sql_query(&version_query).bind::<Integer,_>(source_id).get_result::<Version>(connection).await?;
             let until = closed.valid_to.unwrap();
             let captured = capture_on(connection).await?;
-            let empty = HistoryLifecycleSnapshot::new(HistoryLifecycleControl::empty(),captured.fence().incarnation(),captured.fence().deletion_revision(),closed.valid_from-chrono::Duration::seconds(1))?;
+            let empty = HistoryLifecycleSnapshot::new(HistoryLifecycleControl::empty(),captured.fence().incarnation(),captured.fence().deletion_revision(),closed.valid_from-Duration::seconds(1))?;
             let key = HistoryPolicyKey::new(family,HistoryPolicyScope::Deployment)?;
             let principal = hubuum_domain::PrincipalIdentity::generate();
             let policy = HistoryPolicyChange::new(key,HistoryPolicyRevision::new(0)?,HistoryPolicyBinding::Expire {
@@ -1378,9 +1381,11 @@ mod scan_tests {
                 sql_query("DELETE FROM hubuum_control.history_expiry_members WHERE intent_uuid=$1")
                     .bind::<SqlUuid,_>(retained_intent.identity()).execute(connection).await?;
             }
-            if mode=="conflicting_projection" {
-                sql_query("UPDATE hubuum_control.history_expiry_members SET valid_to=valid_to+INTERVAL '1 microsecond' WHERE intent_uuid=$1")
-                    .bind::<SqlUuid,_>(retained_intent.identity()).execute(connection).await?;
+            if matches!(mode, "conflicting_projection" | "unbounded_projection") {
+                let end = (mode == "conflicting_projection").then_some(until + Duration::microseconds(1));
+                sql_query("UPDATE hubuum_control.history_expiry_members SET valid_to=$2 WHERE intent_uuid=$1")
+                    .bind::<SqlUuid,_>(retained_intent.identity())
+                    .bind::<Nullable<Timestamptz>,_>(end).execute(connection).await?;
             }
             sql_query("SELECT public.hubuum_rotate_application_for_restore()").execute(connection).await?;
             let live = sql_query(format!("SELECT logical_identity FROM public.{current_table} WHERE id=$1"))
@@ -1426,7 +1431,7 @@ mod scan_tests {
             connection.batch_execute("ROLLBACK TO SAVEPOINT exposure_gate_probe").await?;
             assert_eq!(result.is_err(),blocked,"{result:?}");
             if let Err(error)=result {
-                let expected=if mode=="conflicting_projection" {StorageErrorKind::Backend} else {StorageErrorKind::Unavailable};
+                let expected=if matches!(mode, "conflicting_projection" | "unbounded_projection") {StorageErrorKind::Backend} else {StorageErrorKind::Unavailable};
                 assert_eq!(error.kind(),expected);
             }
             assert!(!sql_query("SELECT public.hubuum_deletion_exposure_allowed() AS committed").get_result::<CommittedRow>(connection).await?.committed);
