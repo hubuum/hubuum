@@ -361,6 +361,31 @@ wire allowance. The exact lookup still exceeds its allowance because admission
 retrieves the closed primary's description and execution reads it again from
 the verified artifact. These measurements exclude PostgreSQL storage I/O.
 
+### Verifying a large primary inside PostgreSQL
+
+With commit `a8b59892`, the database returned the digest and encoded length
+of the 3 MiB primary description during admission. The service verified the
+archived payload during execution. One warm-up and five measured runs used a
+fresh database each. All 36 exact and as-of lookups returned the original
+closed revision with complete coverage. The table gives PostgreSQL reply bytes
+for the complete lookup. With five measurements, nearest-rank p95 is the maximum.
+
+| Description size | Lookup | Median reply bytes | P95 reply bytes | P2 allowance |
+| --- | --- | --- | --- | --- |
+| 256 B | Exact | 258,960 | 259,009 | 1,055,064 |
+| 256 B | As-of | 257,210 | 257,259 | 2,110,128 |
+| 64 KiB | Exact | 388,774 | 388,835 | 1,577,320 |
+| 64 KiB | As-of | 388,680 | 388,700 | 3,154,640 |
+| 3 MiB | Exact | 3,417,182 | 3,417,261 | 5,243,437 |
+| 3 MiB | As-of | 3,417,055 | 3,417,167 | 7,340,589 |
+
+Median replies for the 3 MiB exact lookup were 31,115 bytes during admission,
+3,372,945 during execution and 13,154 during final authorized access. The
+verified artifact reader charged 3,309,629 bytes within that traffic. Both
+lookups now fit their wire allowances. PostgreSQL still reads the retained
+description to compute its digest. Native heap, index and TOAST page access,
+schema dependencies and the deployment workload require separate measurements.
+
 ## Remaining acceptance
 
 Project #3 tracks the remaining #514 work on `project/workload-lifecycle`.
