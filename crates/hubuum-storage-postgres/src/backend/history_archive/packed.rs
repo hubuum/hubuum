@@ -114,3 +114,6 @@ pub(super) fn decode(bytes: &[u8]) -> Result<HistoryArchiveCatalog, PostgresStor
         PostgresStorageError::invalid_persisted_value("packed history catalog", error)
     })
 }
+
+#[cfg(test)]
+mod tests;

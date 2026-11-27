@@ -48,12 +48,12 @@ tokio-postgres-rustls = "0.14"
 tracing = "0.1"
 urlparse = "0.7"
 uuid = { version = "1", features = ["v4"] }
-zstd = { version = "0.14", default-features = false, optional = true }
+zstd = { version = "0.14", default-features = false }
 pq-sys = { version = "0.7.6", optional = true }
 
 [features]
 query-capture = []
-integration-test-support = ["dep:zstd"]
+integration-test-support = []
 benchmark-support = []
 scale-benchmark-support = ["query-capture", "benchmark-support", "dep:hubuum-scale-core", "dep:sysinfo"]
 embedded-migrations = ["dep:diesel_migrations", "pq-sys/bundled"]
