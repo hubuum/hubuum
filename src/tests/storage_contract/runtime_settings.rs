@@ -996,6 +996,20 @@ async fn invalid_history_parameters_are_rejected(#[case] query: &str) {
 }
 
 #[actix_web::test]
+async fn admin_configuration_reports_cold_retrieval_disabled() {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let (status, body) = send_json(
+        &backend,
+        &user.raw_token,
+        test::TestRequest::get().uri("/api/v1/admin/config"),
+    )
+    .await;
+    assert_eq!(status, http::StatusCode::OK);
+    assert_eq!(body["artifacts"]["cold_retrieval"], "disabled");
+}
+
+#[actix_web::test]
 async fn admin_configuration_reports_effective_runtime_settings() {
     let storage = MemoryStorage::new();
     let writer = replica(&storage, false);

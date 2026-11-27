@@ -18,7 +18,7 @@ the native trust roots; hostname verification remains enabled. Session tokens
 are supported. Credentials are not serialized or printed by configuration Debug;
 adapter errors never include SDK request/response Debug or provider messages.
 Resolve production secrets through the existing secret provider before building
-configuration. There are no new production environment settings or API selectors.
+configuration. Production task storage has no S3 destination selector.
 
 The SDK connector uses the patched `h2` 0.4 line. The dependency guard requires
 the [RUSTSEC-2026-0258 fix](https://rustsec.org/advisories/RUSTSEC-2026-0258)
@@ -152,8 +152,15 @@ asynchronous retrieval. The candidate for qualification is a private,
 version-enabled AWS general purpose bucket, the S3 Glacier Flexible Retrieval
 storage class (`GLACIER`), and the Standard retrieval tier. The warm adapter
 above remains the supported behavior for the qualified MinIO fixture. The
-project currently has no live AWS test environment. The cases below describe
-acceptance work for the cold implementation.
+project currently has no live AWS test environment. Project 3 can merge with
+cold retrieval disabled. Live AWS qualification remains open in
+[#517](https://github.com/hubuum/hubuum/issues/517) before activation.
+
+Administrators can read `artifacts.cold_retrieval` from
+`GET /api/v1/admin/config`. This release reports `disabled`, the only accepted
+value for `HUBUUM_ARCHIVE_COLD_RETRIEVAL` or `--archive-cold-retrieval`.
+Selecting an AWS profile fails at startup, before workers or provider clients
+start. The deterministic server cases below remain part of the merge milestone.
 
 ### Fixture and identity
 

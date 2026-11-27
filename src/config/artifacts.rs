@@ -1,15 +1,31 @@
-use clap::Args;
+use clap::{Args, ValueEnum};
 use hubuum_storage_core::artifacts::ArtifactLimits;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::errors::ApiError;
 
+/// Cold retrieval modes supported by this server release.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, ToSchema, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveColdRetrieval {
+    #[default]
+    Disabled,
+}
+
 /// Operational admission limits. Retained manifests use a stable format ceiling,
 /// so lowering these limits never changes which existing outputs can be read.
 #[derive(Args, Clone, Debug, Deserialize, Serialize, ToSchema)]
 #[serde(default)]
 pub struct ArtifactOptions {
+    /// Select the archive cold retrieval mode. This release supports only disabled.
+    #[arg(
+        long = "archive-cold-retrieval",
+        env = "HUBUUM_ARCHIVE_COLD_RETRIEVAL",
+        value_enum,
+        default_value = "disabled"
+    )]
+    pub cold_retrieval: ArchiveColdRetrieval,
     #[arg(long, env = "HUBUUM_ARTIFACT_MAX_SPOOL_BYTES", default_value_t = 256 * 1024 * 1024)]
     pub max_spool_bytes: u64,
     #[arg(long, env = "HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES", default_value_t = 4 * 1024 * 1024 * 1024)]
@@ -18,6 +34,7 @@ pub struct ArtifactOptions {
 impl Default for ArtifactOptions {
     fn default() -> Self {
         Self {
+            cold_retrieval: ArchiveColdRetrieval::Disabled,
             max_spool_bytes: 256 * 1024 * 1024,
             worker_resident_bytes: 4 * 1024 * 1024 * 1024,
         }
@@ -86,7 +103,8 @@ mod tests {
         assert!(
             ArtifactOptions {
                 max_spool_bytes: spool,
-                worker_resident_bytes: worker
+                worker_resident_bytes: worker,
+                ..ArtifactOptions::default()
             }
             .validate(1 << 30, 1 << 30)
             .is_err()
