@@ -24189,6 +24189,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Restore staging capacity or rate limit reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [

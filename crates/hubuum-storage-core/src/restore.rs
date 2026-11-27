@@ -78,6 +78,11 @@ impl StorageRestoreInitiatorParts {
 }
 
 impl StorageRestoreInitiator {
+    #[must_use]
+    pub const fn principal_id(&self) -> Option<PrincipalId> {
+        self.principal_id
+    }
+
     pub fn try_new(
         principal_id: Option<PrincipalId>,
         identity_scope: impl Into<String>,
@@ -247,6 +252,11 @@ pub struct StorageRestoreJobSummary {
 }
 
 impl StorageRestoreJobSummary {
+    #[must_use]
+    pub const fn initiator(&self) -> &StorageRestoreInitiator {
+        &self.initiator
+    }
+
     pub fn try_new(
         id: RestoreJobId,
         status: StorageRestoreJobStatus,
@@ -353,6 +363,16 @@ pub struct StorageRestoreStageArtifact {
     expires_at: DateTime<Utc>,
 }
 impl StorageRestoreStageArtifact {
+    /// Checked atomically with stage publication by the selected backend.
+    pub fn check_capacity(active: i64, principal_active: i64) -> Result<(), crate::StorageError> {
+        if active >= 8 || principal_active >= 2 {
+            return Err(crate::StorageError::rate_limited(
+                "Unexpired restore stage limit reached",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn try_new(
         initiator: StorageRestoreInitiator,
         artifact: crate::StorageRestoreArtifact,

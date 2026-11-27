@@ -22,6 +22,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Restore uploads reject oversized declarations before reading the body and return
+  HTTP 429 when staging capacity is exhausted. Backup validation now runs on a
+  blocking worker.
+
 - Best-effort imports can resolve a parent collection by name after an
   earlier item failed to find it and a later item planned its creation.
 

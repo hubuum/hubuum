@@ -13,7 +13,7 @@ use crate::models::{
 };
 use crate::permissions::AppContext;
 use crate::restores::{
-    RestoreSettings, resolve_identity_scope_name, restore_status, stage_restore,
+    RestoreSettings, resolve_identity_scope_name, restore_status, stage_admitted_restore,
 };
 
 const RESTORE_CAPABILITY_HEADER: &str = "X-Hubuum-Restore-Capability";
@@ -31,7 +31,8 @@ const RESTORE_CAPABILITY_HEADER: &str = "X-Hubuum-Restore-Capability";
         (status = 400, description = "Invalid backup document", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Administrator access required", body = ApiErrorResponse),
-        (status = 413, description = "Restore upload too large", body = ApiErrorResponse)
+        (status = 413, description = "Restore upload too large", body = ApiErrorResponse),
+        (status = 429, description = "Restore staging capacity or rate limit reached", body = ApiErrorResponse)
     )
 )]
 #[post("")]
@@ -39,10 +40,24 @@ pub async fn create_restore_stage(
     context: AppContext,
     settings: web::Data<RestoreSettings>,
     admin: AdminAccess,
+    req: HttpRequest,
     mut payload: web::Payload,
 ) -> Result<impl Responder, ApiError> {
     let config = crate::config::runtime::current()?;
     let settings = settings.with_runtime(&config)?;
+    if let Some(value) = req.headers().get(actix_web::http::header::CONTENT_LENGTH) {
+        let bytes = value
+            .to_str()
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or_else(|| ApiError::BadRequest("Invalid restore Content-Length".into()))?;
+        if bytes > settings.max_upload_bytes() as u64 {
+            return Err(ApiError::PayloadTooLarge(
+                "Restore upload exceeds configured size limit".into(),
+            ));
+        }
+    }
+    let permit = settings.admit_upload(admin.user.id)?;
     let mut document = StorageRestoreArtifactBuilder::new(settings.max_upload_bytes())?;
     while let Some(chunk) = payload.next().await {
         let chunk = chunk.map_err(|error| {
@@ -55,7 +70,7 @@ pub async fn create_restore_stage(
     let scope_name = resolve_identity_scope_name(&context, principal.identity_scope_id).await?;
     let initiator = RestoreInitiator::principal(&principal, scope_name)?;
     let request = RestoreStageRequest::new(initiator, artifact)?;
-    let staged = stage_restore(&context, &settings, request).await?;
+    let staged = stage_admitted_restore(&context, &settings, request, Some(permit)).await?;
     Ok(ApiResponse::new_no_store(staged, StatusCode::CREATED))
 }
 
