@@ -161,6 +161,9 @@ impl SegmentRecord {
     pub fn payload(&self) -> &Value {
         &self.payload
     }
+    pub(super) fn into_parts(self) -> (VersionInterval, Vec<VersionIdentity>, Value) {
+        (self.interval, self.dependencies, self.payload)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -368,6 +368,15 @@ captured identities, intervals, generation, owner and deadline. Never refresh an
 old permit after external work. Catalog replacement must not rebind existing
 pins. Keep capture/catalog allocations and cumulative physical work bounded.
 
+The shared capture constructor defaults to a full-row snapshot. The collection
+read service opts into `HistoryArchiveCaptureRequest::for_retained_read`. An
+adapter must supply its actual observed primary and preserve the resulting
+capture across reload and read reservation. Use `resolve_retained_row` with the
+verified segment frame to return a pinned archive row. A verified pin has
+historical authorization facts and a SHA-256 commitment, so `hot()` returns
+`None` for that representation. Upgrade readers of persisted query pins before
+admitting compact pins. Publication continues to use full-row snapshots.
+
 Deploy migrations through `2026-11-19-000001_idle_task_scheduling` and refresh
 runtime function grants before running this server. The archive migrations
 install a protected fixed-true

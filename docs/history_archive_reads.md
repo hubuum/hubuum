@@ -49,7 +49,7 @@ A packed row contains the resource and generation, version count, compressed
 metadata, and the complete UUID and SHA-256 commitment of each version.
 The database checks that the envelope matches the row and that its declared
 length covers every commitment. The reader reconstructs and validates the full
-logical catalog. Query captures keep their existing format.
+logical catalog. The catalog migration does not rewrite existing query captures.
 
 An older reader reports an upgrade error when it encounters a packed row.
 The down migration refuses to proceed while any packed row exists. Roll
@@ -72,6 +72,22 @@ one bounded statement for candidate selection and canonical collection presence.
 A concurrent hot closure cannot alter the captured row. Catalog replacement
 cannot rebind an admitted pin: the pin retains its original immutable location
 and generation. Publication does not delete or move any artifact or primary row.
+
+For a retained collection read, admission compares the observed closed primary
+with the selected descriptor. If the identity, half-open interval and SHA-256
+commitment match, the query pin records those facts and the historical
+collection ID and name under `hot.verified_primary_v1`. Subsequent permission,
+owner, expiry and read-budget checks reload that small pin. Execution hashes the
+payload from the selected segment before normalizing it, checks the frame's
+identity, interval and dependencies, and reconstructs the original collection.
+An absent or changed primary cannot produce a verified pin. A hot-only query
+retains its original full-row snapshot.
+
+**Query pin compatibility.** Updated readers can reopen full-row and verified
+pins. Upgrade processes that read persisted pins before admitting retained
+queries with the updated service. Older readers reject `verified_primary_v1`.
+If recovery must reopen such a pin, use a matching reader and preserve its
+original ownership and deadline.
 
 Segment work happens after that transaction ends. Readers resolve durable artifact
 publication and verify the trusted manifest, index blocks, selected record and

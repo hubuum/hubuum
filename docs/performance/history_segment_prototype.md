@@ -339,6 +339,28 @@ source .env
 ./run_tests.sh --lib postgres_archive_service_wire_traffic -- --ignored --nocapture
 ```
 
+### Rechecking a retained primary through a compact pin
+
+Commit `4fee7bb3` ran the same six lookups with a verified primary pin. One
+warm-up and five measurements each used a fresh PostgreSQL database. All 36
+lookups returned the original closed row with complete coverage.
+
+| Description size | Lookup | Median reply bytes | P95 reply bytes | P2 allowance |
+| --- | --- | --- | --- | --- |
+| 256 B | Exact | 258,623 | 259,009 | 1,055,064 |
+| 256 B | As-of | 256,902 | 257,218 | 2,110,128 |
+| 64 KiB | Exact | 388,466 | 388,780 | 1,577,320 |
+| 64 KiB | As-of | 388,378 | 388,683 | 3,154,640 |
+| 3 MiB | Exact | 6,561,083 | 6,561,667 | 5,243,437 |
+| 3 MiB | As-of | 6,561,036 | 6,561,515 | 7,340,589 |
+
+Median replies for the 3 MiB exact lookup were 3,176,318 bytes during capture,
+3,371,986 during execution and 12,792 during authorized result access. The
+artifact read accounted for 3,309,615 bytes. The as-of lookup now fits its
+wire allowance. The exact lookup still exceeds its allowance because admission
+retrieves the closed primary's description and execution reads it again from
+the verified artifact. These measurements exclude PostgreSQL storage I/O.
+
 ## Remaining acceptance
 
 Project #3 tracks the remaining #514 work on `project/workload-lifecycle`.

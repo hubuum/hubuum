@@ -1,6 +1,7 @@
 //! Collection-only archive query snapshots. These catalog values are not lifecycle
 //! authorization proofs. Public task/API activation and source retirement are off.
 use std::collections::BTreeSet;
+use std::ops::Range;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
@@ -113,12 +114,19 @@ impl HistoryArchiveSelection {
         &self.point
     }
     pub fn matches(&self, row: &HistoryArchiveRow) -> bool {
-        self.resource == row.identity.resource()
+        self.matches_interval(row.identity, row.valid_from, row.valid_to)
+    }
+
+    fn matches_interval(
+        &self,
+        identity: StorageRecordIdentity,
+        from: DateTime<Utc>,
+        to: Option<DateTime<Utc>>,
+    ) -> bool {
+        self.resource == identity.resource()
             && match self.point {
-                HistoryArchivePoint::Exact { version } => row.identity.version() == version,
-                HistoryArchivePoint::AsOf { at } => {
-                    row.valid_from <= at && row.valid_to.is_none_or(|end| at < end)
-                }
+                HistoryArchivePoint::Exact { version } => identity.version() == version,
+                HistoryArchivePoint::AsOf { at } => from <= at && to.is_none_or(|end| at < end),
             }
     }
 }
@@ -320,11 +328,15 @@ impl HistoryArchiveDescriptor {
         Ok(self.identity == row.identity
             && self.valid_from == row.valid_from
             && Some(self.valid_to) == row.valid_to
-            && self.payload_digest
-                == <[u8; 32]>::from(Sha256::digest(history_archive_encoded_bytes(
-                    &row.payload,
-                    HISTORY_ARCHIVE_ROW_BYTES,
-                )?)))
+            && self.matches_payload(&row.payload)?)
+    }
+
+    fn matches_payload(&self, payload: &Value) -> Result<bool, StorageError> {
+        Ok(self.payload_digest
+            == <[u8; 32]>::from(Sha256::digest(history_archive_encoded_bytes(
+                payload,
+                HISTORY_ARCHIVE_ROW_BYTES,
+            )?)))
     }
     pub const fn identity(&self) -> StorageRecordIdentity {
         self.identity
@@ -541,6 +553,7 @@ pub struct HistoryArchiveCaptureRequest {
     selection: HistoryArchiveSelection,
     generation: HistoryArchiveCatalogGeneration,
     available_until: DateTime<Utc>,
+    retained_read: bool,
 }
 impl HistoryArchiveCaptureRequest {
     pub const fn new(
@@ -554,8 +567,17 @@ impl HistoryArchiveCaptureRequest {
             selection,
             generation,
             available_until,
+            retained_read: false,
         }
     }
+    /// A retained query can reconstruct an already verified closed primary from
+    /// its pinned segment. Publication and other callers still retain full rows.
+    #[must_use]
+    pub const fn for_retained_read(mut self) -> Self {
+        self.retained_read = true;
+        self
+    }
+
     pub const fn principal(&self) -> PrincipalIdentity {
         self.principal
     }
@@ -629,6 +651,63 @@ impl HistoryArchiveBudgetEvidence {
     }
 }
 
+/// A full primary remains the legacy wire shape. Only an exact, observed match
+/// between a closed primary and its pinned descriptor can produce a read proof.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(untagged, deny_unknown_fields)]
+enum CapturedPrimary {
+    Full(HistoryArchiveRow),
+    Verified {
+        #[serde(rename = "verified_primary_v1")]
+        proof: VerifiedPrimary,
+    },
+}
+
+impl CapturedPrimary {
+    fn identity(&self) -> StorageRecordIdentity {
+        match self {
+            Self::Full(row) => row.identity(),
+            Self::Verified { proof } => proof.authorization.identity(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct VerifiedPrimary {
+    authorization: HistoryArchiveAuthorization,
+    valid_from: DateTime<Utc>,
+    valid_to: DateTime<Utc>,
+    payload_digest: [u8; 32],
+}
+
+impl VerifiedPrimary {
+    fn from_observation(
+        row: &HistoryArchiveRow,
+        descriptor: &HistoryArchiveDescriptor,
+        authorization: &HistoryArchiveAuthorization,
+    ) -> Option<Self> {
+        descriptor.matches_row(row).ok()?.then(|| Self {
+            authorization: authorization.clone(),
+            valid_from: row.valid_from,
+            valid_to: descriptor.valid_to,
+            payload_digest: descriptor.payload_digest,
+        })
+    }
+
+    fn matches(
+        &self,
+        descriptor: &HistoryArchiveDescriptor,
+        selection: &HistoryArchiveSelection,
+    ) -> bool {
+        self.authorization.identity() == descriptor.identity
+            && self.valid_from == descriptor.valid_from
+            && self.valid_to == descriptor.valid_to
+            && self.payload_digest == descriptor.payload_digest
+            && selection.matches_interval(descriptor.identity, self.valid_from, Some(self.valid_to))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(try_from = "CaptureInput")]
 pub struct HistoryArchiveCapture {
@@ -640,7 +719,7 @@ pub struct HistoryArchiveCapture {
     runtime: Uuid,
     captured_at: DateTime<Utc>,
     available_until: DateTime<Utc>,
-    hot: Option<HistoryArchiveRow>,
+    hot: Option<CapturedPrimary>,
     authorization: Option<HistoryArchiveAuthorization>,
     archive: Option<HistoryArchiveDescriptor>,
     coverage: HistoryArchiveCoverageState,
@@ -659,7 +738,7 @@ struct CaptureInput {
     runtime: Uuid,
     captured_at: DateTime<Utc>,
     available_until: DateTime<Utc>,
-    hot: Option<HistoryArchiveRow>,
+    hot: Option<CapturedPrimary>,
     authorization: Option<HistoryArchiveAuthorization>,
     archive: Option<HistoryArchiveDescriptor>,
     coverage: HistoryArchiveCoverageState,
@@ -787,10 +866,13 @@ impl HistoryArchiveCapture {
             matches!(request.selection.point, HistoryArchivePoint::AsOf { at }
                 if at < entry.valid_from || at >= entry.valid_to)
         });
-        let hot_content_changed = hot_descriptor.is_some_and(|entry| {
-            hot.as_ref()
-                .is_some_and(|row| !entry.matches_row(row).unwrap_or(false))
-        });
+        let verified = hot_descriptor
+            .zip(hot.as_ref())
+            .zip(authorization.as_ref())
+            .and_then(|((descriptor, row), facts)| {
+                VerifiedPrimary::from_observation(row, descriptor, facts)
+            });
+        let hot_content_changed = hot_descriptor.is_some() && verified.is_none();
         let archive = candidate
             .filter(|_| {
                 !ambiguous && !missing_primary && !retained_closure_gap && !retained_overlap
@@ -819,6 +901,12 @@ impl HistoryArchiveCapture {
             HistoryArchiveCoverageState::DependencyIncomplete
         } else {
             HistoryArchiveCoverageState::Complete
+        };
+        let hot = match (request.retained_read, coverage, archive.as_ref(), verified) {
+            (true, HistoryArchiveCoverageState::Complete, Some(_), Some(proof)) => {
+                Some(CapturedPrimary::Verified { proof })
+            }
+            _ => hot.map(CapturedPrimary::Full),
         };
         let capture = Self {
             id: Uuid::new_v4(),
@@ -866,7 +954,61 @@ impl HistoryArchiveCapture {
         self.generation
     }
     pub const fn hot(&self) -> Option<&HistoryArchiveRow> {
-        self.hot.as_ref()
+        match &self.hot {
+            Some(CapturedPrimary::Full(row)) => Some(row),
+            _ => None,
+        }
+    }
+
+    /// Resolve a verified segment frame against the captured primary. Compare the
+    /// raw payload before the row constructor normalizes timestamp spellings.
+    pub fn resolve_retained_row(
+        &self,
+        identity: StorageRecordIdentity,
+        interval: Range<DateTime<Utc>>,
+        dependencies: &[VersionIdentity],
+        payload: Value,
+    ) -> Result<HistoryArchiveRow, StorageError> {
+        let descriptor = self
+            .archive
+            .as_ref()
+            .ok_or_else(|| invalid("Missing pinned archive descriptor"))?;
+        if self.coverage != HistoryArchiveCoverageState::Complete
+            || identity != descriptor.identity
+            || interval.start != descriptor.valid_from
+            || interval.end != descriptor.valid_to
+            || dependencies != descriptor.dependencies()
+            || !descriptor.matches_payload(&payload)?
+        {
+            return Err(invalid("Retained record differs from the pinned version"));
+        }
+        match &self.hot {
+            Some(CapturedPrimary::Full(row))
+                if row.identity == descriptor.identity
+                    && row.valid_from == descriptor.valid_from
+                    && row.valid_to == Some(descriptor.valid_to)
+                    && payload == row.payload =>
+            {
+                Ok(row.clone())
+            }
+            Some(CapturedPrimary::Verified { proof }) => {
+                let row = HistoryArchiveRow::new(
+                    descriptor.identity,
+                    descriptor.valid_from,
+                    Some(descriptor.valid_to),
+                    payload,
+                )?;
+                if proof.authorization.collection() != row.collection().id()
+                    || proof.authorization.name() != row.collection().name()
+                {
+                    return Err(invalid(
+                        "Retained authorization differs from the captured primary",
+                    ));
+                }
+                Ok(row)
+            }
+            _ => Err(invalid("Pinned primary capture missing or inconsistent")),
+        }
     }
     pub const fn authorization(&self) -> Option<&HistoryArchiveAuthorization> {
         self.authorization.as_ref()
@@ -909,7 +1051,7 @@ impl HistoryArchiveCapture {
             .authorization
             .as_ref()
             .is_some_and(|facts| facts.identity().resource() != self.selection.resource())
-            || self.hot.as_ref().is_some_and(|row| {
+            || self.hot().is_some_and(|row| {
                 self.authorization.as_ref().is_none_or(|facts| {
                     facts.identity() != row.identity()
                         || facts.collection() != row.collection().id()
@@ -921,19 +1063,33 @@ impl HistoryArchiveCapture {
                 "Captured authorization facts differ from source identity",
             ));
         }
+        if let Some(CapturedPrimary::Verified { proof }) = &self.hot
+            && (self.authorization.as_ref() != Some(&proof.authorization)
+                || self.selection.family() != StorageBackupHistorySection::CollectionHistory
+                || !matches!(
+                    self.coverage,
+                    HistoryArchiveCoverageState::Complete | HistoryArchiveCoverageState::Expired
+                )
+                || self.archive.as_ref().is_none_or(|entry| {
+                    !entry.supported_format()
+                        || !entry.dependencies().is_empty()
+                        || !proof.matches(entry, &self.selection)
+                }))
+        {
+            return Err(invalid(
+                "Verified primary differs from the pinned archive capture",
+            ));
+        }
         if self.id.is_nil()
             || self.runtime.is_nil()
             || self.available_until <= self.captured_at
             || self.available_until > self.captured_at + Duration::hours(48)
             || self.reserved_read_bytes > HISTORY_ARCHIVE_READ_BYTES
-            || self
-                .hot
-                .as_ref()
-                .is_some_and(|row| !self.selection.matches(row))
+            || self.hot().is_some_and(|row| !self.selection.matches(row))
             || self.archive.as_ref().is_some_and(|entry| {
                 self.hot
                     .as_ref()
-                    .is_none_or(|row| row.identity() != entry.identity())
+                    .is_none_or(|primary| primary.identity() != entry.identity())
             })
         {
             return Err(invalid("Invalid persisted archive capture"));
