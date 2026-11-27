@@ -129,6 +129,9 @@ impl RelationExistence {
 
 #[derive(Default)]
 pub(super) struct PlanningState {
+    pub(super) loaded_collection_names: HashSet<String>,
+    pub(super) resolved_keys: HashMap<crate::models::CollectionKey, i32>,
+    pub(super) execution_paths: HashMap<String, Vec<String>>,
     last_virtual_id: i32,
     pub(super) authorization: ImportAuthorization,
     planned_collection_keys: HashSet<(i32, String)>,

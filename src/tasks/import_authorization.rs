@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::errors::ApiError;
 use crate::models::{CollectionID, Permissions, token_scope::TokenScope};
 use crate::permissions::{
     AuthorizationContext, AuthorizationMode, PrincipalRef, ResourceRef, authorize_resources,
@@ -27,13 +28,15 @@ impl ImportAdminStatus {
 pub(super) struct ImportAuthorization {
     admin_status: ImportAdminStatus,
     scopes: Option<TokenScope>,
-    collection_permission_cache: HashMap<(i32, Permissions), Result<(), String>>,
+    readable: HashMap<(Permissions, i32), bool>,
+    collection_permission_cache: HashMap<(i32, Permissions), Result<(), ApiError>>,
 }
 
 impl ImportAuthorization {
     pub(super) fn new(scopes: Option<&TokenScope>, admin_status: ImportAdminStatus) -> Self {
         Self {
             scopes: scopes.cloned(),
+            readable: HashMap::new(),
             admin_status,
             collection_permission_cache: HashMap::new(),
         }
@@ -96,7 +99,7 @@ impl ImportAuthorization {
 
         let key = (collection_id, permission);
         if let Some(result) = self.collection_permission_cache.get(&key) {
-            return result.clone();
+            return result.clone().map_err(|error| error.to_string());
         }
 
         let collection = CollectionID::new(collection_id).map_err(|err| err.to_string())?;
@@ -106,9 +109,31 @@ impl ImportAuthorization {
             Ok(())
         }
         .await;
-        let result = result.map_err(|err| err.to_string());
         self.collection_permission_cache.insert(key, result.clone());
-        result
+        result.map_err(|err| err.to_string())
+    }
+
+    pub(super) async fn visible<C: AuthorizationContext>(
+        &mut self,
+        backend: &C,
+        user: &impl AuthzSubject,
+        resource: ResourceRef,
+        permission: Permissions,
+    ) -> Result<bool, String> {
+        let key = (
+            permission,
+            resource.id().ok_or("Missing import candidate id")?,
+        );
+        if let Some(visible) = self.readable.get(&key) {
+            return Ok(*visible);
+        }
+        let visible = match self.decide(backend, user, resource, permission).await {
+            Ok(()) => true,
+            Err(ApiError::Forbidden(_) | ApiError::NotFound(_)) => false,
+            Err(error) => return Err(error.to_string()),
+        };
+        self.readable.insert(key, visible);
+        Ok(visible)
     }
 
     /// Existing resources must retain their identity for external policy and token
@@ -123,39 +148,56 @@ impl ImportAuthorization {
     where
         C: AuthorizationContext,
     {
-        if self.scopes.is_none() && self.is_admin(backend, user).await? {
+        self.decide(backend, user, resource, permission)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    async fn decide<C: AuthorizationContext>(
+        &mut self,
+        backend: &C,
+        user: &impl AuthzSubject,
+        resource: ResourceRef,
+        permission: Permissions,
+    ) -> Result<(), ApiError> {
+        if self.scopes.is_none()
+            && self
+                .is_admin(backend, user)
+                .await
+                .map_err(ApiError::PermissionBackendUnavailable)?
+        {
             return Ok(());
         }
         if !scope_allows(self.scopes.as_ref(), &[permission])
             || !scope_allows_resource(self.scopes.as_ref(), &resource)
         {
-            return Err("Permission denied".into());
+            return Err(ApiError::Forbidden("Permission denied".into()));
         }
         match backend.authorization_mode() {
-            AuthorizationMode::Delegated(permission_backend) => authorize_resources(
-                permission_backend,
-                backend,
-                user,
-                self.scopes.as_ref(),
-                vec![permission],
-                vec![resource],
-            )
-            .await
-            .map_err(|error| error.to_string()),
+            AuthorizationMode::Delegated(permission_backend) => {
+                authorize_resources(
+                    permission_backend,
+                    backend,
+                    user,
+                    self.scopes.as_ref(),
+                    vec![permission],
+                    vec![resource],
+                )
+                .await
+            }
             AuthorizationMode::LocalStorage => {
-                let collection_id = resource
-                    .collection_id()
-                    .ok_or_else(|| "Import resource has no collection".to_string())?;
+                let collection_id = resource.collection_id().ok_or_else(|| {
+                    ApiError::InternalServerError("Import resource has no collection".into())
+                })?;
                 let key = (collection_id, permission);
                 if let Some(result) = self.collection_permission_cache.get(&key) {
                     return result.clone();
                 }
-                let collection =
-                    CollectionID::new(collection_id).map_err(|error| error.to_string())?;
+                let collection = CollectionID::new(collection_id)
+                    .map_err(|error| ApiError::InternalServerError(error.to_string()))?;
                 let result = user
                     .can(backend, [permission], [collection], self.scopes.as_ref())
-                    .await
-                    .map_err(|error| error.to_string());
+                    .await;
                 self.collection_permission_cache.insert(key, result.clone());
                 result
             }

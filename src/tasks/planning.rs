@@ -1,4 +1,5 @@
 mod import;
+mod selectors;
 use import::plan_import_with_admin_status;
 
 use crate::models::token_scope::TokenScope;
@@ -178,12 +179,15 @@ async fn preflight_dry_run(
     pool: &impl crate::storage::StorageContext,
     mode: &ImportMode,
     planned_items: Vec<PlannedItem>,
+    state: &PlanningState,
+    preview: &selectors::PreviewClassNames,
 ) -> Result<PlanningOutcome, ApiError> {
     let plan = planned_items
         .iter()
         .enumerate()
         .filter_map(|(index, item)| item.execution.clone().map(|execution| (index, execution)))
-        .map(|(index, execution)| {
+        .map(|(index, mut execution)| {
+            selectors::bind(&mut execution, state, preview);
             crate::services::import_boundary::import_operation_to_storage(execution)
                 .map(|execution| StorageImportPlanItem::new(index, execution))
         })
@@ -225,7 +229,7 @@ async fn preflight_dry_run(
             failures.push(PlanningFailure {
                 kind: preflight_failure_kind(&error),
                 item: item.result,
-                message: sanitize_error_for_storage(&error),
+                message: preview.display_message(sanitize_error_for_storage(&error)),
             });
         } else {
             valid_items.push(item);
@@ -405,7 +409,7 @@ where
         });
     }
 
-    let parent = resolve_collection_parent_planning(pool, state, input)
+    let parent = resolve_collection_parent_planning(pool, user, state, input)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Validation,
@@ -477,6 +481,19 @@ where
     } else {
         None
     };
+
+    let existing = super::resolution::visible_collection(pool, user, state, existing)
+        .await
+        .map_err(|message| PlanningFailure {
+            kind: FailureKind::Runtime,
+            item: planned_result(
+                "collection",
+                "lookup",
+                input.ref_.clone(),
+                Some(input.name.clone()),
+            ),
+            message,
+        })?;
 
     if let Some(collection) = existing {
         state
@@ -691,6 +708,7 @@ where
 
     let collection = resolve_collection_planning(
         pool,
+        user,
         state,
         input.collection_ref.as_deref(),
         input.collection_key.as_ref(),
@@ -757,6 +775,19 @@ where
             })?
             .map(storage_class_to_resolution),
     };
+
+    let existing = super::resolution::visible_class(pool, user, state, existing)
+        .await
+        .map_err(|message| PlanningFailure {
+            kind: FailureKind::Runtime,
+            item: planned_result(
+                "class",
+                "lookup",
+                input.ref_.clone(),
+                Some(input.name.clone()),
+            ),
+            message,
+        })?;
 
     let identifier = format!("{}::{}", collection.name, input.name);
 
@@ -957,6 +988,7 @@ where
 
     let class = resolve_class_planning(
         pool,
+        user,
         state,
         input.class_ref.as_deref(),
         input.class_key.as_ref(),
@@ -1043,7 +1075,7 @@ where
     };
 
     let identifier = format!("{}::{}", class.name, input.name);
-    let collection = resolve_collection_by_id_planning(pool, state, class.collection_id)
+    let collection = resolve_collection_by_id_planning(pool, user, state, class.collection_id)
         .await
         .map_err(|message| PlanningFailure {
             kind: FailureKind::Resolution,
@@ -1175,6 +1207,7 @@ where
     let pool = backend;
     let from_class = resolve_class_planning(
         pool,
+        user,
         state,
         input.from_class_ref.as_deref(),
         input.from_class_key.as_ref(),
@@ -1187,6 +1220,7 @@ where
     })?;
     let to_class = resolve_class_planning(
         pool,
+        user,
         state,
         input.to_class_ref.as_deref(),
         input.to_class_key.as_ref(),
@@ -1200,30 +1234,32 @@ where
     let pair = normalize_pair(from_class.id, to_class.id);
     let identifier = Some(format!("{}<->{}", from_class.name, to_class.name));
 
-    let from_collection = resolve_collection_by_id_planning(pool, state, from_class.collection_id)
-        .await
-        .map_err(|message| PlanningFailure {
-            kind: FailureKind::Resolution,
-            item: planned_result(
-                "class_relation",
-                "create",
-                input.ref_.clone(),
-                identifier.clone(),
-            ),
-            message,
-        })?;
-    let to_collection = resolve_collection_by_id_planning(pool, state, to_class.collection_id)
-        .await
-        .map_err(|message| PlanningFailure {
-            kind: FailureKind::Resolution,
-            item: planned_result(
-                "class_relation",
-                "create",
-                input.ref_.clone(),
-                identifier.clone(),
-            ),
-            message,
-        })?;
+    let from_collection =
+        resolve_collection_by_id_planning(pool, user, state, from_class.collection_id)
+            .await
+            .map_err(|message| PlanningFailure {
+                kind: FailureKind::Resolution,
+                item: planned_result(
+                    "class_relation",
+                    "create",
+                    input.ref_.clone(),
+                    identifier.clone(),
+                ),
+                message,
+            })?;
+    let to_collection =
+        resolve_collection_by_id_planning(pool, user, state, to_class.collection_id)
+            .await
+            .map_err(|message| PlanningFailure {
+                kind: FailureKind::Resolution,
+                item: planned_result(
+                    "class_relation",
+                    "create",
+                    input.ref_.clone(),
+                    identifier.clone(),
+                ),
+                message,
+            })?;
 
     let relation_exists = class_relation_exists_cached(pool, state, pair)
         .await
@@ -1325,6 +1361,7 @@ where
     let pool = backend;
     let from_object = resolve_object_planning(
         pool,
+        user,
         state,
         input.from_object_ref.as_deref(),
         input.from_object_key.as_ref(),
@@ -1337,6 +1374,7 @@ where
     })?;
     let to_object = resolve_object_planning(
         pool,
+        user,
         state,
         input.to_object_ref.as_deref(),
         input.to_object_key.as_ref(),
@@ -1350,30 +1388,32 @@ where
     let pair = normalize_pair(from_object.id, to_object.id);
     let identifier = Some(format!("{}<->{}", from_object.name, to_object.name));
 
-    let from_collection = resolve_collection_by_id_planning(pool, state, from_object.collection_id)
-        .await
-        .map_err(|message| PlanningFailure {
-            kind: FailureKind::Resolution,
-            item: planned_result(
-                "object_relation",
-                "create",
-                input.ref_.clone(),
-                identifier.clone(),
-            ),
-            message,
-        })?;
-    let to_collection = resolve_collection_by_id_planning(pool, state, to_object.collection_id)
-        .await
-        .map_err(|message| PlanningFailure {
-            kind: FailureKind::Resolution,
-            item: planned_result(
-                "object_relation",
-                "create",
-                input.ref_.clone(),
-                identifier.clone(),
-            ),
-            message,
-        })?;
+    let from_collection =
+        resolve_collection_by_id_planning(pool, user, state, from_object.collection_id)
+            .await
+            .map_err(|message| PlanningFailure {
+                kind: FailureKind::Resolution,
+                item: planned_result(
+                    "object_relation",
+                    "create",
+                    input.ref_.clone(),
+                    identifier.clone(),
+                ),
+                message,
+            })?;
+    let to_collection =
+        resolve_collection_by_id_planning(pool, user, state, to_object.collection_id)
+            .await
+            .map_err(|message| PlanningFailure {
+                kind: FailureKind::Resolution,
+                item: planned_result(
+                    "object_relation",
+                    "create",
+                    input.ref_.clone(),
+                    identifier.clone(),
+                ),
+                message,
+            })?;
 
     let class_pair = normalize_pair(from_object.class_id, to_object.class_id);
     let class_relation_exists = class_relation_exists_cached(pool, state, class_pair)
@@ -1498,6 +1538,7 @@ where
     let pool = backend;
     let collection = resolve_collection_planning(
         pool,
+        user,
         state,
         input.collection_ref.as_deref(),
         input.collection_key.as_ref(),

@@ -518,6 +518,7 @@ async fn test_resolve_collection_planning_backfills_caches_after_db_lookup() {
 
     let resolved = (resolve_collection_planning(
         &context.pool,
+        &context.admin_user,
         &mut state,
         None,
         Some(&CollectionKey {
@@ -567,6 +568,7 @@ async fn test_resolve_collection_planning_rejects_ambiguous_bare_name() {
     let mut state = PlanningState::default();
     let err = (resolve_collection_planning(
         &context.pool,
+        &context.admin_user,
         &mut state,
         None,
         Some(&CollectionKey {
@@ -610,6 +612,7 @@ async fn test_resolve_collection_planning_uses_path_to_disambiguate_name() {
     let mut state = PlanningState::default();
     let resolved = (resolve_collection_planning(
         &context.pool,
+        &context.admin_user,
         &mut state,
         None,
         Some(&CollectionKey {
@@ -629,10 +632,14 @@ async fn test_resolve_collection_by_id_planning_backfills_caches_after_db_lookup
     let fixture = (context.collection_fixture("planning_collection_id_cache")).await;
     let mut state = PlanningState::default();
 
-    let resolved =
-        (resolve_collection_by_id_planning(&context.pool, &mut state, fixture.collection.id))
-            .await
-            .unwrap();
+    let resolved = (resolve_collection_by_id_planning(
+        &context.pool,
+        &context.admin_user,
+        &mut state,
+        fixture.collection.id,
+    ))
+    .await
+    .unwrap();
 
     assert_eq!(resolved.name, fixture.collection.name);
     assert!(
@@ -663,6 +670,7 @@ async fn test_resolve_class_planning_backfills_cache_after_db_lookup() {
 
     let resolved = (resolve_class_planning(
         &context.pool,
+        &context.admin_user,
         &mut state,
         None,
         Some(&ClassKey {
@@ -713,6 +721,7 @@ async fn test_resolve_object_planning_backfills_cache_after_db_lookup() {
 
     let resolved = (resolve_object_planning(
         &context.pool,
+        &context.admin_user,
         &mut state,
         None,
         Some(&ObjectKey {
@@ -1195,17 +1204,35 @@ async fn import_overwrite_does_not_reuse_collection_grants_outside_object_scope(
         })).collect::<Vec<_>>()}
     })).unwrap();
 
+    // The token may update its exact object but cannot resolve either object's
+    // parent by name without read grants. Exercise both decisions separately.
+    let mut auth = super::super::import_authorization::ImportAuthorization::new(
+        Some(&scope),
+        Default::default(),
+    );
+    for (index, object) in objects.iter().enumerate() {
+        let decision = auth
+            .require_resource(
+                &context.pool,
+                &context.normal_user,
+                crate::permissions::ResourceRef::object(
+                    object.id,
+                    crate::permissions::ClassResourceEndpoint::new(fixture.collection.id, class.id),
+                    Some(object.name.clone()),
+                ),
+                Permissions::UpdateObject,
+            )
+            .await;
+        assert_eq!(decision.is_ok(), index == 0);
+    }
     let planning = plan_import(&context.pool, &context.normal_user, Some(&scope), &request).await;
-    assert!(matches!(planning.planned_items.as_slice(), [PlannedItem {
-        execution: Some(PlannedExecution::UpdateObject {object_id, ..}), ..
-    }] if *object_id == objects[0].id));
-    assert!(matches!(
-        planning.failures.as_slice(),
-        [PlanningFailure {
-            kind: FailureKind::Permission,
-            ..
-        }]
-    ));
+    assert!(planning.planned_items.is_empty());
+    assert!(
+        planning
+            .failures
+            .iter()
+            .all(|failure| failure.message.contains("not found"))
+    );
 
     for object in objects {
         object.delete_without_events(&context.pool).await.unwrap();
@@ -1225,7 +1252,7 @@ async fn import_overwrite_authorizes_existing_resource(
     #[case] allowed: bool,
     #[values(false, true)] scoped: bool,
 ) {
-    use crate::models::{HubuumClassID, HubuumObjectID, TokenResourceScope, TokenScope};
+    use crate::models::{HubuumObjectID, TokenResourceScope, TokenScope};
     use crate::traits::{CanDelete, SelfAccessors};
     let context = TestContext::new().await;
     let fixture = context.collection_fixture("import_overwrite_policy").await;
@@ -1272,6 +1299,22 @@ async fn import_overwrite_authorizes_existing_resource(
         _ => unreachable!("only class and object overwrites are exercised"),
     };
     let policy = MockTreetopBackend::new();
+    for (action, resource_kind, id) in [
+        (
+            Permissions::ReadCollection,
+            ResourceKind::Collection,
+            fixture.collection.id,
+        ),
+        (Permissions::ReadClass, ResourceKind::Class, class.id),
+    ] {
+        policy.add_rule(MockAllowRule {
+            group_id: fixture.owner_group.id,
+            action,
+            resource_kind,
+            resource_id: Some(id),
+            attrs: ResourceFields::default(),
+        });
+    }
     // A collection probe may succeed even when the actual resource is denied.
     if allowed {
         policy.add_rule(MockAllowRule {
@@ -1298,14 +1341,17 @@ async fn import_overwrite_authorizes_existing_resource(
         Arc::new(policy),
     );
     let scopes = scoped.then(|| {
-        let resource = match kind {
-            ResourceKind::Object => {
-                TokenResourceScope::Object(HubuumObjectID::new(object.id).unwrap())
-            }
-            ResourceKind::Class => TokenResourceScope::Class(HubuumClassID::new(class.id).unwrap()),
-            _ => unreachable!(),
-        };
-        TokenScope::from_stored_parts(Some(vec![permission]), Some(vec![resource])).unwrap()
+        TokenScope::from_stored_parts(
+            Some(vec![
+                permission,
+                Permissions::ReadCollection,
+                Permissions::ReadClass,
+            ]),
+            Some(vec![TokenResourceScope::Collection(
+                CollectionID::new(fixture.collection.id).unwrap(),
+            )]),
+        )
+        .unwrap()
     });
     let request: ImportRequest = serde_json::from_value(serde_json::json!({
         "version": CURRENT_IMPORT_VERSION,
@@ -1444,4 +1490,146 @@ async fn best_effort_import_resolves_a_parent_planned_after_a_name_lookup_miss()
         &item.execution,
         Some(PlannedExecution::CreateCollection(input)) if input.name == later_child
     )));
+}
+
+#[rstest]
+#[case::bare(false)]
+#[case::path(true)]
+#[tokio::test]
+async fn hidden_and_absent_collection_return_identical_dry_run_results(#[case] qualified: bool) {
+    let context = TestContext::new().await;
+    let fixture = context
+        .collection_fixture("private_import_collection")
+        .await;
+    let mut key = serde_json::json!({"name": fixture.collection.name});
+    if qualified {
+        key["path"] = serde_json::json!([fixture.collection.name]);
+    }
+    let request: ImportRequest = serde_json::from_value(serde_json::json!({
+        "version": CURRENT_IMPORT_VERSION, "dry_run": true,
+        "graph": {"classes": [{"name": "sample", "description":"", "collection_key":key}]}
+    }))
+    .unwrap();
+    let hidden = plan_import(&context.pool, &context.normal_user, None, &request).await;
+    fixture.cleanup().await.unwrap();
+    let absent = plan_import(&context.pool, &context.normal_user, None, &request).await;
+    assert!(hidden.planned_items.is_empty() && absent.planned_items.is_empty());
+    assert_eq!(hidden.failures.len(), 1);
+    assert_eq!(absent.failures.len(), 1);
+    assert_eq!(hidden.failures[0].message, absent.failures[0].message);
+    assert_eq!(
+        hidden.failures[0].item.action,
+        absent.failures[0].item.action
+    );
+}
+
+#[tokio::test]
+async fn delegated_create_preview_keeps_hidden_and_available_class_names_indistinguishable() {
+    use crate::traits::CanDelete;
+    let context = TestContext::new().await;
+    let fixture = context.collection_fixture("private_preview_class").await;
+    let class = NewHubuumClass {
+        collection_id: fixture.collection.id,
+        name: context.scoped_name("private_class"),
+        description: "private".into(),
+        json_schema: None,
+        validate_schema: None,
+    }
+    .save_without_events(&context.pool)
+    .await
+    .unwrap();
+    let policy = MockTreetopBackend::new();
+    for (action, resource_kind, resource_id) in [
+        (
+            Permissions::ReadCollection,
+            ResourceKind::Collection,
+            Some(fixture.collection.id),
+        ),
+        (Permissions::CreateClass, ResourceKind::Class, None),
+    ] {
+        policy.add_rule(MockAllowRule {
+            group_id: fixture.owner_group.id,
+            action,
+            resource_kind,
+            resource_id,
+            attrs: ResourceFields {
+                collection_id: Some(fixture.collection.id),
+                ..ResourceFields::default()
+            },
+        });
+    }
+    let backend = crate::tests::app_context_with_permission_backend(
+        context.pool.get_ref().clone(),
+        Arc::new(policy),
+    );
+    let request: ImportRequest = serde_json::from_value(serde_json::json!({
+        "version":CURRENT_IMPORT_VERSION,"dry_run":true,
+        "graph":{"classes":[{"name":class.name,"description":"proposed","collection_key":{"name":fixture.collection.name}}]}
+    })).unwrap();
+    let hidden = plan_import(&backend, &context.admin_user, None, &request).await;
+    class.delete_without_events(&context.pool).await.unwrap();
+    let absent = plan_import(&backend, &context.admin_user, None, &request).await;
+    for result in [hidden, absent] {
+        assert!(result.failures.is_empty(), "{:?}", result.failures);
+        assert_eq!(result.planned_items.len(), 1);
+        assert_eq!(result.planned_items[0].result.action, "create");
+    }
+    fixture.cleanup().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_hidden_duplicate_does_not_change_a_visible_collection_selector() {
+    use crate::traits::CanDelete;
+    let context = TestContext::new().await;
+    let mut parents = context
+        .collection_fixtures("visible_name_resolution", 2)
+        .await;
+    let hidden_parent = parents.pop().unwrap();
+    let readable_parent = parents.pop().unwrap();
+    readable_parent
+        .owner_group
+        .add_member_without_events(&context.pool, &context.normal_user)
+        .await
+        .unwrap();
+    let name = context.scoped_name("shared_child_name");
+    let mut children = Vec::new();
+    for parent in [&readable_parent, &hidden_parent] {
+        children.push(
+            NewCollectionWithAssignee {
+                name: name.clone(),
+                description: "duplicate child".into(),
+                group_id: GroupID::new(parent.owner_group.id).unwrap(),
+                parent_collection_id: Some(CollectionID::new(parent.collection.id).unwrap()),
+            }
+            .save_without_events(&context.pool)
+            .await
+            .unwrap(),
+        );
+    }
+    let request: ImportRequest = serde_json::from_value(serde_json::json!({
+        "version": CURRENT_IMPORT_VERSION,
+        "graph":{"classes":[{"name":"proposed","description":"preview","collection_key":{"name":name}}]}
+    })).unwrap();
+    let plan = plan_import(&context.pool, &context.normal_user, None, &request).await;
+    assert!(plan.failures.is_empty(), "{:?}", plan.failures);
+    let [item] = plan.planned_items.as_slice() else {
+        panic!("expected a single planned class")
+    };
+    let Some(PlannedExecution::CreateClass(input)) = &item.execution else {
+        panic!("expected class creation")
+    };
+    let path = input
+        .collection_key
+        .as_ref()
+        .unwrap()
+        .path
+        .as_deref()
+        .unwrap();
+    assert_eq!(path, &[readable_parent.collection.name.clone(), name]);
+
+    for child in children {
+        child.delete_without_events(&context.pool).await.unwrap();
+    }
+    hidden_parent.cleanup().await.unwrap();
+    readable_parent.cleanup().await.unwrap();
 }

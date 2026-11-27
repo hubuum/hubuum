@@ -1,10 +1,8 @@
 use hubuum_domain::{ClassId, CollectionId};
 use std::collections::{HashMap, HashSet};
 
-use super::helpers::{
-    storage_class_to_resolution, storage_collection_to_resolution, storage_object_to_resolution,
-};
-use super::resolution::{resolve_class_planning, resolve_collection_planning};
+use super::helpers::{storage_class_to_resolution, storage_object_to_resolution};
+use super::resolution::{resolve_class_planning, resolve_collection_planning, visible_class};
 use super::types::{CacheLookup, CollectionResolution, PlanningState};
 use crate::models::{ClassKey, ImportRequest, ObjectKey};
 
@@ -69,62 +67,18 @@ fn collect_request_object_keys(request: &ImportRequest) -> Vec<ObjectKey> {
     keys
 }
 
-async fn preload_collections_for_class_keys(
-    pool: &impl crate::storage::StorageContext,
-    state: &mut PlanningState,
-    class_keys: &[ClassKey],
-) -> Result<(), String> {
-    let names = class_keys
-        .iter()
-        .filter_map(|key| {
-            key.collection_key
-                .as_ref()
-                .and_then(|collection| collection.path.is_none().then_some(collection.name.clone()))
-        })
-        .filter(|name| matches!(state.collections_named(name), CacheLookup::Unknown))
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-
-    for name in names {
-        let collections = storage_handle(pool)
-            .list_import_collections_by_name(&name)
-            .await
-            .map_err(|err| err.to_string())?;
-        if collections.is_empty() {
-            state.record_missing_collection_name(name);
-            continue;
-        }
-        for collection in collections {
-            state.remember_collection(None, storage_collection_to_resolution(collection));
-        }
-    }
-
-    for key in class_keys {
-        if key
-            .collection_key
-            .as_ref()
-            .and_then(|collection| collection.path.as_ref())
-            .is_some()
-        {
-            let _ = resolve_class_collection_for_preload(pool, state, key).await?;
-        }
-    }
-
-    Ok(())
-}
-
 pub(super) async fn preload_existing_classes(
-    pool: &impl crate::storage::StorageContext,
+    pool: &impl crate::permissions::AuthorizationContext,
+    user: &impl crate::traits::AuthzSubject,
     state: &mut PlanningState,
     request: &ImportRequest,
 ) -> Result<(), String> {
     let class_keys = collect_request_class_keys(request);
-    preload_collections_for_class_keys(pool, state, &class_keys).await?;
 
     let mut requested = HashMap::<i32, HashSet<String>>::new();
     for key in class_keys {
-        let Some(collection) = resolve_class_collection_for_preload(pool, state, &key).await?
+        let Some(collection) =
+            resolve_class_collection_for_preload(pool, user, state, &key).await?
         else {
             continue;
         };
@@ -155,12 +109,19 @@ pub(super) async fn preload_existing_classes(
             )
             .await
             .map_err(|err| err.to_string())?;
-        let found_names = classes
-            .iter()
-            .map(|class| class.name().to_string())
-            .collect::<HashSet<_>>();
-        for class in classes {
-            state.remember_class(None, storage_class_to_resolution(class));
+        let mut found_names = HashSet::new();
+        for candidate in classes {
+            if let Some(class) = visible_class(
+                pool,
+                user,
+                state,
+                Some(storage_class_to_resolution(candidate)),
+            )
+            .await?
+            {
+                found_names.insert(class.name.clone());
+                state.remember_class(None, class);
+            }
         }
         for name in names {
             if !found_names.contains(&name) {
@@ -173,14 +134,15 @@ pub(super) async fn preload_existing_classes(
 }
 
 async fn resolve_class_collection_for_preload(
-    pool: &impl crate::storage::StorageContext,
+    pool: &impl crate::permissions::AuthorizationContext,
+    user: &impl crate::traits::AuthzSubject,
     state: &mut PlanningState,
     key: &ClassKey,
 ) -> Result<Option<CollectionResolution>, String> {
     match (key.collection_ref.as_deref(), key.collection_key.as_ref()) {
         (Some(reference), None) => Ok(state.collection_by_ref(reference).cloned()),
         (None, Some(key)) => {
-            match resolve_collection_planning(pool, state, None, Some(key)).await {
+            match resolve_collection_planning(pool, user, state, None, Some(key)).await {
                 Ok(collection) => Ok(Some(collection)),
                 Err(message) if message.contains("not found") => Ok(None),
                 Err(message) => Err(message),
@@ -191,7 +153,8 @@ async fn resolve_class_collection_for_preload(
 }
 
 pub(super) async fn preload_existing_objects(
-    pool: &impl crate::storage::StorageContext,
+    pool: &impl crate::permissions::AuthorizationContext,
+    user: &impl crate::traits::AuthzSubject,
     state: &mut PlanningState,
     request: &ImportRequest,
 ) -> Result<(), String> {
@@ -201,6 +164,7 @@ pub(super) async fn preload_existing_objects(
     for key in object_keys {
         let class = match resolve_class_planning(
             pool,
+            user,
             state,
             key.class_ref.as_deref(),
             key.class_key.as_ref(),

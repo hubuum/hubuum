@@ -88,7 +88,7 @@ impl Default for ImportMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema)]
 pub struct CollectionKey {
     pub name: String,
     pub path: Option<Vec<String>>,
