@@ -517,29 +517,6 @@ fn single_host_direct_routing_uses_one_health_checked_public_api_proxy() {
 }
 
 #[test]
-fn single_host_metrics_routes_target_each_backend_process() {
-    let installer = read_repository_text("scripts/install-single-host.sh");
-
-    assert!(installer.contains(
-        "(metrics_primary_proxy) {\n\
-                                \treverse_proxy hubuum-api:${API_PORT}\n\
-                                }"
-    ));
-    assert!(installer.contains(
-        "(metrics_standby_proxy) {\n\
-                                \treverse_proxy hubuum-api-standby:${API_PORT}\n\
-                                }"
-    ));
-    assert!(installer.contains(
-        "handle /metrics/standby {\n\
-                                \t\trewrite * /metrics\n\
-                                \t\timport metrics_standby_proxy\n\
-                                \t}"
-    ));
-    assert!(!installer.contains("handle /metrics {\n\t\timport api_proxy\n\t}"));
-}
-
-#[test]
 fn single_host_installer_emits_canonical_caddyfile_indentation() {
     let installer = read_repository_text("scripts/install-single-host.sh");
     let template_start = installer
