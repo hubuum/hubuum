@@ -720,11 +720,10 @@ async fn compressed_index_widens_keys_until_versions_are_unambiguous(
 ) {
     let scope = scope();
     let resource = ResourceIdentity::generate();
-    let mut first = record(scope.clone(), resource, 1, 2);
+    let first = record(scope.clone(), resource, 1, 2);
     let mut second = record(scope.clone(), resource, 2, 3);
-    let mut bytes = [1; 16];
-    first.interval.version = VersionIdentity::from_bytes(bytes).unwrap();
-    bytes[difference] = 2;
+    let mut bytes = *first.interval.version.as_bytes();
+    bytes[difference] ^= 1;
     second.interval.version = VersionIdentity::from_bytes(bytes).unwrap();
     let (store, segment) = fixture(vec![first, second.clone()], scope).await.unwrap();
     assert_eq!(segment.reader.key_width as u8, width);
@@ -751,7 +750,9 @@ async fn verified_segment_rejects_a_duplicate_shortened_key_on_reopen() {
         record(scope.clone(), resource, 2, 3),
     ];
     for (row, byte) in rows.iter_mut().zip([1, 2]) {
-        row.interval.version = VersionIdentity::from_bytes([byte; 16]).unwrap();
+        let mut bytes = *row.interval.version.as_bytes();
+        bytes[0] = byte;
+        row.interval.version = VersionIdentity::from_bytes(bytes).unwrap();
     }
     let (store, segment) = fixture(rows.to_vec(), scope).await.unwrap();
     let mut bytes = staged_bytes(&store, &segment).await;

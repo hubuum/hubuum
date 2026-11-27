@@ -415,14 +415,26 @@ impl TestContext {
         let index_length =
             u32::from_le_bytes(bytes[footer..footer + 4].try_into().unwrap()) as usize;
         let index_start = footer - index_length;
-        // Format 2 has two 64-byte entries. Duplicate the version UUID or
-        // move the second lower timestamp onto the first interval's start.
-        assert_eq!(index_length, 2 * 64);
-        let field = if overlap { 32..44 } else { 16..32 };
-        bytes.copy_within(
-            index_start + field.start..index_start + field.end,
-            index_start + 64 + field.start,
-        );
+        // The v3 index stores each byte position as a column of deltas.
+        // A zero delta on row two duplicates the first key or interval start.
+        assert_eq!(segment.format_version(), 3);
+        let width = usize::from(bytes[index_start]);
+        let mut columns =
+            zstd::bulk::decompress(&bytes[index_start + 1..footer], 2 * (48 + width)).unwrap();
+        let field = if overlap {
+            16 + width..28 + width
+        } else {
+            16..16 + width
+        };
+        for position in field {
+            columns[2 * position + 1] = 0;
+        }
+        let frame = zstd::bulk::compress(&columns, 3).unwrap();
+        let marker = bytes[footer + 4..].to_vec();
+        bytes.truncate(index_start + 1);
+        bytes.extend_from_slice(&frame);
+        bytes.extend_from_slice(&((1 + frame.len()) as u32).to_le_bytes());
+        bytes.extend_from_slice(&marker);
         let limits = ArtifactLimits::builder()
             .block_bytes(512 * 1024)
             .artifact_bytes(64 * 1024)
