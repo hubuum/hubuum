@@ -252,6 +252,40 @@ and content digests. These tables model a fresh set of published rows. Live
 update bloat, query captures, dependent history families and the class-skewed
 `archive-exact-v1` deployment still require measurement.
 
+## Compressed index and packed catalog measurements
+
+At commit `bb069f25`, a fresh v3 open of the 10,000-record single-segment
+fixture read 295,444 bytes, including a 24,489-byte manifest. The segment
+occupied 44,311,147 bytes including a 201,050-byte index. Both cold exact and
+cold as-of reads returned the 4,407-byte record after reading 360,980 bytes
+in total. The v2 result was 800,146 bytes. These are segment reads; the
+application also reads the catalog and validates the capture.
+
+On PostgreSQL 18.7, five paired runs after one warm-up used new resource,
+version and artifact UUIDs in the collection fixture. Each entry below is the
+median and nearest-rank p95 in bytes. Total metadata includes the measured
+catalog, embedded index and PostgreSQL artifact overhead described above.
+
+| Allocation (median / p95) | 10,000 versions | 100,000 versions |
+| --- | ---: | ---: |
+| JSONB catalog | 1,728,512 / 1,728,512 | 16,769,024 / 16,769,024 |
+| Candidate packed catalog | 679,936 / 679,936 | 6,422,528 / 6,422,528 |
+| Embedded v3 index | 37,486 / 38,261 | 367,296 / 367,591 |
+| PostgreSQL artifacts including manifests | 409,773 / 410,711 | 2,011,525 / 2,029,084 |
+| Total with JSONB catalog | 2,175,771 / 2,176,029 | 19,147,646 / 19,164,412 |
+| Total with packed catalog | 1,127,195 / 1,127,453 | 8,801,150 / 8,817,916 |
+| P1 allowance | 1,834,346 | 8,916,091 |
+
+| Packed total, bytes | Run 1 | Run 2 | Run 3 | Run 4 | Run 5 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10,000 versions | 1,127,114 | 1,127,195 | 1,127,453 | 1,127,352 | 1,127,066 |
+| 100,000 versions | 8,784,622 | 8,817,916 | 8,801,644 | 8,801,150 | 8,792,946 |
+
+At 100,000 versions, 98,175 bytes remained in the largest sample. Additional
+online state or a different resource distribution can consume this margin.
+All five JSONB totals exceeded the allowance at both sizes. Packed catalog
+storage in this diagnostic is experimental.
+
 ## Remaining acceptance
 
 Project #3 tracks the remaining #514 work on `project/workload-lifecycle`.
