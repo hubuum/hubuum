@@ -76,7 +76,7 @@ fn event_context(req: &HttpRequest) -> EventContext {
 }
 
 #[utoipa::path(get, path = "/api/v1/auth/methods", tag = "auth", responses(
-    (status = 200, description = "Public password methods; interaction protocol version 1", body = AuthenticationMethods),
+    (status = 200, description = "Available password and browser authentication methods and their capabilities", body = AuthenticationMethods),
     (status = 429, description = "Request budget exhausted; honor Retry-After", body = ApiErrorResponse),
     (status = 503, description = "Provider configuration is unavailable", body = ApiErrorResponse)
 ))]
@@ -170,7 +170,7 @@ pub async fn status(
 }
 
 #[utoipa::path(post, path = "/api/v1/auth/interactions/{id}/complete", tag = "auth", security(("interaction_secret" = [])), params(("id" = String, Path)), request_body = InteractionClientRequest, responses(
-    (status = 200, description = "Single-use session issuance using the original client binding", body = InteractionCompleted),
+    (status = 200, description = "Returns a session, credential approval or provider verification result according to the interaction purpose", body = InteractionCompleted),
     (status = 401, description = "Invalid interaction, client, secret or authority", body = ApiErrorResponse),
     (status = 403, description = "Denied or cancelled", body = ApiErrorResponse),
     (status = 409, description = "Not ready, consumed, failed or configuration changed; never replay issuance", body = ApiErrorResponse),

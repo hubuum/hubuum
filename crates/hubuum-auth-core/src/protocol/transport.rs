@@ -1,10 +1,11 @@
 use std::time::Duration;
 
+use hubuum_domain::OAuthProfile;
 use hubuum_outbound_http::{OutboundHeaders, OutboundHttpError, OutboundMethod, OutboundRequest};
 use oauth2::{HttpRequest, HttpResponse, http};
 use tokio::sync::Semaphore;
 
-use super::ProtocolError;
+use super::{ProtocolError, profile};
 
 const RESPONSE_LIMIT: usize = 128 * 1024;
 static REQUESTS: Semaphore = Semaphore::const_new(32);
@@ -71,20 +72,10 @@ impl Transport {
                 )
                 .map_err(|_| ProtocolError::Configuration)?;
         }
+        let skip_get_body = get_body_policy(request.extensions().get::<OAuthProfile>());
         let url = request.uri().to_string();
         let body =
             String::from_utf8(request.into_body()).map_err(|_| ProtocolError::Configuration)?;
-        self.send_to(method, headers, body, url, dispatch).await
-    }
-
-    async fn send_to(
-        self,
-        method: OutboundMethod,
-        headers: OutboundHeaders,
-        body: String,
-        url: String,
-        dispatch: impl FnOnce() -> bool,
-    ) -> Result<HttpResponse, ProtocolError> {
         let request = OutboundRequest::new(method, url, Duration::from_secs(5))
             .headers(headers)
             .body((!body.is_empty()).then_some(body))
@@ -92,7 +83,7 @@ impl Transport {
             .require_complete_body()
             .allow_private_targets(self.allow_private_targets);
         let request = if method == OutboundMethod::Get {
-            request.skip_body_for_status(401)
+            request.skip_body_when(skip_get_body)
         } else {
             request
         };
@@ -142,17 +133,68 @@ impl Transport {
             .header(http::header::ACCEPT, "application/json")
             .body(Vec::new())
             .map_err(|_| ProtocolError::Configuration)?;
-        let response = self.send(request).await?;
+        Self::json_document(self.send(request).await?)
+    }
+
+    fn json_document(response: HttpResponse) -> Result<serde_json::Value, ProtocolError> {
         if response.status() != http::StatusCode::OK {
             return Err(ProtocolError::InvalidResponse);
         }
-        serde_json::from_slice(response.body()).map_err(|_| ProtocolError::InvalidResponse)
+        profile::parse(response.body())
     }
+}
+
+fn get_body_policy(profile: Option<&OAuthProfile>) -> fn(u16, &serde_json::Value) -> bool {
+    match profile {
+        Some(OAuthProfile::Github) => github_profile_status_decided_by_headers,
+        _ => |status, _| status == 401,
+    }
+}
+
+fn github_profile_status_decided_by_headers(status: u16, headers: &serde_json::Value) -> bool {
+    // Preserve a definitive bearer rejection or explicit rate-limit signal even
+    // when the error page is oversized or unreadable. Unmarked 403s still need
+    // their body for GitHub's secondary-rate-limit message.
+    status == 401
+        || status == 403
+            && (headers
+                .get("x-ratelimit-remaining")
+                .and_then(serde_json::Value::as_str)
+                == Some("0")
+                || headers.get("retry-after").is_some())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signing_key_documents_reject_duplicate_key_identifiers() {
+        let reply = HttpResponse::new(br#"{"keys":[{"kid":"a","kid":"b"}]}"#.to_vec());
+        assert_eq!(
+            Transport::json_document(reply),
+            Err(ProtocolError::InvalidResponse)
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::github_quota(Some(OAuthProfile::Github), 403, serde_json::json!({"x-ratelimit-remaining":"0"}), true)]
+    #[case::github_retry(Some(OAuthProfile::Github), 403, serde_json::json!({"retry-after":"60"}), true)]
+    #[case::github_unmarked(Some(OAuthProfile::Github), 403, serde_json::json!({}), false)]
+    #[case::generic_retry(Some(OAuthProfile::JsonUser), 403, serde_json::json!({"retry-after":"60"}), false)]
+    #[case::oidc_quota(None, 403, serde_json::json!({"x-ratelimit-remaining":"0"}), false)]
+    #[case::github_unauthorized(Some(OAuthProfile::Github), 401, serde_json::json!({}), true)]
+    #[case::generic_unauthorized(Some(OAuthProfile::JsonUser), 401, serde_json::json!({}), true)]
+    #[case::oidc_unauthorized(None, 401, serde_json::json!({}), true)]
+    fn get_body_is_skipped_only_for_definitive_headers(
+        #[case] profile: Option<OAuthProfile>,
+        #[case] status: u16,
+        #[case] headers: serde_json::Value,
+        #[case] expected: bool,
+    ) {
+        let skip = get_body_policy(profile.as_ref());
+        assert_eq!(skip(status, &headers), expected);
+    }
 
     #[test]
     fn provider_request_timeout_is_temporary() {
