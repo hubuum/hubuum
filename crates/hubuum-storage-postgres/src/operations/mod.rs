@@ -26,6 +26,7 @@ pub mod export_template;
 pub mod external_identity;
 pub mod group;
 pub mod history;
+pub(crate) mod history_expiry_task;
 pub mod identity_credentials;
 pub mod identity_principals;
 pub mod identity_scope;

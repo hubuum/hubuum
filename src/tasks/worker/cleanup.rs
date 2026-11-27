@@ -57,6 +57,7 @@ async fn iteration(
     // after an idle pass or activation while the runtime is already running.
     // Unconfigured runtimes still avoid backend calls while output cleanup is idle.
     if !context.task_receipts().is_configured()
+        && !context.history_retention().configured()
         && !due(tasks, interval)?
         && !due(artifacts, interval)?
     {
@@ -74,9 +75,21 @@ async fn iteration(
     let scope = storage
         .current_execution_scope()
         .with_application_access(permit);
-    let work = Box::pin(maybe_cleanup_expired_task_outputs(
-        context, tasks, artifacts,
-    ));
+    let work = Box::pin(async {
+        let retry_history =
+            crate::services::deletion_recovery::history_policy::settle_expired_hold(context)
+                .await
+                .unwrap_or_else(|error| {
+                    error!(message = "History hold maintenance failed", %error);
+                    false
+                });
+        let tasks_changed = crate::tasks::history::run(
+            storage,
+            maybe_cleanup_expired_task_outputs(context, tasks, artifacts),
+        )
+        .await?;
+        Ok(retry_history || tasks_changed)
+    });
     storage
         .run_in_scope(scope, track_application_completion(work))
         .await

@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use hubuum_domain::TaskIdentity;
 
 use super::*;
-use crate::{ApplicationReapplication, DeletionControlCapture};
+use crate::{ApplicationReapplication, DeletionControlCapture, HistoryExposureProtection};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(try_from = "StateInput")]
@@ -667,6 +667,7 @@ impl TryFrom<ReapplicationInput> for TaskControlReapplication {
 
 #[derive(Clone, Debug)]
 pub struct ControlCheckpointCapture {
+    history_lifecycle: Option<crate::HistoryLifecycleAuthority>,
     deletion: DeletionControlCapture,
     task_control: TaskControlState,
     task_reapplication: Option<TaskControlReapplication>,
@@ -684,6 +685,7 @@ impl ControlCheckpointCapture {
         Ok(Self {
             deletion,
             task_control,
+            history_lifecycle: None,
             task_reapplication: None,
         })
     }
@@ -704,6 +706,17 @@ impl ControlCheckpointCapture {
         self.task_reapplication = Some(proof);
         Ok(self)
     }
+    pub fn with_history_lifecycle(mut self, authority: crate::HistoryLifecycleAuthority) -> Self {
+        // No decision exists at revision zero. Keep inactive history absent so
+        // existing deletion/task-only checkpoint producers remain compatible.
+        // Every acknowledged policy, hold or expiry decision is nonzero and
+        // must remain in all subsequent protected composite captures.
+        self.history_lifecycle = (!authority.is_pristine()).then_some(authority);
+        self
+    }
+    pub const fn history_lifecycle(&self) -> Option<&crate::HistoryLifecycleAuthority> {
+        self.history_lifecycle.as_ref()
+    }
     pub const fn deletion(&self) -> &DeletionControlCapture {
         &self.deletion
     }
@@ -719,6 +732,7 @@ impl ControlCheckpointCapture {
 pub struct ApplicationExposureProof {
     deletion: ApplicationReapplication,
     tasks: Option<TaskControlReapplication>,
+    history: Option<HistoryExposureProtection>,
 }
 impl ApplicationExposureProof {
     pub fn new(
@@ -733,7 +747,26 @@ impl ApplicationExposureProof {
                 "Exposure proofs refer to different application incarnations",
             ));
         }
-        Ok(Self { deletion, tasks })
+        Ok(Self {
+            deletion,
+            tasks,
+            history: None,
+        })
+    }
+    pub fn with_history_protection(
+        mut self,
+        history: HistoryExposureProtection,
+    ) -> Result<Self, StorageValidationError> {
+        if history.fence() != self.deletion.fence() {
+            return Err(invalid(
+                "History exposure proof refers to a different application fence",
+            ));
+        }
+        self.history = Some(history);
+        Ok(self)
+    }
+    pub const fn history(&self) -> Option<&HistoryExposureProtection> {
+        self.history.as_ref()
     }
     pub const fn deletion(&self) -> &ApplicationReapplication {
         &self.deletion

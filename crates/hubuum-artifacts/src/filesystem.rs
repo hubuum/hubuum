@@ -8,12 +8,18 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use hmac::{Hmac, KeyInit, Mac};
+use hubuum_storage_core::artifacts::ArtifactCleanupReceipt;
 use rustix::fs::{self, AtFlags, Dir, FlockOperation, Mode, OFlags};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
+use crate::owned::{FilesystemBinding, StoreScope, authorize};
 use crate::{
-    ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReference,
-    ArtifactResult, ArtifactStore, Destination, DestinationId, VerifiedArtifact,
+    ArtifactCreationIntent, ArtifactError, ArtifactIdentity, ArtifactLimits, ArtifactManifest,
+    ArtifactReference, ArtifactResult, ArtifactStore, Destination, DestinationId, OwnedArtifact,
+    OwnedArtifactAdmission, OwnedArtifactPhase, OwnedArtifactResolution, OwnedArtifactResult,
+    OwnedArtifactStore, VerifiedArtifact,
 };
 
 type Result<T> = std::result::Result<T, FilesystemError>;
@@ -98,10 +104,12 @@ pub struct FilesystemArtifactStore {
     fail_sync: Arc<std::sync::atomic::AtomicIsize>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct State {
     format: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner: Option<ArtifactCreationIntent>,
     identity: ArtifactIdentity,
     limits: Limits,
     expires: u64,
@@ -112,13 +120,14 @@ struct State {
 }
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 enum Phase {
+    Preparing,
     Staging,
     Sealed,
     Published,
     Deleting,
     Discarded,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Limits {
     block: u32,
@@ -150,7 +159,14 @@ impl State {
     fn decode(bytes: &[u8]) -> Result<Self> {
         let state: Self = decode(bytes)?;
         state.limits.validated()?;
-        if state.format != 1
+        if !matches!(
+            (state.format, state.owner.is_some()),
+            (1, false) | (2, true)
+        ) || (state.phase == Phase::Preparing && (state.owner.is_none() || state.blocks != 0))
+            || state.owner.as_ref().is_some_and(|intent| {
+                intent.identity() != &state.identity
+                    || intent.limits() != state.limits.validated().expect("validated above")
+            })
             || state.blocks > state.limits.blocks
             || state.bytes > state.limits.bytes
             || state.bytes.div_ceil(u64::from(state.limits.block)) != u64::from(state.blocks)
@@ -161,7 +177,7 @@ impl State {
         Ok(state)
     }
     fn live(&self) -> Result<()> {
-        if self.expires <= now()? {
+        if self.owner.is_none() && self.expires <= now()? {
             return Err(conflict());
         }
         Ok(())
@@ -184,7 +200,16 @@ impl State {
 
 impl FilesystemArtifactStore {
     pub async fn open(root: impl AsRef<Path>) -> Result<Self> {
-        let root = root.as_ref().to_owned();
+        Self::open_layout(root.as_ref(), true).await
+    }
+
+    /// Open an already initialized root for offline recovery.
+    pub async fn open_existing(root: impl AsRef<Path>) -> Result<Self> {
+        Self::open_layout(root.as_ref(), false).await
+    }
+
+    async fn open_layout(root: &Path, initialize: bool) -> Result<Self> {
+        let root = root.to_owned();
         tokio::task::spawn_blocking(move || {
             if !root.is_absolute() {
                 return Err(invalid());
@@ -203,7 +228,18 @@ impl FilesystemArtifactStore {
                 #[cfg(test)]
                 fail_sync: Arc::new(std::sync::atomic::AtomicIsize::new(-1)),
             };
-            store.locked(|store| store.initialize_layout())?;
+            if initialize {
+                store.locked(|store| store.initialize_layout())?;
+            } else {
+                let lock = open_file(&store.root, "lock", OFlags::RDWR)?;
+                fs::flock(&lock, FlockOperation::LockExclusive)?;
+                if read(&store.root, "format", ROOT_FORMAT.len())? != ROOT_FORMAT {
+                    return Err(invalid());
+                }
+                for name in DIRECTORIES {
+                    private(&open_dir(&store.root, name)?, true)?;
+                }
+            }
             Ok(store)
         })
         .await
@@ -292,27 +328,41 @@ impl FilesystemArtifactStore {
         }
         self.atomic(&self.root, "format", ROOT_FORMAT)
     }
-    fn claim_identities(&self, identity: &ArtifactIdentity) -> Result<()> {
+    fn check_identities(&self, identity: &ArtifactIdentity, require_existing: bool) -> Result<()> {
         let claims = [
             ("attempts", key(identity.attempt().as_bytes())),
             ("versions", key(identity.version().as_bytes())),
         ];
         // Preflight both keys before writing either. A crash between claims
-        // may conservatively reserve an ID, but can never transfer ownership.
+        // may leave only the attempt key. A version key alone cannot result
+        // from this write order.
+        let mut missing = false;
         for (directory, name) in &claims {
             let directory = open_dir(&self.root, *directory)?;
             private(&directory, true)?;
             match read(&directory, name, STATE_LIMIT) {
                 Ok(bytes) => {
                     let owner: ArtifactIdentity = decode(&bytes)?;
-                    if &owner != identity {
+                    if &owner != identity || missing {
                         return Err(conflict());
                     }
                 }
-                Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(FilesystemError::Io(error))
+                    if !require_existing && error.kind() == io::ErrorKind::NotFound =>
+                {
+                    missing = true;
+                }
                 Err(error) => return Err(error),
             }
         }
+        Ok(())
+    }
+    fn claim_identities(&self, identity: &ArtifactIdentity) -> Result<()> {
+        self.check_identities(identity, false)?;
+        let claims = [
+            ("attempts", key(identity.attempt().as_bytes())),
+            ("versions", key(identity.version().as_bytes())),
+        ];
         for (directory, name) in claims {
             let directory = open_dir(&self.root, directory)?;
             match read(&directory, &name, STATE_LIMIT) {
@@ -420,6 +470,14 @@ fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
     serde_json::to_vec(value).map_err(|_| invalid())
 }
 fn remove(directory: &File, name: &str) -> Result<bool> {
+    // Losing this directory entry must not leave another link to its contents.
+    match open_file(directory, name, OFlags::RDONLY) {
+        Ok(_file) => {}
+        Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
+    }
     match fs::unlinkat(directory, name, AtFlags::empty()) {
         Ok(()) => Ok(true),
         Err(rustix::io::Errno::NOENT) => Ok(false),
@@ -478,7 +536,10 @@ impl ArtifactStore for FilesystemArtifactStore {
             match read(&directory, "state", STATE_LIMIT) {
                 Ok(bytes) => {
                     let state = State::decode(&bytes)?;
-                    if state.identity != identity || state.limits.validated()? != limits {
+                    if state.owner.is_some()
+                        || state.identity != identity
+                        || state.limits.validated()? != limits
+                    {
                         return Err(conflict());
                     }
                     state.writable()?;
@@ -491,6 +552,7 @@ impl ArtifactStore for FilesystemArtifactStore {
                         &directory,
                         &State {
                             format: 1,
+                            owner: None,
                             identity,
                             limits: limits.into(),
                             expires: now()? + STAGING_SECONDS,
@@ -512,85 +574,10 @@ impl ArtifactStore for FilesystemArtifactStore {
         ordinal: u32,
         bytes: &[u8],
     ) -> ArtifactResult<()> {
-        if bytes.is_empty() || bytes.len() > ArtifactLimits::format_ceiling().block_bytes() as usize
-        {
-            return Err(ArtifactError::Limit(
-                "Artifact block exceeds format bounds".into(),
-            ));
-        }
-        let identity = identity.clone();
-        let bytes = bytes.to_vec();
-        self.run(move |store| {
-            let (directory, mut state) = store.state(&identity)?;
-            state.writable()?;
-            let name = block_key(ordinal);
-            if ordinal < state.blocks {
-                if read(&directory, &name, state.limits.block as usize)? != bytes {
-                    return Err(conflict());
-                }
-                return store.sync(&directory);
-            }
-            if ordinal != state.blocks
-                || ordinal >= state.limits.blocks
-                || bytes.len() > state.limits.block as usize
-                || state.bytes != u64::from(state.blocks) * u64::from(state.limits.block)
-                || state.bytes + bytes.len() as u64 > state.limits.bytes
-                || 117 + (ordinal + 1) * 36 > state.limits.manifest
-            {
-                return Err(conflict());
-            }
-            // A crash may have renamed the next block before updating state.
-            match read(&directory, &name, state.limits.block as usize) {
-                Ok(old) if old != bytes => return Err(conflict()),
-                Ok(_) => store.sync(&directory)?,
-                Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
-                    store.atomic(&directory, &name, &bytes)?
-                }
-                Err(error) => return Err(error),
-            }
-            state.blocks += 1;
-            state.bytes += bytes.len() as u64;
-            store.save(&directory, &state)
-        })
-        .await
+        self.append_checked(identity, ordinal, bytes, None).await
     }
     async fn seal(&self, manifest: &ArtifactManifest) -> ArtifactResult<()> {
-        let manifest = manifest.clone();
-        self.run(move |store| {
-            let (directory, mut state) = store.state(manifest.identity())?;
-            if matches!(state.phase, Phase::Sealed | Phase::Published) {
-                if store.manifest_on(&directory, &state)? != manifest.encode() {
-                    return Err(conflict());
-                }
-                return store.sync(&directory);
-            }
-            state.writable()?;
-            let bytes = manifest.encode();
-            ArtifactManifest::decode(&bytes, manifest.identity(), state.limits.validated()?)?;
-            if manifest.block_bytes() != state.limits.block
-                || manifest.block_count() != state.blocks
-                || manifest.byte_size() != state.bytes
-            {
-                return Err(conflict());
-            }
-            for ordinal in 0..state.blocks {
-                let block = open_file(&directory, &block_key(ordinal), OFlags::RDONLY)?;
-                let expected = (state.bytes - u64::from(ordinal) * u64::from(state.limits.block))
-                    .min(u64::from(state.limits.block));
-                if block.metadata()?.len() != expected {
-                    return Err(conflict());
-                }
-            }
-            match open_file(&directory, &block_key(state.blocks), OFlags::RDONLY) {
-                Ok(_) => return Err(conflict()),
-                Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
-            }
-            store.atomic(&directory, "manifest", &bytes)?;
-            state.phase = Phase::Sealed;
-            store.save(&directory, &state)
-        })
-        .await
+        self.seal_checked(manifest, None).await
     }
     async fn manifest(&self, identity: &ArtifactIdentity) -> ArtifactResult<Vec<u8>> {
         let identity = identity.clone();
@@ -649,32 +636,10 @@ impl ArtifactStore for FilesystemArtifactStore {
         .await
     }
     async fn publish(&self, verified: &VerifiedArtifact) -> ArtifactResult<ArtifactReference> {
-        let manifest = verified.manifest().clone();
-        let reference = verified.reference();
-        self.run(move |store| {
-            let (directory, mut state) = store.state(manifest.identity())?;
-            if store.manifest_on(&directory, &state)? != manifest.encode() {
-                return Err(conflict());
-            }
-            state.phase = Phase::Published;
-            store.save(&directory, &state)?;
-            Ok(reference)
-        })
-        .await
+        self.publish_checked(verified, None).await
     }
     async fn abort(&self, identity: &ArtifactIdentity) -> ArtifactResult<()> {
-        let identity = identity.clone();
-        self.run(move |store| {
-            let (directory, mut state) = store.state(&identity)?;
-            if state.phase == Phase::Published {
-                return Err(conflict());
-            }
-            if state.phase != Phase::Discarded {
-                state.phase = Phase::Deleting;
-            }
-            store.save(&directory, &state)
-        })
-        .await
+        self.abort_checked(identity, None).await
     }
     async fn cleanup(&self) -> ArtifactResult<u32> {
         self.run(move |store| {
@@ -712,31 +677,15 @@ impl ArtifactStore for FilesystemArtifactStore {
                 if state.phase == Phase::Discarded || state.phase == Phase::Published {
                     continue;
                 }
-                if state.phase != Phase::Deleting && state.expires > now()? {
+                if state.phase != Phase::Deleting
+                    && (state.owner.is_some() || state.expires > now()?)
+                {
                     continue;
                 }
-                state.phase = Phase::Deleting;
-                store.save(&directory, &state)?;
-                let mut removed = 0;
-                let end = state.cleanup_next.saturating_add(16).min(state.blocks);
-                for ordinal in state.cleanup_next..end {
-                    removed += u32::from(remove(&directory, &block_key(ordinal))?);
+                if let Some(intent) = &state.owner {
+                    store.check_binding(intent)?;
                 }
-                store.sync(&directory)?;
-                state.cleanup_next = end;
-                if end == state.blocks {
-                    // Also collect a block renamed just before a crashed append
-                    // recorded its count. Never delete more than 16 physical blocks.
-                    if removed < 16 {
-                        removed += u32::from(remove(&directory, &block_key(state.blocks))?);
-                        remove(&directory, "manifest")?;
-                        remove(&directory, "pending")?;
-                        store.sync(&directory)?;
-                        state.phase = Phase::Discarded;
-                    }
-                }
-                store.save(&directory, &state)?;
-                return Ok(removed);
+                return store.discard_step(&directory, &mut state);
             }
             Ok(0)
         })
@@ -746,3 +695,477 @@ impl ArtifactStore for FilesystemArtifactStore {
 
 #[cfg(test)]
 mod tests;
+
+impl FilesystemArtifactStore {
+    fn discard_step(&self, directory: &File, state: &mut State) -> Result<u32> {
+        state.phase = Phase::Deleting;
+        self.save(directory, state)?;
+        let mut removed = 0;
+        let end = state.cleanup_next.saturating_add(16).min(state.blocks);
+        for ordinal in state.cleanup_next..end {
+            removed += u32::from(remove(directory, &block_key(ordinal))?);
+        }
+        self.sync(directory)?;
+        state.cleanup_next = end;
+        if end == state.blocks {
+            // Also collect a block renamed just before a crashed append
+            // recorded its count. Never delete more than 16 physical blocks.
+            if removed < 16 {
+                removed += u32::from(remove(directory, &block_key(state.blocks))?);
+                remove(directory, "manifest")?;
+                remove(directory, "pending")?;
+                self.sync(directory)?;
+                state.phase = Phase::Discarded;
+            }
+        }
+        self.save(directory, state)?;
+        Ok(removed)
+    }
+
+    fn filesystem_binding(
+        &self,
+        intent: &ArtifactCreationIntent,
+        initialize: bool,
+    ) -> Result<(FilesystemBinding, [u8; 32])> {
+        let secret: [u8; 32] = match read(&self.root, "issuer", 32) {
+            Ok(bytes) => bytes.try_into().map_err(|_| invalid())?,
+            Err(FilesystemError::Io(error))
+                if initialize && error.kind() == io::ErrorKind::NotFound =>
+            {
+                let mut secret = [0; 32];
+                File::open("/dev/urandom")?.read_exact(&mut secret)?;
+                if secret == [0; 32] {
+                    return Err(invalid());
+                }
+                self.atomic(&self.root, "issuer", &secret)?;
+                secret
+            }
+            Err(error) => return Err(error),
+        };
+        if secret == [0; 32] {
+            return Err(invalid());
+        }
+        let metadata = self.root.metadata()?;
+        self.sync(&self.root)?;
+        let mut mac = Hmac::<Sha256>::new_from_slice(&secret).expect("HMAC accepts a 32 byte key");
+        mac.update(b"hubuum-filesystem-cleanup-v2");
+        mac.update(&metadata.dev().to_be_bytes());
+        mac.update(&metadata.ino().to_be_bytes());
+        mac.update(&intent.unbound_encoding()?);
+        let response: [u8; 32] = mac.finalize().into_bytes().into();
+        Ok((
+            FilesystemBinding {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+                cleanup_commitment: Sha256::digest(response).into(),
+            },
+            response,
+        ))
+    }
+
+    /// Persist the returned canonical intent in the claim before provider admission.
+    pub async fn bind_intent(
+        &self,
+        intent: ArtifactCreationIntent,
+    ) -> ArtifactResult<ArtifactCreationIntent> {
+        self.run(move |store| {
+            let (scope, _) = store.filesystem_binding(&intent, true)?;
+            Ok(intent.bind_filesystem(scope)?)
+        })
+        .await
+    }
+
+    fn check_binding(&self, intent: &ArtifactCreationIntent) -> Result<()> {
+        if let Some(bound) = intent.filesystem()
+            && *bound != self.filesystem_binding(intent, false)?.0
+        {
+            return Err(conflict());
+        }
+        Ok(())
+    }
+
+    /// Discard one bounded batch of a bound, owned, unpublished attempt.
+    /// Keep the durable tombstone to exclude delayed retries. A subsequent
+    /// process may reissue the same evidence after an ambiguous database commit.
+    pub async fn discard_owned_step(
+        &self,
+        intent: &ArtifactCreationIntent,
+    ) -> ArtifactResult<Option<ArtifactCleanupReceipt>> {
+        let intent = intent.clone();
+        self.run(move |store| {
+            let (scope, response) = store.filesystem_binding(&intent, false)?;
+            if intent.filesystem() != Some(&scope) {
+                return Err(conflict());
+            }
+            let (directory, mut state) = store.state(intent.identity())?;
+            if state.owner.as_ref() != Some(&intent) || state.phase == Phase::Published {
+                return Err(conflict());
+            }
+            if state.phase == Phase::Preparing {
+                // Ownership was recorded before either index. No payload could
+                // have been admitted. Finish reserving the IDs and go directly
+                // to the tombstone while the original root is locked.
+                store.check_cleanup_directory(&directory, &state)?;
+                store.claim_identities(intent.identity())?;
+                state.phase = Phase::Discarded;
+                store.save(&directory, &state)?;
+            } else {
+                store.check_identities(intent.identity(), true)?;
+                if state.phase != Phase::Discarded {
+                    store.discard_step(&directory, &mut state)?;
+                }
+            }
+            if state.phase != Phase::Discarded {
+                return Ok(None);
+            }
+            if state.cleanup_next != state.blocks {
+                return Err(invalid());
+            }
+            store.check_cleanup_directory(&directory, &state)?;
+            store.sync(&directory)?;
+            Ok(Some(ArtifactCleanupReceipt::from_provider(
+                intent.encode()?,
+                response,
+            )?))
+        })
+        .await
+    }
+
+    fn check_cleanup_directory(&self, directory: &File, state: &State) -> Result<()> {
+        for entry in Dir::read_from(directory)? {
+            match entry?.file_name().to_bytes() {
+                b"." | b".." | b"state" => {}
+                b"pending" if state.phase == Phase::Preparing => {
+                    // Both indexes precede either possible next state write.
+                    // A crash can leave a partial write before the rename.
+                    self.check_identities(&state.identity, true)?;
+                    let pending = read(directory, "pending", STATE_LIMIT)?;
+                    let mut next = state.clone();
+                    next.phase = Phase::Staging;
+                    if !encode(&next)?.starts_with(&pending) {
+                        next.phase = Phase::Discarded;
+                        if !encode(&next)?.starts_with(&pending) {
+                            return Err(invalid());
+                        }
+                    }
+                }
+                _ => return Err(invalid()),
+            }
+        }
+        Ok(())
+    }
+
+    async fn append_checked(
+        &self,
+        identity: &ArtifactIdentity,
+        ordinal: u32,
+        bytes: &[u8],
+        artifact: Option<OwnedArtifact>,
+    ) -> ArtifactResult<()> {
+        if bytes.is_empty() || bytes.len() > ArtifactLimits::format_ceiling().block_bytes() as usize
+        {
+            return Err(ArtifactError::Limit(
+                "Artifact block exceeds format bounds".into(),
+            ));
+        }
+        let identity = identity.clone();
+        let bytes = bytes.to_vec();
+        self.run(move |store| {
+            let (directory, mut state) = store.state(&identity)?;
+            store.authorize(&state, artifact.as_ref())?;
+            state.writable()?;
+            let name = block_key(ordinal);
+            if ordinal < state.blocks {
+                if read(&directory, &name, state.limits.block as usize)? != bytes {
+                    return Err(conflict());
+                }
+                return store.sync(&directory);
+            }
+            if ordinal != state.blocks
+                || ordinal >= state.limits.blocks
+                || bytes.len() > state.limits.block as usize
+                || state.bytes != u64::from(state.blocks) * u64::from(state.limits.block)
+                || state.bytes + bytes.len() as u64 > state.limits.bytes
+                || 117 + (ordinal + 1) * 36 > state.limits.manifest
+            {
+                return Err(conflict());
+            }
+            // A crash may have renamed the next block before updating state.
+            match read(&directory, &name, state.limits.block as usize) {
+                Ok(old) if old != bytes => return Err(conflict()),
+                Ok(_) => store.sync(&directory)?,
+                Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                    store.atomic(&directory, &name, &bytes)?
+                }
+                Err(error) => return Err(error),
+            }
+            state.blocks += 1;
+            state.bytes += bytes.len() as u64;
+            store.save(&directory, &state)
+        })
+        .await
+    }
+    async fn seal_checked(
+        &self,
+        manifest: &ArtifactManifest,
+        artifact: Option<OwnedArtifact>,
+    ) -> ArtifactResult<()> {
+        let manifest = manifest.clone();
+        self.run(move |store| {
+            let (directory, mut state) = store.state(manifest.identity())?;
+            store.authorize(&state, artifact.as_ref())?;
+            if matches!(state.phase, Phase::Sealed | Phase::Published) {
+                if store.manifest_on(&directory, &state)? != manifest.encode() {
+                    return Err(conflict());
+                }
+                return store.sync(&directory);
+            }
+            state.writable()?;
+            let bytes = manifest.encode();
+            ArtifactManifest::decode(&bytes, manifest.identity(), state.limits.validated()?)?;
+            if manifest.block_bytes() != state.limits.block
+                || manifest.block_count() != state.blocks
+                || manifest.byte_size() != state.bytes
+            {
+                return Err(conflict());
+            }
+            for ordinal in 0..state.blocks {
+                let block = open_file(&directory, &block_key(ordinal), OFlags::RDONLY)?;
+                let expected = (state.bytes - u64::from(ordinal) * u64::from(state.limits.block))
+                    .min(u64::from(state.limits.block));
+                if block.metadata()?.len() != expected {
+                    return Err(conflict());
+                }
+            }
+            match open_file(&directory, &block_key(state.blocks), OFlags::RDONLY) {
+                Ok(_) => return Err(conflict()),
+                Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            store.atomic(&directory, "manifest", &bytes)?;
+            state.phase = Phase::Sealed;
+            store.save(&directory, &state)
+        })
+        .await
+    }
+    async fn publish_checked(
+        &self,
+        verified: &VerifiedArtifact,
+        artifact: Option<OwnedArtifact>,
+    ) -> ArtifactResult<ArtifactReference> {
+        let manifest = verified.manifest().clone();
+        let reference = verified.reference();
+        self.run(move |store| {
+            let (directory, mut state) = store.state(manifest.identity())?;
+            store.authorize(&state, artifact.as_ref())?;
+            if store.manifest_on(&directory, &state)? != manifest.encode() {
+                return Err(conflict());
+            }
+            state.phase = Phase::Published;
+            store.save(&directory, &state)?;
+            Ok(reference)
+        })
+        .await
+    }
+    async fn abort_checked(
+        &self,
+        identity: &ArtifactIdentity,
+        artifact: Option<OwnedArtifact>,
+    ) -> ArtifactResult<()> {
+        let identity = identity.clone();
+        self.run(move |store| {
+            let (directory, mut state) = store.state(&identity)?;
+            store.authorize(&state, artifact.as_ref())?;
+            if state.phase == Phase::Published {
+                return Err(conflict());
+            }
+            if state.phase != Phase::Discarded {
+                state.phase = Phase::Deleting;
+            }
+            store.save(&directory, &state)
+        })
+        .await
+    }
+    fn scope(&self) -> Result<StoreScope> {
+        let metadata = self.root.metadata()?;
+        Ok(StoreScope::Filesystem {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+    fn authorize(&self, state: &State, artifact: Option<&OwnedArtifact>) -> Result<()> {
+        if let Some(intent) = &state.owner {
+            self.check_binding(intent)?;
+        }
+        authorize(state.owner.as_ref(), &self.scope()?, artifact)?;
+        Ok(())
+    }
+    fn owned_resolution(&self, state: &State) -> Result<OwnedArtifactResolution> {
+        let Some(intent) = &state.owner else {
+            return Err(conflict());
+        };
+        if state.phase == Phase::Preparing {
+            return Ok(OwnedArtifactResolution::Pending);
+        }
+        // A previous state rename may have succeeded before its directory sync
+        // failed. Re-establish durability before issuing a recovered receipt.
+        let (directory, _) = self.state(&state.identity)?;
+        self.sync(&directory)?;
+        let phase = match state.phase {
+            Phase::Preparing => unreachable!(),
+            Phase::Staging => OwnedArtifactPhase::Staging,
+            Phase::Sealed => OwnedArtifactPhase::Sealed,
+            Phase::Published => {
+                let (directory, _) = self.state(&state.identity)?;
+                let bytes = self.manifest_on(&directory, state)?;
+                let manifest = ArtifactManifest::decode(&bytes, &state.identity, intent.limits())?;
+                OwnedArtifactPhase::Published(ArtifactReference::from_catalog(
+                    state.identity.clone(),
+                    manifest.manifest_digest(),
+                ))
+            }
+            Phase::Deleting | Phase::Discarded => OwnedArtifactPhase::Fenced,
+        };
+        Ok(OwnedArtifactResolution::Established {
+            artifact: OwnedArtifact::checked(intent.clone(), self.scope()?),
+            phase,
+        })
+    }
+}
+
+#[async_trait]
+impl OwnedArtifactStore for FilesystemArtifactStore {
+    type Receipt = OwnedArtifact;
+    async fn create_owned(
+        &self,
+        intent: &ArtifactCreationIntent,
+    ) -> OwnedArtifactResult<OwnedArtifactAdmission> {
+        let intent = intent.clone();
+        self.run(move |store| {
+            store.check_binding(&intent)?;
+            let identity = intent.identity();
+            if !store
+                .destinations()?
+                .iter()
+                .any(|(id, _)| *id == identity.destination())
+            {
+                return Err(conflict());
+            }
+            let artifacts = open_dir(&store.root, "artifacts")?;
+            private(&artifacts, true)?;
+            let name = key(identity.artifact().as_bytes());
+            // Check all retained uniqueness claims before allocating a new attempt.
+            store.check_identities(identity, false)?;
+            match fs::mkdirat(&artifacts, &name, Mode::RWXU) {
+                Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+                Err(error) => return Err(error.into()),
+            }
+            store.sync(&artifacts)?;
+            let directory = open_dir(&artifacts, &name)?;
+            private(&directory, true)?;
+            let (mut state, created) = match read(&directory, "state", STATE_LIMIT) {
+                Ok(bytes) => {
+                    let state = State::decode(&bytes)?;
+                    if state.owner.as_ref() != Some(&intent) {
+                        return Err(conflict());
+                    }
+                    (state, false)
+                }
+                Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                    let state = State {
+                        format: 2,
+                        owner: Some(intent.clone()),
+                        identity: identity.clone(),
+                        limits: intent.limits().into(),
+                        expires: now()?,
+                        phase: Phase::Preparing,
+                        blocks: 0,
+                        bytes: 0,
+                        cleanup_next: 0,
+                    };
+                    // Commit ownership before further identity claims or data I/O.
+                    store.save(&directory, &state)?;
+                    (state, true)
+                }
+                Err(error) => return Err(error),
+            };
+            if state.phase == Phase::Preparing {
+                store.claim_identities(identity)?;
+                state.phase = Phase::Staging;
+                store.save(&directory, &state)?;
+            }
+            match store.owned_resolution(&state)? {
+                OwnedArtifactResolution::Established { artifact, phase } => {
+                    if created {
+                        Ok(OwnedArtifactAdmission::Created(artifact))
+                    } else {
+                        Ok(OwnedArtifactAdmission::ResumedSameOwner { artifact, phase })
+                    }
+                }
+                OwnedArtifactResolution::Pending => Err(conflict()),
+            }
+        })
+        .await
+        .map_err(Into::into)
+    }
+    async fn resolve_owned(
+        &self,
+        intent: &ArtifactCreationIntent,
+    ) -> OwnedArtifactResult<OwnedArtifactResolution> {
+        let intent = intent.clone();
+        self.run(move |store| {
+            store.check_binding(&intent)?;
+            let (_, state) = match store.state(intent.identity()) {
+                Ok(value) => value,
+                Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                    return Ok(OwnedArtifactResolution::Pending);
+                }
+                Err(error) => return Err(error),
+            };
+            if state.owner.as_ref() != Some(&intent) {
+                return Err(conflict());
+            }
+            store.owned_resolution(&state)
+        })
+        .await
+        .map_err(Into::into)
+    }
+    async fn append_owned(
+        &self,
+        artifact: &OwnedArtifact,
+        ordinal: u32,
+        bytes: &[u8],
+    ) -> OwnedArtifactResult<()> {
+        self.append_checked(
+            artifact.intent().identity(),
+            ordinal,
+            bytes,
+            Some(artifact.clone()),
+        )
+        .await
+        .map_err(Into::into)
+    }
+    async fn seal_owned(
+        &self,
+        artifact: &OwnedArtifact,
+        manifest: &ArtifactManifest,
+    ) -> OwnedArtifactResult<()> {
+        self.seal_checked(manifest, Some(artifact.clone()))
+            .await
+            .map_err(Into::into)
+    }
+    async fn publish_owned(
+        &self,
+        artifact: &OwnedArtifact,
+        verified: &VerifiedArtifact,
+    ) -> OwnedArtifactResult<ArtifactReference> {
+        self.publish_checked(verified, Some(artifact.clone()))
+            .await
+            .map_err(Into::into)
+    }
+    async fn abort_owned(&self, artifact: &OwnedArtifact) -> OwnedArtifactResult<()> {
+        self.abort_checked(artifact.intent().identity(), Some(artifact.clone()))
+            .await
+            .map_err(Into::into)
+    }
+}

@@ -9,8 +9,9 @@ use crate::api::v1::handlers::history::HistoryResponse;
 use crate::api::v1::handlers::{
     backups, classes, client_config, collections, computed_fields, credential_approvals,
     event_deliveries, event_sinks, event_subscriptions, events, export_templates, exports, groups,
-    imports, me, principals, query_usage, relations, remote_targets, restores, runtime_config,
-    schema_evolution, search, service_accounts, system_event_subscriptions, tasks, users,
+    history_lifecycle, imports, me, principals, query_usage, relations, remote_targets, restores,
+    runtime_config, schema_evolution, search, service_accounts, system_event_subscriptions, tasks,
+    users,
 };
 use crate::config::running::{
     AuthenticationConfig, BackupConfig, ClientAllowlistStatus, ClientConfig,
@@ -109,6 +110,15 @@ use utoipa::{Modify, OpenApi};
         probes::healthz,
         probes::readyz,
         client_config::get_client_config,
+        history_lifecycle::policies,
+        history_lifecycle::inspect,
+        history_lifecycle::accounting,
+        history_lifecycle::run,
+        history_lifecycle::preview,
+        history_lifecycle::apply,
+        history_lifecycle::create_hold,
+        history_lifecycle::release_hold,
+        history_lifecycle::operation,
         runtime_config::get_running_config,
         runtime_config::get_task_capacity,
         runtime_config::set_task_capacity,

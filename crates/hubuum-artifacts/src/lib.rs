@@ -4,7 +4,13 @@
 //! optional S3 byte-store adapter.
 #[cfg(unix)]
 mod filesystem;
+mod owned;
 mod producer;
+pub use owned::{
+    ArtifactCreationIntent, OWNED_INTENT_BYTES, OwnedArtifact, OwnedArtifactAdmission,
+    OwnedArtifactError, OwnedArtifactPhase, OwnedArtifactReceipt, OwnedArtifactResolution,
+    OwnedArtifactResult, OwnedArtifactSession, OwnedArtifactStore,
+};
 #[cfg(feature = "s3")]
 pub mod s3;
 #[cfg(unix)]

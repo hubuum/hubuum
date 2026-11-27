@@ -1,6 +1,347 @@
 # Storage Adapter SDK Compatibility
 
-Status: accepted; current experimental release train is `0.19`.
+Status: accepted; current experimental release train is `0.20`.
+
+## Upgrading from 0.19 to 0.20
+
+Recheck clock-dependent review protection while holding the policy commit lock
+after verifying the predecessor and fence. Use
+`HistoryLifecycleControlChange::validate_commit_at` or equivalent native checks;
+preparing a transition does not freeze review or hold expiry. Preserve native
+point tombstones (`valid_to == valid_from`) in retained read spans and treat them
+as deletion gaps from that point onward. Unknown restore ancestry must remain
+unresolved in inspection and preview coverage, matching admission.
+Before scanning a class or collection, verify that its stable UUID is known
+from current or historical resources or retained lifecycle authority. Return
+`StorageErrorKind::NotFound` when all three sources lack the UUID.
+
+**Breaking:** upgrade exact dependencies for all ten SDK crates together.
+`OperationalStorage` now requires `HistoryLifecycleStorage`. Complete adapters
+must implement scoped policy/hold/review control, atomic canonical audit,
+revision/action-bound issued preview/application, opaque history read/publication
+owners, mixed-protocol registration fences, and quarantine-only signed recovery.
+Preserve configured current and historical authorization, original UUIDs, names,
+intervals and read epochs through typed error evidence and restore remapping.
+Preserve both archive-budget and lifecycle-gap evidence through adapter errors;
+API request rejection reasons keep their existing priority.
+
+**Breaking archive recovery capability.** Complete adapters must implement
+`load_history_archive_cleanup` and `settle_history_archive_cleanup` under
+offline control authority. Load the original, uniquely pinned claim under the
+quarantined application fence and matching runtime isolation. Allow provider I/O
+outside the transaction. Revalidate the complete claim and both ownership tokens
+under lock before atomically settling the claim, child, parent and capture pin.
+Preserve the original capture and check all remaining obligations before exposure.
+Upgrade the adapter together with the 0.20 SDK and recovery binary.
+
+The synchronized 0.20 train also includes the mandatory audited
+`RuntimeSettingsStorage` capability introduced on the parallel main line. Implement
+complete snapshots, atomic revision-checked updates and audit history, preserve
+settings during restore, and emit runtime-settings notifications. The
+[runtime settings integration contract](#runtime-settings-integration-in-the-019-train)
+applies with all ten exact dependencies pinned to `0.20.0`.
+
+**Breaking size-accounting capability:** implement
+`HistoryLifecycleStorage::observe_history_size` on every complete adapter.
+Capture authority, exhaust the complete retained family, resolve captured
+attribution, fold `HistorySizeCensus`, and retain any pressure transition with
+canonical audit in one serialized history control transaction. A truncated,
+ambiguous or over-budget scan cannot produce a complete gauge. Use the versioned
+`HistoryLogicalBytes::measure_json_v1` / `measure_fields_json_v1` format or its
+native equivalent, never compressed or physical table bytes. Persist immutable
+`HistorySizeTransition` lineage, including terminal capacity reserves, through
+checkpoint, merge and recovery. Preserve the original clock, initiating
+principal and observation source. Older receipts without a source must replay
+their original audit metadata. Keep pressure
+progress out of history read revisions because it changes no exclusion or
+permission. Return `HistorySizeObservation` for independent protection by the
+trusted service before acknowledgement. This capability authorizes no deletion.
+Upgrade matching adapters, binaries, the history lifecycle migration and grants
+together; older decoders cannot retain pressure evidence. See the
+[accounting contract](history_retention.md#scope-and-original-clocks).
+
+**Breaking size-selection/recovery contract:** initial size-bearing passes use
+`HistorySizeCensus::for_family` and `HistoryExpirySizeSelection` to prove complete
+accounting and exhaust the unchanged family again before choosing its bounded
+oldest eligible prefix. Share the original five-second planning clock and 64-MiB
+metadata budget; cap each pass at 100,000 rows. The admission result reports both
+passes' source examinations (up to 200,000), and exposes accounting-unavailable
+fallback in task progress. Preserve independent age-or-size short-circuiting.
+Native intent/audit failures cannot fall back or commit partially.
+
+Preserve `HistoryExpirySizeAuthorization` with every size-dependent member,
+including its original episode, observed bytes and reserved logical bytes.
+Pending unreceipted copies reserve bytes once per exact source, and selection
+stops at the lower target. Ending pressure does not release an independently
+protected exclusion or erase its original cleanup cause. Recheck current policies,
+holds, native intervals and dependencies before deletion; keep first receipts
+through replay. Protect pressure changes even when a pass selects nothing.
+Upgrade all adapters and checkpoint/restore readers before retaining these facts;
+older decoders cannot preserve their authorization. Keep signed evidence and roll
+forward. Production activation and P6 remain gated.
+
+**Breaking expiry-admission capability:** implement
+`HistoryLifecycleStorage::admit_history_expiry` using native selection under the
+same authority transaction as intent and canonical-audit retention. Require the
+original OnlineV1 application scope, current policy/deletion/incarnation fences,
+and a fleet with no Legacy producers. Callers provide a stable batch/run request,
+not membership; retries inspect the original batch instead of selecting again.
+Generic policy commits preserve retained expiry byte-for-byte on both adapters.
+Capture endpoint and class/collection ownership at version creation; preserve it
+through closure, same-version refresh and restore. Older missing ownership stays
+unresolved. Never infer historical ownership from a current row during selection.
+For ordinary age pages, measure native rows within the 1000-source-row bound;
+all admitted batches retain the 1000-member/16-MiB input bound. Transfer
+only bounded identity/authorization metadata. Preserve current/open copies and
+retained schema revisions. Keep admitted membership and object authorization facts
+through checkpoint capture and recovery; primary admission is not independent
+protection or removal permission.
+
+**Breaking return type:** return `HistoryExpiryAdmissionResult` rather than
+`Option<HistoryExpiryManifest>`. It carries optional membership, the examined row
+count, `oversized_source_rows` and `HistoryExpiryScanProgress`, including when no
+batch was admitted.
+Construct it through `request.scan_window(native_boundary)`, `observe`, `advance`
+and `finish`. Count examined rows before closure, scope, identity, visibility or
+dependency filtering. Stop at a byte boundary; defer a row that fits a fresh page,
+but use `advance_oversized` after observing an individually oversized row. This
+records one explicit outcome and advances once; it does not grant removal or
+create a receipt. A row that fits a fresh input/identity budget must remain
+deferred, even when the current page has insufficient space. For task pages, commit nonzero
+`oversized_source_rows` as a task warning together with its continuation and
+accounting so later eligible rows can progress without hiding deferred sources.
+PostgreSQL measures only the
+bounded prefix and one over-budget row, suppressing its identity metadata before
+transfer. Size/resource qualification remains separate from these encoding bounds.
+
+Consumers use `next_page` with a fresh batch identity and current policy fence.
+Continue inside the original finite native boundary, then start a new pass after
+`PassFinished`. This revisits late commits, old versions closing later and changed
+protections; an allocated ID or timestamp is never a committed-data watermark.
+New rows cannot extend an existing pass indefinitely. Continuations preserve the
+original run, scope, origin, application incarnation and deletion revision;
+policy changes remain subject to fresh admission checks. Native positions use
+canonical unsigned decimal strings and remain adapter-owned traversal hints.
+They are neither immutable membership nor deletion/recovery authority.
+
+**Breaking expiry task contract:** add `TaskKind::HistoryExpiry` to exhaustive
+matches and implement `HistoryLifecycleStorage::process_history_expiry_task` and
+`HistoryLifecycleStorage::recover_history_expiry_task`.
+Read `HistoryExpiryTaskPayload` and the bounded version-1 checkpoint without
+reinterpreting unknown actions, versions, task UUIDs or application images.
+Require initiation-bound authorization for fresh selection. Admission, required
+audit, exclusions, checkpoint and resident accounting must commit atomically;
+uncertain retries resolve the original retained manifest before selecting again.
+Preserve the separate `StorageTaskExecutionPhase::HistoryAuthority` across task
+cancellation and restore. Only an empty finished scan pass may complete without
+production activation; an admitted batch remains pending until protected execution succeeds. Production workers use
+`TaskWorkerKinds::STANDARD` until activation is qualified. Leave unknown expiry
+formats unclaimed even when a worker supports the kind.
+
+The gated expiry task request can carry trusted `HistoryExposureProtection` from
+independent authenticated read-back. This proof is not serialized task input.
+`process_history_expiry_task` then removes at most one retained exact closed copy,
+atomically with its first receipt, audit and checkpoint. Both adapters must
+recheck current policy, holds, native identity/interval, dependencies and original
+application/task ownership, and wait for positive settlement of all pre-exclusion
+publication owners. Receipted members are never reselected; absence cannot prove
+a first removal. A completed checkpoint requires independently protected receipts
+and finalization checks its exact counts against the ledger. One task processes
+one bounded batch or an empty finite scan pass; future tasks start fresh scans.
+This internal executor does not enable production registration or task producers.
+
+`recover_history_expiry_task` serializes one retained batch under the original
+OnlineV1 control scope. Resume its waiting owner without replacing its checkpoint
+or deadline, no faster than once per 30 seconds. Keep cancelled/timed-out tasks
+terminal; adopt their remaining obligation, or a purged owner's, into one internal
+cleanup task. Its payload v2 binds the original batch/run, origin and application
+image and cannot select a new page. Commit the queued payload, admission accounting
+and audit together; persist the execution checkpoint only after claim/deadline
+admission. `TaskMetadataDetails::HistoryExpiry` has an optional `recovery_batch`;
+retain it through terminal payload/checkpoint redaction for indexed owner discovery. An active owner prevents adoption; a busy row must cause retry.
+Successful finalization clears the task checkpoint, so recognize completion from
+the successful owner and retained receipts. Recovery never grants removal authority
+and remains gated with production expiry. Original clocks and receipts survive
+every ownership change; a changed application image requires separate recovery
+qualification.
+
+Finite H1/H4 qualification runs one warm-up before five fresh measurements per
+shape. Each repetition has its own isolated CI runner and PostgreSQL container;
+the measured repetitions start only after warm-up succeeds. Every repetition
+retains the same workload, 30-minute phase bounds and worker/database resource
+caps. Each job keeps its four-hour limit, and aggregation also requires every
+complete case to finish within four hours from warm-up start to its final
+measured job's completion, including intermediate queue time. This qualifies
+finite independent runs, not long-lived database-process or churn robustness.
+A shape report cannot qualify the complete profile. Aggregation requires all thirteen
+shapes and all six repetitions, identical settings and binary provenance, and
+recomputes acceptance, per-repetition database limits and raw RSS evidence before
+publishing the 78-run profile. Each reported fixture, worker and replay phase
+must finish within its original 30-minute bound. The logical-size shape exercises
+65 updates per scope, protected size witnesses and oldest-first ordering through
+the actual worker, independent protection and signed restore/replay. It retains
+the existing 1000-examined-row profile ceiling, memory and CPU limits; it does not
+establish steady-state lag acceptance. The additional `census` shape provisions
+400 real child collections through ordinary native history triggers, then
+closes 251 versions of each. Its 100,800 filler versions keep the family above
+the census row ceiling throughout execution. Combined HTTP/worker replicas must
+report unavailable accounting for every original task, select only independent
+age membership and preserve the unselected filler versions, active hold and
+pressure state through signed full-history restore/replay. The fixture must stay
+within one recovery metadata page. Recovery now traverses larger current/open
+inventories while holding the original application/history authority locks,
+using pages of at most 1,000 identities and 1 MiB. A deferred identity is
+validated on the next page; an identity exceeding a whole page still blocks
+exposure. Projection repair and all pages share one five-second clock, reduced
+to any tighter inherited timeout. Partial traversal, malformed or excluded
+ancestry and timeout leave quarantine intact. No page cursor is completion
+evidence. The temporary
+`ci:history-envelope` label measures just this shape on both profiles; this
+focused result cannot qualify the complete profile. The `metadata` shape uses
+ordinary export-template triggers to capture 513 closed versions with long
+related-object alias paths. Their combined identities exceed 64 MiB while the
+family remains below 100,000 rows and each identity below 1 MiB. The final current
+version has narrow references, preserving the unchanged recovery exposure bound.
+Both combined shapes require the original tasks to report unavailable accounting,
+make age-only progress and preserve held filler, pressure and first receipts
+through signed full-history restore. A focused `metadata` dispatch measures only
+that component. The `policy_count` and `hold_count` cases retain 4,096 policy
+revisions or 2,048 live holds (including reserved terminal capacity), respectively,
+while normal HTTP/worker expiry and signed replay preserve those facts. These are
+separate admissible populations under the shared 4-MiB control budget, not a claim
+that every independent maximum fits simultaneously. The `pending_count` case
+admits native one-member obligations after taking the pre-expiry backup, then
+requires the original worker admissions to fill the journal to 256 pending
+intents. The initial claim barrier checks that the held HTTP responses prevent
+removal from the newly admitted original scopes; older exclusions may correctly
+progress despite those newer reads. Recovery maintenance rotates over at most
+16 retained intents per queue poll, including completed intents whose original
+task may still need finalization. Real recovery tasks must finish every retained obligation before workers
+stop; full restore must preserve the resulting first receipts and release
+quarantine. Focused dispatches qualify only their selected component. Aggregation
+fetches every job page before accepting complete source and timing provenance.
+The `inventory_rows` case retains 1,201 current child collections and their open
+versions, exceeding the recovery row-page bound while staying below the metadata
+page bound. The `inventory_metadata` case keeps 16 templates' current/open
+identities wide through ordinary reference-capture triggers, exceeding 1 MiB in
+aggregate while each identity remains below that bound. Each case preserves its
+held closed filler, policies, pressure and original receipts through the real
+HTTP/worker and signed full-history restore/replay paths. These are finite
+qualification cases; broader restore/concurrency and HTTP/QoS gates remain open.
+The separate `History census qualification` workflow uses the temporary
+`ci:history-census` label for seven native component probes, with one warm-up and
+five fresh measured processes per probe on each database resource profile.
+Every process receives a fresh clone of the migrated baseline database, so
+rolled-back bulk fixtures cannot contaminate later probes with dead tuples.
+It tests supported censuses, the inclusive 100,000-row and 64-MiB metadata bounds,
+and row, individual-identity and cumulative-metadata overflow. Boundary probes
+may report complete accounting or explicit unavailability under the five-second
+clock; overflow must never return a complete gauge. Supported probes must finish
+completely. Each attempt must terminate within ten seconds, leave no partial
+authority after transaction rollback and release its control gates. Raw 20-ms
+RSS/high-water traces and enforced 512-MiB/two-CPU limits accompany each report.
+The 100,001-row probe retains overlapping deployment/collection size sources, an
+active hold and an existing size-selected member before exhausting accounting.
+Its initial complete accounting charges the held copy to the specific source
+without double charging the deployment source. Exhaustion must preserve original
+pressure receipts, pending membership and holds. Size-only admission selects
+nothing; age-or-size admission selects independently eligible age members without
+size witnesses, pending-copy reselection or held-copy selection. Each admission has its own ten-second liveness
+bound. A one-second terminal sampling grace is excluded from operation timings.
+These are native component measurements, without the combined HTTP/worker
+baseline or maximum-count policy, hold and pending-journal populations. Neither result alone
+qualifies the combined maximum-census worker envelope. Remove the investigation
+label after recording the tested commit and results.
+Restore/replay must preserve
+first receipts and release quarantine. P6 sustained-load acceptance remains #561.
+
+**Breaking recovery capability:**
+`HistoryLifecycleStorage::reapply_history_expiry` is a required, trusted recovery
+operation. It removes only one retained exact version under current independently
+protected authority, application quarantine, and positive runtime/publication
+drain. An absent copy is accepted only with its retained first-removal receipt.
+Return `true` only for one actual physical deletion, or `false` for an absent
+copy with its protected first receipt; reject unproved absence and failed fences.
+Reintroduced copies preserve that receipt and its original clock. Recheck policy,
+holds, intervals and dependencies; never widen removal to a derived version.
+Exposure release must reject incomplete receipts or remaining excluded copies.
+
+**Breaking shared admission capability:** implement
+`HistoryLifecycleStorage::submit_history_expiry_task` atomically under the history
+control and task-capacity locks. Preserve one active task per exact stable
+family/scope across both triggers and cleanup adoption. Coalescing returns the
+original owner without charging admission again or refreshing its clocks. Retain
+`TaskMetadataDetails::HistoryExpiry::admission_scope` through payload redaction;
+legacy requests derive the same key from their payload. A busy owner requires
+retry. Resolve retained cleanup before creating fresh work. Periodic origins may
+carry their immutable retained `policy` reference; preserve it and the original
+initiator through task/principal deletion. Validate its retained expiry binding,
+and recheck actual member eligibility at execution. Manual services must recheck
+configured administrator authority even when returning an existing task.
+Update Rust constructors and exhaustive field patterns: `HistoryExpiryOrigin::Scheduled`
+gains `policy`, and `TaskMetadataDetails::HistoryExpiry` gains `admission_scope`.
+Use `None` for legacy origins/metadata; new periodic requests should use
+`HistoryExpiryTaskSubmission::periodic` with their retained policy record.
+
+Stop older API, worker, restore and administrator processes, back up the database,
+and apply the history lifecycle migration with refreshed grants before starting
+matching binaries. The policy revision adds the eighth kind and weight without
+resetting existing configuration. Policy edits must include all eight entries.
+Rollback is refused after eighth-kind task/accounting/receipt evidence is retained; preserve
+independent recovery evidence and roll forward. Production manual/periodic admission and physical removal remain gated pending qualification.
+
+Upgrade complete adapters and refresh runtime grants from the existing new
+migration. Production registration, physical removal and scheduling stay gated.
+
+**Breaking error contract:** `ArtifactError` no longer implements `Clone`, `Eq`
+or `PartialEq`. Move errors rather than copying protected causes. Its neutral
+`Source` retains an owned `Error + Send + Sync` with redacted display/debug;
+`AbortFailed` retains the productive and abort failures separately. Standard
+`Error::source` exposes the primary branch only. Inspect the explicit abort
+accessor for cleanup diagnostics, never as productive authorization causality.
+The application bridge must validate its own original-scope cause before any
+API/task projection. Do not traverse arbitrary source chains, stringify causes
+for classification, or serialize raw error evidence.
+
+**Breaking task-artifact cleanup contract:** implement
+`TaskArtifactStore::abort_task(&TaskArtifactCleanup)` as an exact nonproductive
+operation. Match the original immutable attempt, task ID and claim token, wait
+for outstanding writes, and reject unknown, published or foreign attempts.
+Cancellation, lease loss and old application fences must still permit this abort;
+never use it to authorize reads, writes or publication. Physical reservations
+remain until bounded cleanup confirms removal.
+
+Publication admission retains its original runtime isolation domain after
+unregistration. Missing `renderer_isolation` remains the legacy parent-only
+encoding. Trusted startup may attest `inherited_lock_v1` only after fixing the
+renderer supervisor's inherited shared lock before any template execution.
+Preserve that original attestation in publication ownership; compare the nonce,
+device and inode as lock identity, independently of coverage. Recovery's current
+descriptor must never promote an older owner. Reject unknown protocol values.
+
+**Breaking isolation descriptor upgrade:** stop older producers and descriptor
+readers, upgrade the producers/readers and matching renderer binary, then start
+the new versions. Configured startup records the new proof automatically. Older
+readers may reject the additional field; preserve unresolved parent-only owners
+and roll forward.
+No new migration version is required. Both adapters may retire originally
+protected HTTP/export owners after actual exclusive process isolation and native
+application fencing. Parent-only HTTP/export owners and external publication
+claims stay charged; process death does not reconcile a provider outcome.
+
+Deploy `2026-11-19-000002_history_lifecycle` after the idle scheduler migration,
+refresh runtime grants, and retain independent format-3 recovery material.
+Never rewrite the shipped admission/archive migrations. Once retained expiry
+exists, preserve its original authority and roll forward rather than downgrade.
+
+The new migration replaces the archive-only Legacy entry with the combined
+history publication/producer entry. Both adapters accept registered OnlineV1
+owners; Legacy archive owners remain valid only before retained expiry. Archive
+capture refuses resources with retained collection-expiry membership, including
+archive fallback. This compatibility change is not deployment activation:
+production stays Legacy and PostgreSQL generic expiry admission stays disabled
+pending physical replay, protected executor and transport retirement/resource
+evidence. No hot-source retirement is enabled by this bump.
 
 ## Upgrading from 0.18 to 0.19
 
@@ -845,3 +1186,126 @@ admitted export and backup fixtures for each adapter. The shared `task_waiting`
 scenarios add cancellation, deadlines, concurrency, private projections, and
 capacity evidence; backend-native tests retain transactional accounting and
 rollback coverage.
+
+## History lifecycle policy capability (unreleased)
+
+`HistoryLifecycleStorage` is a required operational capability. Complete adapters
+must implement `admit_history_archive_execution`, `admit_history_publication`, `settle_history_publication`,
+`admit_history_producer`, `settle_history_producer`, `register_history_runtime`,
+`capture_history_lifecycle`, `scan_history_lifecycle`,
+`commit_history_lifecycle` and `recover_history_lifecycle`. Capture returns the
+adapter clock with application incarnation and history/deletion revision fences.
+Scanning covers all nine history families using captured UUID ownership and
+original closure/deletion/schema-event anchors, without reading payloads. Missing
+captured identity or ownership remains unresolved; never infer it from a current
+integer owner. Enforce the 1000-row/1-MiB source limits and explicit bounded
+coverage, including when a limit happens to coincide with the final row.
+
+Commit compares the exact predecessor and fences, preserves immutable policy and
+hold prefixes, validates retained preview identity/principal/proposal/deadline,
+and appends required canonical audit in the same transaction. Keep space for a
+terminal transition of every created hold. Recovery only adds compatible retained
+authority while quarantined, clears transient previews, and replays original audit
+identities and clocks. Logical restore preserves control authority and rotates
+the application incarnation. Composite checkpoint capture must include history
+authority in the same consistent snapshot as deletion and task authority.
+
+This required capability is an incompatible SDK change. Advance all ten exact
+SDK dependencies together to 0.20. Existing
+adapters must implement the complete contract before upgrading. Physical expiry
+and its runtime safety boundary remain separate activation gates; see
+[history retention](history_retention.md).
+
+History-aware producer registration declares `OnlineV1`; existing registration
+remains `Legacy`. Implement ownership/isolation/capacity/exposure checks and
+serialize registration with online intent admission. Admission refuses a mixed
+fleet, and retained expiry refuses subsequent legacy startup. A registration or
+API-owner row is not a shutdown proof; retain uncertain registrations until
+positive producer stop/isolation. Upgrade every API/backup/publication producer
+before enabling expiry, and roll forward after retained expiry is published.
+Production must not advertise the new protocol until all read/publication fences
+are implemented. These are incompatible SDK and deployment requirements.
+
+An admitted expiry batch may reuse its original independently authenticated
+membership proof while removing exact copies. Each native transaction still
+checks current policy, holds, dependencies, application and lease ownership.
+The adapter's last-copy result calls `request_receipt_protection()` to request
+fresh protection, avoiding a service-side task-progress read for every copy.
+This transient request is not serialized into the checkpoint and never proves
+completion: completion must independently protect and validate every retained
+receipt. Fresh or restarted execution always protects the retained batch on entry,
+so loss of the transient request cannot bypass protection.
+The service keeps the adapter's admitted checkpoint across successful removal
+steps and does not repeat selection or publish a checkpoint for each copy.
+Repository contention may wait only under the original execution context; lock
+acquisition still authenticates read-back and authentication failures remain
+terminal. Durable waiting remains available when protected progress cannot proceed.
+
+Retained receipt vectors remain canonically ordered by resource and version UUID.
+Use ordered lookups for original receipts and `pending_member()` to select the
+next unreceipted copy in the original manifest traversal order. Manifest member
+order itself is not UUID order. Decoding, recovery coverage and audit deltas must
+still reject foreign, duplicate, reordered or contradictory original receipts.
+
+Journal serialization borrows retained facts and preserves the existing JSON
+array encoding. An outcome or cancellation update carries forward the private
+journal's validated order and unique membership only after proving exact
+manifest equality and monotonic receipt coverage. It still checks the complete
+encoded byte bound and completion reserve. Raw decoding and new admission must
+validate all identities and membership; an update cannot retarget or erase them.
+
+Native outcome validation may compare the complete returned control document
+against the canonical encoding of already validated expected control. Do not
+reduce that comparison to a revision or receipt count. Adapters may decode
+encoded database JSON directly into validated control and serialize validated
+predecessors once, without constructing an intermediate untyped JSON tree.
+A physical replay with a
+verified first receipt must leave the complete control document unchanged and
+emit no new removal audit; the exact native deletion and all eligibility checks
+still run in the same transaction. The recovery service may retain the original
+independent proof across these unchanged replay outcomes without recapturing the
+composite checkpoint per copy. New first receipts still require fresh capture
+and independent publication before the next copy; final exposure release still
+checks complete protected authority and remaining excluded copies.
+
+Finite `task_output` control scopes retain their original full history epoch
+and an adapter-captured `HistoryReadRevision`. The read revision counts policy,
+hold, intent and cancellation decisions, excluding physical-removal receipts
+under an already installed exclusion. Only an owner with no assigned producer
+may remain productive across receipt-only progress, with unchanged application,
+read revision, publication generation and original scope bindings. Preserve the
+exact registered owner and full epoch; never refresh an inherited context or its
+task deadline. Owners constructed without the read proof remain strictly fenced
+by the full revision. Response, backup, export and archive owners, and any owner
+that has ever assigned a producer, also keep full-revision fencing. A control
+owner whose full epoch changed cannot subsequently admit a producer. Native
+adapters must retain and compare the captured proof atomically, rather than
+recompute and substitute a current epoch for the original owner. Deploy matching
+adapters and the history lifecycle migration together during the offline upgrade.
+
+### Unreleased producer slot contract
+
+Admit the single-assignment producer slot before issuing external work. Its
+private context inherits the original publication epoch. A dropped, failed or
+timed-out completion retains both the child charge and parent obligation.
+`settle_history_producer` accepts only the exact positive completion capability;
+retrying it cannot decrement twice. Parent retirement requires a settled child.
+A retired child tombstone prevents reuse until parent retirement ends its retry
+lifetime. Neither settlement operation reacquires an API owner or current epoch.
+
+The `archive_read` publication class permits a registered Legacy reader only
+under the original pre-expiry snapshot; OnlineV1 readers retain their original
+publication and producer scopes. Registration alone does not qualify all
+production I/O and transport publication. The 256 global/64 per-runtime publication limits and one
+child per publication bound metadata cardinality; H4, aggregate bytes, task/FD
+limits, retained-orphan accounting and liveness remain separate evidence gates.
+
+The archive execution admission returns a coupled affine parent/producer owner
+and private, non-serializable execution permit only after both slots commit.
+Adapters must preserve original effective application, API, task/deadline, budget,
+provenance and revision bindings. The restrictive storage-callback marker is
+sticky across scope layering and captured child tasks; async inheritance happens
+when work starts polling. Archive admission/entry and history settlement must
+reject a callback descendant before acquiring another connection or state lock.
+This contract does not establish production transport integration or authorize
+physical expiry before its separate proof gates pass.

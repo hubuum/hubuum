@@ -125,6 +125,20 @@
           "runtime_settings_group_check"
         ]
       }
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-19-000002_history_lifecycle/up.sql",
+      "sha256": "89f775da6f12d4a25731374883286a831a2416c5aa1b8660c545e9a654c89c15",
+      "reason": "The closed history-expiry task vocabulary requires matching eight-kind policy validators and accounting across API, worker, restore and administrator processes. The accounting CHECK widens the seven existing values with history_expiry; all configured limits and scheduler lanes are retained. Older binaries cannot decode the upgraded policy. The private wait-shape constraint retains every existing deadline, lease, format and byte bound while allowing the new dedicated kind. Exact removal retains deletion SHARE against restore's UPDATE fence, avoiding a lock upgrade after history authority that can deadlock concurrent productive entry. Visibility retains the same exact-copy, known-source and unknown-ancestry exclusions while splitting them into indexed point lookups, avoiding repeated full resource-exclusion scans within the unchanged five-second native scan budget. Original publication owners capture a separate read revision for unassigned task control scopes: receipt-only progress remains productive while policy, hold, intent, cancellation, application and generation changes still fence entry. Assigned producers and all external publication classes retain the full history revision; no inherited owner is refreshed. Stored generated authority/read revisions avoid repeated material decoding at native entry. Matching adapters and predicates must be deployed together. Complete size accounting adds a versioned pure logical-byte function and immutable pressure transition authority with prefix checks, bounded journal capacity and reserved terminal slots. Older decoders cannot preserve pressure lineage. Pressure-only progress does not change history visibility or the read revision. History control entry pins deletion and application SHARE before history UPDATE so later control commit rechecks cannot invert runtime registration lock order. Eight interval-history families add bounded transactional partial indexes over open-copy subjects, including unresolved subjects, so dependency checks do not repeatedly scan closed versions after complete accounting reaches its unchanged budget. The existing migration lock and statement timeouts remain binding; no exclusion, eligibility or production activation rule changes. Each open-history dependency index builds in its own statement under the existing lock and statement timeouts. Class-schema dependency checks use a separate index over every retained revision’s captured class UUID, including NULL for unresolved evidence. The native policy commit returns the locked decision so matching adapters preserve expired and stale review reasons. Issuing or consuming a preview now checks its five-minute lifetime, authority revisions, incarnation and intervening hold expiry at one database decision time. Issuance permits one new preview identity alongside pruning. These function-body changes use the existing locks and grants.",
+      "upgrade_action": "Stop older API, worker, restore and administrator processes; back up the database, apply the history lifecycle migration and reconcile grants, then start only matching eight-kind binaries. Preserve retained expiry and task evidence and roll forward when eighth-kind work exists. See docs/history_retention.md and docs/storage_adapter_sdk.md.",
+      "drop_constraints": {
+        "hubuum_control.task_accounting": [
+          "task_accounting_kind_check"
+        ],
+        "public.tasks": [
+          "tasks_wait_shape"
+        ]
+      }
     }
   ]
 }

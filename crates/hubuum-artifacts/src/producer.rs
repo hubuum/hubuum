@@ -77,9 +77,10 @@ where
         Ok(value) => Ok(value),
         Err(error) => match store.abort(&identity).await {
             Ok(()) => Err(error),
-            Err(cleanup) => Err(ArtifactError::Backend(format!(
-                "Artifact staging failed ({error}); abort failed ({cleanup}); staging cleanup remains required"
-            ))),
+            Err(cleanup) => Err(ArtifactError::AbortFailed {
+                primary: Box::new(error),
+                abort: Box::new(cleanup),
+            }),
         },
     }
 }

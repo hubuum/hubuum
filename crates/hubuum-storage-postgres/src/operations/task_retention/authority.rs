@@ -5,6 +5,7 @@ use serde::de::DeserializeOwned;
 
 #[derive(Deserialize)]
 struct Capture {
+    history_lifecycle: HistoryLifecycleAuthority,
     task_control: TaskControlState,
     deletion: DeletionControlState,
     application: Value,
@@ -62,7 +63,8 @@ pub(crate) async fn capture_on(
     {
         deletion = deletion.with_reapplication(receipt.clone())?;
     }
-    let mut combined = ControlCheckpointCapture::new(deletion, capture.task_control)?;
+    let mut combined = ControlCheckpointCapture::new(deletion, capture.task_control)?
+        .with_history_lifecycle(capture.history_lifecycle);
     if let Some(receipt) = capture.task_reapplication {
         combined = combined.with_task_reapplication(receipt)?;
     }

@@ -78,14 +78,14 @@ impl MemoryState {
         logical_identities.capture(&admin_principal);
         logical_identities.capture(&admin_group);
         logical_identities.capture(&root);
-        let root_identity = logical_identities.history(
-            &MemoryHistoryValue::Collection(root.clone()),
-            StorageHistoryOperation::Create,
-            None,
-        );
+        let root_history = MemoryHistoryValue::Collection(root.clone());
+        let root_identity =
+            logical_identities.history(&root_history, StorageHistoryOperation::Create, None);
         let deletion_control = DeletionControlState::empty(Uuid::new_v4(), Uuid::new_v4())
             .expect("generated control identities");
         let mut state = Self {
+            history_lifecycle: HistoryLifecycleControl::empty(),
+            history_publications: HistoryPublicationRegistry::default(),
             task_control: TaskControlState::initial(
                 deletion_control.lineage(),
                 deletion_control.epoch(),
@@ -136,7 +136,7 @@ impl MemoryState {
             history_ids: IdSequence::with_existing(1),
             restore_job_ids: IdSequence::default(),
             fanout_event_cursor: 0,
-            collections: BTreeMap::from([(ROOT_COLLECTION_ID, root.clone())]),
+            collections: BTreeMap::from([(ROOT_COLLECTION_ID, root)]),
             classes: BTreeMap::new(),
             objects: BTreeMap::new(),
             class_relations: BTreeMap::new(),
@@ -191,9 +191,13 @@ impl MemoryState {
             event_sink_schedule: BTreeMap::new(),
             event_retention_batches: BTreeMap::new(),
             history: vec![MemoryHistoryEntry {
+                scan_position: 1,
                 logical_identity: root_identity,
                 id: HistoryRecordId::new(1).expect("initial history id"),
-                value: MemoryHistoryValue::Collection(root),
+                resource_size: root_history
+                    .history_resource_size()
+                    .expect("valid root snapshot"),
+                value: root_history,
                 operation: StorageHistoryOperation::Create,
                 valid_from: now,
                 valid_to: None,

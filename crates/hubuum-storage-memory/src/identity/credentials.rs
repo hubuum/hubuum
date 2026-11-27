@@ -16,7 +16,7 @@ impl AuthenticationStorage for MemoryStorage {
         policy: CredentialActivityPolicy,
     ) -> Result<(), StorageError> {
         self.state
-            .write()
+            .write_authentication()
             .await?
             .observe_source(token, source, policy)
     }
@@ -85,7 +85,7 @@ impl AuthenticationStorage for MemoryStorage {
         let (credentials, migration_target, observed_at, legacy_valid_after) = attempt.into_parts();
         let observation = StorageTokenObservation::try_new(observed_at, legacy_valid_after)
             .map_err(invalid_contract_value)?;
-        let mut state = self.state.write().await?;
+        let mut state = self.state.write_authentication().await?;
         let matching = state
             .tokens
             .values()

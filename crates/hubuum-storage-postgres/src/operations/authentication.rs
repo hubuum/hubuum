@@ -125,7 +125,7 @@ pub async fn authenticate_bearer_token(
         .map(|credential| credential.lookup_value().to_string())
         .collect::<Vec<_>>();
     let rows = runtime
-        .with_read_connection(async move |conn| {
+        .with_authentication_read(async move |conn| {
             tokens
                 .filter(token.eq_any(lookup_values))
                 .filter(active_token_predicate(observed_at, legacy_valid_after))
@@ -175,7 +175,7 @@ pub async fn authenticate_bearer_token(
         let matched_hash = row.token.clone();
         let id = row.id;
         let migration = runtime
-            .with_connection(async move |conn| {
+            .with_authentication_connection(async move |conn| {
                 diesel::update(
                     tokens
                         .filter(token_id.eq(id))
@@ -217,7 +217,7 @@ pub async fn authenticate_bearer_token(
         let id = row.id;
         let stale_before = observed_at.checked_sub_signed(throttle);
         let updated = runtime
-            .with_connection(async move |conn| -> Result<_, PostgresStorageError> {
+            .with_authentication_connection(async move |conn| -> Result<_, PostgresStorageError> {
                 crate::reach_fault_point(
                     crate::PostgresFaultPoint::AuthenticationBeforeActivityUpdate,
                     Some(conn),

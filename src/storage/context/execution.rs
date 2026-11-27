@@ -39,6 +39,13 @@ impl ExecutionStorage for StorageHandle {
 }
 
 impl StorageHandle {
+    pub(crate) fn uses_online_history(&self) -> bool {
+        self.inner
+            .runtime_owner
+            .as_ref()
+            .is_some_and(|owner| owner.history_protocol().supports_online())
+    }
+
     pub(crate) fn has_worker_notification_provider(&self) -> bool {
         self.inner.worker_notification_provider.is_some()
     }

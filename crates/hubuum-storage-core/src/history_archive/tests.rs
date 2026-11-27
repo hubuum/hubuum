@@ -7,7 +7,7 @@ use serde_json::json;
 fn at(value: i64) -> DateTime<Utc> {
     DateTime::from_timestamp(value, 0).unwrap()
 }
-fn row() -> HistoryArchiveRow {
+pub(super) fn row() -> HistoryArchiveRow {
     let identity =
         StorageRecordIdentity::new(ResourceIdentity::generate(), VersionIdentity::generate());
     let evidence = StorageIdentityEvidence::try_new(

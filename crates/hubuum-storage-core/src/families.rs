@@ -13,7 +13,7 @@ use crate::{
     EventDeliveryAdministrationStorage, EventDeliveryWorkerStorage, EventFanoutStorage,
     EventHealthStorage, EventRetentionStorage, ExecutionStorage, ExportTemplateStorage,
     ExternalIdentityStorage, GroupMembershipStorage, GroupStorage, HistoryArchiveStorage,
-    HistoryStorage, IdentityScopeStorage, ImportStorage, InventoryStorage,
+    HistoryLifecycleStorage, HistoryStorage, IdentityScopeStorage, ImportStorage, InventoryStorage,
     LocalIdentityCredentialStorage, LogicalIdentityStorage, MetricsStorage, ObjectAggregateStorage,
     ObjectRelationStorage, ObjectStorage, OperationalStateStorage, PrincipalStorage,
     QueryUsageStorage, RelationQueryStorage, RemoteTargetStorage, RestoreStorage,
@@ -178,6 +178,7 @@ pub trait OperationalStorage:
     + TokenRetentionStorage
     + ExecutionStorage
     + DeletionControlStorage
+    + HistoryLifecycleStorage
 {
 }
 
@@ -188,6 +189,7 @@ impl<T> OperationalStorage for T where
         + TokenRetentionStorage
         + ExecutionStorage
         + DeletionControlStorage
+        + HistoryLifecycleStorage
         + ?Sized
 {
 }

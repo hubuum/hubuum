@@ -19,7 +19,9 @@ use crate::models::{TaskDetailsExpiredResponse, TokenPolicyError};
 use crate::observability::metrics;
 use crate::permissions::AppContext;
 use crate::storage::{ExecutionStorage, StorageError, StorageErrorKind};
-use hubuum_storage_core::{ApiRequestRejection, TaskCapacityRejection};
+use hubuum_storage_core::{
+    ApiRequestRejection, HistoryPolicyReviewConflict, TaskCapacityRejection,
+};
 
 const PUBLIC_INTERNAL_ERROR: &str = "An internal error occurred";
 const PUBLIC_SERVICE_UNAVAILABLE: &str = "Service temporarily unavailable";
@@ -69,6 +71,7 @@ pub fn fatal_error(message: &str, exit_code: i32) -> ! {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum ApiError {
+    HistoryPolicyReview(HistoryPolicyReviewConflict),
     ApiRequestAdmission(ApiRequestRejection),
     TaskCapacity(TaskCapacityRejection),
     TaskDetailsExpired(TaskDetailsExpiredResponse),
@@ -103,6 +106,7 @@ pub enum ApiError {
 impl ApiError {
     pub fn class(&self) -> &'static str {
         match self {
+            ApiError::HistoryPolicyReview(reason) => reason.as_str(),
             ApiError::ApiRequestAdmission(reason) => reason.as_str(),
             ApiError::TaskCapacity(reason) => reason.as_str(),
             ApiError::TaskDetailsExpired(_) => "task_details_expired",
@@ -159,6 +163,9 @@ impl ApiError {
     /// bodies and streaming events.
     pub fn public_message(&self) -> &str {
         match self {
+            ApiError::HistoryPolicyReview(_) => {
+                "The policy review cannot be applied; inspect current authority and obtain a new review"
+            }
             ApiError::ApiRequestAdmission(reason) if reason.is_retryable() => {
                 "Expensive request admission is temporarily unavailable; retry after capacity or control state recovers"
             }
@@ -217,6 +224,9 @@ impl ApiError {
 
 impl From<StorageError> for ApiError {
     fn from(error: StorageError) -> Self {
+        if let Some(reason) = error.history_policy_review_conflict() {
+            return Self::HistoryPolicyReview(reason);
+        }
         if let Some(reason) = error.api_request_rejection() {
             return Self::ApiRequestAdmission(reason);
         }
@@ -308,8 +318,9 @@ impl From<PositiveIdError> for ApiError {
 impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ApiError::TaskStopped(_)
+            ApiError::HistoryPolicyReview(_)
             | ApiError::ApiRequestAdmission(_)
+            | ApiError::TaskStopped(_)
             | ApiError::TaskCapacity(_)
             | ApiError::TaskDetailsExpired(_)
             | ApiError::IdempotencyConflict
@@ -345,6 +356,9 @@ impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         metrics::api_error(self.class());
         match self {
+            ApiError::HistoryPolicyReview(reason) => HttpResponse::build(self.status_code())
+                .insert_header(("Cache-Control", "no-store"))
+                .json(json!({"error":if matches!(reason, HistoryPolicyReviewConflict::InaccessiblePreview) { "Not Found" } else { "Conflict" }, "reason":reason.as_str(), "message":self.public_message()})),
             ApiError::ApiRequestAdmission(reason) => HttpResponse::build(self.status_code())
                 .insert_header(("Cache-Control", "no-store"))
                 .json(json!({"error":"API Request Admission", "reason":reason.as_str(), "retryable":reason.is_retryable(), "message":self.public_message()})),
@@ -438,6 +452,10 @@ impl ResponseError for ApiError {
 
     fn status_code(&self) -> StatusCode {
         match self {
+            ApiError::HistoryPolicyReview(HistoryPolicyReviewConflict::InaccessiblePreview) => {
+                StatusCode::NOT_FOUND
+            }
+            ApiError::HistoryPolicyReview(_) => StatusCode::CONFLICT,
             ApiError::ApiRequestAdmission(reason) => match reason {
                 ApiRequestRejection::Deployment | ApiRequestRejection::Principal => {
                     StatusCode::TOO_MANY_REQUESTS
@@ -692,6 +710,14 @@ mod tests {
                 "permission_backend_unavailable",
             ),
             (StorageError::invalid_input("invalid move"), "bad_request"),
+            (
+                StorageError::history_policy_review(HistoryPolicyReviewConflict::PreviewExpired),
+                "preview_expired",
+            ),
+            (
+                StorageError::history_policy_review(HistoryPolicyReviewConflict::StalePreview),
+                "stale_preview",
+            ),
             (
                 StorageError::conflict("collection has children"),
                 "conflict",

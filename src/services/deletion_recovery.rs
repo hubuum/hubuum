@@ -5,6 +5,8 @@
 //! narrower restrictions; importing authority never releases those restrictions.
 
 mod cleanup;
+pub(crate) mod history_expiry;
+pub(crate) mod history_policy;
 mod reapplication;
 mod repository;
 mod status;
@@ -18,7 +20,11 @@ pub(crate) use task_receipts::{TaskReceiptService, TaskRetentionSweep};
 
 pub(crate) use cleanup::cleanup_object_history;
 
+#[cfg(feature = "integration-test-support")]
+use hubuum_storage_core::{DeletionCheckpointIdentity, HistoryExposureProtection};
+use hubuum_storage_core::{HistoryArchiveCleanupRequest, HistoryLifecycleStorage};
 use std::path::Path;
+use uuid::Uuid;
 
 use hubuum_storage_core::{
     ApplicationControlState, ControlCheckpointCapture, DeletionControlState,
@@ -46,6 +52,14 @@ pub(crate) struct RuntimeRecoveryLifetime {
 }
 
 impl RuntimeRecoveryLifetime {
+    pub(crate) fn protect_renderers(mut self) -> Result<Self, ApiError> {
+        self.permit
+            .as_mut()
+            .expect("unreleased runtime lifetime")
+            .pin_renderers()?;
+        Ok(self)
+    }
+
     pub(crate) fn isolation_domain(&self) -> Option<RuntimeIsolationDomain> {
         self.permit
             .as_ref()
@@ -66,6 +80,18 @@ impl Drop for RuntimeRecoveryLifetime {
 }
 
 impl RuntimeRecoveryPermit {
+    pub(crate) fn protect_renderers(mut self) -> Result<Self, ApiError> {
+        self.pin_renderers()?;
+        Ok(self)
+    }
+
+    fn pin_renderers(&mut self) -> Result<(), ApiError> {
+        if let Some(isolation) = &mut self.isolation {
+            isolation.protect_renderers()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn into_runtime_lifetime(self) -> RuntimeRecoveryLifetime {
         RuntimeRecoveryLifetime { permit: Some(self) }
     }
@@ -96,6 +122,33 @@ async fn evidence(directory: &Path, key_file: &Path) -> Result<RecoveryEvidence,
     })
     .await
     .map_err(|_| unavailable("Recovery evidence worker failed"))?
+}
+
+/// Capture the same signed authority and application fence used by exact-copy
+/// recovery, so a fixture can queue that request across a logical restore.
+#[cfg(feature = "integration-test-support")]
+pub async fn history_replay_fixture_protection(
+    storage: &impl StorageContext,
+    directory: &Path,
+    key_file: &Path,
+) -> Result<HistoryExposureProtection, ApiError> {
+    checkpoint(storage, directory, key_file, false).await?;
+    let evidence = evidence(directory, key_file).await?;
+    let signed = evidence.checkpoint();
+    let authority = signed
+        .history_lifecycle()
+        .cloned()
+        .ok_or_else(|| unavailable("Missing protected history authority"))?;
+    let identity =
+        DeletionCheckpointIdentity::new(signed.identity().to_owned()).map_err(invalid_control)?;
+    Ok(HistoryExposureProtection::new(
+        authority,
+        storage_handle(storage)
+            .read_application_control()
+            .await?
+            .fence(),
+        identity,
+    ))
 }
 
 /// Restore executors need current authority and process exclusion while they
@@ -175,6 +228,15 @@ pub(crate) async fn recover(
     directory: &Path,
     key_file: &Path,
 ) -> Result<ControlRecoveryReport, ApiError> {
+    recover_with_archive_cleanup(context, directory, key_file, None).await
+}
+
+pub(crate) async fn recover_with_archive_cleanup(
+    context: &impl StorageContext,
+    directory: &Path,
+    key_file: &Path,
+    cleanup: Option<(Uuid, &Path)>,
+) -> Result<ControlRecoveryReport, ApiError> {
     // Hold the independent publication lock through commit and read-back.
     // The exact predecessor fences a concurrent primary transition; any error
     // leaves the independent checkpoint intact and can be retried after restart.
@@ -184,7 +246,7 @@ pub(crate) async fn recover(
     let before = storage.read_deletion_control().await?;
     let change = before.recover_from(required.state())
         .map_err(|_| unavailable("Control recovery conflicts with local lineage, epoch, or decisions; keep the deployment quarantined"))?;
-    storage
+    let fence = storage
         .recover_application_control(change, isolation.domain())
         .await?;
     let recovered = storage.read_deletion_control().await?;
@@ -192,6 +254,12 @@ pub(crate) async fn recover(
         return Err(unavailable(
             "Recovered authority read-back did not cover the checkpoint; keep the deployment quarantined",
         ));
+    }
+    if let Some(history) = required.checkpoint().history_lifecycle() {
+        let snapshot = storage.capture_history_lifecycle().await?;
+        let recovery = hubuum_storage_core::HistoryLifecycleRecovery::new(snapshot, history.clone())
+            .map_err(|_| unavailable("History retention recovery conflicts with local authority; keep the deployment quarantined"))?;
+        storage.recover_history_lifecycle(recovery).await?;
     }
     if let Some(tasks) = required.checkpoint().task_control() {
         let current = storage.read_task_control().await?;
@@ -208,7 +276,60 @@ pub(crate) async fn recover(
             "Recovered task authority does not cover independent evidence; keep the deployment quarantined",
         ));
     }
+    if let Some((publication, root)) = cleanup {
+        let request = HistoryArchiveCleanupRequest::new(publication, fence, isolation.domain())?;
+        reconcile_archive_cleanup(context, request, root).await?;
+    }
     Ok(report(&recovered, required.state()))
+}
+
+#[cfg(unix)]
+async fn reconcile_archive_cleanup(
+    context: &impl StorageContext,
+    request: HistoryArchiveCleanupRequest,
+    root: &Path,
+) -> Result<(), ApiError> {
+    use hubuum_artifacts::{ArtifactCreationIntent, FilesystemArtifactStore};
+    use hubuum_storage_core::{HISTORY_ARCHIVE_PUBLICATION_BYTES, HistoryArchiveStorage};
+
+    let storage = storage_handle(context);
+    let claim = storage.load_history_archive_cleanup(&request).await?;
+    let manifest = claim.manifest();
+    let intent = ArtifactCreationIntent::decode(claim.encoded_intent())
+        .map_err(|_| unavailable("Cannot decode the retained filesystem intent"))?;
+    if intent.identity() != manifest.location()
+        || intent.operation() != manifest.producer_id().as_bytes()
+        || intent.incarnation() != manifest.original_history().incarnation().as_bytes()
+        || *intent.request_commitment() != manifest.request_commitment()?
+        || intent.limits().artifact_bytes() > HISTORY_ARCHIVE_PUBLICATION_BYTES
+        || intent.limits().artifact_bytes() < manifest.source_bytes()
+    {
+        return Err(unavailable(
+            "Filesystem intent differs from the original archive claim",
+        ));
+    }
+    let provider = FilesystemArtifactStore::open_existing(root)
+        .await
+        .map_err(|_| unavailable("Cannot open the original filesystem provider"))?;
+    loop {
+        if let Some(receipt) = provider.discard_owned_step(&intent).await.map_err(|_| {
+            unavailable("Cannot prove cleanup of the original filesystem attempt; keep quarantine")
+        })? {
+            storage
+                .settle_history_archive_cleanup(claim.after_cleanup(&receipt)?)
+                .await?;
+            return Ok(());
+        }
+    }
+}
+
+#[cfg(not(unix))]
+async fn reconcile_archive_cleanup(
+    _: &impl StorageContext,
+    _: HistoryArchiveCleanupRequest,
+    _: &Path,
+) -> Result<(), ApiError> {
+    Err(unavailable("Filesystem archive recovery requires Unix"))
 }
 
 #[derive(Serialize)]
@@ -257,7 +378,11 @@ fn covers_checkpoint(
     current: &ControlCheckpointCapture,
     required: &repository::DurableCheckpoint,
 ) -> bool {
-    current.deletion().state().covers(required.state())
+    required.history_lifecycle().is_none_or(|history| {
+        current
+            .history_lifecycle()
+            .is_some_and(|current| current.covers(history))
+    }) && current.deletion().state().covers(required.state())
         && required
             .task_control()
             .is_none_or(|tasks| current.task_control().covers(tasks))
@@ -335,4 +460,34 @@ fn invalid_control(error: StorageValidationError) -> ApiError {
 }
 
 #[cfg(all(test, unix))]
-mod tests;
+pub(crate) mod tests;
+
+/// Integration-only authority fixture. It exercises the real checkpoint,
+/// exclusive isolation, recovery and reapplication paths without enabling
+/// generic online intent admission or representing executor/removal evidence.
+#[cfg(feature = "integration-test-support")]
+pub(crate) async fn prepare_history_read_fixture(
+    storage: &impl StorageContext,
+    required: hubuum_storage_core::HistoryLifecycleAuthority,
+    directory: &Path,
+    key: &Path,
+) -> Result<(), ApiError> {
+    // This prepares restrictions and protected exact replay for fixture-owned
+    // history. It is not native selection/input-budget qualification.
+    // Use genuine isolation/quarantine and sign the actual native capture;
+    // never override a captured component or initialize acknowledged authority.
+    let isolation = runtime_isolation(directory, key, true).await?;
+    let storage = storage_handle(storage);
+    let before = storage.read_deletion_control().await?;
+    let change = before.recover_from(&before).map_err(invalid_control)?;
+    storage
+        .recover_application_control(change, isolation.domain())
+        .await?;
+    let snapshot = storage.capture_history_lifecycle().await?;
+    let recovery = hubuum_storage_core::HistoryLifecycleRecovery::new(snapshot, required)
+        .map_err(invalid_control)?;
+    storage.recover_history_lifecycle(recovery).await?;
+    checkpoint(&storage, directory, key, false).await?;
+    reapply(&storage, directory, key).await?;
+    Ok(())
+}

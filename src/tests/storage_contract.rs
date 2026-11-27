@@ -1,5 +1,6 @@
 use crate::tests::asserts::expect_legacy_task;
-use hubuum_storage_core::StorageRestoreStageArtifact;
+use hubuum_domain::ResourceIdentity;
+use hubuum_storage_core::{HistoryPolicyScope, StorageRestoreStageArtifact};
 use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 mod auth_sessions;
 use hubuum_storage_core::{EventSinkGrantAction, StorageAuditSubject, StorageEventSinkGrantChange};
@@ -11,8 +12,10 @@ mod credential_approvals;
 mod event_delivery;
 mod history_access;
 mod history_archive;
+mod history_authentication;
 mod history_computed;
 mod history_fixtures;
+mod history_http_publication;
 mod history_name;
 mod history_navigation;
 mod history_population;
@@ -1810,6 +1813,7 @@ fn compatibility_completion_payload(kind: StorageTaskKind) -> StorageTaskComplet
     let output_expires_at =
         chrono::Utc::now() + chrono::Duration::try_hours(1).expect("valid duration");
     match kind {
+        StorageTaskKind::HistoryExpiry => StorageTaskCompletionPayload::HistoryExpiry,
         StorageTaskKind::Import => StorageTaskCompletionPayload::Import,
         StorageTaskKind::Reindex => StorageTaskCompletionPayload::Reindex,
         StorageTaskKind::SchemaValidation => StorageTaskCompletionPayload::SchemaValidation,
@@ -1893,6 +1897,31 @@ mod relation_search;
 mod resource_lifecycle;
 mod resource_queries;
 mod task_queue;
+
+#[rstest::rstest]
+#[case::class(HistoryPolicyScope::Class { identity: ResourceIdentity::generate() })]
+#[case::collection(HistoryPolicyScope::Collection { identity: ResourceIdentity::generate() })]
+#[actix_web::test]
+async fn every_backend_rejects_an_unknown_history_inspection_scope(
+    #[case] scope: HistoryPolicyScope,
+) {
+    use hubuum_storage_core::{
+        HistoryLifecycleScan, HistoryLifecycleStorage, HistoryPolicyKey, StorageIdentityHistoryKind,
+    };
+    let _permit = postgres_permit().await;
+    let scan = HistoryLifecycleScan::new(
+        HistoryPolicyKey::new(StorageIdentityHistoryKind::Object, scope).unwrap(),
+        1,
+    )
+    .unwrap();
+    for backend in available_backends() {
+        let error = backend
+            .scan_history_lifecycle(scan.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), StorageErrorKind::NotFound);
+    }
+}
 
 #[actix_web::test]
 async fn every_available_storage_backend_restores_scope_after_synchronous_polling() {

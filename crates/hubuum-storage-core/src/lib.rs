@@ -39,6 +39,8 @@ mod families;
 mod history;
 mod history_archive;
 pub use history_archive::*;
+mod history_lifecycle;
+pub use history_lifecycle::*;
 mod identity;
 mod identity_operations;
 mod identity_resources;
@@ -512,6 +514,8 @@ pub struct StorageError {
     current_revision: Option<ResourceRevision>,
     task_capacity: Option<TaskCapacityRejection>,
     api_request: Option<ApiRequestRejection>,
+    history_policy_review: Option<HistoryPolicyReviewConflict>,
+    history_population_gap: Option<Box<HistoryObjectPopulationGap>>,
     history_archive_budget: Option<Box<HistoryArchiveBudgetEvidence>>,
 }
 
@@ -528,6 +532,20 @@ impl StorageError {
     #[must_use]
     pub fn history_archive_budget_evidence(&self) -> Option<&HistoryArchiveBudgetEvidence> {
         self.history_archive_budget.as_deref()
+    }
+
+    /// Retained policy inputs must be authorized before projecting absence.
+    /// Generic error translation deliberately remains unavailable.
+    #[must_use]
+    pub fn history_population_gap(evidence: HistoryObjectPopulationGap) -> Self {
+        let mut error = Self::unavailable("Historical population requires retained authorization");
+        error.history_population_gap = Some(Box::new(evidence));
+        error
+    }
+
+    #[must_use]
+    pub fn history_population_gap_evidence(&self) -> Option<&HistoryObjectPopulationGap> {
+        self.history_population_gap.as_deref()
     }
 
     #[must_use]
@@ -583,6 +601,20 @@ impl StorageError {
     #[must_use]
     pub fn invalid_input(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::InvalidInput, message, None)
+    }
+
+    #[must_use]
+    pub fn history_policy_review(reason: HistoryPolicyReviewConflict) -> Self {
+        let mut error = match reason {
+            HistoryPolicyReviewConflict::InaccessiblePreview => Self::not_found(reason.as_str()),
+            _ => Self::conflict(reason.as_str()),
+        };
+        error.history_policy_review = Some(reason);
+        error
+    }
+
+    pub const fn history_policy_review_conflict(&self) -> Option<HistoryPolicyReviewConflict> {
+        self.history_policy_review
     }
 
     #[must_use]
@@ -688,6 +720,8 @@ impl StorageError {
             current_revision,
             task_capacity: None,
             api_request: None,
+            history_policy_review: None,
+            history_population_gap: None,
             history_archive_budget: None,
         }
     }

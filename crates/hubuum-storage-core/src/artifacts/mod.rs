@@ -4,6 +4,8 @@
 //! provider metadata nor a successful upload creates a verification proof.
 //! Retained proof types cross task publication without reconstructing raw metadata.
 
+mod cleanup;
+pub use cleanup::ArtifactCleanupReceipt;
 mod backup;
 pub(crate) use backup::validate_backup_artifacts;
 pub use backup::{
@@ -31,7 +33,6 @@ pub use manifest::{
 };
 pub use transfer::{ArtifactReader, ArtifactWriter, verify, verify_and_publish};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ArtifactError {
     Invalid(String),
     Limit(String),
@@ -39,6 +40,39 @@ pub enum ArtifactError {
     Conflict(String),
     NotFound,
     Backend(String),
+    /// Operation-local opaque causality, never authorization or durable proof.
+    /// Display and Debug intentionally do not expose the underlying evidence.
+    Source(Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// Both failures remain available. The productive failure is primary;
+    /// cleanup failure does not establish physical completion or replace it.
+    AbortFailed {
+        primary: Box<ArtifactError>,
+        abort: Box<ArtifactError>,
+    },
+}
+
+impl ArtifactError {
+    pub fn abort_error(&self) -> Option<&Self> {
+        match self {
+            Self::AbortFailed { abort, .. } => Some(abort),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Debug for ArtifactError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Invalid(message) => f.debug_tuple("Invalid").field(message).finish(),
+            Self::Limit(message) => f.debug_tuple("Limit").field(message).finish(),
+            Self::Corrupt(message) => f.debug_tuple("Corrupt").field(message).finish(),
+            Self::Conflict(message) => f.debug_tuple("Conflict").field(message).finish(),
+            Self::NotFound => f.write_str("NotFound"),
+            Self::Backend(message) => f.debug_tuple("Backend").field(message).finish(),
+            Self::Source(_) => f.write_str("Source(..)"),
+            Self::AbortFailed { .. } => f.write_str("AbortFailed { primary: .., abort: .. }"),
+        }
+    }
 }
 
 impl fmt::Display for ArtifactError {
@@ -50,11 +84,26 @@ impl fmt::Display for ArtifactError {
             | Self::Conflict(message)
             | Self::Backend(message) => f.write_str(message),
             Self::NotFound => f.write_str("Artifact was not found"),
+            Self::Source(_) => f.write_str("Artifact operation failed"),
+            Self::AbortFailed { .. } => {
+                f.write_str("Artifact staging failed; abort failed; cleanup remains pending")
+            }
         }
     }
 }
 
-impl std::error::Error for ArtifactError {}
+impl std::error::Error for ArtifactError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Source(error) => Some(error.as_ref()),
+            Self::AbortFailed { primary, .. } => Some(primary.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod error_tests;
 
 pub type ArtifactResult<T> = Result<T, ArtifactError>;
 
@@ -176,6 +225,28 @@ impl ArtifactReservation {
     }
 }
 
+/// Exact original task-attempt binding for nonproductive cleanup.
+#[derive(Clone, Debug)]
+pub struct TaskArtifactCleanup {
+    identity: ArtifactIdentity,
+    lease: crate::StorageTaskLease,
+}
+
+impl TaskArtifactCleanup {
+    /// The adapter validates this exact original binding. Possession permits
+    /// only aborting its unpublished attempt, including after stop or lease loss.
+    pub fn new(identity: ArtifactIdentity, lease: crate::StorageTaskLease) -> Self {
+        Self { identity, lease }
+    }
+
+    pub fn identity(&self) -> &ArtifactIdentity {
+        &self.identity
+    }
+    pub fn lease(&self) -> &crate::StorageTaskLease {
+        &self.lease
+    }
+}
+
 /// Result of one bounded task-artifact cleanup pass.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ArtifactCleanupBatch {
@@ -205,6 +276,11 @@ pub trait TaskArtifactStore: ArtifactStore {
             .await
             .map(|removed_blocks| ArtifactCleanupBatch::Progress { removed_blocks })
     }
+
+    /// Exact nonproductive cleanup; must not reacquire productive admission or
+    /// waive scope restrictions for reads, append, seal or publication. Wait for
+    /// in-flight attempt writes and reject published, unknown or foreign work.
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()>;
 
     async fn bind_task(
         &self,

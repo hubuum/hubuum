@@ -2,17 +2,68 @@ use super::*;
 use hubuum_domain::{PrincipalIdentity, ResourceIdentity};
 use hubuum_storage_core::{
     HistoryArchiveCapture, HistoryArchiveCaptureRequest, HistoryArchiveCatalog,
-    HistoryArchiveCatalogGeneration, HistoryArchiveDescriptor, HistoryArchiveStorage,
-    StorageExecutionPermit,
+    HistoryArchiveCatalogGeneration, HistoryArchiveCleanupClaim, HistoryArchiveCleanupRequest,
+    HistoryArchiveCleanupSettlement, HistoryArchiveDescriptor, HistoryArchiveExecutionPermit,
+    HistoryArchivePublicationClaim, HistoryArchivePublicationRequest, HistoryArchiveStorage,
 };
 use uuid::Uuid;
 
 #[async_trait]
 impl HistoryArchiveStorage for StorageHandle {
+    async fn load_history_archive_cleanup(
+        &self,
+        request: &HistoryArchiveCleanupRequest,
+    ) -> Result<HistoryArchiveCleanupClaim, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "load_history_archive_cleanup",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .load_history_archive_cleanup(request)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn settle_history_archive_cleanup(
+        &self,
+        settlement: HistoryArchiveCleanupSettlement,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "settle_history_archive_cleanup",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .settle_history_archive_cleanup(settlement)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn claim_history_archive_publication(
+        &self,
+        request: HistoryArchivePublicationRequest,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<HistoryArchivePublicationClaim, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "claim_history_archive_publication",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .claim_history_archive_publication(request, permit)
+                    .await)
+            },
+        )
+        .await
+    }
+
     async fn history_archive_catalog(
         &self,
         resource: ResourceIdentity,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCatalog, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -30,7 +81,7 @@ impl HistoryArchiveStorage for StorageHandle {
         &self,
         expected: HistoryArchiveCatalogGeneration,
         descriptors: Vec<HistoryArchiveDescriptor>,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCatalog, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -47,7 +98,7 @@ impl HistoryArchiveStorage for StorageHandle {
     async fn capture_history_archive(
         &self,
         request: HistoryArchiveCaptureRequest,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCapture, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -65,7 +116,7 @@ impl HistoryArchiveStorage for StorageHandle {
         &self,
         id: Uuid,
         principal: PrincipalIdentity,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<Option<HistoryArchiveCapture>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),
@@ -84,7 +135,7 @@ impl HistoryArchiveStorage for StorageHandle {
         id: Uuid,
         principal: PrincipalIdentity,
         bytes: u64,
-        permit: &StorageExecutionPermit,
+        permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCapture, StorageError> {
         self.observe_storage_call(
             self.backend_name(),

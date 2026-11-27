@@ -5,12 +5,45 @@ use hubuum_storage_core::RuntimeIsolationDomain;
 
 pub(crate) struct RuntimeIsolationGuard {
     domain: RuntimeIsolationDomain,
-    _file: File,
+    #[cfg(unix)]
+    file: File,
+    #[cfg(unix)]
+    mode: IsolationMode,
+}
+
+#[cfg(unix)]
+enum IsolationMode {
+    Shared,
+    Exclusive,
 }
 
 impl RuntimeIsolationGuard {
     pub(crate) fn domain(&self) -> RuntimeIsolationDomain {
         self.domain.clone()
+    }
+
+    pub(in crate::services::deletion_recovery) fn protect_renderers(
+        &mut self,
+    ) -> Result<(), ApiError> {
+        #[cfg(unix)]
+        {
+            if matches!(self.mode, IsolationMode::Exclusive) {
+                return Err(unavailable(
+                    "Cannot attach renderers to offline recovery isolation",
+                ));
+            }
+            let file = self
+                .file
+                .try_clone()
+                .map_err(|_| unavailable("Cannot pin renderer process isolation"))?;
+            hubuum_templates::configure_template_process_isolation(file).map_err(|_| {
+                unavailable("Renderer isolation must be configured before template execution")
+            })?;
+            self.domain = self.domain.clone().with_renderer_isolation();
+            Ok(())
+        }
+        #[cfg(not(unix))]
+        Err(unavailable("Renderer process isolation requires Unix"))
     }
 }
 
@@ -67,7 +100,12 @@ impl CheckpointRepository {
             .map_err(|_| unavailable("Invalid runtime isolation identity"))?;
         Ok(RuntimeIsolationGuard {
             domain,
-            _file: file,
+            file,
+            mode: if exclusive {
+                IsolationMode::Exclusive
+            } else {
+                IsolationMode::Shared
+            },
         })
     }
 
@@ -85,6 +123,16 @@ impl CheckpointRepository {
 #[cfg(all(test, unix))]
 mod tests {
     use crate::services::deletion_recovery::repository::tests::Fixture;
+
+    #[test]
+    fn exclusive_recovery_cannot_downgrade_its_lock_to_install_renderers() {
+        let fixture = Fixture::new();
+        fixture.repository.publish(&fixture.initial, true).unwrap();
+        let mut recovery = fixture.repository.runtime_isolation(true).unwrap();
+        assert!(recovery.protect_renderers().is_err());
+        assert!(fixture.repository.runtime_isolation(false).is_err());
+        assert!(!recovery.domain().excludes_renderers());
+    }
 
     #[test]
     fn shared_runtimes_exclude_recovery_until_every_owner_exits() {

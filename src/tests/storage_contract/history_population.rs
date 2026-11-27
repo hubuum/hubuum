@@ -729,3 +729,169 @@ async fn every_backend_population_uses_historical_class_membership(
         delete_backend_object_fixture(&backend, target).await;
     }
 }
+
+// Real memory-native admission and configured policy. Physical closed-copy
+// absence has separate PostgreSQL coverage.
+#[rstest]
+#[case::authorized("both", "expired")]
+#[case::historical_denied("current", "forbidden")]
+#[case::current_denied("historical", "forbidden")]
+#[case::stale_prebound_uuid("stale", "unavailable")]
+#[actix_web::test]
+async fn retained_population_gap_requires_original_configured_authorization(
+    #[case] condition: &str,
+    #[case] expected: &str,
+) {
+    use hubuum_domain::{PrincipalIdentity, ResourceIdentity};
+    use hubuum_storage_core::{
+        DeletionControlStorage, ExecutionStorage, HistoryExpiryOrigin, HistoryExpiryTrigger,
+        HistoryLifecycleScan, HistoryLifecycleStorage, HistoryObjectAuthorizationFacts,
+        HistoryPolicyApplication, HistoryPolicyApplyRequest, HistoryPolicyBinding,
+        HistoryPolicyChange, HistoryPolicyKey, HistoryPolicyRevision, HistoryPolicyScope,
+        HistoryPublicationKind, HistoryRetentionSeconds, StorageExecutionScope,
+        StorageIdentityHistoryKind,
+    };
+    use uuid::Uuid;
+    let backend = StorageHandle::from_registered_backend(MemoryStorage::new());
+    let initial = backend.capture_history_lifecycle().await.unwrap();
+    let principal_id = PrincipalIdentity::generate();
+    let key = HistoryPolicyKey::new(
+        StorageIdentityHistoryKind::Object,
+        HistoryPolicyScope::Deployment,
+    )
+    .unwrap();
+    let policy = initial
+        .control()
+        .apply(
+            HistoryPolicyApplyRequest::new(
+                HistoryPolicyChange::new(
+                    key,
+                    HistoryPolicyRevision::new(0).unwrap(),
+                    HistoryPolicyBinding::Expire {
+                        trigger: HistoryExpiryTrigger::Age {
+                            age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                            deleted_age_seconds: None,
+                        },
+                        minimum_age_seconds: HistoryRetentionSeconds::new(0).unwrap(),
+                    },
+                    HistoryPolicyApplication::Prospective,
+                )
+                .unwrap(),
+                None,
+            ),
+            principal_id,
+            initial.fence(),
+            initial.observed_at(),
+        )
+        .unwrap();
+    backend.commit_history_lifecycle(policy).await.unwrap();
+    let mut fixture =
+        create_backend_object_fixture(&backend, &prefix("retained_population_policy"), vec![])
+            .await;
+    let object = create_named(&backend, &fixture, "original_member").await;
+    fixture.objects.push(
+        update(
+            &backend,
+            object.id(),
+            StorageObjectUpdate::builder()
+                .name(Some("current_member".into()))
+                .build(),
+        )
+        .await,
+    );
+    let user = owner_user(&backend, &fixture).await;
+    let principal = backend
+        .get_authentication_identity(user.principal_id)
+        .await
+        .unwrap()
+        .into_parts()
+        .0;
+    let row = versions(&backend, fixture.class.id(), object.id())
+        .await
+        .into_iter()
+        .find(|row| row.clone().into_parts().1.valid_to().is_some())
+        .unwrap();
+    let metadata = row.clone().into_parts().1;
+    let at = metadata.valid_from();
+    let facts = HistoryObjectAuthorizationFacts::capture(row).unwrap();
+    let class_uuid = facts.attribution().class().unwrap();
+    let snapshot = backend.capture_history_lifecycle().await.unwrap();
+    let registration = backend.register_history_runtime(None).await.unwrap();
+    let application = backend
+        .capture_application_execution(Some(registration.owner()))
+        .await
+        .unwrap();
+    let request = hubuum_storage_core::HistoryExpiryAdmissionRequest::new(
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        HistoryExpiryOrigin::Manual {
+            principal: principal_id,
+        },
+        // The positive fixture includes preceding open and other-family rows.
+        HistoryLifecycleScan::new(key, 1000).unwrap(),
+        snapshot.fence(),
+    )
+    .unwrap();
+    let manifest = backend
+        .run_in_scope(
+            StorageExecutionScope::default().with_application_access(application),
+            backend.admit_history_expiry(request),
+        )
+        .await
+        .unwrap()
+        .into_manifest()
+        .unwrap();
+    assert_eq!(manifest.members()[0].target(), facts.target());
+    let permit = backend
+        .capture_application_execution(Some(registration.owner()))
+        .await
+        .unwrap();
+    let scope = StorageExecutionScope::default().with_application_access(permit);
+    let publication = backend
+        .run_in_scope(
+            scope.clone(),
+            backend.admit_history_publication(HistoryPublicationKind::TaskOutput),
+        )
+        .await
+        .unwrap();
+    let context = AppContext::new(
+        backend.clone(),
+        permissions(
+            &fixture,
+            match condition {
+                "current" => Some("current_member"),
+                "historical" => Some("original_member"),
+                _ => None,
+            },
+        ),
+    );
+    let selected = query(fixture.class.id(), at, "limit=2").for_resource(if condition == "stale" {
+        ResourceIdentity::generate()
+    } else {
+        class_uuid
+    });
+    let result = backend
+        .run_in_scope(
+            scope.with_history_read(publication.context()),
+            class_objects_as_of(&context, &principal, None, selected),
+        )
+        .await;
+    // No transport exists in this fixture and all issued storage futures ended.
+    let settled = publication
+        .after_drained(std::future::ready(Ok(())), std::future::ready(Ok(())))
+        .await
+        .unwrap();
+    backend.settle_history_publication(settled).await.unwrap();
+    backend.unregister_runtime(registration).await.unwrap();
+    delete_backend_user(&backend, user).await;
+    delete_backend_object_fixture(&backend, fixture).await;
+    match expected {
+        "expired" => assert!(matches!(result, Err(crate::errors::ApiError::NotFound(_)))),
+        "forbidden" => assert!(matches!(result, Err(crate::errors::ApiError::Forbidden(_)))),
+        "unavailable" => assert!(matches!(
+            result,
+            Err(crate::errors::ApiError::ServiceUnavailable(_))
+        )),
+        _ => unreachable!(),
+    }
+}

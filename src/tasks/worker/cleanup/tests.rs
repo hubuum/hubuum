@@ -1,3 +1,4 @@
+use hubuum_storage_core::artifacts::TaskArtifactCleanup;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -6,7 +7,9 @@ use hubuum_storage_core::artifacts::{
     ArtifactReservation, ArtifactResult, ArtifactStore, Destination, TaskArtifactStore,
     VerifiedArtifact,
 };
-use hubuum_storage_core::{StorageTaskLease, TaskWorkerId};
+use hubuum_storage_core::{
+    DeletionControlStorage, HistoryLifecycleStorage, StorageTaskLease, TaskWorkerId,
+};
 
 use crate::storage::StorageHandle;
 
@@ -61,6 +64,10 @@ impl ArtifactStore for PausedCleanup {
 
 #[async_trait]
 impl TaskArtifactStore for PausedCleanup {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        self.store.abort_task(cleanup).await
+    }
+
     async fn cleanup_batch(&self) -> ArtifactResult<ArtifactCleanupBatch> {
         self.entered.notify_one();
         self.release.notified().await;
@@ -78,9 +85,21 @@ impl TaskArtifactStore for PausedCleanup {
     }
 }
 
+#[rstest::rstest]
+#[case::legacy(false)]
+#[case::online(true)]
 #[actix_web::test]
-async fn paused_maintenance_does_not_block_the_task_claim_loop() {
-    let baseline = StorageHandle::memory();
+async fn paused_maintenance_does_not_block_the_task_claim_loop(#[case] online: bool) {
+    let unbound = StorageHandle::memory();
+    let registration = if online {
+        Some(unbound.register_history_runtime(None).await.unwrap())
+    } else {
+        None
+    };
+    let baseline = match &registration {
+        Some(registration) => unbound.clone().with_runtime_owner(registration.owner()),
+        None => unbound.clone(),
+    };
     let paused = Arc::new(PausedCleanup {
         store: baseline.artifact_store(),
         entered: Notify::new(),
@@ -113,6 +132,9 @@ async fn paused_maintenance_does_not_block_the_task_claim_loop() {
     .await;
     paused.release.notify_waiters();
     maintenance.await.unwrap().unwrap();
+    if let Some(registration) = registration {
+        unbound.unregister_runtime(registration).await.unwrap();
+    }
 
     assert!(
         !result
@@ -132,4 +154,23 @@ fn maintenance_future_fits_the_worker_stack_budget() {
     let artifacts = Mutex::new(CleanupSchedule::default());
     let work = iteration(&context, &tasks, &artifacts);
     assert!(std::mem::size_of_val(&work) < 16 * 1024);
+}
+
+#[actix_web::test]
+async fn artifact_cleanup_runs_when_history_protection_is_unavailable() {
+    let storage = StorageHandle::memory();
+    let missing = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+    let options = serde_json::from_value(serde_json::json!({
+        "directory": missing.join("repository"), "key": missing.join("key")
+    }))
+    .unwrap();
+    let context = AppContext::new(
+        storage.clone(),
+        Arc::new(LocalPermissionBackend::new(storage, "admin".to_owned())),
+    )
+    .with_history_retention(options);
+    let tasks = Mutex::new(CleanupSchedule::default());
+    let artifacts = Mutex::new(CleanupSchedule::default());
+    iteration(&context, &tasks, &artifacts).await.unwrap();
+    assert!(artifacts.lock().unwrap().last_completed_at.is_some());
 }

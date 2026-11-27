@@ -46,6 +46,18 @@ assert_literal_include_is_code() {
 
 # Filesystem adapter implementation and native fault tests remain production
 # inputs even though selecting it for task outputs is a separate activation.
+for expiry_input in .github/workflows/history-expiry-qualification.yml \
+  .github/workflows/history-census-qualification.yml tests/python/integration/history_census.py \
+  tests/python/integration/history_expiry.py tests/restore_contract/history_expiry_qualification.rs \
+  tests/restore_contract/history_expiry_qualification/replica.rs \
+  tests/restore_contract/history_expiry_qualification/metadata.rs \
+  tests/restore_contract/history_expiry_qualification/authority.rs; do
+  expiry_output="$(bash "$classifier" "$expiry_input")"
+  assert_flag "$expiry_output" code true
+  assert_flag "$expiry_output" rust true
+  assert_flag "$expiry_output" container true
+done
+
 for filesystem_path in crates/hubuum-artifacts/src/filesystem.rs \
   crates/hubuum-artifacts/src/filesystem/tests.rs crates/hubuum-artifacts/Cargo.toml; do
   filesystem_output="$(bash "$classifier" "$filesystem_path")"
@@ -85,6 +97,51 @@ for authorization_path in src/tasks/import_authorization.rs src/tests/permission
   assert_flag "$authorization_output" treetop_conformance true
 done
 
+for policy_input in src/models/history_lifecycle.rs src/api/v1/handlers/history_lifecycle.rs \
+  crates/hubuum-storage-core/src/history_lifecycle.rs crates/hubuum-storage-core/src/history_lifecycle/policy.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/authorization.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/authorization/tests.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/online/scan.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/task.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/task/tests.rs \
+  crates/hubuum-domain/src/task_kind.rs \
+  crates/hubuum-storage-core/src/record_identity.rs crates/hubuum-storage-core/src/logical_identity.rs; do
+  policy_output="$(bash "$classifier" "$policy_input")"
+  assert_flag "$policy_output" code true
+  assert_flag "$policy_output" rust true
+  assert_flag "$policy_output" openapi true
+  assert_flag "$policy_output" operational_contract true
+  assert_flag "$policy_output" container true
+done
+
+for policy_storage_input in crates/hubuum-storage-postgres/tests/history_lifecycle.rs \
+  crates/hubuum-storage-postgres/tests/history_expiry/mod.rs \
+  crates/hubuum-storage-postgres/tests/history_expiry/bounded_scan.rs \
+  crates/hubuum-storage-postgres/tests/history_expiry/task.rs \
+  crates/hubuum-storage-postgres/tests/history_expiry/task/removal_race.rs \
+  crates/hubuum-storage-postgres/src/operations/history_expiry_task.rs \
+  crates/hubuum-storage-memory/src/history_lifecycle/expiry/task_tests.rs \
+  src/services/deletion_recovery/history_expiry.rs \
+  crates/hubuum-storage-memory/src/history_lifecycle/expiry/progress_tests.rs \
+  crates/hubuum-storage-postgres/src/runtime/history_publication.rs \
+  crates/hubuum-storage-postgres/migrations/2026-11-19-000002_history_lifecycle/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-19-000002_history_lifecycle/down.sql; do
+  policy_storage_output="$(bash "$classifier" "$policy_storage_input")"
+  assert_flag "$policy_storage_output" code true
+  assert_flag "$policy_storage_output" rust true
+done
+
+history_projection_output="$(bash "$classifier" src/models/history_lifecycle/operation_response_tests.rs)"
+assert_flag "$history_projection_output" code true
+assert_flag "$history_projection_output" rust true
+assert_flag "$history_projection_output" container true
+
+# The history capability is embedded in the finite operational metrics catalog.
+history_catalog_output="$(bash "$classifier" src/storage/context/history_lifecycle.rs)"
+assert_flag "$history_catalog_output" code true
+assert_flag "$history_catalog_output" rust true
+assert_flag "$history_catalog_output" operational_contract true
+
 for planner_test in src/tasks/tests/import_execution.rs src/tasks/tests/import_planning.rs; do
   planner_output="$(bash "$classifier" "$planner_test")"
   assert_flag "$planner_output" rust true
@@ -113,6 +170,9 @@ for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.r
 done
 
 for artifact_input in crates/hubuum-artifacts/Cargo.toml \
+  crates/hubuum-storage-core/src/artifacts/error_tests.rs \
+  crates/hubuum-artifacts/src/owned.rs crates/hubuum-artifacts/src/owned/tests.rs \
+  crates/hubuum-artifacts/tests/owned_external_provider.rs \
   crates/hubuum-artifacts/src/s3.rs crates/hubuum-artifacts/src/s3/config.rs \
   crates/hubuum-artifacts/src/s3/tests.rs \
   src/benchmark_support/history_segments.rs src/benchmark_support/history_segments/tests.rs \
@@ -209,10 +269,12 @@ for fuzz_dependency in crates/hubuum-regex/src/lib.rs \
   assert_flag "$fuzz_output" regex_fuzz true
 done
 
-# The portable CI wrapper supplies the database used by Rust restore contracts.
-restore_fixture_output="$(bash "$classifier" tests/python/integration/rust_tests.py)"
-assert_flag "$restore_fixture_output" code true
-assert_flag "$restore_fixture_output" rust true
+# Both runners supply the isolated databases used by Rust restore/archive contracts.
+for restore_fixture in run_tests.sh tests/python/integration/rust_tests.py; do
+  restore_fixture_output="$(bash "$classifier" "$restore_fixture")"
+  assert_flag "$restore_fixture_output" code true
+  assert_flag "$restore_fixture_output" rust true
+done
 
 assert_flag "$(bash "$classifier" docs/testing.md)" regex_fuzz false
 for unrelated_crate in crates/hubuum-domain/src/lib.rs \

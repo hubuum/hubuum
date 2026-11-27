@@ -20,6 +20,8 @@ const UP: &str =
     include_str!("../migrations/2026-11-11-000001_archive_runtime_compatibility/up.sql");
 const DOWN: &str =
     include_str!("../migrations/2026-11-11-000001_archive_runtime_compatibility/down.sql");
+const LIFECYCLE_DOWN: &str =
+    include_str!("../migrations/2026-11-19-000002_history_lifecycle/down.sql");
 const SCHEDULER_UP: &str =
     include_str!("../migrations/2026-11-19-000001_idle_task_scheduling/up.sql");
 const SCHEDULER_DOWN: &str =
@@ -130,29 +132,45 @@ async fn compatibility_migration_only_changes_unversioned_legacy_guards(
         become_owner(connection).await?;
         // Test each historical guard at its own migration checkpoint.
         sql_query("DELETE FROM public.__diesel_schema_migrations WHERE version > $1")
-            .bind::<Text, _>(checkpoint).execute(connection).await?;
-        if versioned {
-            connection.batch_execute("ALTER TABLE hubuum_control.runtime_registrations ADD COLUMN history_protocol integer NOT NULL DEFAULT 0").await?;
-        } else if upgrade {
-            connection.batch_execute(down).await?;
+            .bind::<Text, _>(checkpoint)
+            .execute(connection)
+            .await?;
+        if !versioned {
+            connection.batch_execute(LIFECYCLE_DOWN).await?;
+            connection
+                .batch_execute(if upgrade { down } else { up })
+                .await?;
         }
         let before = definition(connection).await?;
-        connection.batch_execute(if upgrade { up } else { down }).await?;
+        connection
+            .batch_execute(if upgrade { up } else { down })
+            .await?;
         let after = definition(connection).await?;
         if !upgrade && !versioned && checkpoint == "20261119000001" {
             // The actual downgrade re-enables the prior, explicitly qualified layout.
-            connection.batch_execute("SAVEPOINT scheduler_rollback").await?;
+            connection
+                .batch_execute("SAVEPOINT scheduler_rollback")
+                .await?;
             sql_query("DELETE FROM public.__diesel_schema_migrations WHERE version = $1")
-                .bind::<Text, _>(checkpoint).execute(connection).await?;
+                .bind::<Text, _>(checkpoint)
+                .execute(connection)
+                .await?;
             assert!(entry(connection, &permit).await?);
-            connection.batch_execute("ROLLBACK TO SAVEPOINT scheduler_rollback").await?;
+            connection
+                .batch_execute("ROLLBACK TO SAVEPOINT scheduler_rollback")
+                .await?;
         }
         connection.batch_execute("SAVEPOINT entry_check").await?;
-        let allowed = entry(connection, &permit).await.map_err(|error| error.to_string());
-        connection.batch_execute("ROLLBACK TO SAVEPOINT entry_check").await?;
+        let allowed = entry(connection, &permit)
+            .await
+            .map_err(|error| error.to_string());
+        connection
+            .batch_execute("ROLLBACK TO SAVEPOINT entry_check")
+            .await?;
         observed = Some((before, after, allowed));
         Err::<(), _>(PostgresStorageError::invalid_input(ROLLBACK))
-    }).await;
+    })
+    .await;
     fixture
         .backend
         .unregister_runtime(registration)
@@ -177,6 +195,36 @@ async fn compatibility_migration_only_changes_unversioned_legacy_guards(
 }
 
 #[tokio::test]
+async fn lifecycle_rollback_preserves_archive_entry_at_the_synchronized_checkpoint() {
+    let _serial = MIGRATION_FIXTURE.lock().await;
+    let fixture = Fixture::new();
+    let registration = fixture.backend.register_runtime().await.unwrap();
+    let permit = fixture
+        .backend
+        .capture_application_execution(Some(registration.owner()))
+        .await
+        .unwrap();
+    let mut allowed = None;
+    let result = with_transaction(&fixture.admin, async |connection| {
+        become_owner(connection).await?;
+        connection.batch_execute(LIFECYCLE_DOWN).await?;
+        sql_query("DELETE FROM public.__diesel_schema_migrations WHERE version = '20261119000002'")
+            .execute(connection)
+            .await?;
+        allowed = Some(entry(connection, &permit).await?);
+        Err::<(), _>(PostgresStorageError::invalid_input(ROLLBACK))
+    })
+    .await;
+    fixture
+        .backend
+        .unregister_runtime(registration)
+        .await
+        .unwrap();
+    assert_eq!(result.unwrap_err().to_string(), ROLLBACK);
+    assert_eq!(allowed, Some(true));
+}
+
+#[tokio::test]
 async fn unversioned_archive_guard_rejects_unknown_future_checkpoints() {
     let _serial = MIGRATION_FIXTURE.lock().await;
     let fixture = Fixture::new();
@@ -189,6 +237,7 @@ async fn unversioned_archive_guard_rejects_unknown_future_checkpoints() {
     let mut rejection = None;
     let result = with_transaction(&fixture.admin, async |connection| {
         become_owner(connection).await?;
+        connection.batch_execute(LIFECYCLE_DOWN).await?;
         sql_query("INSERT INTO public.__diesel_schema_migrations(version) VALUES($1)")
             .bind::<Text, _>("20990101000001")
             .execute(connection)

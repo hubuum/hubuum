@@ -1780,6 +1780,7 @@ impl TaskRecord {
                     }),
                 }));
             }
+            D::HistoryExpiry { .. } => *details = None,
             D::Reindex {
                 class_id,
                 computation_revision,

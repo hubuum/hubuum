@@ -1,3 +1,5 @@
+use std::error::Error;
+use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -42,7 +44,17 @@ enum Fault {
     Append,
     Seal,
     Abort,
+    TypedAbort,
 }
+
+#[derive(Debug)]
+struct OperationCause(u8);
+impl fmt::Display for OperationCause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("private operation evidence")
+    }
+}
+impl Error for OperationCause {}
 
 #[async_trait]
 impl ArtifactStore for FaultStore {
@@ -134,6 +146,9 @@ impl ArtifactStore for FaultStore {
         let mut state = self.state.lock().unwrap();
         if matches!(state.fault, Some(Fault::Abort)) {
             return Err(ArtifactError::Backend("abort failed".into()));
+        }
+        if matches!(state.fault, Some(Fault::TypedAbort)) {
+            return Err(ArtifactError::Source(Box::new(OperationCause(2))));
         }
         state.aborted = true;
         Ok(())
@@ -528,6 +543,90 @@ async fn producer_abort_failure_preserves_cleanup_obligation() {
     .unwrap();
     assert!(error.to_string().contains("abort failed"));
     assert!(!store.state.lock().unwrap().published);
+    let ArtifactError::AbortFailed { primary, abort } = error else {
+        panic!("both failures must be retained");
+    };
+    assert!(matches!(*primary, ArtifactError::Invalid(message) if message == "producer failed"));
+    assert!(matches!(*abort, ArtifactError::Backend(message) if message == "abort failed"));
+}
+
+#[rstest]
+#[case::abort_succeeds(false)]
+#[case::abort_fails(true)]
+#[tokio::test]
+async fn producer_preserves_typed_primary_and_separate_abort_cause(#[case] failed_abort: bool) {
+    let store = FaultStore::default();
+    if failed_abort {
+        store.state.lock().unwrap().fault = Some(Fault::TypedAbort);
+    }
+    let error = stage_producer(&store, identity(), limits(), |_| {
+        Err::<(), _>(ArtifactError::Source(Box::new(OperationCause(1))))
+    })
+    .await
+    .unwrap_err();
+    let primary = match &error {
+        ArtifactError::AbortFailed { primary, .. } => primary.as_ref(),
+        _ => &error,
+    };
+    assert_eq!(
+        primary
+            .source()
+            .unwrap()
+            .downcast_ref::<OperationCause>()
+            .unwrap()
+            .0,
+        1
+    );
+    if failed_abort {
+        assert_eq!(
+            error
+                .abort_error()
+                .unwrap()
+                .source()
+                .unwrap()
+                .downcast_ref::<OperationCause>()
+                .unwrap()
+                .0,
+            2
+        );
+    } else {
+        assert!(error.abort_error().is_none());
+        assert!(store.state.lock().unwrap().aborted);
+    }
+    assert!(!store.state.lock().unwrap().published);
+}
+
+#[tokio::test]
+async fn concurrent_producer_failures_retain_their_own_operation_cause() {
+    // Focused error transport only, not artifact ownership or bridge authority.
+    let store = FaultStore::default();
+    let (left, right) = tokio::join!(
+        stage_producer(&store, identity(), limits(), |_| {
+            Err::<(), _>(ArtifactError::Source(Box::new(OperationCause(11))))
+        }),
+        stage_producer(&store, identity(), limits(), |_| {
+            Err::<(), _>(ArtifactError::Source(Box::new(OperationCause(12))))
+        })
+    );
+    assert_eq!(
+        left.unwrap_err()
+            .source()
+            .unwrap()
+            .downcast_ref::<OperationCause>()
+            .unwrap()
+            .0,
+        11
+    );
+    assert_eq!(
+        right
+            .unwrap_err()
+            .source()
+            .unwrap()
+            .downcast_ref::<OperationCause>()
+            .unwrap()
+            .0,
+        12
+    );
 }
 
 #[tokio::test]

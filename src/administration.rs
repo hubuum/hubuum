@@ -64,10 +64,10 @@ fn parse_query_usage_class(value: &str) -> Result<ClassId, String> {
     ClassId::new(id).map_err(|error| error.to_string())
 }
 
-fn parse_deletion_intent(value: &str) -> Result<Uuid, String> {
+fn parse_non_nil_uuid(value: &str) -> Result<Uuid, String> {
     let identity = value.parse::<Uuid>().map_err(|error| error.to_string())?;
     if identity.is_nil() {
-        return Err("Deletion intent must be a non-nil UUID".into());
+        return Err("Expected a non-nil UUID".into());
     }
     Ok(identity)
 }
@@ -111,6 +111,14 @@ struct AdminCli {
     #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
     recover_control: Option<PathBuf>,
 
+    /// Reconcile this interrupted archive publication during isolated recovery
+    #[arg(long, value_name = "UUID", value_parser = parse_non_nil_uuid, requires_all = ["recover_control", "archive_cleanup_root"])]
+    archive_cleanup_publication: Option<Uuid>,
+
+    /// Original private filesystem artifact root of the interrupted publication
+    #[arg(long, value_name = "DIRECTORY", requires_all = ["recover_control", "archive_cleanup_publication"])]
+    archive_cleanup_root: Option<PathBuf>,
+
     /// Reapply retained deletion decisions and protect completion before reopening access
     #[arg(long, value_name = "DIRECTORY", requires = "control_checkpoint_key", conflicts_with_all = ["control_checkpoint", "verify_control_recovery", "recover_control", "delete_object_history_version", "backup", "restore", "restore_executor", "verify_backup", "reconcile_query_usage", "database_ready", "reset_password", "audit_templates", "export_template_health", "token_key_status", "database_role_setup_sql", "database_role_grants_sql", "check_database_privileges"])]
     #[cfg_attr(feature = "embedded-migrations", arg(conflicts_with_all = ["migrate", "migration_mode"]))]
@@ -130,7 +138,7 @@ struct AdminCli {
     history_resource: Option<ResourceIdentity>,
 
     /// Stable deletion intent identity; reuse the same value on every retry
-    #[arg(long, value_name = "UUID", requires = "delete_object_history_version", value_parser = parse_deletion_intent)]
+    #[arg(long, value_name = "UUID", requires = "delete_object_history_version", value_parser = parse_non_nil_uuid)]
     deletion_intent: Option<Uuid>,
 
     /// Initialized independent recovery repository for the managed-copy operation
@@ -598,7 +606,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
             &storage,
             &admin_cli.control_recovery,
         )
-        .await?;
+        .await?
+        .protect_renderers()?;
         let registration = storage
             .register_runtime_isolated(recovery.isolation_domain())
             .await?;
@@ -640,7 +649,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
             &storage,
             &admin_cli.control_recovery,
         )
-        .await?;
+        .await?
+        .protect_renderers()?;
         let registration = if action.requires_execution() {
             Some(
                 storage
@@ -758,7 +768,20 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
         } else if let Some(directory) = admin_cli.reapply_control.as_deref() {
             crate::services::deletion_recovery::reapply(&storage, directory, key).await?
         } else if let Some(directory) = admin_cli.recover_control.as_deref() {
-            crate::services::deletion_recovery::recover(&storage, directory, key).await?
+            if let Some(cleanup) = admin_cli
+                .archive_cleanup_publication
+                .zip(admin_cli.archive_cleanup_root.as_deref())
+            {
+                crate::services::deletion_recovery::recover_with_archive_cleanup(
+                    &storage,
+                    directory,
+                    key,
+                    Some(cleanup),
+                )
+                .await?
+            } else {
+                crate::services::deletion_recovery::recover(&storage, directory, key).await?
+            }
         } else {
             crate::services::deletion_recovery::verify(
                 &storage,
@@ -785,7 +808,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
                 &storage,
                 &admin_cli.control_recovery,
             )
-            .await?,
+            .await?
+            .protect_renderers()?,
         )
     } else {
         None
@@ -805,7 +829,8 @@ pub async fn run_admin_from_environment() -> Result<(), ApiError> {
                 &storage,
                 &admin_cli.control_recovery,
             )
-            .await?,
+            .await?
+            .protect_renderers()?,
         )
     } else {
         None

@@ -129,7 +129,7 @@ pub async fn observe(
         .unwrap_or_default();
     let method = source.method();
     let recent = runtime
-        .with_connection(async move |connection| {
+        .with_authentication_read(async move |connection| {
             diesel::sql_query("SELECT EXISTS (SELECT 1 FROM credential_sources s JOIN credential_activity a ON a.id=s.activity_id JOIN tokens t ON (a.token_id=t.id OR a.session_id=t.auth_session_id) WHERE t.id=$1 AND s.address=$2 AND s.address_method=$3 AND s.last_seen > (clock_timestamp() AT TIME ZONE 'UTC') - interval '60 seconds') AS recent")
                 .bind::<Integer, _>(token.id())
                 .bind::<Text, _>(address)
@@ -143,7 +143,7 @@ pub async fn observe(
         return Ok(());
     }
     runtime
-        .with_transaction(async move |connection| -> Result<_, PostgresStorageError> {
+        .with_authentication_transaction(async move |connection| -> Result<_, PostgresStorageError> {
             reach_fault_point(PostgresFaultPoint::CredentialActivityBeforeWrite, Some(connection)).await?;
             let activity = ensure(connection, token).await?;
             let now = diesel::select(diesel::dsl::sql::<Timestamp>(

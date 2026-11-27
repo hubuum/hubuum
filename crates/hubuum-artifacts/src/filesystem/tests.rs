@@ -286,10 +286,10 @@ async fn wrong_catalog_digest_cannot_open() {
 #[tokio::test]
 async fn aborting_unknown_attempt_reports_no_fence() {
     let fixture = Fixture::new().await;
-    assert_eq!(
+    assert!(matches!(
         fixture.store.abort(&fixture.identity()).await,
         Err(ArtifactError::NotFound)
-    );
+    ));
 }
 
 #[tokio::test]
@@ -793,5 +793,830 @@ async fn stage_retry_rejects_an_unsupported_state_version() {
             .stage(&identity, limits())
             .await
             .is_err()
+    );
+}
+
+fn owned_intent(identity: ArtifactIdentity, operation: u8) -> ArtifactCreationIntent {
+    ArtifactCreationIntent::new(identity, limits(), [operation; 16], [1; 16], [7; 32]).unwrap()
+}
+fn owned_receipt(admission: OwnedArtifactAdmission) -> OwnedArtifact {
+    match admission {
+        OwnedArtifactAdmission::Created(artifact)
+        | OwnedArtifactAdmission::ResumedSameOwner { artifact, .. } => artifact,
+    }
+}
+async fn owned_sealed(
+    fixture: &Fixture,
+) -> (ArtifactCreationIntent, OwnedArtifact, ArtifactManifest) {
+    let intent = owned_intent(fixture.identity(), 1);
+    let artifact = owned_receipt(fixture.store.create_owned(&intent).await.unwrap());
+    let session = artifact.session(&fixture.store);
+    let mut writer = ArtifactWriter::new(&session, intent.identity().clone(), limits())
+        .await
+        .unwrap();
+    writer.write(b"abcd").await.unwrap();
+    let manifest = writer.seal().await.unwrap();
+    (intent, artifact, manifest)
+}
+#[tokio::test]
+async fn owned_publication_survives_reopen() {
+    let fixture = Fixture::new().await;
+    let (intent, artifact, manifest) = owned_sealed(&fixture).await;
+    let proof = verify(&fixture.store, &manifest).await.unwrap();
+    let reference = fixture
+        .store
+        .publish_owned(&artifact, &proof)
+        .await
+        .unwrap();
+    let reopened = fixture.reopen().await;
+    assert!(
+        matches!(reopened.resolve_owned(&intent).await.unwrap(), OwnedArtifactResolution::Established { phase: OwnedArtifactPhase::Published(found), .. } if found == reference)
+    );
+    assert_eq!(drain(&reopened, &reference).await, b"abcd");
+}
+#[tokio::test]
+async fn owned_staging_resumes_only_the_same_intent() {
+    let fixture = Fixture::new().await;
+    let intent = owned_intent(fixture.identity(), 1);
+    fixture.store.create_owned(&intent).await.unwrap();
+    assert!(matches!(
+        fixture.reopen().await.create_owned(&intent).await.unwrap(),
+        OwnedArtifactAdmission::ResumedSameOwner {
+            phase: OwnedArtifactPhase::Staging,
+            ..
+        }
+    ));
+}
+#[rstest]
+#[case("operation")]
+#[case("incarnation")]
+#[case("request_commitment")]
+#[case("limits")]
+#[tokio::test]
+async fn changed_owned_intent_cannot_take_over(#[case] changed: &str) {
+    let fixture = Fixture::new().await;
+    let intent = owned_intent(fixture.identity(), 1);
+    let artifact = owned_receipt(fixture.store.create_owned(&intent).await.unwrap());
+    let other = ArtifactCreationIntent::new(
+        intent.identity().clone(),
+        if changed == "limits" {
+            ArtifactLimits::default()
+        } else {
+            limits()
+        },
+        if changed == "operation" {
+            [2; 16]
+        } else {
+            [1; 16]
+        },
+        if changed == "incarnation" {
+            [2; 16]
+        } else {
+            [1; 16]
+        },
+        if changed == "request_commitment" {
+            [8; 32]
+        } else {
+            [7; 32]
+        },
+    )
+    .unwrap();
+    assert!(fixture.reopen().await.create_owned(&other).await.is_err());
+    fixture
+        .store
+        .append_owned(&artifact, 0, b"abcd")
+        .await
+        .unwrap();
+}
+#[rstest]
+#[case("stage")]
+#[case("append")]
+#[case("seal")]
+#[case("publish")]
+#[case("abort")]
+#[tokio::test]
+async fn all_legacy_mutators_reject_owned_records(#[case] operation: &str) {
+    let fixture = Fixture::new().await;
+    let intent = owned_intent(fixture.identity(), 1);
+    let artifact = owned_receipt(fixture.store.create_owned(&intent).await.unwrap());
+    let mut builder = ManifestBuilder::new(intent.identity().clone(), limits());
+    builder.push(b"abcd").unwrap();
+    let manifest = builder.finish().unwrap();
+    if operation == "seal" || operation == "publish" {
+        fixture
+            .store
+            .append_owned(&artifact, 0, b"abcd")
+            .await
+            .unwrap();
+    }
+    if operation == "publish" {
+        fixture
+            .store
+            .seal_owned(&artifact, &manifest)
+            .await
+            .unwrap();
+    }
+    let result = match operation {
+        "stage" => fixture.store.stage(intent.identity(), limits()).await,
+        "append" => fixture.store.append(intent.identity(), 0, b"abcd").await,
+        "seal" => fixture.store.seal(&manifest).await,
+        "publish" => fixture
+            .store
+            .publish(&verify(&fixture.store, &manifest).await.unwrap())
+            .await
+            .map(|_| ()),
+        "abort" => fixture.store.abort(intent.identity()).await,
+        _ => unreachable!(),
+    };
+    assert!(result.is_err());
+}
+#[tokio::test]
+async fn owned_create_cannot_adopt_legacy_staging() {
+    let fixture = Fixture::new().await;
+    let intent = owned_intent(fixture.identity(), 1);
+    fixture
+        .store
+        .stage(intent.identity(), limits())
+        .await
+        .unwrap();
+    assert!(fixture.store.create_owned(&intent).await.is_err());
+    fixture
+        .store
+        .append(intent.identity(), 0, b"abcd")
+        .await
+        .unwrap();
+}
+#[tokio::test]
+async fn receipt_from_different_root_cannot_mutate_same_identity() {
+    let fixture = Fixture::new().await;
+    let other = Fixture::new().await;
+    let shared = Destination::new(DestinationId::generate(), "shared-owned-scope").unwrap();
+    fixture.store.register_destination(&shared).await.unwrap();
+    other.store.register_destination(&shared).await.unwrap();
+    let intent = owned_intent(ArtifactIdentity::new(shared.id()), 1);
+    let artifact = owned_receipt(fixture.store.create_owned(&intent).await.unwrap());
+    other.store.create_owned(&intent).await.unwrap();
+    assert!(
+        other
+            .store
+            .append_owned(&artifact, 0, b"abcd")
+            .await
+            .is_err()
+    );
+}
+#[tokio::test]
+async fn owned_expiry_is_not_automatic_cleanup_authority() {
+    let fixture = Fixture::new().await;
+    let intent = owned_intent(fixture.identity(), 1);
+    let artifact = owned_receipt(fixture.store.create_owned(&intent).await.unwrap());
+    fixture
+        .store
+        .append_owned(&artifact, 0, b"abcd")
+        .await
+        .unwrap();
+    fixture.store.cleanup().await.unwrap();
+    assert!(matches!(
+        fixture.reopen().await.resolve_owned(&intent).await.unwrap(),
+        OwnedArtifactResolution::Established {
+            phase: OwnedArtifactPhase::Staging,
+            ..
+        }
+    ));
+}
+#[tokio::test]
+async fn owned_tombstone_blocks_same_and_other_producers_after_cleanup() {
+    let fixture = Fixture::new().await;
+    let (intent, artifact, _) = owned_sealed(&fixture).await;
+    fixture.store.abort_owned(&artifact).await.unwrap();
+    fixture.store.cleanup().await.unwrap();
+    let reopened = fixture.reopen().await;
+    assert!(matches!(
+        reopened.create_owned(&intent).await.unwrap(),
+        OwnedArtifactAdmission::ResumedSameOwner {
+            phase: OwnedArtifactPhase::Fenced,
+            ..
+        }
+    ));
+    assert!(
+        reopened
+            .create_owned(&owned_intent(intent.identity().clone(), 2))
+            .await
+            .is_err()
+    );
+    assert!(reopened.append_owned(&artifact, 0, b"abcd").await.is_err());
+}
+#[tokio::test]
+async fn owned_abort_and_publication_have_one_winner() {
+    let fixture = Fixture::new().await;
+    let (_, artifact, manifest) = owned_sealed(&fixture).await;
+    let proof = verify(&fixture.store, &manifest).await.unwrap();
+    let other = fixture.reopen().await;
+    let (publish, abort) = tokio::join!(
+        fixture.store.publish_owned(&artifact, &proof),
+        other.abort_owned(&artifact)
+    );
+    assert_ne!(publish.is_ok(), abort.is_ok());
+}
+#[rstest]
+#[case(0)]
+#[case(1)]
+#[case(2)]
+#[case(3)]
+#[case(4)]
+#[case(5)]
+#[case(6)]
+#[case(7)]
+#[case(8)]
+#[case(9)]
+#[tokio::test]
+async fn interrupted_owned_creation_reopens_without_adoption(#[case] fail_after: isize) {
+    let fixture = Fixture::new().await;
+    let intent = owned_intent(fixture.identity(), 1);
+    fixture.store.fail_sync.store(fail_after, Ordering::SeqCst);
+    let _ambiguous = fixture.store.create_owned(&intent).await;
+    fixture.store.fail_sync.store(-1, Ordering::SeqCst);
+    let reopened = fixture.reopen().await;
+    // Retrying the original intent can establish/finish a persisted Preparing state.
+    let artifact = owned_receipt(reopened.create_owned(&intent).await.unwrap());
+    assert!(
+        reopened
+            .create_owned(&owned_intent(intent.identity().clone(), 2))
+            .await
+            .is_err()
+    );
+    reopened.append_owned(&artifact, 0, b"abcd").await.unwrap();
+}
+#[tokio::test]
+async fn pending_missing_intent_can_still_be_created_later() {
+    let fixture = Fixture::new().await;
+    let intent = owned_intent(fixture.identity(), 1);
+    assert!(matches!(
+        fixture.store.resolve_owned(&intent).await.unwrap(),
+        OwnedArtifactResolution::Pending
+    ));
+    fixture.store.create_owned(&intent).await.unwrap();
+}
+
+// Pinned v1 decoding mirrors the LANDED decoder's accepted fields/format. The
+// actual old mutation and cleanup paths all decode State before touching blocks.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyFilesystemState {
+    format: u8,
+    identity: ArtifactIdentity,
+    limits: Limits,
+    expires: u64,
+    phase: LegacyFilesystemPhase,
+    blocks: u32,
+    bytes: u64,
+    cleanup_next: u32,
+}
+impl LegacyFilesystemState {
+    fn decode(bytes: &[u8]) -> Result<ArtifactIdentity> {
+        let state: Self = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+        state.limits.validated()?;
+        if state.format != 1
+            || state.blocks > state.limits.blocks
+            || state.bytes > state.limits.bytes
+            || state.bytes.div_ceil(u64::from(state.limits.block)) != u64::from(state.blocks)
+            || state.cleanup_next > state.blocks
+        {
+            return Err(invalid());
+        }
+        if matches!(
+            state.phase,
+            LegacyFilesystemPhase::Staging | LegacyFilesystemPhase::Sealed
+        ) && state.expires <= now()?
+        {
+            return Err(conflict());
+        }
+        Ok(state.identity)
+    }
+}
+#[derive(Deserialize)]
+enum LegacyFilesystemPhase {
+    Staging,
+    Sealed,
+    Published,
+    Deleting,
+    Discarded,
+}
+#[tokio::test]
+async fn owned_encoding_is_rejected_by_landed_v1_state_decoder() {
+    let fixture = Fixture::new().await;
+    let intent = owned_intent(fixture.identity(), 1);
+    fixture.store.create_owned(&intent).await.unwrap();
+    let bytes = std::fs::read(fixture.directory(intent.identity()).join("state")).unwrap();
+    assert!(LegacyFilesystemState::decode(&bytes).is_err());
+    let mut wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    wire.as_object_mut().unwrap().remove("owner");
+    wire["format"] = serde_json::json!(1);
+    wire["expires"] = serde_json::json!(now().unwrap() + 3600);
+    assert!(LegacyFilesystemState::decode(&serde_json::to_vec(&wire).unwrap()).is_ok());
+}
+
+#[rstest]
+#[case("append", 3)]
+#[case("seal", 3)]
+#[case("publish", 1)]
+#[case("abort", 1)]
+#[tokio::test]
+async fn owned_mutation_sync_failure_after_rename_is_recoverable(
+    #[case] operation: &str,
+    #[case] fail_after: isize,
+) {
+    let fixture = Fixture::new().await;
+    let intent = owned_intent(fixture.identity(), 1);
+    let artifact = owned_receipt(fixture.store.create_owned(&intent).await.unwrap());
+    if operation == "append" {
+        fixture.store.fail_sync.store(fail_after, Ordering::SeqCst);
+        assert!(
+            fixture
+                .store
+                .append_owned(&artifact, 0, b"abcd")
+                .await
+                .is_err()
+        );
+        fixture.store.fail_sync.store(-1, Ordering::SeqCst);
+    }
+    fixture
+        .store
+        .append_owned(&artifact, 0, b"abcd")
+        .await
+        .unwrap();
+    let mut builder = ManifestBuilder::new(intent.identity().clone(), limits());
+    builder.push(b"abcd").unwrap();
+    let manifest = builder.finish().unwrap();
+    if operation == "seal" {
+        fixture.store.fail_sync.store(fail_after, Ordering::SeqCst);
+        assert!(
+            fixture
+                .store
+                .seal_owned(&artifact, &manifest)
+                .await
+                .is_err()
+        );
+        fixture.store.fail_sync.store(-1, Ordering::SeqCst);
+    }
+    fixture
+        .store
+        .seal_owned(&artifact, &manifest)
+        .await
+        .unwrap();
+    let reopened = fixture.reopen().await;
+    if operation == "abort" {
+        fixture.store.fail_sync.store(fail_after, Ordering::SeqCst);
+        assert!(fixture.store.abort_owned(&artifact).await.is_err());
+        fixture.store.fail_sync.store(-1, Ordering::SeqCst);
+        assert!(matches!(
+            reopened.resolve_owned(&intent).await.unwrap(),
+            OwnedArtifactResolution::Established {
+                phase: OwnedArtifactPhase::Fenced,
+                ..
+            }
+        ));
+    } else {
+        let proof = verify(&fixture.store, &manifest).await.unwrap();
+        if operation == "publish" {
+            fixture.store.fail_sync.store(fail_after, Ordering::SeqCst);
+            assert!(
+                fixture
+                    .store
+                    .publish_owned(&artifact, &proof)
+                    .await
+                    .is_err()
+            );
+            fixture.store.fail_sync.store(-1, Ordering::SeqCst);
+        }
+        reopened.publish_owned(&artifact, &proof).await.unwrap();
+        assert!(matches!(
+            reopened.resolve_owned(&intent).await.unwrap(),
+            OwnedArtifactResolution::Established {
+                phase: OwnedArtifactPhase::Published(_),
+                ..
+            }
+        ));
+    }
+}
+
+#[rstest]
+#[case(true)]
+#[case(false)]
+#[tokio::test]
+async fn owned_cross_artifact_identity_collision_survives_cleanup(#[case] reuse_attempt: bool) {
+    let fixture = Fixture::new().await;
+    let (intent, artifact, _) = owned_sealed(&fixture).await;
+    fixture.store.abort_owned(&artifact).await.unwrap();
+    fixture.store.cleanup().await.unwrap();
+    let fresh = fixture.identity();
+    let collision = ArtifactIdentity::from_parts(
+        fresh.artifact(),
+        if reuse_attempt {
+            intent.identity().attempt()
+        } else {
+            fresh.attempt()
+        },
+        fresh.destination(),
+        if reuse_attempt {
+            fresh.version()
+        } else {
+            intent.identity().version()
+        },
+    );
+    assert!(
+        fixture
+            .reopen()
+            .await
+            .create_owned(&owned_intent(collision, 2))
+            .await
+            .is_err()
+    );
+}
+#[tokio::test]
+async fn owned_receipt_cannot_publish_corrupt_bytes() {
+    let fixture = Fixture::new().await;
+    let (_, _, manifest) = owned_sealed(&fixture).await;
+    std::fs::write(
+        fixture.directory(manifest.identity()).join(block_key(0)),
+        b"evil",
+    )
+    .unwrap();
+    assert!(verify(&fixture.store, &manifest).await.is_err());
+}
+#[tokio::test]
+async fn owned_view_producer_failure_fences_without_claiming_physical_removal() {
+    let fixture = Fixture::new().await;
+    let intent = owned_intent(fixture.identity(), 1);
+    let artifact = owned_receipt(fixture.store.create_owned(&intent).await.unwrap());
+    let view = artifact.session(&fixture.store);
+    let result = stage_producer(&view, intent.identity().clone(), limits(), |writer| {
+        writer.write_all(b"abcd").unwrap();
+        Err::<(), _>(ArtifactError::Backend("producer failed".into()))
+    })
+    .await;
+    assert!(result.is_err());
+    assert!(matches!(
+        fixture.store.resolve_owned(&intent).await.unwrap(),
+        OwnedArtifactResolution::Established {
+            phase: OwnedArtifactPhase::Fenced,
+            ..
+        }
+    ));
+}
+
+#[rstest]
+#[case::legacy("legacy")]
+#[case::never_created("absent")]
+#[case::another_intent("foreign")]
+#[case::published("published")]
+#[case::unexpected_file("unexpected")]
+#[case::aliased_payload("hardlink")]
+#[case::missing_attempt_claim("missing_claim")]
+#[tokio::test]
+async fn unresolved_attempt_cannot_issue_physical_cleanup(#[case] scenario: &str) {
+    let fixture = Fixture::new().await;
+    let unbound = owned_intent(fixture.identity(), 1);
+    let intent = if scenario == "legacy" {
+        unbound
+    } else {
+        fixture.store.bind_intent(unbound).await.unwrap()
+    };
+    if scenario != "absent" {
+        let artifact = owned_receipt(fixture.store.create_owned(&intent).await.unwrap());
+        fixture
+            .store
+            .append_owned(&artifact, 0, b"abcd")
+            .await
+            .unwrap();
+        let directory = fixture.directory(intent.identity());
+        match scenario {
+            "published" => {
+                let mut builder = ManifestBuilder::new(intent.identity().clone(), limits());
+                builder.push(b"abcd").unwrap();
+                let manifest = builder.finish().unwrap();
+                fixture
+                    .store
+                    .seal_owned(&artifact, &manifest)
+                    .await
+                    .unwrap();
+                let verified = verify(&fixture.store, &manifest).await.unwrap();
+                fixture
+                    .store
+                    .publish_owned(&artifact, &verified)
+                    .await
+                    .unwrap();
+            }
+            "unexpected" => {
+                std::fs::write(directory.join("unexpected"), b"payload").unwrap();
+            }
+            "missing_claim" => {
+                std::fs::remove_file(
+                    fixture
+                        .root
+                        .path()
+                        .join("attempts")
+                        .join(key(intent.identity().attempt().as_bytes())),
+                )
+                .unwrap();
+            }
+            "hardlink" => {
+                std::fs::hard_link(
+                    directory.join(block_key(0)),
+                    fixture.root.path().join("alias"),
+                )
+                .unwrap();
+            }
+            _ => {}
+        }
+    }
+    let checked = if scenario == "foreign" {
+        fixture
+            .store
+            .bind_intent(owned_intent(intent.identity().clone(), 2))
+            .await
+            .unwrap()
+    } else {
+        intent
+    };
+    assert!(
+        fixture
+            .reopen()
+            .await
+            .discard_owned_step(&checked)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn copied_provider_cannot_attest_original_attempt() {
+    let original = Fixture::new().await;
+    let other = Fixture::new().await;
+    let intent = original
+        .store
+        .bind_intent(owned_intent(original.identity(), 1))
+        .await
+        .unwrap();
+    let receipt = owned_receipt(original.store.create_owned(&intent).await.unwrap());
+    original
+        .store
+        .append_owned(&receipt, 0, b"abcd")
+        .await
+        .unwrap();
+    let replica = other.directory(intent.identity());
+    std::fs::create_dir(&replica).unwrap();
+    std::fs::set_permissions(&replica, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for name in ["state", &block_key(0)] {
+        std::fs::copy(
+            original.directory(intent.identity()).join(name),
+            replica.join(name),
+        )
+        .unwrap();
+    }
+    std::fs::copy(
+        original.root.path().join("issuer"),
+        other.root.path().join("issuer"),
+    )
+    .unwrap();
+    assert!(other.store.discard_owned_step(&intent).await.is_err());
+    assert!(replica.join(block_key(0)).exists());
+    assert!(
+        original
+            .directory(intent.identity())
+            .join(block_key(0))
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn cleanup_receipt_requires_synced_empty_attempt_on_every_retry() {
+    let fixture = Fixture::new().await;
+    let intent = fixture
+        .store
+        .bind_intent(owned_intent(fixture.identity(), 1))
+        .await
+        .unwrap();
+    let receipt = owned_receipt(fixture.store.create_owned(&intent).await.unwrap());
+    fixture
+        .store
+        .append_owned(&receipt, 0, b"abcd")
+        .await
+        .unwrap();
+    fixture.store.abort_owned(&receipt).await.unwrap();
+    fixture.store.cleanup().await.unwrap();
+    fixture.store.fail_sync.store(1, Ordering::SeqCst);
+    assert!(fixture.store.discard_owned_step(&intent).await.is_err());
+    let issued = fixture
+        .reopen()
+        .await
+        .discard_owned_step(&intent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(issued.encoded_intent(), intent.encode().unwrap());
+    assert!(ArtifactCleanupReceipt::from_provider(intent.encode().unwrap(), [9; 32]).is_err());
+}
+
+// Interrupt the actual create path after writing Preparing, before it can
+// return a staging receipt. Reopen the store to drop the injected fault.
+async fn interrupted_preparation(fail_after: isize) -> (Fixture, ArtifactCreationIntent) {
+    let fixture = Fixture::new().await;
+    let intent = fixture
+        .store
+        .bind_intent(owned_intent(fixture.identity(), 1))
+        .await
+        .unwrap();
+    fixture.store.fail_sync.store(fail_after, Ordering::SeqCst);
+    assert!(fixture.store.create_owned(&intent).await.is_err());
+    let (_, state) = fixture.store.state(intent.identity()).unwrap();
+    assert!(state.phase == Phase::Preparing);
+    (fixture, intent)
+}
+
+#[rstest]
+#[case::before_attempt_index(4, false, false)]
+#[case::before_version_index(6, true, false)]
+#[case::before_staging_state(8, true, true)]
+#[tokio::test]
+async fn cleanup_fences_interrupted_preparation(
+    #[case] fail_after: isize,
+    #[case] attempt_exists: bool,
+    #[case] version_exists: bool,
+) {
+    let (fixture, intent) = interrupted_preparation(fail_after).await;
+    let identity = intent.identity();
+    for (index, id, exists) in [
+        ("attempts", identity.attempt().as_bytes(), attempt_exists),
+        ("versions", identity.version().as_bytes(), version_exists),
+    ] {
+        assert_eq!(
+            fixture.root.path().join(index).join(key(id)).exists(),
+            exists
+        );
+    }
+    let store = fixture.reopen().await;
+    let proof = store.discard_owned_step(&intent).await.unwrap().unwrap();
+    assert_eq!(proof.encoded_intent(), intent.encode().unwrap());
+    store.check_identities(identity, true).unwrap();
+    let restarted = fixture.reopen().await;
+    let OwnedArtifactAdmission::ResumedSameOwner {
+        artifact,
+        phase: OwnedArtifactPhase::Fenced,
+    } = restarted.create_owned(&intent).await.unwrap()
+    else {
+        panic!("a delayed create must find the tombstone");
+    };
+    assert!(restarted.append_owned(&artifact, 0, b"abcd").await.is_err());
+    assert!(
+        restarted
+            .discard_owned_step(&intent)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn preparing_cleanup_retries_an_interrupted_tombstone_write() {
+    let (fixture, intent) = interrupted_preparation(4).await;
+    let store = fixture.reopen().await;
+    // The two index writes succeed. The pending tombstone write fails its
+    // sync before rename, so the durable state still says Preparing.
+    store.fail_sync.store(5, Ordering::SeqCst);
+    assert!(store.discard_owned_step(&intent).await.is_err());
+    assert!(store.state(intent.identity()).unwrap().1.phase == Phase::Preparing);
+    let pending = fixture.directory(intent.identity()).join("pending");
+    let mut partial = std::fs::read(&pending).unwrap();
+    assert!(State::decode(&partial).unwrap().phase == Phase::Discarded);
+    partial.pop();
+    std::fs::write(&pending, partial).unwrap();
+    let proof = fixture
+        .reopen()
+        .await
+        .discard_owned_step(&intent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.encoded_intent(), intent.encode().unwrap());
+}
+
+#[rstest]
+#[case::payload_without_admission("00000000.block")]
+#[case::manifest_without_admission("manifest")]
+#[case::foreign_version_claim("foreign")]
+#[case::version_without_attempt_claim("version_only")]
+#[tokio::test]
+async fn inconsistent_preparation_keeps_original_evidence(#[case] condition: &str) {
+    let (fixture, intent) = interrupted_preparation(4).await;
+    let identity = intent.identity();
+    let (path, bytes) = match condition {
+        "foreign" | "version_only" => {
+            let bytes = if condition == "foreign" {
+                encode(&fixture.identity()).unwrap()
+            } else {
+                encode(identity).unwrap()
+            };
+            (
+                fixture
+                    .root
+                    .path()
+                    .join("versions")
+                    .join(key(identity.version().as_bytes())),
+                bytes,
+            )
+        }
+        name => (
+            fixture.directory(identity).join(name),
+            b"unexpected".to_vec(),
+        ),
+    };
+    std::fs::write(&path, &bytes).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let store = fixture.reopen().await;
+    assert!(store.discard_owned_step(&intent).await.is_err());
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+    assert!(store.state(identity).unwrap().1.phase == Phase::Preparing);
+    assert!(
+        !fixture
+            .root
+            .path()
+            .join("attempts")
+            .join(key(identity.attempt().as_bytes()))
+            .exists()
+    );
+}
+
+#[rstest]
+#[case::unexpected_pending_contents(false)]
+#[case::pending_transition_missing_version_index(true)]
+#[tokio::test]
+async fn preparing_cleanup_requires_evidence_for_pending_state(#[case] missing_version: bool) {
+    let (fixture, intent) = interrupted_preparation(8).await;
+    let identity = intent.identity();
+    let pending = fixture.directory(identity).join("pending");
+    if missing_version {
+        let version = fixture
+            .root
+            .path()
+            .join("versions")
+            .join(key(identity.version().as_bytes()));
+        std::fs::remove_file(version).unwrap();
+    } else {
+        std::fs::write(&pending, b"unexpected").unwrap();
+    }
+    let before = std::fs::read(&pending).unwrap();
+    let store = fixture.reopen().await;
+    assert!(store.discard_owned_step(&intent).await.is_err());
+    assert_eq!(std::fs::read(pending).unwrap(), before);
+    assert!(store.state(identity).unwrap().1.phase == Phase::Preparing);
+}
+
+#[tokio::test]
+async fn cleanup_receipt_waits_for_the_last_bounded_batch() {
+    let fixture = Fixture::new().await;
+    let limits = ArtifactLimits::builder()
+        .block_bytes(4)
+        .blocks(17)
+        .artifact_bytes(68)
+        .build()
+        .unwrap();
+    let intent =
+        ArtifactCreationIntent::new(fixture.identity(), limits, [1; 16], [2; 16], [3; 32]).unwrap();
+    let intent = fixture.store.bind_intent(intent).await.unwrap();
+    let receipt = owned_receipt(fixture.store.create_owned(&intent).await.unwrap());
+    for ordinal in 0..17 {
+        fixture
+            .store
+            .append_owned(&receipt, ordinal, b"abcd")
+            .await
+            .unwrap();
+    }
+    assert!(
+        fixture
+            .store
+            .discard_owned_step(&intent)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .directory(intent.identity())
+            .join(block_key(16))
+            .is_file()
+    );
+    let proof = fixture
+        .reopen()
+        .await
+        .discard_owned_step(&intent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.encoded_intent(), intent.encode().unwrap());
+    assert!(
+        !fixture
+            .directory(intent.identity())
+            .join(block_key(16))
+            .exists()
     );
 }
