@@ -339,7 +339,7 @@ impl HistoryArchiveDescriptor {
         &self.location
     }
     const fn supported_format(&self) -> bool {
-        matches!(self.format_version, 1 | 2)
+        matches!(self.format_version, 1..=3)
     }
     pub const fn format_version(&self) -> u16 {
         self.format_version

@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, from_slice, to_writer};
 
 mod index;
-use index::SegmentFormat;
+use index::{IndexedEntry, KeyWidth, SegmentFormat, VersionKey};
 
 const MARKER_BYTES: usize = 5 + size_of::<u32>();
 // Retained format v1 must not follow future artifact write-policy defaults.
@@ -184,8 +184,9 @@ pub struct RetainedHistorySegment {
     format: SegmentFormat,
     manifest: ArtifactManifest,
     scope: SegmentScope,
-    entries: Vec<Entry>,
-    versions: BTreeMap<VersionIdentity, usize>,
+    entries: Vec<IndexedEntry>,
+    key_width: KeyWidth,
+    versions: BTreeMap<VersionKey, usize>,
     resources: BTreeMap<ResourceIdentity, Vec<usize>>,
     index_bytes: usize,
 }
@@ -211,7 +212,7 @@ impl HistorySegment {
         let (proof, ()) = stage_producer(store, identity, limits, move |output| {
             let mut output = LimitedWriter::new(output, ByteLimit::new(SEGMENT_BYTES));
             output
-                .write_all(SegmentFormat::Compact.header())
+                .write_all(SegmentFormat::CompressedIndex.header())
                 .map_err(io_error)?;
             let header = encode(&output_scope, 512)?;
             write_frame(&mut output, &header)?;
@@ -237,14 +238,22 @@ impl HistorySegment {
                     length: (bytes.len() + 4) as u32,
                 });
             }
-            validate_entries(&entries)?;
-            let index = index::encode_compact(&entries);
+            validate_intervals(entries.iter().map(|entry| {
+                let interval = &entry.interval;
+                (
+                    interval.version,
+                    interval.resource,
+                    interval.valid_from,
+                    interval.valid_to,
+                )
+            }))?;
+            let index = index::encode_compressed(&entries)?;
             output.write_all(&index).map_err(io_error)?;
             output
                 .write_all(&(index.len() as u32).to_le_bytes())
                 .map_err(io_error)?;
             output
-                .write_all(SegmentFormat::Compact.footer())
+                .write_all(SegmentFormat::CompressedIndex.footer())
                 .map_err(io_error)?;
             Ok(())
         })
@@ -404,7 +413,7 @@ impl RetainedHistorySegment {
             .ok_or_else(|| ArtifactError::Corrupt("History index lies outside segment".into()))?;
         let index = blocks.range(index_offset, index_bytes).await?;
         drop(blocks);
-        let entries = format.decode_index(&index)?;
+        let (key_width, entries) = format.decode_index(&index)?;
         if entries.len() > MAX_RECORDS {
             return Err(ArtifactError::Limit(
                 "History index exceeds record budget".into(),
@@ -428,7 +437,12 @@ impl RetainedHistorySegment {
                 "History index omits record bytes".into(),
             ));
         }
-        validate_entries(&entries).map_err(|error| match error {
+        validate_intervals(
+            entries
+                .iter()
+                .map(|entry| (entry.version, entry.resource, entry.from, entry.to)),
+        )
+        .map_err(|error| match error {
             ArtifactError::Invalid(message) => ArtifactError::Corrupt(message),
             other => other,
         })?;
@@ -437,21 +451,21 @@ impl RetainedHistorySegment {
             manifest,
             scope,
             entries,
+            key_width,
             versions: BTreeMap::new(),
             resources: BTreeMap::new(),
             index_bytes,
         };
         for (position, entry) in segment.entries.iter().enumerate() {
-            segment.versions.insert(entry.interval.version, position);
+            segment.versions.insert(entry.version, position);
             segment
                 .resources
-                .entry(entry.interval.resource)
+                .entry(entry.resource)
                 .or_default()
                 .push(position);
         }
         for positions in segment.resources.values_mut() {
-            positions
-                .sort_unstable_by_key(|&position| segment.entries[position].interval.valid_from);
+            positions.sort_unstable_by_key(|&position| segment.entries[position].from);
         }
         Ok(segment)
     }
@@ -475,14 +489,17 @@ impl RetainedHistorySegment {
         version: VersionIdentity,
         budget: &mut ByteBudget,
     ) -> ArtifactResult<Option<SegmentRecord>> {
-        let Some(&position) = self.versions.get(&version) else {
+        let Some(&position) = self.versions.get(&self.key_width.key(version)) else {
             return Ok(None);
         };
         let entry = &self.entries[position];
-        if entry.interval.resource != resource {
+        if entry.resource != resource {
             return Ok(None);
         }
-        self.read(store, entry, budget).await.map(Some)
+        // A shortened key may also match a UUID absent from this segment. The
+        // authenticated record supplies the full identity for the exact query.
+        let record = self.read(store, entry, budget).await?;
+        Ok((record.interval.version == version).then_some(record))
     }
 
     /// Half-open validity intervals: valid_from <= instant < valid_to.
@@ -496,8 +513,7 @@ impl RetainedHistorySegment {
         let Some(positions) = self.resources.get(&resource) else {
             return Ok(None);
         };
-        let end = positions
-            .partition_point(|&position| self.entries[position].interval.valid_from <= instant);
+        let end = positions.partition_point(|&position| self.entries[position].from <= instant);
         let Some(&position) = end
             .checked_sub(1)
             .and_then(|position| positions.get(position))
@@ -505,7 +521,7 @@ impl RetainedHistorySegment {
             return Ok(None);
         };
         let entry = &self.entries[position];
-        if instant >= entry.interval.valid_to {
+        if instant >= entry.to {
             return Ok(None);
         }
         self.read(store, entry, budget).await.map(Some)
@@ -514,7 +530,7 @@ impl RetainedHistorySegment {
     async fn read<S: ArtifactStore + ?Sized>(
         &self,
         store: &S,
-        entry: &Entry,
+        entry: &IndexedEntry,
         budget: &mut ByteBudget,
     ) -> ArtifactResult<SegmentRecord> {
         let bytes = SegmentBlockReader::new(store, &self.manifest, budget)
@@ -530,7 +546,7 @@ impl RetainedHistorySegment {
         }
         let record: SegmentRecord = from_slice(&bytes[4..])
             .map_err(|_| ArtifactError::Corrupt("Invalid history frame".into()))?;
-        if record.interval != entry.interval || record.scope != self.scope {
+        if !entry.matches(&record.interval, self.key_width) || record.scope != self.scope {
             return Err(ArtifactError::Corrupt(
                 "History index and record identities/interval disagree".into(),
             ));
@@ -539,21 +555,25 @@ impl RetainedHistorySegment {
     }
 }
 
-fn validate_entries(entries: &[Entry]) -> ArtifactResult<()> {
+fn validate_intervals<K: Ord>(
+    entries: impl Iterator<Item = (K, ResourceIdentity, DateTime<Utc>, DateTime<Utc>)>,
+) -> ArtifactResult<()> {
     let mut versions = BTreeSet::new();
-    let mut intervals: Vec<_> = entries.iter().map(|entry| &entry.interval).collect();
-    for interval in &intervals {
-        if !versions.insert(interval.version) {
+    let mut intervals = Vec::with_capacity(entries.size_hint().0);
+    for (version, resource, from, to) in entries {
+        if !versions.insert(version) {
             return Err(ArtifactError::Invalid(
                 "Duplicate history version identity".into(),
             ));
         }
+        intervals.push((resource, from, to));
     }
-    intervals.sort_unstable_by_key(|interval| (interval.resource, interval.valid_from));
-    if intervals
-        .windows(2)
-        .any(|pair| pair[0].resource == pair[1].resource && pair[0].valid_to > pair[1].valid_from)
-    {
+    intervals.sort_unstable();
+    if intervals.windows(2).any(|pair| {
+        let (resource, _, end) = pair[0];
+        let (next_resource, start, _) = pair[1];
+        resource == next_resource && end > start
+    }) {
         return Err(ArtifactError::Invalid(
             "Overlapping history validity intervals".into(),
         ));
