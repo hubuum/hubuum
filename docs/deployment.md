@@ -96,7 +96,9 @@ separate Prometheus targets. They intentionally do not fail over to one another,
 because doing so would mix independent counters and produce invalid rates.
 Caddy only forwards those paths to clients inside `--metrics-allow-cidr`
 (default: the container bridge subnet), so an external Prometheus must be
-listed explicitly and every other client receives `404`.
+listed explicitly and every other client receives `404`. Separate multiple CIDRs
+with commas. Updates preserve this setting. The generated API proxy also
+suppresses runtime-selected scrape paths for clients outside those networks.
 
 The installer also creates an empty `/opt/hubuum/auth.toml` for local-only
 authentication. This empty placeholder is mode `0644` so the non-root API can

@@ -37,7 +37,8 @@ async fn remote_target_updates_are_fenced_by_the_authorized_revision() {
 }
 
 #[rstest::rstest]
-#[case::approved_path("https://approved.example/other", true)]
+#[case::approved_path("https://approved.example/hook", true)]
+#[case::other_path("https://approved.example/other", false)]
 #[case::different_host("https://other.example/hook", false)]
 #[case::different_port("https://approved.example:8443/hook", false)]
 #[case::http("http://approved.example/hook", false)]

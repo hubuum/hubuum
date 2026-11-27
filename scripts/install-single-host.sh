@@ -289,6 +289,7 @@ if generates_deployment_files && [[ -f "$ENV_FILE" ]]; then
   reuse_from_env FRONTEND_REPO FRONTEND_REPO
   reuse_from_env BUILD_FROM_SOURCE BUILD_FROM_SOURCE
   reuse_from_env NETWORK_SUBNET HUBUUM_CLIENT_ALLOWLIST
+  reuse_from_env METRICS_ALLOW_CIDR METRICS_ALLOW_CIDR
   reuse_from_env DATABASE_ROLE_MODE HUBUUM_DATABASE_ROLE_MODE
   reuse_from_env AUTH_CONFIG_HOST_PATH HUBUUM_AUTH_CONFIG_HOST_PATH
   reuse_from_env SCRIPT_BASE_URL MANAGEMENT_SCRIPT_BASE_URL
@@ -315,9 +316,11 @@ if [[ -n "$IMAGE_TAG$BACKEND_TAG$FRONTEND_TAG" ]]; then
 fi
 
 [[ "$MODE" == "all" || "$MODE" == "backend" ]] || die "--mode must be all or backend"
-if [[ -n "$METRICS_ALLOW_CIDR" && "$METRICS_ALLOW_CIDR" == *"*"* ]]; then
-  die "--metrics-allow-cidr does not accept '*'; use explicit CIDRs such as 0.0.0.0/0,::/0"
+METRICS_ALLOW_CIDR="${METRICS_ALLOW_CIDR:-$NETWORK_SUBNET}"
+if [[ ! "$METRICS_ALLOW_CIDR" =~ ^[0-9a-fA-F:.]+/[0-9]+(,[0-9a-fA-F:.]+/[0-9]+)*$ ]]; then
+  die "--metrics-allow-cidr requires a CIDR or comma-separated CIDRs"
 fi
+METRICS_REMOTE_IPS="${METRICS_ALLOW_CIDR//,/ }"
 [[ "$DATABASE_ROLE_MODE" == "single" || "$DATABASE_ROLE_MODE" == "split" ]] || die "--database-role-mode must be single or split"
 [[ "$ENGINE" == "auto" || "$ENGINE" == "docker" || "$ENGINE" == "podman" ]] || die "--engine must be auto, docker, or podman"
 [[ "$MONITORING_ENABLED" == "true" || "$MONITORING_ENABLED" == "false" ]] || die "MONITORING_ENABLED must be true or false"
@@ -671,6 +674,7 @@ write_deployment_env() {
   printf 'HUBUUM_BIND_PORT=%s\n' "$API_PORT"
   printf 'HUBUUM_LOG_LEVEL=info\n'
   printf 'HUBUUM_TOKEN_HASH_KEY=%s\n' "$HUBUUM_TOKEN_HASH_KEY"
+  printf 'METRICS_ALLOW_CIDR=%s\n' "$METRICS_ALLOW_CIDR"
   printf 'HUBUUM_CLIENT_ALLOWLIST=%s\n' "$NETWORK_SUBNET"
   printf 'HUBUUM_TRUST_IP_HEADERS=false\n'
   printf 'HUBUUM_TOKEN_LIFETIME_HOURS=24\n'
@@ -716,7 +720,7 @@ merge_missing_env_values() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     key="${line%%=*}"
     if [[ "$key" == "BACKEND_IMAGE" || "$key" == "FRONTEND_IMAGE" ||
-      "$key" == "POSTGRES_IMAGE" || "$key" == "VALKEY_IMAGE" || "$key" == "CADDY_IMAGE" ||
+      "$key" == "METRICS_ALLOW_CIDR" || "$key" == "POSTGRES_IMAGE" || "$key" == "VALKEY_IMAGE" || "$key" == "CADDY_IMAGE" ||
       "$key" == "MONITORING_ENABLED" || "$key" == "MONITORING_ASSETS_REF" ||
       "$key" == "PROMETHEUS_IMAGE" || "$key" == "GRAFANA_IMAGE" ]] && arg_was_set "$key"; then
       line="${key}=${!key}"
@@ -789,6 +793,10 @@ cat > "$CADDYFILE_TEMP" <<EOF
 }
 
 (api_proxy) {
+	# The server owns the runtime-configurable scrape path. Signal a denial
+	# on every ordinary proxied request from outside the scraper networks.
+	@outside_scrape_network not remote_ip ${METRICS_REMOTE_IPS}
+	request_header @outside_scrape_network X-Hubuum-Deny-Metrics 1
 	reverse_proxy hubuum-api:${API_PORT} hubuum-api-standby:${API_PORT} {
 		health_uri /readyz
 		health_interval 5s
@@ -813,21 +821,19 @@ EOF
 # Metrics are unauthenticated Prometheus output. Restrict them to the container
 # network by default so the public hostnames do not disclose build metadata,
 # inventory counts, or template names.
-METRICS_ALLOW_CIDR="${METRICS_ALLOW_CIDR:-$NETWORK_SUBNET}"
-
 append_metrics_routes() {
   local primary_path="$1"
   local standby_path="$2"
   cat <<EOF
 	handle ${primary_path} {
-		@metrics_denied not remote_ip ${METRICS_ALLOW_CIDR}
+		@metrics_denied not remote_ip ${METRICS_REMOTE_IPS}
 		respond @metrics_denied 404
 		rewrite * /metrics
 		import metrics_primary_proxy
 	}
 
 	handle ${standby_path} {
-		@metrics_denied not remote_ip ${METRICS_ALLOW_CIDR}
+		@metrics_denied not remote_ip ${METRICS_REMOTE_IPS}
 		respond @metrics_denied 404
 		rewrite * /metrics
 		import metrics_standby_proxy

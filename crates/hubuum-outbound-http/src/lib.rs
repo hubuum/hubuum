@@ -143,6 +143,7 @@ impl OutboundMethod {
 #[derive(Clone, PartialEq, Eq)]
 pub struct OutboundUrlParts {
     url: Url,
+    original_path: String,
     host: String,
     port: u16,
 }
@@ -169,6 +170,11 @@ impl OutboundUrlParts {
 
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    /// Path spelling supplied by the caller, before URL normalization.
+    pub fn original_path(&self) -> &str {
+        &self.original_path
     }
 
     /// Percent-encoded, dot-segment-normalized request path.
@@ -207,8 +213,17 @@ pub fn validate_outbound_url(url: &str) -> Result<OutboundUrlParts, OutboundHttp
         .port_or_known_default()
         .ok_or(OutboundHttpError::MissingKnownPort)?;
 
+    let original_path = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .split_once("://")
+        .and_then(|(_, rest)| rest.find(['/', '\\']).map(|index| &rest[index..]))
+        .unwrap_or("/")
+        .to_owned();
     Ok(OutboundUrlParts {
         url: parsed,
+        original_path,
         host,
         port,
     })

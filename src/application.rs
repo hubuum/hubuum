@@ -835,8 +835,14 @@ mod tests {
         }
     }
 
+    #[rstest]
+    #[case::allowed(false, StatusCode::OK)]
+    #[case::outside_scrape_network(true, StatusCode::NOT_FOUND)]
     #[actix_web::test]
-    async fn runtime_metrics_path_skips_maintenance_database_reads() {
+    async fn runtime_metrics_path_skips_maintenance_database_reads(
+        #[case] denied: bool,
+        #[case] expected: StatusCode,
+    ) {
         let _lock = METRICS_TEST_LOCK.lock().await;
         let app = actix_test::init_service(
             App::new().service(api_metrics_test_service(unreachable_context())),
@@ -847,8 +853,13 @@ mod tests {
         config.metrics_path = "/internal/runtime-metrics".parse().unwrap();
         let request = actix_test::TestRequest::get()
             .uri(config.metrics_path.as_str())
-            .peer_addr("127.0.0.1:4242".parse().unwrap())
-            .to_request();
+            .peer_addr("127.0.0.1:4242".parse().unwrap());
+        let request = if denied {
+            request.insert_header(("X-Hubuum-Deny-Metrics", "1"))
+        } else {
+            request
+        }
+        .to_request();
         // A maintenance-state read would fail against this unreachable database.
         // Both the exemption and the endpoint must use this request's new path.
         let response = crate::config::runtime::scope(
@@ -856,7 +867,7 @@ mod tests {
             actix_test::call_service(&app, request),
         )
         .await;
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), expected);
     }
 
     #[rstest]
