@@ -170,6 +170,16 @@ impl OutboundUrlParts {
     pub fn port(&self) -> u16 {
         self.port
     }
+
+    /// Percent-encoded, dot-segment-normalized request path.
+    pub fn path(&self) -> &str {
+        self.url.path()
+    }
+
+    /// Percent-encoded query string, without the leading `?`.
+    pub fn query(&self) -> Option<&str> {
+        self.url.query()
+    }
 }
 
 pub fn validate_outbound_url(url: &str) -> Result<OutboundUrlParts, OutboundHttpError> {
@@ -921,6 +931,14 @@ mod tests {
         assert!(debug.contains("example.com"));
         assert!(debug.contains("port: 443"));
         assert!(!debug.contains("query-secret"));
+    }
+
+    #[test]
+    fn outbound_url_parts_expose_normalized_path_and_query() {
+        let parts = validate_outbound_url("https://example.com/a/../b/c?x=1&y=2#fragment").unwrap();
+
+        assert_eq!(parts.path(), "/b/c");
+        assert_eq!(parts.query(), Some("x=1&y=2"));
     }
 
     #[test]

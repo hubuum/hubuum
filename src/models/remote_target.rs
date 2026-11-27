@@ -121,27 +121,49 @@ impl RemoteAuthConfig {
 
 /// An HTTPS authority fixed by the credential owner's target definition.
 /// Invocation data may fill paths and queries, but cannot select another origin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ApprovedPath {
+    /// The template has no substitutions in its path; the rendered path must
+    /// match it exactly.
+    Exact(String),
+    /// Substitutions are allowed below a literal directory prefix.
+    Prefix(String),
+}
+
 pub(crate) struct CredentialBoundDestination {
     host: String,
     port: u16,
+    path: ApprovedPath,
 }
 
 impl CredentialBoundDestination {
     pub(crate) fn from_template(template: &str) -> Result<Self, ApiError> {
-        let authority = template
-            .strip_prefix("https://")
-            .and_then(|rest| rest.split(['/', '?', '#']).next())
+        let rest = template.strip_prefix("https://").ok_or_else(|| {
+            ApiError::BadRequest(
+                "Credential-bearing targets require a literal HTTPS host and port in url_template"
+                    .to_string(),
+            )
+        })?;
+        let authority = rest
+            .split(['/', '?', '#'])
+            .next()
             .filter(|authority| !authority.contains(['{', '}', '\\']))
-            .ok_or_else(|| ApiError::BadRequest(
-                "Credential-bearing targets require a literal HTTPS host and port in url_template".to_string(),
-            ))?;
-        let parts = validate_outbound_url(&format!("https://{authority}/"))
-            .map_err(|_| ApiError::BadRequest(
-                "Credential-bearing targets require a literal HTTPS host and port without URL credentials".to_string(),
-            ))?;
+            .ok_or_else(|| {
+                ApiError::BadRequest(
+                    "Credential-bearing targets require a literal HTTPS host and port in url_template"
+                        .to_string(),
+                )
+            })?;
+        let parts = validate_outbound_url(&format!("https://{authority}/")).map_err(|_| {
+            ApiError::BadRequest(
+                "Credential-bearing targets require a literal HTTPS host and port without URL credentials"
+                    .to_string(),
+            )
+        })?;
         Ok(Self {
             host: parts.host().to_owned(),
             port: parts.port(),
+            path: ApprovedPath::from_template_path(&template_path_template(rest)),
         })
     }
 
@@ -152,8 +174,97 @@ impl CredentialBoundDestination {
                     .to_string(),
             ));
         }
+        let path = parts.path();
+        if rendered_path_escapes(path) {
+            return Err(ApiError::Forbidden(
+                "Rendered destination contains a path escape".to_string(),
+            ));
+        }
+        let approved = match &self.path {
+            ApprovedPath::Exact(expected) => path == expected,
+            ApprovedPath::Prefix(prefix) => path.starts_with(prefix),
+        };
+        if !approved {
+            return Err(ApiError::Forbidden(
+                "Rendered destination differs from the credential owner's approved path"
+                    .to_string(),
+            ));
+        }
         Ok(())
     }
+}
+
+impl ApprovedPath {
+    fn from_template_path(path_template: &str) -> Self {
+        match path_template.find('{') {
+            None => Self::Exact(path_template.to_string()),
+            Some(index) => {
+                let literal = &path_template[..index];
+                let prefix = match literal.rfind('/') {
+                    Some(position) => &literal[..=position],
+                    None => "/",
+                };
+                Self::Prefix(prefix.to_string())
+            }
+        }
+    }
+}
+
+/// Extract the path portion of a template URL, excluding authority, query, and
+/// fragment. The returned value always starts with `/`.
+fn template_path_template(rest: &str) -> String {
+    let without_fragment = rest.split('#').next().unwrap_or(rest);
+    let without_query = without_fragment
+        .split('?')
+        .next()
+        .unwrap_or(without_fragment);
+    match without_query.find('/') {
+        Some(index) => without_query[index..].to_string(),
+        None => "/".to_string(),
+    }
+}
+
+/// Reject dot segments and encoded separators that a downstream server could
+/// decode into a path escape.
+fn rendered_path_escapes(path: &str) -> bool {
+    path.split('/').any(|segment| {
+        let decoded = percent_decode(segment);
+        decoded == "."
+            || decoded == ".."
+            || decoded.contains('/')
+            || decoded.contains('\\')
+            || decoded.contains('\0')
+    })
+}
+
+fn percent_decode(value: &str) -> String {
+    fn hex(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        }
+    }
+
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && let (Some(high), Some(low)) = (
+                bytes.get(index + 1).copied().and_then(hex),
+                bytes.get(index + 2).copied().and_then(hex),
+            )
+        {
+            decoded.push((high << 4) | low);
+            index += 3;
+            continue;
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 impl fmt::Debug for RemoteAuthConfig {
@@ -969,6 +1080,41 @@ mod tests {
     }
 
     use super::*;
+
+    #[rstest]
+    #[case::same_path("https://service.example/api/objects/42", true)]
+    #[case::below_prefix("https://service.example/api/objects/42/details", true)]
+    #[case::query_is_allowed("https://service.example/api/objects/42?expand=1", true)]
+    #[case::sibling_endpoint("https://service.example/admin/users", false)]
+    #[case::dot_segment("https://service.example/api/objects/../admin", false)]
+    #[case::encoded_slash("https://service.example/api/objects/..%2fadmin", false)]
+    #[case::encoded_dot_segment("https://service.example/api/objects/%2e%2e/admin", false)]
+    #[case::encoded_backslash("https://service.example/api/objects/..%5cadmin", false)]
+    fn rendered_credential_destination_stays_below_approved_path(
+        #[case] url: &str,
+        #[case] valid: bool,
+    ) {
+        let destination = CredentialBoundDestination::from_template(
+            "https://service.example/api/objects/{{ parameters.id }}",
+        )
+        .unwrap();
+        let accepted = validate_outbound_url(url)
+            .is_ok_and(|parts| destination.validate_rendered(&parts).is_ok());
+        assert_eq!(accepted, valid);
+    }
+
+    #[rstest]
+    #[case::exact("https://service.example/hook", true)]
+    #[case::exact_with_query("https://service.example/hook?asset=2", true)]
+    #[case::extra_segment("https://service.example/hook/extra", false)]
+    #[case::prefix_collision("https://service.example/hook2", false)]
+    fn literal_path_without_substitutions_is_exact(#[case] url: &str, #[case] valid: bool) {
+        let destination =
+            CredentialBoundDestination::from_template("https://service.example/hook").unwrap();
+        let accepted = validate_outbound_url(url)
+            .is_ok_and(|parts| destination.validate_rendered(&parts).is_ok());
+        assert_eq!(accepted, valid);
+    }
 
     #[rstest]
     #[case::maximum(128, true)]

@@ -14,6 +14,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Credential-bearing remote targets now bind the rendered request to the
+  administrator-approved path prefix, not only the origin, preventing
+  server-held credentials from being sent to other endpoints on the same
+  service.
+- The single-host installer restricts `/metrics` to `--metrics-allow-cidr`
+  (default: the container bridge subnet) and disables the per-IP and
+  per-subnet login scopes that would otherwise turn a shared proxy address
+  into a deployment-wide lockout.
+
 - Remove the unused Actix Web cookie feature and its dependency on
   `cookie` 0.16.2 (RUSTSEC-2026-0594).
 
