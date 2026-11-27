@@ -1,4 +1,3 @@
-use argon2::password_hash::phc::PasswordHash;
 use chrono::SubsecRound;
 use hubuum_domain::PrincipalId;
 use hubuum_events_core::EventSubject;
@@ -174,14 +173,6 @@ pub(crate) async fn authenticate_local(
         );
         return Err(auth_failure());
     };
-    if PasswordHash::new(hash).is_err() {
-        let _ = verify_dummy_password_async(password).await;
-        warn!(
-            message = "Login failed (local password hash invalid)",
-            user = name
-        );
-        return Err(auth_failure());
-    }
     match verify_password_async(password, hash.to_owned()).await {
         Ok(true) => Ok(user),
         Ok(false) => {

@@ -14,8 +14,6 @@ use std::fmt;
 use std::sync::{Arc, LazyLock};
 use tokio::sync::Semaphore;
 
-use tracing::debug;
-
 static DUMMY_PASSWORD_HASH: LazyLock<String> = LazyLock::new(|| {
     hash_password("hubuum-dummy-password-verification-target")
         .expect("the built-in dummy password must be hashable")
@@ -147,19 +145,19 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, argon2::Error
     if password.is_empty() {
         return Ok(false);
     }
-    let parsed_hash_result = PasswordHash::new(hash);
+    Ok(verify_usable_hash(password, hash).unwrap_or(false))
+}
 
-    let parsed_hash = match parsed_hash_result {
-        Ok(parsed_hash) => parsed_hash,
-        Err(_) => {
-            debug!(message = "Error parsing password hash.");
-            return Ok(false);
-        }
-    };
-
-    Ok(Argon2::default()
-        .verify_password(password.as_bytes(), &parsed_hash)
-        .is_ok())
+// Some(false) means a valid verifier actually performed the password work.
+fn verify_usable_hash(password: &str, hash: &str) -> Option<bool> {
+    let parsed = PasswordHash::new(hash).ok()?;
+    parsed.salt.as_ref()?;
+    parsed.hash.as_ref()?;
+    match Argon2::default().verify_password(password.as_bytes(), &parsed) {
+        Ok(()) => Some(true),
+        Err(argon2::password_hash::Error::PasswordInvalid) => Some(false),
+        Err(_) => None,
+    }
 }
 
 pub async fn verify_password_async(
@@ -167,8 +165,12 @@ pub async fn verify_password_async(
     hash: String,
 ) -> Result<bool, PasswordWorkError> {
     run_password_work(move || {
-        verify_password(password.as_str(), &hash)
-            .map_err(|error| PasswordWorkError(error.to_string()))
+        if let Some(matches) = verify_usable_hash(password.as_str(), &hash) {
+            return Ok(matches);
+        }
+        verify_dummy_password(password.as_str())
+            .map_err(|error| PasswordWorkError(error.to_string()))?;
+        Ok(false)
     })
     .await
 }
@@ -203,6 +205,14 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[rstest]
+    #[case("invalid")]
+    #[case("$argon2id$v=19$m=19456,t=2,p=1")]
+    #[case("$unsupported$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$d2lubmVy")]
+    fn unusable_login_verifiers_select_the_dummy_work(#[case] hash: &str) {
+        assert_eq!(verify_usable_hash("sample-password", hash), None);
+    }
 
     #[test]
     fn completed_password_hash_debug_is_redacted() {
