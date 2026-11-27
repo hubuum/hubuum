@@ -874,3 +874,5 @@ async fn cold_lookup_with_a_full_compact_index_fits_p2(#[values(false, true)] as
         budget.used()
     );
 }
+
+mod rewrite;

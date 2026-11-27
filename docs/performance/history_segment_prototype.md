@@ -296,3 +296,37 @@ end-to-end cold reads within P2, and subset-rewrite measurements. See the
 The fixture holds artifact bytes in memory. Durable storage and reader
 compatibility across future format versions require separate evidence before
 production deployment or primary-copy retirement.
+
+## Local mixed-segment rewrite
+
+Run the full 10,000- and 100,000-version diagnostic with the command below.
+
+```bash
+cargo test --lib one_percent_subset_rewrite_traffic --locked -- --ignored --nocapture --test-threads=1
+```
+
+The fixture distributes 10,000 objects over 128 classes and 32 collections.
+Eight classes own 60% of objects. Each object has one version in the smaller
+run and ten in the larger run. Ordinary payloads contain 256 bytes of filler
+and every hundredth object contains 64 KiB. Each collection is segmented at
+the 10,000-frame limit. The selected offset rotates in each group of 100
+versions. Every touched segment produces a separate traffic record.
+
+| Versions | Touched segments | Selected | Source open | Source scan | Destination written | Destination verification | Largest source plus destination |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10,000 | 32 of 32 | 100 | 2,861,828 | 12,713,505 | 12,695,140 | 15,482,788 | 4,622,985 |
+| 100,000 | 36 of 36 | 1,000 | 4,342,756 | 126,435,511 | 125,691,466 | 129,739,564 | 45,516,363 |
+
+All traffic quantities are bytes from one successful run per size. Source open
+includes the published manifest and verified framing/index blocks. Source scan
+charges each intersecting record block at its actual physical length.
+Destination writes include the sealed manifest. Verification reads back the
+manifest and every destination block and reopens its index. For each segment,
+the first three traffic columns stayed below the P8 ceiling of 134,217,728
+bytes in aggregate. Subsequent independent lookups compared every complete
+surviving record and checked that each selected UUID was absent.
+
+The fixture uses the memory artifact adapter and excludes database/WAL,
+provider retries, process RSS, publication, superseded-copy cleanup and restore.
+The named deployment still needs those measurements. A staged replacement alone
+supplies no authority to switch catalogs or erase a source.

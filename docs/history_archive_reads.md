@@ -129,6 +129,15 @@ P1/P2 performance acceptance. Full 10k/100k catalog allocation, worker RSS,
 constrained profiles, complete pipeline amplification and subset-rewrite costs
 remain unqualified. No cold-provider or source-retirement acceptance is claimed.
 
+A published mixed segment can stage a fresh replacement from exact resource and
+version UUIDs. The selection is limited to 1,000 members and 16 MiB of selected
+frames. Every source frame is authenticated and decoded, including selected
+frames. Surviving frames retain their original bytes. An absent version, a
+survivor depending on a selected version, corruption or a depleted read budget
+stops staging. Publication, cross-segment dependency checks and retirement of
+the old copy still require the owning operation and its durable fences. See the
+[local subset-rewrite measurements](performance/history_segment_prototype.md#local-mixed-segment-rewrite).
+
 Capture staging exhaustion preserves at most 4 KiB of encoded historical
 authorization facts plus fixed original request/fence/lifetime metadata in a
 private validated error proof. Both adapters preserve this proof across their
