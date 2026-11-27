@@ -18,17 +18,16 @@ impl HistoryPolicyCatalog {
         }
         let mut keys = std::collections::BTreeMap::new();
         let mut operations = std::collections::BTreeSet::new();
-        let mut previous = None;
-        for record in &records {
+        let mut previous_time = None;
+        for (index, record) in records.iter().enumerate() {
             if !operations.insert(record.operation()) {
                 return Err(invalid("Duplicate policy operation identity"));
             }
-            if previous.is_some_and(|old: &HistoryPolicyRecord| {
-                old.revision() >= record.revision() || old.applied_at() > record.applied_at()
-            }) {
-                return Err(invalid(
-                    "Policy revisions must increase and application time cannot move backwards",
-                ));
+            if record.revision().value() != index as u64 + 1 {
+                return Err(invalid("Retained policy catalog is missing a revision"));
+            }
+            if previous_time.is_some_and(|time| time > record.applied_at()) {
+                return Err(invalid("Policy application time cannot move backwards"));
             }
             let expected = keys
                 .get(&record.proposal().key())
@@ -40,7 +39,7 @@ impl HistoryPolicyCatalog {
                 ));
             }
             keys.insert(record.proposal().key(), record.revision());
-            previous = Some(record);
+            previous_time = Some(record.applied_at());
         }
         Ok(Self(records))
     }
@@ -439,6 +438,7 @@ impl HistoryEndpointDecision {
         issued_at: DateTime<Utc>,
     ) -> Result<(), StorageValidationError> {
         let policy = &self.policy;
+        policy.binding.validate()?;
         let mut references = policy.inherited.iter().chain(&policy.source);
         if policy.binding == HistoryPolicyBinding::Inherit
             || (policy.source.is_none() && policy.binding != HistoryPolicyBinding::DisabledExpiry)
@@ -490,6 +490,9 @@ impl HistoryExpiryCandidate {
         attributions: Vec<HistoryScopeAttribution>,
         has_dependency: bool,
     ) -> Result<Self, StorageValidationError> {
+        if let Some(anchor) = anchor {
+            anchor.validate_family(family)?;
+        }
         if !attributions.is_empty() && attributions.len() != endpoint_count(family) {
             return Err(invalid(
                 "Historical attribution must cover every endpoint or remain explicitly unresolved",
@@ -652,6 +655,9 @@ impl HistoryExpiryDecision {
         issued_at: DateTime<Utc>,
     ) -> Result<(), StorageValidationError> {
         use HistoryExpiryBlocker::{Hold, OpenVersion, RetainedDependency, UnknownAttribution};
+        if let Some(anchor) = self.anchor {
+            anchor.validate_family(family)?;
+        }
         let expected = match (self.anchor, self.endpoints.len()) {
             (None, 0) => Some(OpenVersion),
             (Some(_), 0) => Some(UnknownAttribution),

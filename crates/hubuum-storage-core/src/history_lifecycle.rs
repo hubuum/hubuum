@@ -249,6 +249,20 @@ pub enum HistoryRetentionAnchor {
     SchemaEvent(DateTime<Utc>),
 }
 impl HistoryRetentionAnchor {
+    fn validate_family(
+        self,
+        family: StorageIdentityHistoryKind,
+    ) -> Result<(), StorageValidationError> {
+        if matches!(self, Self::SchemaEvent(_))
+            != (family == StorageIdentityHistoryKind::ClassSchema)
+        {
+            return Err(invalid(
+                "Only class schema history uses schema-event anchors",
+            ));
+        }
+        Ok(())
+    }
+
     pub const fn at(self) -> DateTime<Utc> {
         match self {
             Self::Closed(at) | Self::Deleted(at) | Self::SchemaEvent(at) => at,

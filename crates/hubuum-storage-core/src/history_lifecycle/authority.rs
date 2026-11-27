@@ -613,10 +613,7 @@ impl HistoryLifecycleAuthority {
             .collect();
         // Place each policy as early as its predecessor permits. An issued
         // review fixes both ends of its range to the very next decision.
-        for (index, record) in self.policies.records().iter().enumerate() {
-            if record.revision().value() != index as u64 + 1 {
-                return Err(invalid("Retained policy catalog is missing a revision"));
-            }
+        for record in self.policies.records() {
             record
                 .proposal()
                 .validate_review_presence(record.review())?;

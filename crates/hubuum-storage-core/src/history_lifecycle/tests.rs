@@ -92,9 +92,8 @@ fn recovered_policy_catalog_accounts_for_every_revision(
     let mut policies = serde_json::to_value(catalog).unwrap();
     policies[0]["revision"] = first.into();
     policies[1]["revision"] = second.into();
-    let authority = serde_json::json!({"revision":"2", "holds":[], "policies":policies});
     assert_eq!(
-        serde_json::from_value::<HistoryLifecycleAuthority>(authority).is_ok(),
+        serde_json::from_value::<HistoryPolicyCatalog>(policies).is_ok(),
         valid
     );
 }
@@ -163,6 +162,8 @@ fn preview_cannot_count_the_same_version_twice() {
 #[case::open_version("open_version", false)]
 #[case::missing_endpoint("missing_endpoint", false)]
 #[case::wrong_family("wrong_family", false)]
+#[case::schema_event_on_object("wrong_anchor", false)]
+#[case::invalid_size_thresholds("wrong_thresholds", false)]
 #[case::wrong_deadline("wrong_deadline", false)]
 #[case::ignored_endpoint_blocker("ignored_endpoint_blocker", false)]
 #[case::held("held", true)]
@@ -201,6 +202,17 @@ fn saved_preview_samples_match_the_issued_decision(#[case] change: &str, #[case]
         "missing_endpoint" => sample["endpoints"] = serde_json::json!([]),
         "wrong_family" => {
             sample["endpoints"][0]["policy"]["source"]["key"]["family"] = "class".into()
+        }
+        "wrong_anchor" => sample["anchor"]["kind"] = "schema_event".into(),
+        "wrong_thresholds" => {
+            let endpoint = &mut sample["endpoints"][0];
+            endpoint["policy"]["binding"]["trigger"] = serde_json::json!({
+                "kind": "logical_size", "upper_logical_bytes": "10", "lower_logical_bytes": "10"
+            });
+            endpoint["deadline"] = serde_json::Value::Null;
+            endpoint["blocker"] = "trigger_not_reached".into();
+            sample["blocker"] = "trigger_not_reached".into();
+            data["impact"]["eligible_observed"] = "0".into();
         }
         "wrong_deadline" => {
             sample["endpoints"][0]["deadline"] = serde_json::to_value(at(46)).unwrap()
