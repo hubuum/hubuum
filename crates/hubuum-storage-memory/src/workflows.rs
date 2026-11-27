@@ -1021,9 +1021,26 @@ impl RestoreStorage for MemoryStorage {
         let (initiator, artifact, capability_hash, validation_summary, expires_at) =
             request.into_parts();
         let mut state = self.state.write().await;
+        let now = Utc::now();
+        let mut active = 0;
+        let mut principal_active = 0;
+        for record in state.restore_jobs.values() {
+            let summary = record.job.summary();
+            if summary.status() == StorageRestoreJobStatus::Confirmed
+                || (summary.status() == StorageRestoreJobStatus::Validated
+                    && summary.timestamps().expires_at() > now)
+            {
+                active += 1;
+                if summary.initiator().principal_id() == initiator.principal_id()
+                    && (initiator.principal_id().is_some() || summary.initiator() == &initiator)
+                {
+                    principal_active += 1;
+                }
+            }
+        }
+        StorageRestoreStageArtifact::check_capacity(active, principal_active)?;
         let id = RestoreJobId::new(state.restore_job_ids.next()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
-        let now = Utc::now();
         let timestamps = StorageRestoreTimestamps::try_new(expires_at, None, None, now, now)
             .map_err(invalid_contract_value)?;
         let summary = StorageRestoreJobSummary::try_new(

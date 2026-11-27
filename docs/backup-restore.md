@@ -318,6 +318,14 @@ In the default single-role mode, omit `--migration-database-url`; the command
 uses `HUBUUM_DATABASE_URL`. Split-role deployments use the privileged URL shown
 above.
 
+Each API process admits one restore upload per administrator and two in total.
+It accepts up to four starts per administrator and 16 starts in a rolling
+minute. A disconnected upload releases its active slot when validation stops.
+The selected storage backend also enforces a shared limit of two unexpired
+or confirmed stages per initiator and eight in total across replicas. A full
+budget returns HTTP 429. An oversized declared or streamed body returns HTTP
+413. Document parsing runs on a blocking worker.
+
 On Unix, `--restore` also accepts FIFOs and shell process substitution. The
 producer must close the stream: restore reads the complete document into
 memory until EOF before validating or staging it. This preserves the CLI's

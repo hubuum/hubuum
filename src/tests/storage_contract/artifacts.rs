@@ -300,6 +300,58 @@ async fn every_available_storage_backend_supplies_remote_target_lifecycle() {
 }
 
 #[actix_web::test]
+async fn concurrent_restore_stages_share_the_principals_retained_artifact_budget() {
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let principal =
+            StorageRestoreInitiator::try_new(None, "contract", prefix("stage_capacity")).unwrap();
+        let stage = StorageRestoreStageArtifact::try_new(
+            principal,
+            hubuum_storage_core::StorageRestoreArtifact::from_reader(b"{}".as_slice(), 2).unwrap(),
+            "b".repeat(64),
+            serde_json::json!({}),
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .unwrap();
+        let (first, second, third) = tokio::join!(
+            backend.stage_restore_artifact(stage.clone()),
+            backend.stage_restore_artifact(stage.clone()),
+            backend.stage_restore_artifact(stage.clone())
+        );
+        let mut ids = Vec::new();
+        let mut limited = 0;
+        for result in [first, second, third] {
+            match result {
+                Ok(status) => ids.push(status.summary().id()),
+                Err(error) if error.kind() == crate::storage::StorageErrorKind::RateLimited => {
+                    limited += 1
+                }
+                Err(error) => panic!("unexpected admission error: {error}"),
+            }
+        }
+        assert_eq!((ids.len(), limited), (2, 1));
+        backend
+            .fail_restore_and_resume(StorageRestoreFailure::new(ids[0], "contract cleanup"))
+            .await
+            .unwrap();
+        ids.push(
+            backend
+                .stage_restore_artifact(stage)
+                .await
+                .unwrap()
+                .summary()
+                .id(),
+        );
+        if let BackendTestEnvironment::Postgres { .. } = environment {
+            hubuum_storage_postgres::test_support::delete_restore_jobs(pool().get_ref(), &ids)
+                .await
+                .unwrap();
+        }
+    }
+}
+
+#[actix_web::test]
 async fn every_available_storage_backend_supplies_restore_lifecycle_and_coordination() {
     let _permit = postgres_permit().await;
     let pool = pool();

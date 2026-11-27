@@ -1,6 +1,8 @@
 use crate::config::AppConfig;
 use hubuum_storage_core::StorageRuntimeSettingsGroup;
+mod admission;
 mod maintenance;
+use admission::{StageAdmission, StagePermit};
 pub(crate) mod replay;
 use hubuum_storage_core::{
     StorageBackupReplay, StorageRestoreArtifact, StorageRestoreArtifactJob,
@@ -12,7 +14,7 @@ use maintenance::active_maintenance_work;
 use hubuum_domain::{JsonSchemaLimits, PrincipalId};
 use std::collections::BTreeMap;
 use std::io::{self, Write};
-use std::sync::Once;
+use std::sync::{Arc, Mutex, Once};
 use std::time::{Duration as StdDuration, Instant};
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
@@ -226,6 +228,7 @@ fn confirmation_is_stale(confirmed_at: NaiveDateTime, now: NaiveDateTime) -> boo
 
 #[derive(Clone, Debug)]
 pub struct RestoreSettings {
+    admission: Arc<Mutex<StageAdmission>>,
     stage_retention: FutureRetention,
     max_upload_bytes: usize,
 }
@@ -237,6 +240,10 @@ impl RestoreSettings {
                 config.restore_stage_retention_minutes,
                 config.restore_max_upload_bytes,
             )
+            .map(|settings| Self {
+                admission: self.admission.clone(),
+                ..settings
+            })
             .map_err(ApiError::BadRequest)
         } else {
             Ok(self.clone())
@@ -250,9 +257,14 @@ impl RestoreSettings {
             return Err("restore upload size limit must be greater than zero".to_string());
         }
         Ok(Self {
+            admission: Arc::default(),
             stage_retention,
             max_upload_bytes,
         })
+    }
+
+    pub(crate) fn admit_upload(&self, principal: i32) -> Result<StagePermit, ApiError> {
+        StageAdmission::acquire(&self.admission, principal)
     }
 
     fn stage_expires_at(&self, now: NaiveDateTime) -> Result<NaiveDateTime, ApiError> {
@@ -399,14 +411,46 @@ pub async fn stage_restore(
     settings: &RestoreSettings,
     request: RestoreStageRequest,
 ) -> Result<RestoreStageResponse, ApiError> {
+    stage_admitted_restore(pool, settings, request, None).await
+}
+
+async fn validate_artifact(
+    artifact: StorageRestoreArtifact,
+    max_bytes: usize,
+    limits: JsonSchemaLimits,
+    permit: Option<StagePermit>,
+) -> Result<
+    (
+        StorageRestoreArtifact,
+        crate::models::RestoreValidationSummary,
+        Option<StagePermit>,
+    ),
+    ApiError,
+> {
+    tokio::task::spawn_blocking(move || {
+        let (document, _, _) = replay::parse(artifact.reader(), max_bytes, limits)?;
+        Ok((artifact, document.summary()?, permit))
+    })
+    .await
+    .map_err(|error| {
+        ApiError::InternalServerError(format!("Restore validation worker failed: {error}"))
+    })?
+}
+
+pub(crate) async fn stage_admitted_restore(
+    pool: &impl crate::storage::StorageContext,
+    settings: &RestoreSettings,
+    request: RestoreStageRequest,
+    permit: Option<StagePermit>,
+) -> Result<RestoreStageResponse, ApiError> {
     let (initiator, artifact) = request.into_parts();
-    let (document, _, _) = replay::parse(
-        artifact.reader(),
+    let (artifact, validation, _permit) = validate_artifact(
+        artifact,
         settings.max_upload_bytes(),
         storage_handle(pool).schema_limits(),
-    )?;
-    let validation = document.summary()?;
-    drop(document);
+        permit,
+    )
+    .await?;
     let capability = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let capability_hash = sha256(capability.as_bytes());
     let expires_at = settings.stage_expires_at(Utc::now().naive_utc())?;
@@ -619,20 +663,18 @@ pub(crate) async fn confirm_restore_with_approval(
         }
         return Err(ApiError::Gone("Restore stage has expired".to_string()));
     }
-    let (document, _, _) = replay::parse(
-        document_bytes
-            .as_ref()
-            .ok_or_else(|| {
-                ApiError::InternalServerError("Active restore artifact is missing".into())
-            })?
-            .reader(),
-        usize::try_from(job.byte_size).map_err(|_| {
-            ApiError::PayloadTooLarge("Restore artifact exceeds address space".into())
-        })?,
+    let artifact = document_bytes.ok_or_else(|| {
+        ApiError::InternalServerError("Active restore artifact is missing".into())
+    })?;
+    let max_bytes = usize::try_from(job.byte_size)
+        .map_err(|_| ApiError::PayloadTooLarge("Restore artifact exceeds address space".into()))?;
+    let (_, validation, _) = validate_artifact(
+        artifact,
+        max_bytes,
         storage_handle(pool).schema_limits(),
-    )?;
-    let validation = document.summary()?;
-    drop(document);
+        None,
+    )
+    .await?;
     // Confirmation commits only the maintenance transition. A separately
     // deployed executor owns the privileged destructive transaction, so the
     // API and worker processes never need a migration credential.

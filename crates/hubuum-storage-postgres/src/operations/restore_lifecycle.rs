@@ -313,6 +313,14 @@ fn instance_to_storage(
     )
 }
 
+#[derive(QueryableByName)]
+struct ActiveStageCounts {
+    #[diesel(sql_type = BigInt)]
+    active: i64,
+    #[diesel(sql_type = BigInt)]
+    principal_active: i64,
+}
+
 pub async fn stage_restore_artifact(
     runtime: &PostgresRuntime,
     request: StorageRestoreStageArtifact,
@@ -334,6 +342,20 @@ pub async fn stage_restore_artifact(
         expires_at: expires_at.naive_utc(),
     };
     runtime.with_transaction(async move |connection| -> Result<_, PostgresStorageError> {
+        // Serialize publication across API replicas. Count in a fresh statement
+        // after acquiring the lock so a previous publisher's commit is visible.
+        diesel::sql_query("SELECT pg_advisory_xact_lock(4850188191125218)")
+            .execute(connection).await?;
+        let counts = diesel::sql_query(
+            "SELECT count(*) AS active, count(*) FILTER (WHERE requested_by IS NOT DISTINCT FROM $1
+                AND ($1 IS NOT NULL OR (requested_by_identity_scope = $2 AND requested_by_name = $3))) AS principal_active
+             FROM restore_jobs WHERE status = 'confirmed' OR
+             (status = 'validated' AND expires_at > statement_timestamp() AT TIME ZONE 'UTC')"
+        ).bind::<diesel::sql_types::Nullable<diesel::sql_types::Integer>,_>(input.requested_by)
+            .bind::<Text,_>(&input.requested_by_identity_scope)
+            .bind::<Text,_>(&input.requested_by_name)
+            .get_result::<ActiveStageCounts>(connection).await?;
+        StorageRestoreStageArtifact::check_capacity(counts.active, counts.principal_active)?;
         let staged_at = sql::<Timestamp>("statement_timestamp() AT TIME ZONE 'UTC'");
         let row = diesel::insert_into(crate::schema::restore_jobs::table)
             .values((input, crate::schema::restore_jobs::created_at.eq(staged_at.clone()), crate::schema::restore_jobs::updated_at.eq(staged_at)))
