@@ -21,6 +21,24 @@ fn server_binary_exposes_help() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("Hubuum server"));
 }
 
+#[rstest::rstest]
+#[case::command_line(true)]
+#[case::environment(false)]
+fn server_rejects_aws_cold_retrieval_at_startup(#[case] command_line: bool) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_hubuum-server"));
+    let profile = "aws-glacier-flexible-retrieval";
+    if command_line {
+        command.args(["--archive-cold-retrieval", profile]);
+    } else {
+        command.env("HUBUUM_ARCHIVE_COLD_RETRIEVAL", profile);
+    }
+    let output = command.output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--archive-cold-retrieval"));
+    assert!(stderr.contains("possible values: disabled"));
+}
+
 #[test]
 fn admin_binary_exposes_version() {
     let output = Command::new(env!("CARGO_BIN_EXE_hubuum-admin"))
