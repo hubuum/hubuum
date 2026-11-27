@@ -281,6 +281,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Opening a retained history segment now reuses verified header and footer
+  blocks while loading the index. Each new open and each subsequent record
+  lookup still charges the bytes it fetches.
+
 - **Breaking for experimental Windows history-aware HTTP runtimes:** owned
   publication now fails with HTTP 503 before history admission because bounded
   socket-abort retirement under backpressure is unqualified on Windows. Keep
