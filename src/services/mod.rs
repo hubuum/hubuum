@@ -15,6 +15,7 @@ pub(crate) mod groups;
 pub(crate) mod history;
 pub mod identity;
 pub(crate) mod import_boundary;
+pub(crate) mod import_payload;
 pub(crate) mod inventory;
 pub(crate) mod object_aggregates;
 mod object_relations;

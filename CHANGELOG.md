@@ -14,6 +14,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- **Breaking change:** Credential-bearing imports now require a configured
+  `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF` on API and worker processes.
+  Configure its 32-byte key and drain credential imports before upgrading.
+  Queued passwords and password hashes are encrypted until terminal redaction.
+
 - Remove the unused Actix Web cookie feature and its dependency on
   `cookie` 0.16.2 (RUSTSEC-2026-0594).
 

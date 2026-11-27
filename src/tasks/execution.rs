@@ -3,11 +3,12 @@ use tracing::{Instrument, info, info_span, warn};
 
 use crate::errors::ApiError;
 use crate::models::{
-    ImportAtomicity, ImportCollisionPolicy, ImportMode, ImportPermissionPolicy, ImportRequest,
-    NewTaskEventRecord, TaskResultCounts, TaskStatus, TokenScope,
+    ImportAtomicity, ImportCollisionPolicy, ImportMode, ImportPermissionPolicy, NewTaskEventRecord,
+    PrincipalID, TaskResultCounts, TaskStatus, TokenScope,
 };
 use crate::observability::metrics;
 use crate::permissions::AuthorizationContext;
+use crate::services::import_payload;
 use crate::services::tasks::{
     ClaimedTask, TaskStateChange, append_task_event, complete_task, update_task_state,
 };
@@ -35,7 +36,12 @@ where
         .request_payload
         .clone()
         .ok_or_else(|| ApiError::BadRequest("Import task payload is missing".to_string()))?;
-    let request: ImportRequest = serde_json::from_value(payload)?;
+    let request = import_payload::open(
+        payload,
+        PrincipalID::new(user.id())?,
+        task.request_hash.as_deref(),
+    )
+    .await?;
     request.validate().await?;
     let mode = request.mode();
     let atomicity = mode.atomicity.unwrap_or(ImportAtomicity::Strict);

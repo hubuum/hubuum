@@ -174,6 +174,15 @@ When a task is created:
 - counters are initialized to zero
 - a `queued` event is appended
 
+Credential imports store an AES-256-GCM envelope for the request and a keyed
+fingerprint for idempotency. Configure `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF`
+and its 32-byte key on every API and worker before importing passwords or
+password hashes, including dry runs. Keep each alias and its original key
+available while its tasks can still execute. Complete outstanding idempotent
+retries before switching the active alias. Drain existing credential imports
+before upgrading workers and API servers. Previously captured database backups
+retain the protection in effect when they were created.
+
 ## Worker model
 
 The worker implementation lives in:

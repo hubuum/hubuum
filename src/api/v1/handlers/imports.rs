@@ -9,16 +9,15 @@ use crate::errors::ApiError;
 use crate::extractors::Authenticated;
 use crate::models::search::parse_query_parameter;
 use crate::models::{
-    ImportRequest, ImportTaskResultResponse, PrincipalID, TaskID, TaskKind, TaskResponse, TokenID,
+    ImportRequest, ImportTaskResultResponse, TaskID, TaskKind, TaskResponse, TokenID,
 };
 use crate::pagination::prepare_db_pagination;
 use crate::permissions::AppContext;
+use crate::services::import_payload;
 use crate::services::tasks::{
     TaskSubmission, list_import_results, load_authorized_import, submit_task, task_scope_snapshot,
 };
-use crate::tasks::{
-    ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker, request_hash,
-};
+use crate::tasks::{ensure_task_worker_running, idempotency_key_from_headers, kick_task_worker};
 
 #[utoipa::path(
     post,
@@ -32,6 +31,7 @@ use crate::tasks::{
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 409, description = "Conflict", body = ApiErrorResponse),
         (status = 429, description = "Too many active import tasks", body = ApiErrorResponse),
+        (status = 503, description = "Credential import encryption key unavailable", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Forbidden", body = ApiErrorResponse)
     )
@@ -65,8 +65,8 @@ pub async fn create_import(
     } else {
         (import_request, None)
     };
-    let payload = serde_json::to_value(&import_request)?;
-    let hash = request_hash(&payload)?;
+    let actor = requestor.principal.id();
+    let (payload, hash) = import_payload::prepare(&import_request, actor).await?;
     let idempotency_key = idempotency_key_from_headers(req.headers())?;
     let snapshot = task_scope_snapshot(
         Some(TokenID::new(requestor.token_meta.id().id())?),
@@ -77,7 +77,7 @@ pub async fn create_import(
         &context,
         TaskSubmission::new(
             TaskKind::Import,
-            PrincipalID::new(requestor.principal.id().id())?,
+            actor,
             payload,
             import_request.total_items(),
             max_active_import_tasks_per_user(),
