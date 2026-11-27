@@ -12,6 +12,7 @@ use hubuum_storage_core::{
     LogicalIdentityStorage, StorageAuthorizationResource, StorageAuthorizationResourceKey,
     StorageAuthorizationResourcesQuery, StorageBackupHistorySection, StorageErrorKind,
     StorageIdentityResourceKind, StorageIdentitySubject, StorageIdentityTarget,
+    StorageRecordIdentity,
 };
 use tracing::{Instrument, instrument::WithSubscriber};
 use uuid::Uuid;
@@ -201,7 +202,8 @@ impl HistoryArchiveQuery {
                     selection,
                     catalog.generation(),
                     request.available_until,
-                );
+                )
+                .for_retained_read();
                 let capture = match storage
                     .capture_history_archive(capture_request.clone(), &permit)
                     .await
@@ -421,22 +423,19 @@ impl HistoryArchiveQuery {
                         .ok_or_else(|| {
                             ArtifactError::Corrupt("Pinned archive version missing".into())
                         })?;
-                    let expected = capture.hot().ok_or_else(|| {
-                        ArtifactError::Corrupt("Pinned primary capture missing".into())
-                    })?;
-                    if record.payload() != expected.payload()
-                        || record.dependencies() != descriptor.dependencies()
-                        || record.interval().valid_from() != expected.valid_from()
-                        || Some(record.interval().valid_to()) != expected.valid_to()
-                        || !descriptor.matches_row(expected).map_err(|_| {
-                            ArtifactError::Corrupt("Pinned version commitment invalid".into())
-                        })?
-                    {
-                        return Err(ArtifactError::Corrupt(
-                            "Pinned archive differs from captured version".into(),
-                        ));
-                    }
-                    Ok(expected.clone())
+                    let (interval, dependencies, payload) = record.into_parts();
+                    capture
+                        .resolve_retained_row(
+                            StorageRecordIdentity::new(interval.resource(), interval.version()),
+                            interval.valid_from()..interval.valid_to(),
+                            &dependencies,
+                            payload,
+                        )
+                        .map_err(|_| {
+                            ArtifactError::Corrupt(
+                                "Pinned archive differs from captured version".into(),
+                            )
+                        })
                 }
                 .await;
                 charged = budget.used();

@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Retained collection history reads now verify the closed primary once and
+  reuse its identity, interval, historical authorization and content digest for
+  later checks. **Breaking persisted archive pin format.** Upgrade processes
+  that reopen query pins before admitting reads that write `verified_primary_v1`.
+  Updated readers also accept existing full-row pins.
 - Offline recovery can reconcile an interrupted filesystem archive publication
   against its original private root and committed v2 intent, including a crash
   while reserving IDs before staging begins. Signed reapplication

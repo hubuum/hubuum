@@ -28,12 +28,16 @@ pub(super) fn row() -> HistoryArchiveRow {
     )
     .unwrap()
 }
-fn capture() -> (HistoryArchiveCapture, StorageExecutionPermit) {
-    let row = row();
-    let permit = StorageExecutionPermit::new(
+fn permit() -> StorageExecutionPermit {
+    StorageExecutionPermit::new(
         Some(RuntimeRegistration::generate().owner()),
         ApplicationFence::new(Uuid::new_v4(), 0).unwrap(),
-    );
+    )
+}
+
+fn capture() -> (HistoryArchiveCapture, StorageExecutionPermit) {
+    let row = row();
+    let permit = permit();
     let request = HistoryArchiveCaptureRequest::new(
         PrincipalIdentity::generate(),
         HistoryArchiveSelection::new(
@@ -205,6 +209,175 @@ fn staging_budget_evidence_rejects_changed_bindings(#[case] changed: &str) {
             .history_archive_budget_evidence()
             .unwrap()
             .validate_request(&request, &permit, now)
+            .is_err()
+    );
+}
+
+fn retained_fixture() -> (
+    HistoryArchiveRow,
+    HistoryArchiveCatalog,
+    HistoryArchiveCaptureRequest,
+) {
+    use crate::artifacts::{ArtifactIdentity, DestinationId};
+
+    let original = row();
+    let mut payload = original.payload().clone();
+    payload["description"] = json!("x".repeat(64 * 1024));
+    let row = HistoryArchiveRow::new(original.identity(), at(10), Some(at(20)), payload).unwrap();
+    let empty = HistoryArchiveCatalog::empty(row.identity().resource());
+    let descriptor = HistoryArchiveDescriptor::new(
+        &row,
+        Vec::new(),
+        3,
+        ArtifactReference::from_catalog(ArtifactIdentity::new(DestinationId::generate()), [42; 32]),
+    )
+    .unwrap();
+    let catalog = empty.publish(empty.generation(), vec![descriptor]).unwrap();
+    let request = HistoryArchiveCaptureRequest::new(
+        PrincipalIdentity::generate(),
+        HistoryArchiveSelection::new(
+            StorageBackupHistorySection::CollectionHistory,
+            row.identity().resource(),
+            HistoryArchivePoint::AsOf { at: at(15) },
+        ),
+        catalog.generation(),
+        at(100),
+    );
+    (row, catalog, request)
+}
+
+fn retained_capture(compact: bool) -> (HistoryArchiveCapture, HistoryArchiveRow) {
+    let (row, catalog, request) = retained_fixture();
+    let request = if compact {
+        request.for_retained_read()
+    } else {
+        request
+    };
+    let capture = HistoryArchiveCapture::capture(
+        request,
+        &catalog,
+        &permit(),
+        HistoryArchiveInput::Available(row.clone()),
+        at(50),
+    )
+    .unwrap();
+    (capture, row)
+}
+
+#[rstest]
+#[case::missing(false, HistoryArchiveCoverageState::Unavailable)]
+#[case::substituted(true, HistoryArchiveCoverageState::Corrupt)]
+fn retained_read_requires_the_original_primary_at_capture(
+    #[case] substituted: bool,
+    #[case] expected: HistoryArchiveCoverageState,
+) {
+    let (row, catalog, request) = retained_fixture();
+    let input = if substituted {
+        let mut payload = row.payload().clone();
+        payload["description"] = json!("different source content");
+        HistoryArchiveInput::Available(
+            HistoryArchiveRow::new(row.identity(), row.valid_from(), row.valid_to(), payload)
+                .unwrap(),
+        )
+    } else {
+        HistoryArchiveInput::Unavailable
+    };
+    let capture = HistoryArchiveCapture::capture(
+        request.for_retained_read(),
+        &catalog,
+        &permit(),
+        input,
+        at(50),
+    )
+    .unwrap();
+    assert_eq!(capture.coverage(at(50)), expected);
+    assert!(
+        capture
+            .resolve_retained_row(row.identity(), at(10)..at(20), &[], row.payload().clone())
+            .is_err()
+    );
+}
+
+#[rstest]
+#[case::original_full_capture(false)]
+#[case::verified_primary(true)]
+#[test]
+fn persisted_primary_reconstructs_the_original_row(#[case] compact: bool) {
+    let (capture, row) = retained_capture(compact);
+    let encoded = serde_json::to_vec(&capture).unwrap();
+    let document: Value = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(
+        document.pointer("/hot/verified_primary_v1").is_some(),
+        compact
+    );
+    assert_eq!(document.pointer("/hot/payload").is_some(), !compact);
+    assert_eq!(encoded.len() < 8192, compact);
+    let restored: HistoryArchiveCapture = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(restored.hot().is_none(), compact);
+    assert_eq!(
+        restored
+            .resolve_retained_row(row.identity(), at(10)..at(20), &[], row.payload().clone())
+            .unwrap(),
+        row
+    );
+}
+
+#[rstest]
+#[case::missing_pin("archive", Value::Null)]
+#[case::authorization_name("authorization.name", json!("other"))]
+#[case::observed_name("hot.verified_primary_v1.authorization.name", json!("other"))]
+#[case::observed_interval("hot.verified_primary_v1.valid_to", json!(at(16)))]
+#[case::changed_selection("selection.point.at", json!(at(23)))]
+#[case::unsupported_format("archive.format_version", json!(99))]
+#[case::dependencies("archive.dependencies", json!([VersionIdentity::generate()]))]
+#[case::content_commitment("hot.verified_primary_v1.payload_digest", json!(vec![0u8; 32]))]
+#[test]
+fn persisted_read_proof_rejects_a_substituted_binding(#[case] path: &str, #[case] value: Value) {
+    let (capture, _) = retained_capture(true);
+    let mut document = serde_json::to_value(capture).unwrap();
+    let pointer = format!("/{}", path.replace('.', "/"));
+    *document.pointer_mut(&pointer).expect("existing binding") = value;
+    assert!(serde_json::from_value::<HistoryArchiveCapture>(document).is_err());
+}
+
+#[test]
+fn full_and_verified_primary_encodings_cannot_be_combined() {
+    let (capture, row) = retained_capture(true);
+    let mut document = serde_json::to_value(capture).unwrap();
+    let full = serde_json::to_value(row).unwrap();
+    document["hot"]
+        .as_object_mut()
+        .unwrap()
+        .extend(full.as_object().unwrap().clone());
+    assert!(serde_json::from_value::<HistoryArchiveCapture>(document).is_err());
+}
+
+#[rstest]
+#[case::identity("identity")]
+#[case::interval("interval")]
+#[case::dependencies("dependencies")]
+#[case::content("content")]
+#[case::timestamp_spelling("timestamp")]
+#[test]
+fn retained_row_requires_the_original_verified_frame(#[case] changed: &str) {
+    let (capture, row) = retained_capture(true);
+    let mut identity = row.identity();
+    let mut interval = at(10)..at(20);
+    let mut dependencies = Vec::new();
+    let mut payload = row.payload().clone();
+    match changed {
+        "identity" => {
+            identity = StorageRecordIdentity::new(identity.resource(), VersionIdentity::generate())
+        }
+        "interval" => interval.end = at(19),
+        "dependencies" => dependencies.push(VersionIdentity::generate()),
+        "content" => payload["description"] = json!("substituted"),
+        "timestamp" => payload["created_at"] = json!("1970-01-01T00:00:00+00:00"),
+        _ => unreachable!(),
+    }
+    assert!(
+        capture
+            .resolve_retained_row(identity, interval, &dependencies, payload)
             .is_err()
     );
 }
