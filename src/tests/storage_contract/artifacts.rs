@@ -331,7 +331,10 @@ async fn concurrent_restore_stages_share_the_principals_retained_artifact_budget
             }
         }
         assert_eq!((ids.len(), limited), (2, 1));
-        assert!(backend.expire_restore_stage(ids[0]).await.unwrap());
+        backend
+            .fail_restore_and_resume(StorageRestoreFailure::new(ids[0], "contract cleanup"))
+            .await
+            .unwrap();
         ids.push(
             backend
                 .stage_restore_artifact(stage)
