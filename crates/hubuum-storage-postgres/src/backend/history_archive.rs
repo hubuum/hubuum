@@ -7,7 +7,7 @@ use super::*;
 use crate::PostgresConnection;
 use chrono::{DateTime, Utc};
 use diesel::sql_types::{
-    BigInt, Binary, Bool, Jsonb, Nullable, Text, Timestamptz, Uuid as SqlUuid,
+    BigInt, Binary, Bool, Integer, Jsonb, Nullable, Text, Timestamptz, Uuid as SqlUuid,
 };
 use diesel::{QueryableByName, sql_query};
 use diesel_async::RunQueryDsl;
@@ -35,6 +35,10 @@ struct Clock {
 }
 #[derive(QueryableByName)]
 struct Hot {
+    #[diesel(sql_type=Nullable<Binary>)]
+    description_digest: Option<Vec<u8>>,
+    #[diesel(sql_type=Nullable<Integer>)]
+    encoded_description_bytes: Option<i32>,
     #[diesel(sql_type=Jsonb)]
     authorization: Value,
     #[diesel(sql_type=Jsonb)]
@@ -77,6 +81,7 @@ mod catalog;
 async fn hot_on(
     connection: &mut PostgresConnection,
     selection: &HistoryArchiveSelection,
+    descriptor: Option<&HistoryArchiveDescriptor>,
 ) -> Result<HistoryArchiveInput, PostgresStorageError> {
     if selection.family() != StorageBackupHistorySection::CollectionHistory {
         return Ok(HistoryArchiveInput::Unavailable);
@@ -99,9 +104,15 @@ async fn hot_on(
     };
     // One statement snapshot. Limit both candidate count and returned text before
     // allocation in Rust; do not materialize an unbounded history page.
-    let rows = sql_query("WITH candidates AS (SELECT h.* FROM public.collections_history h WHERE logical_identity #>> '{subject,identity,identity}'=$1 AND (($2::text IS NOT NULL AND logical_identity #>> '{subject,version}'=$2) OR ($2::text IS NULL AND valid_from<=$3 AND (valid_to IS NULL OR $3<valid_to))) ORDER BY valid_from DESC,history_id DESC LIMIT 2), encoded AS (SELECT CASE WHEN octet_length(name)+octet_length(description)>4194304 THEN NULL ELSE jsonb_build_object('identity',jsonb_build_object('resource',logical_identity #> '{subject,identity,identity}','version',logical_identity #> '{subject,version}'),'valid_from',valid_from,'valid_to',valid_to,'payload',jsonb_build_object('id',id,'name',name,'description',description,'created_at',created_at AT TIME ZONE 'UTC','updated_at',updated_at AT TIME ZONE 'UTC','parent_collection_id',parent_collection_id,'revision',revision,'logical_identity',logical_identity)) END AS row,id,name,logical_identity FROM candidates) SELECT COALESCE((SELECT jsonb_agg(CASE WHEN row IS NULL OR octet_length(row::text)>4194304 THEN '__oversized__' ELSE row::text END) FROM encoded),'[]'::jsonb) AS material,COALESCE((SELECT jsonb_agg(jsonb_build_object('collection',id,'name',name,'identity',jsonb_build_object('resource',logical_identity #> '{subject,identity,identity}','version',logical_identity #> '{subject,version}'))) FROM encoded),'[]'::jsonb) AS authorization,EXISTS(SELECT 1 FROM public.collections WHERE logical_identity #>> '{subject,identity,identity}'=$1 AND $3 < created_at AT TIME ZONE 'UTC') AS known_empty,EXISTS(SELECT 1 FROM public.collections WHERE logical_identity #>> '{subject,identity,identity}'=$1) AS live")
-        .bind::<Text,_>(Uuid::from_bytes(*selection.resource().as_bytes()).to_string())
-        .bind::<Nullable<Text>,_>(version).bind::<Nullable<Timestamptz>,_>(at).get_result::<Hot>(connection).await?;
+    let projected_version = descriptor
+        .map(|entry| Uuid::from_bytes(*entry.identity().version().as_bytes()).to_string());
+    let rows = sql_query(include_str!("history_archive/hot.sql"))
+        .bind::<Text, _>(Uuid::from_bytes(*selection.resource().as_bytes()).to_string())
+        .bind::<Nullable<Text>, _>(version)
+        .bind::<Nullable<Timestamptz>, _>(at)
+        .bind::<Nullable<Text>, _>(projected_version)
+        .get_result::<Hot>(connection)
+        .await?;
     let encoded: Vec<String> = serde_json::from_value(rows.material)
         .map_err(|e| PostgresStorageError::invalid_persisted_value("history capture", e))?;
     if encoded.len() > 1 {
@@ -128,9 +139,25 @@ async fn hot_on(
             || PostgresStorageError::database("Overflow authorization missing"),
         )?));
     }
-    Ok(HistoryArchiveInput::Available(decode::<HistoryArchiveRow>(
-        bytes,
-    )?))
+    let row: HistoryArchiveRow = decode(bytes)?;
+    match (rows.description_digest, rows.encoded_description_bytes) {
+        (None, None) if !descriptor.is_some_and(|entry| entry.identity() == row.identity()) => {
+            Ok(HistoryArchiveInput::Available(row))
+        }
+        (Some(digest), Some(encoded_bytes)) => {
+            let entry = descriptor
+                .ok_or_else(|| PostgresStorageError::database("Unexpected primary projection"))?;
+            let digest = digest
+                .try_into()
+                .map_err(|_| PostgresStorageError::database("Invalid description digest"))?;
+            let encoded_bytes = usize::try_from(encoded_bytes)
+                .map_err(|_| PostgresStorageError::database("Invalid description byte count"))?;
+            Ok(entry.observe_primary_description(row, digest, encoded_bytes)?)
+        }
+        _ => Err(PostgresStorageError::database(
+            "Incomplete archive primary projection",
+        )),
+    }
 }
 async fn capture_on(
     connection: &mut PostgresConnection,
@@ -311,7 +338,7 @@ impl HistoryArchiveStorage for PostgresStorage {
                             version: descriptor.identity().version(),
                         },
                     );
-                    let input = hot_on(connection, &selection).await?;
+                    let input = hot_on(connection, &selection, None).await?;
                     let HistoryArchiveInput::Available(hot) = input else {
                         return Err(PostgresStorageError::conflict(
                             "Publication requires the exact retained primary version",
@@ -353,7 +380,8 @@ impl HistoryArchiveStorage for PostgresStorage {
                     permit.application(),
                 )
                 .await?;
-                let input = hot_on(connection, request.selection()).await?;
+                let projection = request.retained_primary_descriptor(&catalog);
+                let input = hot_on(connection, request.selection(), projection).await?;
                 let now = sql_query("SELECT clock_timestamp() AS recorded_at")
                     .get_result::<Clock>(connection)
                     .await?

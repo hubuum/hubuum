@@ -179,8 +179,11 @@ for artifact_input in crates/hubuum-artifacts/Cargo.toml \
   src/services/history/segments.rs src/services/history/segments/tests.rs \
   src/services/history/segments/index.rs src/services/history/archive.rs \
   crates/hubuum-storage-core/src/history_archive.rs \
+  crates/hubuum-storage-core/src/history_archive/primary_observation.rs \
+  crates/hubuum-storage-core/src/history_archive/primary_observation/tests.rs \
   crates/hubuum-storage-core/src/history_archive/tests.rs \
   crates/hubuum-storage-postgres/src/backend/history_archive.rs \
+  crates/hubuum-storage-postgres/src/backend/history_archive/hot.sql \
   crates/hubuum-storage-postgres/migrations/2026-11-03-000004_history_archive_reads/up.sql \
   crates/hubuum-storage-postgres/migrations/2026-11-03-000004_history_archive_reads/down.sql \
   examples/history_segments.rs \

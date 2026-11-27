@@ -361,6 +361,60 @@ wire allowance. The exact lookup still exceeds its allowance because admission
 retrieves the closed primary's description and execution reads it again from
 the verified artifact. These measurements exclude PostgreSQL storage I/O.
 
+### Verifying a large primary inside PostgreSQL
+
+With commit `a8b59892`, the database returned the digest and encoded length
+of the 3 MiB primary description during admission. The service verified the
+archived payload during execution. One warm-up and five measured runs used a
+fresh database each. All 36 exact and as-of lookups returned the original
+closed revision with complete coverage. The table gives PostgreSQL reply bytes
+for the complete lookup. With five measurements, nearest-rank p95 is the maximum.
+
+| Description size | Lookup | Median reply bytes | P95 reply bytes | P2 allowance |
+| --- | --- | --- | --- | --- |
+| 256 B | Exact | 258,960 | 259,009 | 1,055,064 |
+| 256 B | As-of | 257,210 | 257,259 | 2,110,128 |
+| 64 KiB | Exact | 388,774 | 388,835 | 1,577,320 |
+| 64 KiB | As-of | 388,680 | 388,700 | 3,154,640 |
+| 3 MiB | Exact | 3,417,182 | 3,417,261 | 5,243,437 |
+| 3 MiB | As-of | 3,417,055 | 3,417,167 | 7,340,589 |
+
+Median replies for the 3 MiB exact lookup were 31,115 bytes during admission,
+3,372,945 during execution and 13,154 during final authorized access. The
+verified artifact reader charged 3,309,629 bytes within that traffic. Both
+lookups now fit their wire allowances. PostgreSQL still reads the retained
+description to compute its digest.
+
+### Database pages used to check the 3 MiB primary
+
+The production admission statement ran separately on PostgreSQL 18.7 with
+2 vCPUs and 2 GiB of memory. Each collection had 98 small updates followed by
+a 3 MiB description and a closing update. One description repeated `x`. The
+other concatenated the hexadecimal MD5 strings of integers 1 through 98,304.
+PostgreSQL stored those descriptions in 36,015 and 3,145,728 bytes respectively.
+
+Before each of five executions per shape and lookup, the fixture evicted only
+the disposable collections' live and history tables, their indexes and their
+TOAST relations from PostgreSQL shared buffers. All reported evictions
+completed. Each execution used the original version, resource and start time
+with the SQL in `crates/hubuum-storage-postgres/src/backend/history_archive/hot.sql`.
+The top-level execution counters from `EXPLAIN (ANALYZE, BUFFERS)` include
+index and TOAST access. Read counts were identical across the five runs.
+[PostgreSQL buffer counters](https://www.postgresql.org/docs/18/sql-explain.html)
+and [relation eviction](https://www.postgresql.org/docs/18/pgbuffercache.html).
+
+| Description | Lookup | 8 KiB shared blocks read | Median shared-buffer hits | Median execution time |
+| --- | --- | --- | --- | --- |
+| Repeated | Exact | 11 | 38 | 13.78 ms |
+| Repeated | As-of | 29 | 38 | 12.92 ms |
+| Low compression | Exact | 406 | 432 | 13.35 ms |
+| Low compression | As-of | 443 | 432 | 13.41 ms |
+
+Exact admission of the low-compression description read 3,325,952 bytes into
+shared buffers. The operating system could serve those reads from its own cache.
+Temporary block reads and writes were zero. Full-service page costs, including
+artifact and dependency reads, and the deployment workload remain open.
+
 ## Remaining acceptance
 
 Project #3 tracks the remaining #514 work on `project/workload-lifecycle`.

@@ -83,6 +83,21 @@ identity, interval and dependencies, and reconstructs the original collection.
 An absent or changed primary cannot produce a verified pin. A hot-only query
 retains its original full-row snapshot.
 
+When a new collection descriptor covers a description of at least 1 MiB, it
+also records `primary_commitment_v1`. This commits to the SHA-256 digest of
+the description's UTF-8 bytes and the complete remaining collection payload,
+including historical identity evidence and any additional fields. Publication
+checks both commitments against the original closed row. At read admission
+PostgreSQL returns the description digest, its escaped byte count and the rest
+of the primary from one statement snapshot. Admission charges the original
+encoded row size. Changed data fails verification. The verified archive frame
+still has to match the original full-payload SHA-256 digest before delivery.
+
+Upgrade catalog, query-pin and recovery readers before publishing large
+descriptions with the added field. Old descriptors take the full-primary path
+without a catalog rewrite. An older reader rejects a descriptor with the new
+field. Preserve the catalog and use a matching reader to recover those entries.
+
 **Query pin compatibility.** Updated readers can reopen full-row and verified
 pins. Upgrade processes that read persisted pins before admitting retained
 queries with the updated service. Older readers reject `verified_primary_v1`.
