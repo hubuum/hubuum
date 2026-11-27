@@ -27,6 +27,7 @@ INTEGRATION = {
     "event-transports": "integration.event_transports",
     "corpus": "integration.corpus",
     "task-retention": "integration.task_retention",
+    "task-reconnect": "integration.task_reconnect",
     "atlas": "integration.atlas",
     "scheduling-benchmark": "integration.scheduling_benchmark",
     "schema-budget": "integration.schema_budget",

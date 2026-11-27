@@ -78,6 +78,22 @@ Terminal statuses:
 - `partially_succeeded`
 - `cancelled`
 
+## Return to an export from another session
+
+Keep the task link from the export submission. Logging out ends that session
+and leaves the accepted task with its submitting principal. A worker can
+finish the export while the API is offline. After signing in again, request
+`GET /api/v1/tasks?kind=export&status=succeeded` to discover visible results,
+or follow the original task link. Use `links.export_output` and the reported
+`details.export.output_expires_at` to retrieve the output during its retention
+window. The download checks the current caller's authorization.
+
+The packaged `task-reconnect` integration test logs out with the export still
+queued, stops the API, and starts a separate worker. It checks the completed
+result from a new login after restarting the API and tests a second principal's
+access. Its 48-hour warm-output configuration leaves more than 24 hours on the
+reported deadline when the worker finishes.
+
 ## Cancel a task
 
 ```http
