@@ -312,19 +312,32 @@ and every hundredth object contains 64 KiB. Each collection is segmented at
 the 10,000-frame limit. The selected offset rotates in each group of 100
 versions. Every touched segment produces a separate traffic record.
 
-| Versions | Touched segments | Selected | Source open | Source scan | Destination written | Destination verification | Largest source plus destination |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 10,000 | 32 of 32 | 100 | 2,861,828 | 12,713,505 | 12,695,140 | 15,482,788 | 4,622,985 |
-| 100,000 | 36 of 36 | 1,000 | 4,342,756 | 126,435,511 | 125,691,466 | 129,739,564 | 45,516,363 |
+After a warm-up, five fresh runs generated new UUIDs and independently
+verified the same logical workload. All traffic quantities are bytes.
 
-All traffic quantities are bytes from one successful run per size. Source open
+| Versions | Touched segments | Selected | Source open, median | Source scan, median | Destination written, median | Destination verification, median | Largest segment, p95 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10,000 | 32 of 32 | 100 | 2,861,033 | 12,712,710 | 12,694,361 | 15,481,230 | 4,623,784 |
+| 100,000 | 36 of 36 | 1,000 | 4,342,760 | 126,435,512 | 125,691,484 | 129,739,600 | 45,516,363 |
+
+| Run | 10k source plus destination | 10k maximum segment | 100k source plus destination | 100k maximum segment |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 28,271,256 | 4,622,985 | 256,469,747 | 45,516,363 |
+| 2 | 28,266,506 | 4,623,784 | 256,469,750 | 45,516,362 |
+| 3 | 28,268,086 | 4,622,985 | 256,469,774 | 45,516,363 |
+| 4 | 28,268,634 | 4,623,513 | 256,469,750 | 45,516,363 |
+| 5 | 28,268,098 | 4,622,985 | 256,469,781 | 45,516,363 |
+| Median | 28,268,098 | 4,622,985 | 256,469,750 | 45,516,363 |
+| p95 | 28,271,256 | 4,623,784 | 256,469,781 | 45,516,363 |
+
+With five runs, nearest-rank p95 is the largest observation. Source open
 includes the published manifest and verified framing/index blocks. Source scan
 charges each intersecting record block at its actual physical length.
 Destination writes include the sealed manifest. Verification reads back the
-manifest and every destination block and reopens its index. For each segment,
-the first three traffic columns stayed below the P8 ceiling of 134,217,728
-bytes in aggregate. Subsequent independent lookups compared every complete
-surviving record and checked that each selected UUID was absent.
+manifest and every destination block and reopens its index. Each segment stayed
+below the P8 ceiling of 134,217,728 bytes for source open, source scan and
+destination writes combined. Subsequent independent lookups compared every
+complete surviving record and checked that each selected UUID was absent.
 
 The fixture uses the memory artifact adapter and excludes database/WAL,
 provider retries, process RSS, publication, superseded-copy cleanup and restore.
