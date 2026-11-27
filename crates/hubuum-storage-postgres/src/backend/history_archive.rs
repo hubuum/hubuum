@@ -1,4 +1,6 @@
 //! Short native catalog/capture transactions; external segment I/O is service-owned.
+#[cfg(feature = "integration-test-support")]
+pub(crate) mod allocation;
 mod cleanup;
 use super::*;
 use crate::PostgresConnection;
