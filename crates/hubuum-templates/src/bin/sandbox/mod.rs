@@ -56,7 +56,8 @@ mod tests {
 
     #[test]
     fn worker_policy_denies_private_files_and_network() {
-        const PROBE: &str = "HUBUUM_TEST_WORKER_SANDBOX_FILE";
+        // Only the test harness consumes this private parent/child fixture path.
+        const PROBE: &str = "TEMPLATE_WORKER_TEST_PRIVATE_FILE";
         if let Some(path) = std::env::var_os(PROBE) {
             super::enter().expect("install worker policy");
             let file_denied = fs::File::open(path)
