@@ -18,9 +18,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, and
   `Cache-Control: private, no-store`, so template-authored markup cannot run
   with the API or frontend origin.
-- Outbound HTTP screening also blocks IPv6 transition and anycast ranges
-  (`2002::/16`, `2001::/32`, `192.88.99.0/24`, and ORCHID) that can encode
-  private IPv4 destinations.
+- Outbound HTTP screening now rejects 6to4, Teredo, ORCHID and the deprecated
+  6to4 relay anycast range.
 - Webhook `Retry-After` hints are clamped to one hour so a remote endpoint
   cannot park its delivery indefinitely.
 - PostgreSQL cursor text and JSON literals now use escaped string syntax, so

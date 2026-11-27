@@ -543,7 +543,7 @@ mod tests {
 
     use super::{
         CursorSqlField, CursorSqlType, CursorTieBreaker, cursor_filter_sql_for_fields,
-        normalize_query_fields, validated_query_limit,
+        normalize_query_fields, postgres_escaped_literal, validated_query_limit,
     };
 
     #[cfg(feature = "integration-test-support")]
@@ -669,14 +669,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn string_literals_escape_backslashes_and_quotes() {
-        assert_eq!(postgres_escaped_literal("plain"), "E'plain'");
-        assert_eq!(postgres_escaped_literal("O'Brien"), "E'O''Brien'");
-        assert_eq!(
-            postgres_escaped_literal(r"back\slash'quote"),
-            r"E'back\\slash''quote'"
-        );
+    #[rstest::rstest]
+    #[case("plain", "E'plain'")]
+    #[case("O'Brien", "E'O''Brien'")]
+    #[case(r"back\slash'quote", r"E'back\\slash''quote'")]
+    fn string_literals_escape_backslashes_and_quotes(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(postgres_escaped_literal(input), expected);
     }
 
     #[test]

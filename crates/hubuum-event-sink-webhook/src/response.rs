@@ -146,11 +146,9 @@ fn retry_delay(header: Option<&str>, now: DateTime<Utc>) -> Duration {
             if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
                 return Some(value.parse::<u64>().unwrap_or(u64::MAX));
             }
-            {
-                DateTime::parse_from_rfc2822(value)
-                    .ok()
-                    .map(|date| (date.with_timezone(&Utc) - now).num_seconds().max(1) as u64)
-            }
+            DateTime::parse_from_rfc2822(value)
+                .ok()
+                .map(|date| (date.with_timezone(&Utc) - now).num_seconds().max(1) as u64)
         })
         .filter(|seconds| *seconds > 0)
         .unwrap_or(60);
