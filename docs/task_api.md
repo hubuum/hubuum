@@ -94,6 +94,15 @@ result from a new login after restarting the API and tests a second principal's
 access. Its 48-hour warm-output configuration leaves more than 24 hours on the
 reported deadline when the worker finishes.
 
+For the elapsed-time check, run the command below on a host that can keep the
+disposable PostgreSQL container available for 25 hours. It stops the worker,
+waits, then starts the API and downloads the original output with a new login.
+The normal CI run checks reconnect and the reported deadline immediately.
+
+```bash
+python3 -I -S tests/python/run.py integration task-reconnect --image hubuum-server:verify --next-day
+```
+
 ## Cancel a task
 
 ```http

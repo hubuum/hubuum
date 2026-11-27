@@ -1,8 +1,9 @@
 """Check that a packaged worker can finish a queued export after logout and API restart."""
 
 import argparse
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import secrets
+import time
 
 from integration.corpus import Api, Deployment, POSTGRES_IMAGE, require, wait_for
 
@@ -45,7 +46,7 @@ def sign_in(origin, name, password):
     return reader, credentials["session_id"]
 
 
-def verify(deployment):
+def verify(deployment, next_day=False):
     deployment.admin("source", "--migrate")
     api = deployment.start_api("source")
     admin = deployment.login(api, "source", "admin")
@@ -78,6 +79,10 @@ def verify(deployment):
     worker = deployment.run_worker()
     wait_for("background export completion without a login", lambda: deployment.task_succeeded(task["id"]))
     deployment.docker("stop", worker)
+    if next_day:
+        print("Warm result ready. Waiting 25 hours before a fresh login. "
+              f"Started {datetime.now(UTC).isoformat()}.", flush=True)
+        time.sleep(timedelta(hours=25).total_seconds())
     restarted = deployment.start_api("source")
     reader, new_session = sign_in(restarted.base, name, password)
     require(new_session != first_session, "Expected an independent login")
@@ -88,6 +93,11 @@ def verify(deployment):
     finished = datetime.fromisoformat(details["finished_at"])
     readable_until = datetime.fromisoformat(details["details"]["export"]["output_expires_at"])
     require(readable_until - finished > timedelta(hours=24), "Output lacks its next-day window")
+    if next_day:
+        observed = datetime.now(UTC)
+        require(finished.replace(tzinfo=UTC) + timedelta(hours=24) < observed
+                < readable_until.replace(tzinfo=UTC),
+                "Fresh-session read must occur after 24 hours and before the original expiry")
     result = reader.get(details["links"]["export_output"])
     require(any(item["id"] == collection["id"] and item["name"] == collection["name"]
                 for item in result["items"]), "Export lost its collection across sessions")
@@ -98,12 +108,13 @@ def verify(deployment):
     outsider.request("GET", details["links"]["export_output"], expected=(403, 404))
 
 
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", default="hubuum-server:verify")
     parser.add_argument("--postgres-image", default=POSTGRES_IMAGE)
+    parser.add_argument("--next-day", action="store_true",
+                        help="Wait 25 real hours after completion before restarting the API and signing in")
     args = parser.parse_args(argv)
     with ReconnectDeployment(args.image, args.postgres_image) as deployment:
-        verify(deployment)
+        verify(deployment, args.next_day)
     print("A fresh login discovered and read the export completed while the API was stopped.")
