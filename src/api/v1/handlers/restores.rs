@@ -18,6 +18,22 @@ use crate::restores::{
 
 const RESTORE_CAPABILITY_HEADER: &str = "X-Hubuum-Restore-Capability";
 
+fn check_upload_length(req: &HttpRequest, max_bytes: usize) -> Result<(), ApiError> {
+    if let Some(value) = req.headers().get(actix_web::http::header::CONTENT_LENGTH) {
+        let bytes = value
+            .to_str()
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or_else(|| ApiError::BadRequest("Invalid restore Content-Length".into()))?;
+        if bytes > max_bytes as u64 {
+            return Err(ApiError::PayloadTooLarge(
+                "Restore upload exceeds configured size limit".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[utoipa::path(
     post,
     path = "/api/v1/restores",
@@ -45,18 +61,7 @@ pub async fn create_restore_stage(
 ) -> Result<impl Responder, ApiError> {
     let config = crate::config::runtime::current()?;
     let settings = settings.with_runtime(&config)?;
-    if let Some(value) = req.headers().get(actix_web::http::header::CONTENT_LENGTH) {
-        let bytes = value
-            .to_str()
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .ok_or_else(|| ApiError::BadRequest("Invalid restore Content-Length".into()))?;
-        if bytes > settings.max_upload_bytes() as u64 {
-            return Err(ApiError::PayloadTooLarge(
-                "Restore upload exceeds configured size limit".into(),
-            ));
-        }
-    }
+    check_upload_length(&req, settings.max_upload_bytes())?;
     let permit = settings.admit_upload(admin.user.id)?;
     let mut document = StorageRestoreArtifactBuilder::new(settings.max_upload_bytes())?;
     while let Some(chunk) = payload.next().await {
@@ -156,4 +161,28 @@ pub async fn get_restore_status(
     Ok(HttpResponse::Ok()
         .insert_header(("Cache-Control", "no-store"))
         .json(response))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::{ResponseError, http::header, test::TestRequest};
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::chunked(None, None)]
+    #[case::at_limit(Some("64"), None)]
+    #[case::oversized(Some("65"), Some(StatusCode::PAYLOAD_TOO_LARGE))]
+    #[case::malformed(Some("unknown"), Some(StatusCode::BAD_REQUEST))]
+    fn declared_restore_size_is_checked_before_spooling(
+        #[case] length: Option<&str>,
+        #[case] expected: Option<StatusCode>,
+    ) {
+        let mut req = TestRequest::post();
+        if let Some(length) = length {
+            req = req.insert_header((header::CONTENT_LENGTH, length));
+        }
+        let result = check_upload_length(&req.to_http_request(), 64);
+        assert_eq!(result.err().map(|error| error.status_code()), expected);
+    }
 }
