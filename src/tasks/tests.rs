@@ -267,21 +267,18 @@ async fn import_planning_query_growth_is_bounded_per_object_in_one_class() {
     assert!(large_plan.failures.is_empty());
     assert_eq!(large_plan.planned_items.len(), 20);
 
-    // Current before-refactor shape: three fixed batch queries (collection,
-    // class, object), plus three collection-name resolutions per object across
-    // class preload, object preload, and object planning. Keep that slope
-    // explicit so a storage-boundary rewrite cannot make it worse unnoticed.
-    let fixed_queries = 3;
-    let queries_per_object = 3;
+    // Repeated references to the same collection and class reuse the authorized
+    // resolution. Reading one or twenty objects takes one query per entity kind.
+    let expected_queries = 3;
     assert_eq!(
         small_queries.total_queries(),
-        fixed_queries + queries_per_object,
+        expected_queries,
         "{:#?}",
         small_queries.query_counts()
     );
     assert_eq!(
         large_queries.total_queries(),
-        fixed_queries + queries_per_object * 20,
+        expected_queries,
         "{:#?}",
         large_queries.query_counts()
     );
@@ -305,10 +302,7 @@ async fn import_planning_query_growth_is_bounded_per_object_in_one_class() {
     );
     assert_eq!(large_queries.queries_matching("FROM \"hubuumclass\""), 1);
     assert_eq!(large_queries.queries_matching("FROM \"hubuumobject\""), 1);
-    assert_eq!(
-        large_queries.queries_matching("FROM \"collections\""),
-        queries_per_object * 20 + 1
-    );
+    assert_eq!(large_queries.queries_matching("FROM \"collections\""), 1);
 
     fixture.cleanup().await.expect("import fixture cleanup");
 }
