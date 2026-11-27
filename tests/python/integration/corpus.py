@@ -308,9 +308,12 @@ class Deployment:
 
     def start_api(self, database):
         require(self.api_container is None, "Stop the previous application before starting another")
-        name = self.name + "-" + database
+        self.api_container = self.name + "-" + database
+        return self.start_replica(database, database)
+
+    def start_replica(self, database, suffix):
+        name = self.name + "-" + suffix
         self.containers.append(name)
-        self.api_container = name
         self.docker(
             "run", "--detach", "--name", name, "--network", self.name,
             "--publish", "127.0.0.1::8080", *self.environment(database), self.image,

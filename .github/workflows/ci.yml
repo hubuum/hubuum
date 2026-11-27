@@ -1523,6 +1523,8 @@ jobs:
         run: python3 tests/python/run.py integration corpus verify --image hubuum-server:ci
       - name: Verify the Atlas documentation corpus against the production image
         run: python3 tests/python/run.py integration atlas verify --image hubuum-server:ci
+      - name: Verify request capacity and crash recovery across two API replicas
+        run: python3 -I -S tests/python/run.py integration api-admission --image hubuum-server:ci
       - name: Verify Atlas corpus regeneration separately
         run: |
           python3 tests/python/run.py integration atlas generate \
