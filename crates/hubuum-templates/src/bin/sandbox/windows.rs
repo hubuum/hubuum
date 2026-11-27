@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::io;
+use std::path::Path;
 
 use rappct::acl::{AccessMask, ResourcePath, grant_to_package};
 use rappct::{
@@ -38,9 +39,12 @@ pub(crate) fn enter() -> Result<Worker, Box<dyn Error>> {
     let security = SecurityCapabilitiesBuilder::new(&profile.sid)
         .lpac(true)
         .build()?;
+    let system_root =
+        std::env::var_os("SystemRoot").ok_or("Windows system directory is missing")?;
     let options = LaunchOptions {
         exe: std::env::current_exe()?,
-        env: Some(Vec::new()),
+        cwd: Some(Path::new(&system_root).join("System32")),
+        env: Some(vec![("SystemRoot".into(), system_root)]),
         stdio: StdioConfig::Pipe,
         join_job: Some(JobLimits {
             kill_on_job_close: true,
