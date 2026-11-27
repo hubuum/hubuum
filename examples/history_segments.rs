@@ -2,7 +2,8 @@
 //! RSS measurement or a persistent archive catalog.
 use chrono::{DateTime, Utc};
 use hubuum::benchmark_support::history_segments::{
-    HistorySegment, MAX_RECORDS, SEGMENT_BYTES, SegmentRecord, SegmentScope, VersionInterval,
+    HistorySegment, MAX_RECORDS, RetainedHistorySegment, SEGMENT_BYTES, SegmentRecord,
+    SegmentScope, VersionInterval,
 };
 use hubuum_artifacts::{ArtifactIdentity, ArtifactStore, Destination, DestinationId};
 use hubuum_budget::ByteLimit;
@@ -65,21 +66,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if exact != as_of {
         return Err("Exact/as-of records disagree".into());
     }
+    let reference = store.publish(segment.proof()).await?;
+    let segment_bytes = segment.proof().manifest().byte_size();
+    let manifest_bytes = segment.proof().manifest().encoded_len();
+    drop(segment);
+    let mut cold_exact_budget = ByteLimit::new(SEGMENT_BYTES).start();
+    let reader = RetainedHistorySegment::open(&store, &reference, &mut cold_exact_budget).await?;
+    let cold_open_bytes = cold_exact_budget.used();
+    let cold_exact = reader
+        .exact(
+            &store,
+            sample_resource,
+            sample_version,
+            &mut cold_exact_budget,
+        )
+        .await?;
+    drop(reader);
+    let mut cold_as_of_budget = ByteLimit::new(SEGMENT_BYTES).start();
+    let reader = RetainedHistorySegment::open(&store, &reference, &mut cold_as_of_budget).await?;
+    let cold_as_of = reader
+        .as_of(&store, sample_resource, from, &mut cold_as_of_budget)
+        .await?;
+    if cold_exact.as_ref() != Some(&exact) || cold_as_of.as_ref() != Some(&as_of) {
+        return Err("Published and staged history lookups disagree".into());
+    }
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
             "diagnostic_only": true,
-            "records": segment.record_count(),
-            "segment_bytes": segment.proof().manifest().byte_size(),
-            "index_bytes": segment.index_bytes(),
-            "manifest_bytes": segment.proof().manifest().encoded_len(),
+            "records": reader.record_count(),
+            "segment_bytes": segment_bytes,
+            "index_bytes": reader.index_bytes(),
+            "manifest_bytes": manifest_bytes,
             "result_bytes": serde_json::to_vec(&exact)?.len(),
             "exact_block_bytes": exact_budget.used(),
             "as_of_block_bytes": as_of_budget.used(),
+            "cold_open_bytes": cold_open_bytes,
+            "cold_exact_total_bytes": cold_exact_budget.used(),
+            "cold_as_of_total_bytes": cold_as_of_budget.used(),
             "unqualified": ["production RSS", "durable catalog/index recovery", "authorization and dependency coverage", "task snapshots and source retirement"]
         }))?
     );
-    store.abort(segment.proof().manifest().identity()).await?;
-    while store.cleanup().await? != 0 {}
     Ok(())
 }

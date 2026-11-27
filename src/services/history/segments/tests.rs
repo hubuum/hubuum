@@ -242,6 +242,14 @@ fn bounded_encoding_accounts_for_json_escaping() {
     ));
 }
 
+async fn staged_bytes(store: &MemoryStorage, segment: &HistorySegment) -> Vec<u8> {
+    let manifest = segment.proof().manifest();
+    SegmentBlockReader::new(store, manifest, &mut ByteLimit::new(SEGMENT_BYTES).start())
+        .range(0, manifest.byte_size() as usize)
+        .await
+        .unwrap()
+}
+
 async fn verified_bytes(bytes: &[u8], block_bytes: u32) -> (MemoryStorage, VerifiedArtifact) {
     let store = MemoryStorage::new();
     let destination =
@@ -252,7 +260,7 @@ async fn verified_bytes(bytes: &[u8], block_bytes: u32) -> (MemoryStorage, Verif
         ArtifactIdentity::new(destination.id()),
         ArtifactLimits::builder()
             .block_bytes(block_bytes)
-            .artifact_bytes(SEGMENT_BYTES as u64)
+            .artifact_bytes(bytes.len() as u64)
             .build()
             .unwrap(),
     )
@@ -322,16 +330,7 @@ async fn retained_index_reopens_without_writer_state(#[case] block_bytes: u32) {
     let mut row = record(scope.clone(), resource, 10, 20);
     row.payload = json!("x".repeat(1024 * 1024));
     let (store, segment) = fixture(vec![row.clone()], scope).await.unwrap();
-    let manifest = segment.proof().manifest();
-    let bytes = read_range(
-        &store,
-        manifest,
-        0,
-        manifest.byte_size() as usize,
-        &mut ByteLimit::new(SEGMENT_BYTES).start(),
-    )
-    .await
-    .unwrap();
+    let bytes = staged_bytes(&store, &segment).await;
     drop(segment);
     drop(store);
     let (store, proof) = verified_bytes(&bytes, block_bytes).await;
@@ -467,16 +466,7 @@ async fn published_reference_roundtrip_reads_retained_bytes(#[case] block_bytes:
     let resource = ResourceIdentity::generate();
     let row = record(scope.clone(), resource, 10, 20);
     let (store, segment) = fixture(vec![row.clone()], scope).await.unwrap();
-    let manifest = segment.proof().manifest();
-    let bytes = read_range(
-        &store,
-        manifest,
-        0,
-        manifest.byte_size() as usize,
-        &mut ByteLimit::new(SEGMENT_BYTES).start(),
-    )
-    .await
-    .unwrap();
+    let bytes = staged_bytes(&store, &segment).await;
     drop(segment);
     drop(store);
     let (store, proof) = verified_bytes(&bytes, block_bytes).await;
@@ -496,6 +486,39 @@ async fn published_reference_roundtrip_reads_retained_bytes(#[case] block_bytes:
             .unwrap(),
         Some(row)
     );
+}
+
+#[rstest]
+#[case::single_block(Some(BLOCK_BYTES))]
+#[case::index_spans_blocks(Some(128))]
+#[case::footer_straddles_blocks(None)]
+#[tokio::test]
+async fn cold_open_charges_shared_framing_blocks_once_per_open(#[case] block_bytes: Option<u32>) {
+    let scope = scope();
+    let mut row = record(scope.clone(), ResourceIdentity::generate(), 10, 20);
+    row.payload = json!({"data": "x".repeat(4096)});
+    let (original_store, segment) = fixture(vec![row], scope).await.unwrap();
+    let bytes = staged_bytes(&original_store, &segment).await;
+    let block_bytes = block_bytes.unwrap_or(bytes.len() as u32 - 4);
+    let (store, proof) = verified_bytes(&bytes, block_bytes).await;
+    let reference = store.publish(&proof).await.unwrap();
+
+    // The complete scope fits in the first block. The index and footer occupy
+    // every block from the start of the index's block through the end.
+    let block_size = block_bytes as usize;
+    let index_offset = bytes.len() - MARKER_BYTES - segment.index_bytes();
+    let tail_start = index_offset / block_size * block_size;
+    let header_bytes_outside_tail = block_size.min(tail_start);
+    let bytes_per_open =
+        proof.manifest().encoded_len() + header_bytes_outside_tail + bytes.len() - tail_start;
+
+    let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+    for _ in 0..2 {
+        RetainedHistorySegment::open(&store, &reference, &mut budget)
+            .await
+            .unwrap();
+    }
+    assert_eq!(budget.used(), 2 * bytes_per_open);
 }
 
 #[tokio::test]

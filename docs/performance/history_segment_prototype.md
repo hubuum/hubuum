@@ -60,10 +60,9 @@ index/data block also charges the same cumulative budget. History decoding still
 within 256 KiB and a segment within 64 MiB. This conservative charge is explicit;
 it does not establish P2 acceptance for the complete query pipeline.
 
-This foundation provides segment-local inclusion only. Persisted query catalogs,
-capture, generation-checked pins, live authorization and retained expiry gates,
-result lifetime and typed query coverage remain pending. It cannot establish a
-complete empty result or authorize exposure of any record.
+The segment reader establishes inclusion within one published segment. The
+[gated collection-history service](../history_archive_reads.md) owns catalog
+selection, capture, authorization, result lifetime and coverage.
 
 ## Reproduction
 
@@ -73,11 +72,11 @@ Run the offline diagnostic with 1–10,000 records:
 cargo run --locked --example history_segments -- 10000
 ```
 
-The fixture streams 4 KiB JSON payloads into the existing in-memory artifact
-store. It reports encoded segment/index/manifest sizes, an exact result size,
-physical block bytes for exact/as-of reads with a loaded index. UUIDs vary
-between runs; their encoded widths are constant. This is not a throughput or
-latency benchmark or an acceptance result.
+The fixture streams 4 KiB JSON payloads into the in-memory artifact store. It
+measures exact and as-of reads with the index already loaded, then publishes
+the segment in that store and repeats each query from a fresh reader. It
+reports encoded sizes and physical bytes fetched. UUIDs vary between runs and
+have constant encoded widths.
 
 One unoptimized Rust 1.99.1 diagnostic with 512 KiB write blocks on
 2026-10-31 produced:
@@ -111,26 +110,42 @@ still exhaust the smaller exact-read allowance at a boundary. They remain
 readable with a sufficient explicit budget; changing the write policy does not
 waive physical-read accounting or turn exhaustion into a complete empty result.
 
-These checks cover selected-frame traffic with the index already loaded. Cold
-index loading, dependency reads, and the complete production query pipeline
-remain unqualified. The smaller write blocks increase the manifest entry count
-from 45 to 89 at this scale; the table includes that cost.
+These checks cover selected-frame traffic with the index already loaded. The
+smaller write blocks increase the manifest entry count from 45 to 89 at this
+scale. The table includes that cost.
+
+## Cold index and record reads
+
+Opening a published segment reads its manifest, scope header, footer and index.
+The header and footer each have a nine-byte framing marker. The reader keeps
+the verified blocks containing those markers until it has assembled the index.
+This avoids fetching a block again when it also contains scope or index bytes,
+including when the footer crosses a block boundary. A fresh open starts a new
+set of reads. Each record lookup independently verifies and charges its blocks.
+
+On 2026-11-27 the 10,000-record fixture above produced these physical byte
+counts for the same 4,407-byte result and 512 KiB write blocks.
+
+| Operation | Before block reuse | With block reuse |
+| --- | ---: | ---: |
+| Open the published index, including its manifest | 3,409,511 | 2,754,992 |
+| Open and read the exact record | 3,933,799 | 3,279,280 |
+| Read the exact record with the index loaded | 524,288 | 524,288 |
+
+A separate cold as-of lookup also fetched 3,279,280 bytes. The applicable P2
+limits for this result are 1,083,832 bytes for exact and 2,167,664 bytes for
+as-of. Both cold reads exceed those limits. The embedded index alone occupies
+2,157,478 bytes. These measurements include the fetched manifest, framing,
+index and selected data blocks. Database catalog traffic and dependency reads
+remain outside this fixture.
 
 ## Remaining acceptance
 
-Production integration still needs persisted catalog locations and scope
-evidence, bounded hot-input capture, generation-checked pins, task/result
-lifetime, live authorization and erasure fencing, dependency resolution, and
-the typed query-coverage contract in #545. A segment-local miss must never be
-promoted to a complete empty query without that planning evidence.
-
-The diagnostic does not qualify worker RSS, constrained deployments, 100,000
-retained versions, complete online catalog/index allocation, cold index load
-costs, subset rewrites, or all H1–H5/P1/P2 targets. The in-memory fixture retains
-artifact bytes; it cannot establish bounded production storage or durability.
-Retained-reader compatibility beyond this initial version remains an explicit
-gate before any format is deployed or primary data is retired.
-
-This slice has no user-facing behavior or compatibility change and needs no
-changelog entry. It is independently reviewable against `main`; it does not
-depend on the recovery, audit-contract, receipt, or scheduler PR stacks.
+Project #3 tracks the remaining #514 work on `project/workload-lifecycle`.
+Production qualification still needs worker RSS on constrained deployments,
+complete online catalog/index allocation at 10,000 and 100,000 versions,
+end-to-end cold reads within P2, and subset-rewrite measurements. See the
+[lifecycle budgets](lifecycle_budgets.md) for the profiles and pass rules.
+The fixture holds artifact bytes in memory. Durable storage and reader
+compatibility across future format versions require separate evidence before
+production deployment or primary-copy retirement.

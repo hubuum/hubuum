@@ -22,6 +22,7 @@ use serde_json::{Value, from_slice, to_writer};
 
 const MAGIC: &[u8; 5] = b"HUBH\x01";
 const FOOTER: &[u8; 5] = b"HUBI\x01";
+const MARKER_BYTES: usize = MAGIC.len() + size_of::<u32>();
 // Retained format v1 must not follow future artifact write-policy defaults.
 const MAX_BLOCK_BYTES: u32 = 1024 * 1024;
 // Two fetched blocks must fit P2's 1 MiB allowance for small exact results.
@@ -352,14 +353,15 @@ impl RetainedHistorySegment {
         budget: &mut ByteBudget,
     ) -> ArtifactResult<Self> {
         if manifest.byte_size() > SEGMENT_BYTES as u64
-            || manifest.byte_size() < 18
+            || manifest.byte_size() < (2 * MARKER_BYTES) as u64
             || manifest.block_bytes() > MAX_BLOCK_BYTES
         {
             return Err(ArtifactError::Corrupt(
                 "Invalid history segment size".into(),
             ));
         }
-        let header = read_range(store, &manifest, 0, 9, budget).await?;
+        let mut blocks = SegmentBlockReader::new(store, &manifest, budget);
+        let header = blocks.range(0, MARKER_BYTES).await?;
         if &header[..5] != MAGIC {
             return Err(ArtifactError::Corrupt(
                 "Unsupported history segment format".into(),
@@ -372,10 +374,10 @@ impl RetainedHistorySegment {
                 "History scope exceeds header budget".into(),
             ));
         }
-        let scope = from_slice(&read_range(store, &manifest, 9, header_length, budget).await?)
+        let scope = from_slice(&blocks.range(MARKER_BYTES as u64, header_length).await?)
             .map_err(|_| ArtifactError::Corrupt("Invalid history scope".into()))?;
-        let footer_offset = manifest.byte_size() - 9;
-        let footer = read_range(store, &manifest, footer_offset, 9, budget).await?;
+        let footer_offset = manifest.byte_size() - MARKER_BYTES as u64;
+        let footer = blocks.range(footer_offset, MARKER_BYTES).await?;
         if &footer[4..] != FOOTER {
             return Err(ArtifactError::Corrupt(
                 "Unsupported history index format".into(),
@@ -391,7 +393,8 @@ impl RetainedHistorySegment {
         let index_offset = footer_offset
             .checked_sub(index_bytes as u64)
             .ok_or_else(|| ArtifactError::Corrupt("History index lies outside segment".into()))?;
-        let index = read_range(store, &manifest, index_offset, index_bytes, budget).await?;
+        let index = blocks.range(index_offset, index_bytes).await?;
+        drop(blocks);
         let entries: Vec<Entry> = from_slice(&index)
             .map_err(|_| ArtifactError::Corrupt("Invalid history index".into()))?;
         if entries.len() > MAX_RECORDS {
@@ -399,7 +402,7 @@ impl RetainedHistorySegment {
                 "History index exceeds record budget".into(),
             ));
         }
-        let mut offset = 9 + header_length as u64;
+        let mut offset = (MARKER_BYTES + header_length) as u64;
         for entry in &entries {
             if entry.offset != offset || !(4..=ROW_BYTES as u32).contains(&entry.length) {
                 return Err(ArtifactError::Corrupt(
@@ -504,9 +507,9 @@ impl RetainedHistorySegment {
         entry: &Entry,
         budget: &mut ByteBudget,
     ) -> ArtifactResult<SegmentRecord> {
-        let manifest = &self.manifest;
-        let bytes =
-            read_range(store, manifest, entry.offset, entry.length as usize, budget).await?;
+        let bytes = SegmentBlockReader::new(store, &self.manifest, budget)
+            .range(entry.offset, entry.length as usize)
+            .await?;
         if bytes.len() < 4
             || u32::from_le_bytes(bytes[..4].try_into().expect("checked length")) as usize
                 != bytes.len() - 4
@@ -578,35 +581,59 @@ fn io_error(error: io::Error) -> ArtifactError {
     }
 }
 
-async fn read_range<S: ArtifactStore + ?Sized>(
-    store: &S,
-    manifest: &ArtifactManifest,
-    offset: u64,
-    length: usize,
-    budget: &mut ByteBudget,
-) -> ArtifactResult<Vec<u8>> {
-    let end = offset
-        .checked_add(length as u64)
-        .filter(|&end| end <= manifest.byte_size())
-        .ok_or_else(|| ArtifactError::Corrupt("History frame lies outside segment".into()))?;
-    let block_bytes = u64::from(manifest.block_bytes());
-    let mut output = Vec::with_capacity(length);
-    for ordinal in offset / block_bytes..end.div_ceil(block_bytes) {
-        let start = ordinal * block_bytes;
-        let expected = (manifest.byte_size() - start).min(block_bytes) as usize;
-        budget.consume(expected).map_err(|_| {
-            ArtifactError::Limit("History read exceeds physical byte budget".into())
-        })?;
-        let bytes = store
-            .block(manifest.identity(), ordinal as u32)
-            .await?
-            .ok_or_else(|| ArtifactError::Corrupt("Missing history artifact block".into()))?;
-        manifest.verify_block(ordinal as u32, &bytes)?;
-        let from = offset.saturating_sub(start) as usize;
-        let to = (end - start).min(block_bytes) as usize;
-        output.extend_from_slice(&bytes[from..to]);
+/// One operation on one immutable manifest. Only the two nine-byte framing
+/// reads retain verified blocks. Payload and index ranges never populate the map.
+struct SegmentBlockReader<'a, S: ?Sized> {
+    store: &'a S,
+    manifest: &'a ArtifactManifest,
+    budget: &'a mut ByteBudget,
+    marker_blocks: BTreeMap<u32, Vec<u8>>,
+}
+
+impl<'a, S: ArtifactStore + ?Sized> SegmentBlockReader<'a, S> {
+    fn new(store: &'a S, manifest: &'a ArtifactManifest, budget: &'a mut ByteBudget) -> Self {
+        Self {
+            store,
+            manifest,
+            budget,
+            marker_blocks: BTreeMap::new(),
+        }
     }
-    Ok(output)
+
+    async fn range(&mut self, offset: u64, length: usize) -> ArtifactResult<Vec<u8>> {
+        let end = offset
+            .checked_add(length as u64)
+            .filter(|&end| end <= self.manifest.byte_size())
+            .ok_or_else(|| ArtifactError::Corrupt("History frame lies outside segment".into()))?;
+        let is_marker = length == MARKER_BYTES && (offset == 0 || end == self.manifest.byte_size());
+        let block_bytes = u64::from(self.manifest.block_bytes());
+        let mut output = Vec::with_capacity(length);
+        for ordinal in offset / block_bytes..end.div_ceil(block_bytes) {
+            let start = ordinal * block_bytes;
+            let ordinal = ordinal as u32;
+            let from = offset.saturating_sub(start) as usize;
+            let to = (end - start).min(block_bytes) as usize;
+            if let Some(bytes) = self.marker_blocks.get(&ordinal) {
+                output.extend_from_slice(&bytes[from..to]);
+                continue;
+            }
+            let expected = (self.manifest.byte_size() - start).min(block_bytes) as usize;
+            self.budget.consume(expected).map_err(|_| {
+                ArtifactError::Limit("History read exceeds physical byte budget".into())
+            })?;
+            let bytes = self
+                .store
+                .block(self.manifest.identity(), ordinal)
+                .await?
+                .ok_or_else(|| ArtifactError::Corrupt("Missing history artifact block".into()))?;
+            self.manifest.verify_block(ordinal, &bytes)?;
+            output.extend_from_slice(&bytes[from..to]);
+            if is_marker {
+                self.marker_blocks.insert(ordinal, bytes);
+            }
+        }
+        Ok(output)
+    }
 }
 
 #[cfg(test)]
