@@ -361,10 +361,10 @@ async fn offline_recovery_requires_process_exit_and_revokes_old_runtime_access()
     );
     // Model OS release after process death; protected registration survives.
     drop(permit);
-    recover(&fixture.storage, &fixture.directory, &fixture.key)
+    after_repository_release(|| recover(&fixture.storage, &fixture.directory, &fixture.key))
         .await
         .unwrap();
-    reapply(&fixture.storage, &fixture.directory, &fixture.key)
+    after_repository_release(|| reapply(&fixture.storage, &fixture.directory, &fixture.key))
         .await
         .unwrap();
     assert!(bound.admit_application_work().await.is_err());

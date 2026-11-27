@@ -59,6 +59,9 @@ a third database because their oversized rows and unsettled owners could interfe
 with backup and restore certification. HTTP crash recovery uses a fourth
 database so its application generation and checkpoint stay separate from restore
 fixtures. The runner migrates and removes these databases, including on failure.
+PostgreSQL adapter unit tests for rollback-only history recovery and archive
+cleanup share the restore database. Both hold `RESTORE_TEST_LOCK` through
+fixture cleanup so they can check publication state in isolation.
 
 By default, the runner provisions separate owner, migrator and runtime roles,
 requiring a test login with `CREATEDB` and `CREATEROLE`. For a disposable instance

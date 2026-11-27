@@ -1371,6 +1371,32 @@ mod tests {
         selection.finish().unwrap()
     }
 
+    #[rstest]
+    #[case::requested_batch(true)]
+    #[case::other_batch(false)]
+    fn scan_result_binds_the_manifest_to_the_requested_batch(#[case] same_batch: bool) {
+        let manifest = manifest(&snapshot());
+        let batch = if same_batch {
+            manifest.identity()
+        } else {
+            Uuid::new_v4()
+        };
+        let request = HistoryExpiryAdmissionRequest::new(
+            batch,
+            manifest.run(),
+            manifest.origin().clone(),
+            HistoryLifecycleScan::new(manifest.key(), 2).unwrap(),
+            manifest.fence(),
+        )
+        .unwrap();
+        let mut window = request.scan_window(2).unwrap();
+        for position in 1..=2 {
+            window.observe(position).unwrap();
+            window.advance();
+        }
+        assert_eq!(window.finish(Some(manifest), true).is_ok(), same_batch);
+    }
+
     fn after_change(
         snapshot: &HistoryLifecycleSnapshot,
         change: HistoryLifecycleControlChange,

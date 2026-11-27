@@ -2538,6 +2538,13 @@ async fn native_expiry_retains_trigger_created_tombstone_gaps(
     );
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ExpiryTestScope {
+    Deployment,
+    Collection,
+    Class,
+}
+
 async fn expiry_fixture(
     family: StorageIdentityHistoryKind,
     width: i32,
@@ -2550,6 +2557,21 @@ async fn expiry_fixture_on(
     family: StorageIdentityHistoryKind,
     width: i32,
     size: bool,
+) -> (Fixture, HistoryPolicyKey, i32) {
+    let scope = if family == StorageIdentityHistoryKind::ClassSchema {
+        ExpiryTestScope::Class
+    } else {
+        ExpiryTestScope::Collection
+    };
+    expiry_fixture_in_scope(fixture, family, width, size, scope).await
+}
+
+async fn expiry_fixture_in_scope(
+    fixture: Fixture,
+    family: StorageIdentityHistoryKind,
+    width: i32,
+    size: bool,
+    scope: ExpiryTestScope,
 ) -> (Fixture, HistoryPolicyKey, i32) {
     use diesel::sql_types::Integer;
     #[derive(QueryableByName)]
@@ -2606,30 +2628,62 @@ async fn expiry_fixture_on(
         .record_identity()
         .unwrap()
         .resource();
-    let scope = if family == StorageIdentityHistoryKind::ClassSchema {
-        let identity=with_transaction(&fixture.owner_pool,async |connection| {
-            owner(connection).await?;
-            sql_query("SELECT logical_identity AS material FROM public.hubuumclass_history WHERE name=$1||'_b' AND op='I'").bind::<Text,_>(&name).get_result::<Material>(connection).await.map_err(PostgresStorageError::from)
-        }).await.unwrap();
-        let evidence: StorageIdentityEvidence = serde_json::from_value(identity.material).unwrap();
-        HistoryPolicyScope::Class {
-            identity: evidence
-                .subject()
-                .unwrap()
-                .record_identity()
-                .unwrap()
-                .resource(),
-        }
-    } else {
-        HistoryPolicyScope::Collection {
+    let scope = match scope {
+        ExpiryTestScope::Deployment => HistoryPolicyScope::Deployment,
+        ExpiryTestScope::Collection => HistoryPolicyScope::Collection {
             identity: collection,
+        },
+        ExpiryTestScope::Class => {
+            let identity = with_transaction(&fixture.owner_pool, async |connection| {
+                owner(connection).await?;
+                sql_query(
+                    "SELECT logical_identity AS material FROM public.hubuumclass_history
+                     WHERE name = $1 || '_b' AND op = 'I'",
+                )
+                .bind::<Text, _>(&name)
+                .get_result::<Material>(connection)
+                .await
+                .map_err(PostgresStorageError::from)
+            })
+            .await
+            .unwrap();
+            let evidence: StorageIdentityEvidence =
+                serde_json::from_value(identity.material).unwrap();
+            HistoryPolicyScope::Class {
+                identity: evidence
+                    .subject()
+                    .unwrap()
+                    .record_identity()
+                    .unwrap()
+                    .resource(),
+            }
         }
     };
     let key = HistoryPolicyKey::new(family, scope).unwrap();
+    // Both relation endpoints must be eligible. The class policy governs the
+    // selected endpoint; the deployment fallback governs the other endpoint.
+    if matches!(scope, HistoryPolicyScope::Class { .. })
+        && matches!(
+            family,
+            StorageIdentityHistoryKind::ClassRelation | StorageIdentityHistoryKind::ObjectRelation
+        )
+    {
+        let fallback = HistoryPolicyKey::new(family, HistoryPolicyScope::Deployment).unwrap();
+        install_fixture_expiry_policy(&fixture, fallback, size).await;
+    }
+    install_fixture_expiry_policy(&fixture, key, size).await;
+    (fixture, key, created.id)
+}
+
+async fn install_fixture_expiry_policy(fixture: &Fixture, key: HistoryPolicyKey, size: bool) {
     let before = fixture.storage.capture_history_lifecycle().await.unwrap();
     let proposal = HistoryPolicyChange::new(
         key,
-        HistoryPolicyRevision::new(0).unwrap(),
+        before
+            .control()
+            .authority()
+            .policies()
+            .current_revision(key),
         HistoryPolicyBinding::Expire {
             trigger: if size {
                 HistoryExpiryTrigger::LogicalSize {
@@ -2666,7 +2720,6 @@ async fn expiry_fixture_on(
     })
     .await
     .unwrap();
-    (fixture, key, created.id)
 }
 
 async fn cleanup_expiry_fixture(fixture: Fixture, collection: i32, batch: Uuid) {
@@ -2769,6 +2822,122 @@ async fn native_expiry_admits_exact_trigger_created_membership(
     if family == StorageIdentityHistoryKind::Object {
         assert!(manifest.members()[0].object_authorization().is_some());
     }
+}
+
+#[rstest::rstest]
+#[case::collection_deployment(StorageIdentityHistoryKind::Collection, ExpiryTestScope::Deployment)]
+#[case::collection_collection(StorageIdentityHistoryKind::Collection, ExpiryTestScope::Collection)]
+#[case::class_deployment(StorageIdentityHistoryKind::Class, ExpiryTestScope::Deployment)]
+#[case::class_collection(StorageIdentityHistoryKind::Class, ExpiryTestScope::Collection)]
+#[case::class_class(StorageIdentityHistoryKind::Class, ExpiryTestScope::Class)]
+#[case::object_deployment(StorageIdentityHistoryKind::Object, ExpiryTestScope::Deployment)]
+#[case::object_collection(StorageIdentityHistoryKind::Object, ExpiryTestScope::Collection)]
+#[case::object_class(StorageIdentityHistoryKind::Object, ExpiryTestScope::Class)]
+#[case::classrelation_deployment(
+    StorageIdentityHistoryKind::ClassRelation,
+    ExpiryTestScope::Deployment
+)]
+#[case::classrelation_collection(
+    StorageIdentityHistoryKind::ClassRelation,
+    ExpiryTestScope::Collection
+)]
+#[case::classrelation_class(StorageIdentityHistoryKind::ClassRelation, ExpiryTestScope::Class)]
+#[case::objectrelation_deployment(
+    StorageIdentityHistoryKind::ObjectRelation,
+    ExpiryTestScope::Deployment
+)]
+#[case::objectrelation_collection(
+    StorageIdentityHistoryKind::ObjectRelation,
+    ExpiryTestScope::Collection
+)]
+#[case::objectrelation_class(StorageIdentityHistoryKind::ObjectRelation, ExpiryTestScope::Class)]
+#[case::exporttemplate_deployment(
+    StorageIdentityHistoryKind::ExportTemplate,
+    ExpiryTestScope::Deployment
+)]
+#[case::exporttemplate_collection(
+    StorageIdentityHistoryKind::ExportTemplate,
+    ExpiryTestScope::Collection
+)]
+#[case::exporttemplate_class(StorageIdentityHistoryKind::ExportTemplate, ExpiryTestScope::Class)]
+#[case::remotetarget_deployment(
+    StorageIdentityHistoryKind::RemoteTarget,
+    ExpiryTestScope::Deployment
+)]
+#[case::remotetarget_collection(
+    StorageIdentityHistoryKind::RemoteTarget,
+    ExpiryTestScope::Collection
+)]
+#[case::remotetarget_class(StorageIdentityHistoryKind::RemoteTarget, ExpiryTestScope::Class)]
+#[case::computeddefinitions_deployment(
+    StorageIdentityHistoryKind::ComputedDefinitions,
+    ExpiryTestScope::Deployment
+)]
+#[case::computeddefinitions_collection(
+    StorageIdentityHistoryKind::ComputedDefinitions,
+    ExpiryTestScope::Collection
+)]
+#[case::computeddefinitions_class(
+    StorageIdentityHistoryKind::ComputedDefinitions,
+    ExpiryTestScope::Class
+)]
+#[case::classschema_deployment(
+    StorageIdentityHistoryKind::ClassSchema,
+    ExpiryTestScope::Deployment
+)]
+#[case::classschema_collection(
+    StorageIdentityHistoryKind::ClassSchema,
+    ExpiryTestScope::Collection
+)]
+#[case::classschema_class(StorageIdentityHistoryKind::ClassSchema, ExpiryTestScope::Class)]
+#[tokio::test]
+async fn native_expiry_respects_every_supported_family_scope(
+    #[case] family: StorageIdentityHistoryKind,
+    #[case] scope: ExpiryTestScope,
+) {
+    let _guard = CONTROL_LOCK.lock().await;
+    let (fixture, key, collection) =
+        expiry_fixture_in_scope(Fixture::new().await, family, 32, false, scope).await;
+    let runtime = fixture
+        .storage
+        .register_history_runtime(None)
+        .await
+        .unwrap();
+    let application = fixture
+        .storage
+        .capture_application_execution(Some(runtime.owner()))
+        .await
+        .unwrap();
+    let snapshot = fixture.storage.capture_history_lifecycle().await.unwrap();
+    let batch = Uuid::new_v4();
+    let request = HistoryExpiryAdmissionRequest::new(
+        batch,
+        Uuid::new_v4(),
+        HistoryExpiryOrigin::Scheduled {
+            initiator: None,
+            policy: None,
+        },
+        HistoryLifecycleScan::new(key, 1000).unwrap(),
+        snapshot.fence(),
+    )
+    .unwrap();
+    let result = fixture
+        .storage
+        .run_in_scope(
+            StorageExecutionScope::default().with_application_access(application),
+            first_expiry_batch(&fixture.storage, request),
+        )
+        .await;
+    fixture.storage.unregister_runtime(runtime).await.unwrap();
+    cleanup_expiry_fixture(fixture, collection, batch).await;
+    // These fixtures have collection-wide templates/targets, with no class
+    // attribution. A class policy must not adopt them through today's owner.
+    let expected = !(matches!(scope, ExpiryTestScope::Class)
+        && matches!(
+            family,
+            StorageIdentityHistoryKind::ExportTemplate | StorageIdentityHistoryKind::RemoteTarget
+        ));
+    assert_eq!(result.unwrap().is_some(), expected);
 }
 
 #[rstest::rstest]
