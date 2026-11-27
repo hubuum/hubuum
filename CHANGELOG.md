@@ -14,6 +14,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- HTML export output is served with a sandboxed
+  `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, and
+  `Cache-Control: private, no-store`, so template-authored markup cannot run
+  with the API or frontend origin.
+- Outbound HTTP screening now rejects 6to4, Teredo, ORCHID and the deprecated
+  6to4 relay anycast range.
+- Webhook `Retry-After` hints are clamped to one hour so a remote endpoint
+  cannot park its delivery indefinitely.
+- PostgreSQL cursor text and JSON literals now use escaped string syntax, so
+  they remain safe if a deployment disables `standard_conforming_strings`.
+- Deployment-configured files read through the bounded-file helper now reject
+  a path replacement between inspection and open while still following
+  administrator-managed symlinks.
+
 - Remove the unused Actix Web cookie feature and its dependency on
   `cookie` 0.16.2 (RUSTSEC-2026-0594).
 

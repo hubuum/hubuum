@@ -217,6 +217,7 @@ fn blocked_outbound_nets() -> &'static [IpNet] {
             "172.16.0.0/12",
             "192.0.0.0/24",
             "192.0.2.0/24",
+            "192.88.99.0/24",
             "192.168.0.0/16",
             "198.18.0.0/15",
             "198.51.100.0/24",
@@ -229,7 +230,11 @@ fn blocked_outbound_nets() -> &'static [IpNet] {
             "::ffff:0:0/96",
             "64:ff9b::/96",
             "100::/64",
+            "2001::/32",
+            "2001:10::/28",
+            "2001:20::/28",
             "2001:db8::/32",
+            "2002::/16",
             "fc00::/7",
             "fe80::/10",
             "ff00::/8",
@@ -934,6 +939,13 @@ mod tests {
         assert!(ip_blocked(IpAddr::V6(Ipv6Addr::LOCALHOST)));
         assert!(ip_blocked("fd00::1".parse::<IpAddr>().unwrap()));
         assert!(ip_blocked("::ffff:127.0.0.1".parse::<IpAddr>().unwrap()));
+
+        // IPv6 transition and anycast ranges that can encode or reach private IPv4.
+        assert!(ip_blocked(IpAddr::V4(Ipv4Addr::new(192, 88, 99, 1))));
+        assert!(ip_blocked("2002:7f00:1::".parse::<IpAddr>().unwrap()));
+        assert!(ip_blocked("2001:0:4136:e378::1".parse::<IpAddr>().unwrap()));
+        assert!(ip_blocked("2001:10::1".parse::<IpAddr>().unwrap()));
+        assert!(ip_blocked("2001:20::1".parse::<IpAddr>().unwrap()));
 
         assert!(!ip_blocked(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
         assert!(!ip_blocked(

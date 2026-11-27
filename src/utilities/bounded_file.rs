@@ -11,28 +11,14 @@ pub(crate) fn read_bounded_regular_file(
     max_bytes: usize,
 ) -> io::Result<Vec<u8>> {
     let max_bytes_u64 = u64::try_from(max_bytes).unwrap_or(u64::MAX);
-    let path_metadata = fs::metadata(path).map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("Failed to inspect {description} {path:?}: {error}"),
-        )
-    })?;
-    validate_metadata(path, description, max_bytes, max_bytes_u64, &path_metadata)?;
 
-    let file = File::open(path).map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("Failed to open {description} {path:?}: {error}"),
-        )
-    })?;
-    let file_metadata = file.metadata().map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("Failed to inspect open {description} {path:?}: {error}"),
-        )
-    })?;
-    validate_metadata(path, description, max_bytes, max_bytes_u64, &file_metadata)?;
-
+    let (file, file_metadata) = open_bounded_file(path, description, max_bytes, max_bytes_u64)
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("Failed to open {description} {path:?}: {error}"),
+            )
+        })?;
     let mut bytes = Vec::with_capacity(file_metadata.len() as usize);
     file.take(max_bytes_u64.saturating_add(1))
         .read_to_end(&mut bytes)
@@ -46,6 +32,52 @@ pub(crate) fn read_bounded_regular_file(
         return Err(size_error(path, description, max_bytes));
     }
     Ok(bytes)
+}
+
+#[cfg(unix)]
+fn open_bounded_file(
+    path: &Path,
+    description: &str,
+    max_bytes: usize,
+    max_bytes_u64: u64,
+) -> io::Result<(File, fs::Metadata)> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    // Resolve configured symlinks once, then compare the inspected identity to
+    // the open descriptor. Nonblocking open also handles replacement of a
+    // regular file by a special file without stalling the caller.
+    let resolved = fs::canonicalize(path)?;
+    let expected = fs::metadata(&resolved)?;
+    validate_metadata(path, description, max_bytes, max_bytes_u64, &expected)?;
+    let file = File::options()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(resolved)?;
+    let opened = file.metadata()?;
+    if (expected.dev(), expected.ino()) != (opened.dev(), opened.ino()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{description} {path:?} changed while it was opened"),
+        ));
+    }
+    validate_metadata(path, description, max_bytes, max_bytes_u64, &opened)?;
+    Ok((file, opened))
+}
+
+#[cfg(not(unix))]
+fn open_bounded_file(
+    path: &Path,
+    description: &str,
+    max_bytes: usize,
+    max_bytes_u64: u64,
+) -> io::Result<(File, fs::Metadata)> {
+    // Let the OS follow any configured link in a single open. Inspect and
+    // later read that same handle, so that replacing the pathname cannot
+    // change the file between validation and consumption.
+    let file = File::open(path)?;
+    let opened = file.metadata()?;
+    validate_metadata(path, description, max_bytes, max_bytes_u64, &opened)?;
+    Ok((file, opened))
 }
 
 fn validate_metadata(
@@ -130,5 +162,30 @@ mod tests {
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert!(error.to_string().contains("must be a regular file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn follows_a_configured_symlink_to_a_regular_file() {
+        let target = TestFile::new(b"secret");
+        let link = std::env::temp_dir().join(format!("hubuum-bounded-link-{}", Uuid::new_v4()));
+        std::os::unix::fs::symlink(target.path(), &link).unwrap();
+
+        let result = read_bounded_regular_file(&link, "test material", 16);
+
+        let _ = fs::remove_file(&link);
+        assert_eq!(result.unwrap(), b"secret");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_symlink_that_is_not_a_regular_file() {
+        let link = std::env::temp_dir().join(format!("hubuum-bounded-link-{}", Uuid::new_v4()));
+        std::os::unix::fs::symlink("/dev/null", &link).unwrap();
+
+        let error = read_bounded_regular_file(&link, "test material", 4).unwrap_err();
+
+        let _ = fs::remove_file(&link);
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     }
 }

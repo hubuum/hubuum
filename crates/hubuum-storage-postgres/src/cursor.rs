@@ -330,9 +330,7 @@ where
         }
         (CursorSqlType::Numeric, CursorValue::Decimal(value)) => Ok(format!("{value}::numeric")),
         (CursorSqlType::Boolean, CursorValue::Boolean(value)) => Ok(value.to_string()),
-        (CursorSqlType::String, CursorValue::String(value)) => {
-            Ok(format!("'{}'", value.replace('\'', "''")))
-        }
+        (CursorSqlType::String, CursorValue::String(value)) => Ok(postgres_escaped_literal(value)),
         (CursorSqlType::DateTime, CursorValue::DateTime(value)) => Ok(format!(
             "'{}'::timestamp",
             value.format("%Y-%m-%d %H:%M:%S%.f")
@@ -357,13 +355,23 @@ where
             let value = serde_json::to_string(value).map_err(|error| {
                 PostgresStorageError::database(format!("Unable to serialize JSON cursor: {error}"))
             })?;
-            Ok(format!("'{}'::jsonb", value.replace('\'', "''")))
+            Ok(format!("{}::jsonb", postgres_escaped_literal(&value)))
         }
         _ => Err(PostgresStorageError::invalid_input(format!(
             "cursor value does not match expected type for '{}'",
             field.expression()
         ))),
     }
+}
+
+/// Quote a text literal independently of `standard_conforming_strings`.
+///
+/// Escape-string syntax (`E'...'`) always treats a backslash as the start of an
+/// escape sequence, so escaping backslashes explicitly keeps the literal safe
+/// even when a deployment disables `standard_conforming_strings`.
+fn postgres_escaped_literal(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('\'', "''");
+    format!("E'{escaped}'")
 }
 
 fn validate_postgres_jsonb_cursor_value(
@@ -535,7 +543,7 @@ mod tests {
 
     use super::{
         CursorSqlField, CursorSqlType, CursorTieBreaker, cursor_filter_sql_for_fields,
-        normalize_query_fields, validated_query_limit,
+        normalize_query_fields, postgres_escaped_literal, validated_query_limit,
     };
 
     #[cfg(feature = "integration-test-support")]
@@ -657,8 +665,16 @@ mod tests {
 
         assert_eq!(
             sql.as_deref(),
-            Some("((((resources.name) COLLATE \"C\" < 'beta' OR resources.name IS NULL)))")
+            Some("((((resources.name) COLLATE \"C\" < E'beta' OR resources.name IS NULL)))")
         );
+    }
+
+    #[rstest::rstest]
+    #[case("plain", "E'plain'")]
+    #[case("O'Brien", "E'O''Brien'")]
+    #[case(r"back\slash'quote", r"E'back\\slash''quote'")]
+    fn string_literals_escape_backslashes_and_quotes(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(postgres_escaped_literal(input), expected);
     }
 
     #[test]
