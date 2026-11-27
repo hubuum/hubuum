@@ -10,26 +10,34 @@ use hubuum_domain::{
 };
 use hubuum_domain::{PrincipalId, ResourceRevision};
 use hubuum_secrets::SecretValue;
+use hubuum_storage_core::ExternalIdentityStorage;
 use hubuum_storage_core::StorageEncryptedUpstreamCredential;
 use hubuum_storage_core::StorageRuntimeSettingsValue;
-use hubuum_storage_core::StorageUpstreamFailure;
-use hubuum_storage_core::{ExternalIdentityStorage, StorageError, StorageErrorKind};
 use hubuum_storage_core::{
     StorageAuthenticationProvider, StorageBrowserProviderDefinition,
     StorageExternalInteractionAuthentication, StorageInteractionAction,
     StorageInteractionAuthorization, StorageInteractionOutcome,
     StorageProtectedAuthenticationState,
 };
-use revocation::revoke_uninstalled_oidc;
+use hubuum_storage_core::{StorageExecutionScope, StorageQueryBudget, StorageUpstreamFailure};
+use hubuum_task_core::TaskExecutionContext;
 pub(crate) use revocation::{revoke_best_effort, revoke_provider_best_effort};
 use sha2::{Digest, Sha256};
+use std::{
+    future::Future,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
+use tokio::time::{Instant, timeout_at};
 use uuid::Uuid;
 
 use crate::{
     errors::{ApiError, InteractionError},
     models::auth_interaction::browser::BrowserSession,
     permissions::AppContext,
-    storage::storage_handle,
+    restores::MaintenanceActivityGuard,
+    storage::{storage_handle, with_storage_execution_scope_send},
+    tasks::control,
 };
 
 pub(crate) fn error(error: OidcError) -> ApiError {
@@ -424,41 +432,229 @@ pub(crate) async fn renew(
     revision: ResourceRevision,
     provider: &StorageAuthenticationProvider,
 ) -> Result<bool, ApiError> {
-    use hubuum_storage_core::StorageUpstreamClaimOutcome;
     if !retain_credentials(provider) {
         return Ok(false);
     }
-    loop {
-        let claim = match storage
-            .claim_upstream_credential(revision, principal)
-            .await?
-        {
-            StorageUpstreamClaimOutcome::Unavailable
-                if matches!(
-                    provider.browser_definition(),
-                    Some(StorageBrowserProviderDefinition::Oauth(_))
-                ) =>
-            {
-                return Err(ApiError::Unauthorized(
-                    "External identity requires a new upstream sign-in".into(),
-                ));
-            }
-            StorageUpstreamClaimOutcome::Unavailable | StorageUpstreamClaimOutcome::RetryLater => {
-                return Ok(false);
-            }
-            StorageUpstreamClaimOutcome::Busy => {
-                return Err(ApiError::ServiceUnavailable(
-                    "External identity refresh is in progress".into(),
-                ));
-            }
-            StorageUpstreamClaimOutcome::Claim(claim) => *claim,
-        };
-        match attempt_renewal(storage, claim, provider).await? {
+    // Keep the claim transaction and its cleanup alive if the HTTP client
+    // disconnects, including while storage is acknowledging the claim.
+    let storage = storage.clone();
+    let provider = provider.clone();
+    let oauth_deadline = matches!(
+        provider.browser_definition(),
+        Some(StorageBrowserProviderDefinition::Oauth(_))
+    )
+    .then(|| Instant::now() + RENEWAL_TIMEOUT);
+    let limits = RenewalLimits {
+        oauth_deadline,
+        task: control::execution_context(),
+    };
+    let worker = MaintenanceActivityGuard::begin().spawn(storage.clone(), async move {
+        let attempt = || claim_and_renew(&storage, principal, revision, &provider, &limits);
+        if let Some(deadline) = oauth_deadline {
+            return renew_oauth_grants(deadline, attempt).await;
+        }
+        Ok(matches!(attempt().await?, RenewalAttempt::Refreshed))
+    });
+    // The caller can time out while the worker is acknowledging a known
+    // rejection. The worker keeps its drain guard through that final write.
+    let joined = match oauth_deadline {
+        Some(deadline) => timeout_at(deadline, worker)
+            .await
+            .map_err(|_| oauth_budget_exhausted())?,
+        None => worker.await,
+    };
+    joined.map_err(|_| {
+        ApiError::ServiceUnavailable("External identity refresh was interrupted".into())
+    })?
+}
+
+const RENEWAL_TIMEOUT: Duration = Duration::from_secs(25);
+const MAX_OAUTH_GRANTS_PER_REQUEST: usize = 8;
+
+async fn renew_oauth_grants<F>(
+    deadline: Instant,
+    mut attempt: impl FnMut() -> F,
+) -> Result<bool, ApiError>
+where
+    F: Future<Output = Result<RenewalAttempt, ApiError>>,
+{
+    for _ in 0..MAX_OAUTH_GRANTS_PER_REQUEST {
+        if Instant::now() >= deadline {
+            break;
+        }
+        match attempt().await? {
             RenewalAttempt::Refreshed => return Ok(true),
             RenewalAttempt::Unavailable => return Ok(false),
             RenewalAttempt::ExpiredCredential => continue,
         }
     }
+    Err(oauth_budget_exhausted())
+}
+
+fn oauth_budget_exhausted() -> ApiError {
+    ApiError::ServiceUnavailable(
+        "OAuth credential checks exceeded the request budget; retry".into(),
+    )
+}
+
+#[derive(Clone)]
+struct RenewalLimits {
+    oauth_deadline: Option<Instant>,
+    task: Option<TaskExecutionContext>,
+}
+
+impl RenewalLimits {
+    fn check(&self) -> Result<(), ApiError> {
+        if let Some(task) = &self.task {
+            task.check()?;
+        }
+        if self.oauth_deadline.is_some_and(|end| Instant::now() >= end) {
+            return Err(oauth_budget_exhausted());
+        }
+        Ok(())
+    }
+
+    fn claim_scope(&self) -> StorageExecutionScope {
+        let scope = StorageExecutionScope::default().with_task_execution(self.task.clone());
+        match self.oauth_deadline {
+            Some(end) => {
+                // Round up so the database gets the remaining request budget.
+                let millis = end
+                    .saturating_duration_since(Instant::now())
+                    .as_nanos()
+                    .div_ceil(1_000_000)
+                    .max(1);
+                scope.with_query_budget(StorageQueryBudget::from_millis(millis as u64))
+            }
+            None => scope,
+        }
+    }
+
+    fn for_claim(&self, started_at: chrono::DateTime<chrono::Utc>) -> RenewalDispatch {
+        // The lease is already running while the database acknowledges the claim.
+        let age = (chrono::Utc::now() - started_at)
+            .to_std()
+            .unwrap_or_default();
+        let end = Instant::now() + RENEWAL_TIMEOUT.saturating_sub(age);
+        RenewalDispatch {
+            limits: self.clone(),
+            deadline: self.oauth_deadline.map_or(end, |budget| budget.min(end)),
+            decision: OnceLock::new(),
+        }
+    }
+}
+
+struct RenewalDispatch {
+    limits: RenewalLimits,
+    deadline: Instant,
+    decision: OnceLock<Result<(), ApiError>>,
+}
+
+impl RenewalDispatch {
+    fn deadline_error(&self) -> ApiError {
+        if self
+            .limits
+            .oauth_deadline
+            .is_some_and(|end| end <= self.deadline)
+        {
+            oauth_budget_exhausted()
+        } else {
+            ApiError::ServiceUnavailable("External identity refresh claim timed out; retry".into())
+        }
+    }
+
+    fn check(&self) -> Result<(), ApiError> {
+        self.limits.check()?;
+        if Instant::now() >= self.deadline {
+            return Err(self.deadline_error());
+        }
+        Ok(())
+    }
+
+    fn admit(&self) -> bool {
+        self.decision.get_or_init(|| self.check()).is_ok()
+    }
+
+    fn submitted(&self) -> bool {
+        matches!(self.decision.get(), Some(Ok(())))
+    }
+
+    async fn run_claimed<T>(
+        &self,
+        work: impl Future<Output = Result<T, RenewalFailure>>,
+    ) -> Result<T, RenewalFailure> {
+        self.check().map_err(RenewalFailure::Interrupted)?;
+        let attempt = timeout_at(self.deadline, work);
+        tokio::pin!(attempt);
+        let result = if let Some(task) = &self.limits.task {
+            tokio::select! {
+                biased;
+                result = &mut attempt => result,
+                reason = control::wait_for_stop(task) => {
+                    if !self.submitted() {
+                        return Err(RenewalFailure::Interrupted(reason.into()));
+                    }
+                    // A submitted grant can rotate or yield a definitive rejection.
+                    attempt.await
+                }
+            }
+        } else {
+            attempt.await
+        };
+        if let Some(Err(reason)) = self.decision.get() {
+            return Err(RenewalFailure::Interrupted(reason.clone()));
+        }
+        result.unwrap_or_else(|_| {
+            Err(
+                if self.limits.oauth_deadline.is_some() || !self.submitted() {
+                    RenewalFailure::Interrupted(self.deadline_error())
+                } else {
+                    InteractionError::ProviderUnavailable.into()
+                },
+            )
+        })
+    }
+}
+
+async fn claim_and_renew(
+    storage: &crate::storage::StorageHandle,
+    principal: PrincipalId,
+    revision: ResourceRevision,
+    provider: &StorageAuthenticationProvider,
+    limits: &RenewalLimits,
+) -> Result<RenewalAttempt, ApiError> {
+    use hubuum_storage_core::StorageUpstreamClaimOutcome;
+    limits.check()?;
+    // Await ownership even if the caller leaves while the commit is being acknowledged.
+    // Only acquisition inherits task cancellation. An owned claim must be finalized.
+    let outcome = with_storage_execution_scope_send(
+        storage,
+        limits.claim_scope(),
+        storage.claim_upstream_credential(revision, principal),
+    )
+    .await?;
+    let claim = match outcome {
+        StorageUpstreamClaimOutcome::Unavailable
+            if matches!(
+                provider.browser_definition(),
+                Some(StorageBrowserProviderDefinition::Oauth(_))
+            ) =>
+        {
+            return Err(ApiError::Unauthorized(
+                "External identity requires a new upstream sign-in".into(),
+            ));
+        }
+        StorageUpstreamClaimOutcome::Unavailable | StorageUpstreamClaimOutcome::RetryLater => {
+            return Ok(RenewalAttempt::Unavailable);
+        }
+        StorageUpstreamClaimOutcome::Busy => {
+            return Err(ApiError::ServiceUnavailable(
+                "External identity refresh is in progress".into(),
+            ));
+        }
+        StorageUpstreamClaimOutcome::Claim(claim) => *claim,
+    };
+    attempt_renewal(storage, claim, provider, limits).await
 }
 
 enum RenewalAttempt {
@@ -470,6 +666,7 @@ enum RenewalAttempt {
 // Only a validation failure from the dispatched provider operation can invalidate
 // the principal. Local envelope, configuration and persistence errors cannot.
 enum RenewalFailure {
+    Interrupted(ApiError),
     Local(ApiError),
     Provider(OidcError),
 }
@@ -495,6 +692,7 @@ impl RenewalFailure {
             )
         );
         let failure = match self {
+            Self::Interrupted(reason) => return (StorageUpstreamFailure::Interrupted, Err(reason)),
             Self::Local(failure) => failure,
             Self::Provider(failure) => error(failure),
         };
@@ -529,12 +727,12 @@ async fn attempt_renewal(
     storage: &crate::storage::StorageHandle,
     claim: hubuum_storage_core::StorageUpstreamClaim,
     provider: &StorageAuthenticationProvider,
+    limits: &RenewalLimits,
 ) -> Result<RenewalAttempt, ApiError> {
     use hubuum_storage_core::StorageUpstreamRenewal;
-    // Bound the complete attempt, including secret resolution, to the claim lease.
-    let submitted = std::sync::atomic::AtomicBool::new(false);
-    let mut returned_grant = None;
-    let outcome = tokio::time::timeout(std::time::Duration::from_secs(25), async {
+    let dispatch = Arc::new(limits.for_claim(claim.started_at()));
+    let admission = dispatch.clone();
+    let work = async {
         let original = claim.session();
         let purpose = format!("upstream:{}", original.subject());
         let scope =
@@ -558,11 +756,10 @@ async fn attempt_renewal(
             .await?,
         )
         .map_err(error)?;
-        let authentication = match configured_adapter(provider)
-            .await?
-            .refresh(credentials, &provider_context, || {
-                submitted.store(true, std::sync::atomic::Ordering::Relaxed)
-            })
+        let adapter = configured_adapter(provider).await?;
+        dispatch.check().map_err(RenewalFailure::Interrupted)?;
+        let authentication = match adapter
+            .refresh(credentials, &provider_context, move || admission.admit())
             .await
         {
             Ok(authentication) => authentication,
@@ -570,8 +767,7 @@ async fn attempt_renewal(
             Err(failure) => return Err(RenewalFailure::Provider(failure)),
         };
         let (proof, credentials) = authentication.into_parts();
-        returned_grant = credentials;
-        let credentials = match &returned_grant {
+        let credentials = match credentials {
             Some(credentials) => Some(
                 StorageEncryptedUpstreamCredential::new(
                     protect(
@@ -590,10 +786,8 @@ async fn attempt_renewal(
         StorageUpstreamRenewal::new(claim.clone(), proof, credentials)
             .map(Some)
             .map_err(|_| RenewalFailure::from(InteractionError::Invalid))
-    })
-    .await
-    .unwrap_or_else(|_| Err(InteractionError::ProviderUnavailable.into()));
-    match outcome {
+    };
+    match dispatch.run_claimed(work).await {
         Ok(None) => {
             storage
                 .fail_upstream_renewal(claim, StorageUpstreamFailure::CredentialExpired)
@@ -601,32 +795,17 @@ async fn attempt_renewal(
             Ok(RenewalAttempt::ExpiredCredential)
         }
         Ok(Some(renewal)) => {
-            complete_renewal(storage.finish_upstream_renewal(renewal).await, || {
-                revoke_uninstalled_oidc(provider, returned_grant)
-            })
+            storage.finish_upstream_renewal(renewal).await?;
+            Ok(RenewalAttempt::Refreshed)
         }
         Err(failure) => {
-            revoke_uninstalled_oidc(provider, returned_grant);
-            let (disposition, result) =
-                failure.disposition(submitted.load(std::sync::atomic::Ordering::Relaxed));
+            let (disposition, result) = failure.disposition(dispatch.submitted());
+            // OIDC revocation may invalidate a whole client session shared with
+            // other scopes or a newer login. Renewal only finalizes local state.
             storage.fail_upstream_renewal(claim, disposition).await?;
             result
         }
     }
-}
-
-fn complete_renewal(
-    result: Result<(), StorageError>,
-    revoke_uninstalled: impl FnOnce(),
-) -> Result<RenewalAttempt, ApiError> {
-    result.inspect_err(|failure| {
-        // A definitive fence refused the write. A lost commit acknowledgement
-        // may instead refer to a grant already installed in a live session.
-        if failure.kind() == StorageErrorKind::AuthenticationRequired {
-            revoke_uninstalled();
-        }
-    })?;
-    Ok(RenewalAttempt::Refreshed)
 }
 
 fn retain_credentials(provider: &StorageAuthenticationProvider) -> bool {
@@ -642,23 +821,147 @@ fn retain_credentials(provider: &StorageAuthenticationProvider) -> bool {
 #[cfg(test)]
 mod renewal_tests {
     use super::{ApiError, InteractionError, OidcError, RenewalFailure, StorageUpstreamFailure};
-    use hubuum_storage_core::StorageError;
+
+    use super::{Duration, Instant, RenewalLimits, TaskExecutionContext};
+    use chrono::Utc;
+    use hubuum_task_core::TaskStopReason;
 
     #[rstest::rstest]
-    #[case::logout_won(Err(StorageError::authentication_required("session revoked")), true)]
-    #[case::installed(Ok(()), false)]
-    #[case::unknown_commit(Err(StorageError::unavailable("lost acknowledgement")), false)]
-    fn rotated_grant_cleanup_follows_the_storage_fence(
-        #[case] result: Result<(), StorageError>,
-        #[case] expected_revocation: bool,
+    #[case::preparing(false)]
+    #[case::profile_read(true)]
+    #[tokio::test]
+    async fn oauth_budget_interrupts_an_owned_claim_without_a_sync_failure(
+        #[case] dispatched: bool,
     ) {
-        let mut revoked = false;
-        let installed = result.is_ok();
-        assert_eq!(
-            super::complete_renewal(result, || revoked = true).is_ok(),
-            installed
-        );
-        assert_eq!(revoked, expected_revocation);
+        let limits = RenewalLimits {
+            oauth_deadline: Some(Instant::now() + Duration::from_millis(20)),
+            task: None,
+        };
+        let claim = limits.for_claim(Utc::now());
+        if dispatched {
+            assert!(claim.admit());
+        }
+        let error = claim
+            .run_claimed::<()>(std::future::pending())
+            .await
+            .unwrap_err();
+        let (disposition, result) = error.disposition(dispatched);
+        assert_eq!(disposition, StorageUpstreamFailure::Interrupted);
+        assert!(matches!(result, Err(ApiError::ServiceUnavailable(_))));
+    }
+
+    #[rstest::rstest]
+    #[case::preparing(false)]
+    #[case::submitted(true)]
+    #[tokio::test]
+    async fn task_stop_releases_an_unsubmitted_claim_and_drains_submitted_work(
+        #[case] submitted: bool,
+    ) {
+        let (task, stop) = TaskExecutionContext::new(Duration::from_secs(60)).unwrap();
+        let limits = RenewalLimits {
+            oauth_deadline: None,
+            task: Some(task),
+        };
+        let claim = limits.for_claim(Utc::now());
+        if submitted {
+            assert!(claim.admit());
+        }
+        let outcome = claim
+            .run_claimed(async {
+                stop.request_stop(TaskStopReason::Cancelled);
+                if submitted {
+                    tokio::task::yield_now().await;
+                    Err(RenewalFailure::Provider(OidcError::Denied))
+                } else {
+                    std::future::pending::<Result<(), RenewalFailure>>().await
+                }
+            })
+            .await;
+        let (disposition, result) = outcome.unwrap_err().disposition(submitted);
+        if submitted {
+            assert_eq!(disposition, StorageUpstreamFailure::Rejected);
+        } else {
+            assert_eq!(disposition, StorageUpstreamFailure::Interrupted);
+            assert!(matches!(
+                result,
+                Err(ApiError::TaskStopped(TaskStopReason::Cancelled))
+            ));
+        }
+        assert!(matches!(
+            limits.check(),
+            Err(ApiError::TaskStopped(TaskStopReason::Cancelled))
+        ));
+    }
+
+    #[tokio::test]
+    async fn stop_during_preparation_vetoes_dispatch_and_releases_the_claim() {
+        let (task, stop) = TaskExecutionContext::new(Duration::from_secs(60)).unwrap();
+        let claim = RenewalLimits {
+            oauth_deadline: None,
+            task: Some(task),
+        }
+        .for_claim(Utc::now());
+        let failure = claim
+            .run_claimed::<()>(async {
+                stop.request_stop(TaskStopReason::Cancelled);
+                assert!(!claim.admit());
+                Err(RenewalFailure::Provider(OidcError::Unavailable))
+            })
+            .await
+            .unwrap_err();
+        let (disposition, result) = failure.disposition(claim.submitted());
+        assert_eq!(disposition, StorageUpstreamFailure::Interrupted);
+        assert!(matches!(
+            result,
+            Err(ApiError::TaskStopped(TaskStopReason::Cancelled))
+        ));
+    }
+
+    #[tokio::test]
+    async fn delayed_claim_acknowledgement_cannot_start_expired_work() {
+        let started = Utc::now() - chrono::Duration::seconds(26);
+        let claim = RenewalLimits {
+            oauth_deadline: None,
+            task: None,
+        }
+        .for_claim(started);
+        let failure = claim
+            .run_claimed::<()>(async { panic!("expired work was polled") })
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            failure,
+            RenewalFailure::Interrupted(ApiError::ServiceUnavailable(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn oauth_scan_stops_claiming_after_its_attempt_budget() {
+        let mut calls = 0;
+        let result =
+            super::renew_oauth_grants(super::Instant::now() + super::RENEWAL_TIMEOUT, || {
+                calls += 1;
+                std::future::ready(Ok(super::RenewalAttempt::ExpiredCredential))
+            })
+            .await;
+        assert!(matches!(result, Err(ApiError::ServiceUnavailable(_))));
+        assert_eq!(calls, super::MAX_OAUTH_GRANTS_PER_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn oauth_scan_finishes_an_admitted_result_and_skips_the_next_claim_after_deadline() {
+        let mut calls = 0;
+        let deadline = super::Instant::now() + super::Duration::from_secs(1);
+        let result = super::renew_oauth_grants(deadline, || {
+            calls += 1;
+            async move {
+                tokio::time::sleep_until(deadline).await;
+                Ok(super::RenewalAttempt::ExpiredCredential)
+            }
+        })
+        .await;
+        assert!(matches!(result, Err(ApiError::ServiceUnavailable(_))));
+        assert_eq!(calls, 1);
     }
 
     #[rstest::rstest]
@@ -668,6 +971,11 @@ mod renewal_tests {
         RenewalFailure::Provider(OidcError::Denied),
         false,
         StorageUpstreamFailure::UnavailableBeforeSubmission
+    )]
+    #[case::malformed_id_token(
+        RenewalFailure::Provider(OidcError::InvalidResponse),
+        true,
+        StorageUpstreamFailure::Rejected
     )]
     #[case::upstream_rejection(
         RenewalFailure::Provider(OidcError::Denied),

@@ -14,6 +14,9 @@ use crate::{AuthSessionId, StorageValidationError};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StorageUpstreamFailure {
     CredentialExpired,
+    /// A local limit stopped a read-only OAuth check or an unsubmitted OIDC
+    /// exchange. Release the claim for immediate retry without a sync observation.
+    Interrupted,
     UnavailableBeforeSubmission,
     Unavailable,
     Rejected,
@@ -21,7 +24,7 @@ pub enum StorageUpstreamFailure {
 impl StorageUpstreamFailure {
     pub fn sync_failure(self) -> Option<crate::StorageExternalSyncFailure> {
         match self {
-            Self::CredentialExpired => None,
+            Self::CredentialExpired | Self::Interrupted => None,
             Self::Rejected => Some(crate::StorageExternalSyncFailure::Rejected),
             Self::Unavailable | Self::UnavailableBeforeSubmission => {
                 Some(crate::StorageExternalSyncFailure::Unavailable)
@@ -336,8 +339,8 @@ impl StorageUpstreamSession {
             && self.lease == Some((claim.attempt, claim.deadline))
             && now < claim.deadline
     }
-    /// An OAuth read or pre-submission OIDC failure leaves the grant usable. Retry after
-    /// a bounded delay, without advancing the last successful verification.
+    /// Restore a usable grant. Provider outages back off, local interruptions
+    /// allow immediate retry, and neither advances successful verification.
     pub fn defer_credential_retry(
         &mut self,
         claim: &StorageUpstreamClaim,
@@ -345,10 +348,19 @@ impl StorageUpstreamSession {
         failure: StorageUpstreamFailure,
         now: DateTime<Utc>,
     ) -> bool {
-        if !(failure == StorageUpstreamFailure::UnavailableBeforeSubmission
-            || failure == StorageUpstreamFailure::Unavailable
-                && provider.kind() == crate::StorageAuthenticationProviderKind::Oauth)
-            || Some(provider.id()) != self.binding.provider().external_id()
+        let retry_after = match failure {
+            StorageUpstreamFailure::Interrupted => None,
+            StorageUpstreamFailure::UnavailableBeforeSubmission => {
+                Some(now + Duration::seconds(30))
+            }
+            StorageUpstreamFailure::Unavailable
+                if provider.kind() == crate::StorageAuthenticationProviderKind::Oauth =>
+            {
+                Some(now + Duration::seconds(30))
+            }
+            _ => return false,
+        };
+        if Some(provider.id()) != self.binding.provider().external_id()
             || provider.namespace() != self.namespace()
             || !self.accepts(claim, now)
         {
@@ -356,7 +368,7 @@ impl StorageUpstreamSession {
         }
         self.credential = Some(claim.credential.clone());
         self.lease = None;
-        self.retry_after = Some(now + Duration::seconds(30));
+        self.retry_after = retry_after;
         true
     }
     pub fn renewed(
@@ -591,6 +603,28 @@ mod tests {
         assert_eq!(
             next.credential().ciphertext(),
             old.credential().ciphertext()
+        );
+    }
+
+    #[test]
+    fn interrupted_profile_read_can_immediately_reclaim_the_same_bearer() {
+        let (mut record, provider) = oauth_session();
+        let now = Utc::now();
+        let StorageUpstreamClaimOutcome::Claim(first) = record.claim(now) else {
+            panic!("initial claim")
+        };
+        assert!(record.defer_credential_retry(
+            &first,
+            &provider,
+            StorageUpstreamFailure::Interrupted,
+            now
+        ));
+        let StorageUpstreamClaimOutcome::Claim(retry) = record.claim(now) else {
+            panic!("immediate retry")
+        };
+        assert_eq!(
+            retry.credential().ciphertext(),
+            first.credential().ciphertext()
         );
     }
 

@@ -149,7 +149,15 @@ impl OAuthAdapter {
                 .set_pkce_verifier(PkceCodeVerifier::new(
                     accepted.pending.code_state.verifier().to_owned(),
                 ))
-                .request_async(client)
+                .request_async(&|request| async {
+                    let reply = client.call(request).await?;
+                    if reply.status() == http::StatusCode::OK
+                        && !profile::has_json_content_type(reply.headers())
+                    {
+                        return Err(OAuthError::InvalidResponse);
+                    }
+                    Ok(reply)
+                })
                 .await
                 .map_err(token_error)?;
             let credentials = self.credentials(response)?;
@@ -219,7 +227,7 @@ impl OAuthAdapter {
         credentials: RetainedCredentials,
         context: &ExternalAuthenticationContext,
     ) -> Result<Authentication, OAuthError> {
-        self.refresh_with_dispatch(credentials, context, || {})
+        self.refresh_with_dispatch(credentials, context, || true)
             .await
     }
 
@@ -227,10 +235,11 @@ impl OAuthAdapter {
         &self,
         credentials: RetainedCredentials,
         context: &ExternalAuthenticationContext,
-        submitting: impl Fn() + Sync,
+        submitting: impl Fn() -> bool + Clone + Sync,
     ) -> Result<Authentication, OAuthError> {
         self.authenticate_using(credentials, context, &|request| {
-            self.transport.send_with_dispatch(request, &submitting)
+            self.transport
+                .send_with_dispatch(request, submitting.clone())
         })
         .await
     }
@@ -247,20 +256,15 @@ impl OAuthAdapter {
         if *self.definition.profile() == OAuthProfile::Github && github_rate_limited(&response) {
             return Err(OAuthError::Unavailable);
         }
+        // The authenticated-user endpoint rejected this bearer. Another session
+        // must still prove the same subject and current eligibility independently.
+        if response.status() == http::StatusCode::UNAUTHORIZED && credentials.subject.is_some() {
+            return Err(OAuthError::CredentialExpired);
+        }
         if response.status() != http::StatusCode::OK {
             return Err(OAuthError::Denied);
         }
-        if !response
-            .headers()
-            .get(http::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| {
-                value
-                    .split(';')
-                    .next()
-                    .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"))
-            })
-        {
+        if !profile::has_json_content_type(response.headers()) {
             return Err(OAuthError::InvalidResponse);
         }
         let document = profile::parse(response.body())?;

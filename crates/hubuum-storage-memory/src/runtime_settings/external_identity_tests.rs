@@ -5,6 +5,7 @@ use hubuum_storage_core::{
     StorageInteractionCommand, StorageInteractionComplete, StorageInteractionCompletion,
     StorageInteractionCreate, StorageInteractionIssuance, StorageInteractionOutcome,
 };
+use hubuum_storage_core::{StorageErrorKind, StorageUpstreamFailure};
 use rstest::rstest;
 use serde_json::{Value, json};
 
@@ -716,10 +717,53 @@ impl Fixture {
 }
 
 #[rstest]
-#[case::rejected_refresh(false)]
-#[case::successful_refresh(true)]
+#[case::only_family(false)]
+#[case::shared_upstream_session(true)]
 #[tokio::test]
-async fn fresh_authentication_fences_old_memory_refresh(#[case] success: bool) {
+async fn oidc_outage_consumes_only_the_claimed_credential(#[case] sibling: bool) {
+    use hubuum_storage_core::StorageUpstreamClaimOutcome;
+    let f = Fixture::new(json!({"mode":"provision_without_grants"}), false).await;
+    let (_, principal) = f.retained_session().await;
+    if sibling {
+        assert_eq!(f.retained_session().await.1, principal);
+    }
+    let StorageUpstreamClaimOutcome::Claim(claim) = f
+        .backend
+        .claim_upstream_credential(ResourceRevision::INITIAL, principal)
+        .await
+        .unwrap()
+    else {
+        panic!("retained claim");
+    };
+    let claimed_session = claim.session().session();
+    f.backend
+        .fail_upstream_renewal(*claim, StorageUpstreamFailure::Unavailable)
+        .await
+        .unwrap();
+    let remaining = f
+        .backend
+        .claim_upstream_credential(ResourceRevision::INITIAL, principal)
+        .await
+        .unwrap();
+    match remaining {
+        StorageUpstreamClaimOutcome::Claim(other) if sibling => {
+            assert_ne!(other.session().session(), claimed_session)
+        }
+        StorageUpstreamClaimOutcome::Unavailable if !sibling => {}
+        _ => panic!("unexpected remaining credential after failed OIDC renewal"),
+    }
+}
+
+#[rstest]
+#[case::rejected(Some(StorageUpstreamFailure::Rejected))]
+#[case::pre_dispatch(Some(StorageUpstreamFailure::UnavailableBeforeSubmission))]
+#[case::post_dispatch(Some(StorageUpstreamFailure::Unavailable))]
+#[case::interrupted(Some(StorageUpstreamFailure::Interrupted))]
+#[case::successful_refresh(None)]
+#[tokio::test]
+async fn fresh_authentication_fences_old_memory_refresh(
+    #[case] failure: Option<StorageUpstreamFailure>,
+) {
     use hubuum_storage_core::{
         StorageEncryptedUpstreamCredential, StorageUpstreamClaimOutcome, StorageUpstreamRenewal,
     };
@@ -740,7 +784,9 @@ async fn fresh_authentication_fences_old_memory_refresh(#[case] success: bool) {
     };
     let command = f.fresh_retention_command(principal).await;
     f.backend.advance_auth_interaction(command).await.unwrap();
-    let stale = if success {
+    let stale = if let Some(disposition) = failure {
+        f.backend.fail_upstream_renewal(*old, disposition).await
+    } else {
         f.backend
             .finish_upstream_renewal(
                 StorageUpstreamRenewal::new(
@@ -751,12 +797,11 @@ async fn fresh_authentication_fences_old_memory_refresh(#[case] success: bool) {
                 .unwrap(),
             )
             .await
-    } else {
-        f.backend
-            .fail_upstream_renewal(*old, hubuum_storage_core::StorageUpstreamFailure::Rejected)
-            .await
     };
-    assert!(stale.is_err());
+    assert_eq!(
+        stale.unwrap_err().kind(),
+        StorageErrorKind::AuthenticationRequired
+    );
     let StorageUpstreamClaimOutcome::Claim(new) = f
         .backend
         .claim_upstream_credential(ResourceRevision::INITIAL, principal)

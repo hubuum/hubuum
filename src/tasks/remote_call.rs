@@ -353,6 +353,7 @@ fn status_family(status_code: u16) -> &'static str {
 
 fn remote_error_outcome(error: &OutboundHttpError) -> &'static str {
     match error {
+        OutboundHttpError::DispatchCancelled => "cancelled",
         OutboundHttpError::Timeout => "timeout",
         OutboundHttpError::DisallowedAddress { .. } => "private_target_rejected",
         OutboundHttpError::InvalidUrl
@@ -618,6 +619,7 @@ fn outbound_error_to_api_message(error: OutboundHttpError) -> String {
         OutboundHttpError::InvalidResponseBody { .. } | OutboundHttpError::ResponseRead => {
             "Failed reading remote response".to_string()
         }
+        OutboundHttpError::DispatchCancelled => "Remote call cancelled before dispatch".to_string(),
         OutboundHttpError::Timeout => "Remote call timed out".to_string(),
         OutboundHttpError::Connect => "Remote connection failed".to_string(),
         OutboundHttpError::Request => "Remote call failed".to_string(),

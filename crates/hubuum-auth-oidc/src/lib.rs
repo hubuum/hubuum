@@ -1,5 +1,9 @@
 //! OIDC protocol adapter. Protocol types and upstream credentials stay private.
-use std::time::Duration;
+use std::{
+    future::Future,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
@@ -15,8 +19,8 @@ use hubuum_domain::{
 use hubuum_secrets::SecretValue;
 use openidconnect::{
     AccessTokenHash, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet,
-    EndpointNotSet, EndpointSet, Nonce, NonceVerifier, OAuth2TokenResponse, PkceCodeVerifier,
-    RedirectUrl, RefreshToken, Scope, TokenResponse,
+    EndpointNotSet, EndpointSet, HttpRequest, HttpResponse, Nonce, NonceVerifier,
+    OAuth2TokenResponse, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope, TokenResponse,
     core::{
         CoreAuthenticationFlow, CoreClient, CoreJsonWebKeySet, CoreJwsSigningAlgorithm,
         CoreProviderMetadata, CoreTokenResponse,
@@ -219,6 +223,7 @@ impl OidcAdapter {
     ) -> Result<Authentication, OidcError> {
         self.check_pending(&accepted.pending)?;
         let discovered = self.discover().await?;
+        let grant = GrantResponse::default();
         let response = discovered
             .client
             .exchange_code(AuthorizationCode::new(accepted.code))
@@ -226,9 +231,9 @@ impl OidcAdapter {
             .set_pkce_verifier(PkceCodeVerifier::new(
                 accepted.pending.code_state.verifier().to_owned(),
             ))
-            .request_async(&|request| self.transport.send(request))
-            .await
-            .map_err(token_error)?;
+            .request_async(&|request| grant.clone().inspect(self.transport.send(request)))
+            .await;
+        let response = grant.decode(response)?;
         self.verify(
             &discovered,
             response,
@@ -245,7 +250,7 @@ impl OidcAdapter {
         &self,
         retained: RetainedCredentials,
         context: &ExternalAuthenticationContext,
-        submitting: impl Fn() + Sync,
+        submitting: impl Fn() -> bool + Clone + Sync,
     ) -> Result<Authentication, OidcError> {
         if retained.issuer != self.definition.issuer().as_str()
             || retained.client_id != self.definition.client_id()
@@ -253,14 +258,31 @@ impl OidcAdapter {
             return Err(OidcError::Denied);
         }
         let discovered = self.discover().await?;
+        let transport = self.transport;
+        self.refresh_using(&discovered, retained, context, move |request| {
+            transport.send_with_dispatch(request, submitting.clone())
+        })
+        .await
+    }
+
+    async fn refresh_using<F>(
+        &self,
+        discovered: &Discovered,
+        retained: RetainedCredentials,
+        context: &ExternalAuthenticationContext,
+        send: impl Fn(HttpRequest) -> F,
+    ) -> Result<Authentication, OidcError>
+    where
+        F: Future<Output = Result<HttpResponse, OidcError>>,
+    {
+        let grant = GrantResponse::default();
         let response = discovered
             .client
             .exchange_refresh_token(&RefreshToken::new(retained.refresh.clone()))
             .map_err(|_| OidcError::Configuration)?
-            .request_async(&|request| self.transport.send_with_dispatch(request, &submitting))
-            .await
-            .map_err(token_error)?;
-        self.verify_refresh(&discovered, response, retained, context)
+            .request_async(&|request| grant.clone().inspect(send(request)))
+            .await;
+        self.verify_refresh(discovered, grant.decode(response)?, retained, context)
             .await
     }
 
@@ -712,12 +734,77 @@ fn discovery_error(error: OidcError) -> OidcError {
     }
 }
 
-fn token_error(
-    error: openidconnect::RequestTokenError<
-        OidcError,
-        openidconnect::StandardErrorResponse<openidconnect::core::CoreErrorResponseType>,
-    >,
-) -> OidcError {
+type TokenError = openidconnect::RequestTokenError<
+    OidcError,
+    openidconnect::StandardErrorResponse<openidconnect::core::CoreErrorResponseType>,
+>;
+
+/// Check the wire envelope independently of the SDK, which accepts unknown
+/// members and decodes the ID token while deserializing the response.
+#[derive(Clone, Default)]
+struct GrantResponse {
+    envelope: Arc<OnceLock<Result<(), OidcError>>>,
+}
+
+impl GrantResponse {
+    async fn inspect(
+        self,
+        pending: impl Future<Output = Result<HttpResponse, OidcError>>,
+    ) -> Result<HttpResponse, OidcError> {
+        let reply = pending.await?;
+        if reply.status() == openidconnect::http::StatusCode::OK {
+            self.envelope
+                .get_or_init(|| {
+                    validate_grant_envelope(reply.body())?;
+                    profile::has_json_content_type(reply.headers())
+                        .then_some(())
+                        .ok_or(OidcError::Unavailable)
+                })
+                .clone()?;
+        }
+        Ok(reply)
+    }
+
+    fn decode(
+        self,
+        response: Result<CoreTokenResponse, TokenError>,
+    ) -> Result<CoreTokenResponse, OidcError> {
+        match self.envelope.get() {
+            Some(Ok(())) => response.map_err(|error| match error {
+                openidconnect::RequestTokenError::Parse(..) => OidcError::InvalidResponse,
+                other => token_error(other),
+            }),
+            Some(Err(error)) => Err(error.clone()),
+            None => response.map_err(token_error),
+        }
+    }
+}
+
+fn validate_grant_envelope(body: &[u8]) -> Result<(), OidcError> {
+    let has_grant_field = |document: &Value| {
+        ["access_token", "id_token", "refresh_token"]
+            .iter()
+            .any(|key| document.get(key).is_some())
+    };
+    let document = profile::parse(body).map_err(|_| {
+        // An unreadable response provides no identity decision. Use the lenient
+        // parser only to distinguish a malformed grant from a gateway error.
+        if serde_json::from_slice::<Value>(body).is_ok_and(|doc| has_grant_field(&doc)) {
+            OidcError::InvalidResponse
+        } else {
+            OidcError::Unavailable
+        }
+    })?;
+    if !has_grant_field(&document) {
+        return Err(OidcError::Unavailable);
+    }
+    if document.get("error").is_some() {
+        return Err(OidcError::InvalidResponse);
+    }
+    Ok(())
+}
+
+fn token_error(error: TokenError) -> OidcError {
     use openidconnect::core::CoreErrorResponseType::*;
     match error {
         openidconnect::RequestTokenError::Request(OidcError::InvalidResponse) => {

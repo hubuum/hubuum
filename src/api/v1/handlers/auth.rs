@@ -4,7 +4,7 @@ use std::fmt;
 use crate::errors::ApiError;
 use crate::events::{EventContext, RequestProvenance};
 use crate::extractors::AccessEventContext;
-use crate::extractors::{AdminAccess, Authenticated, LogoutCredential, ManagementAccess};
+use crate::extractors::{AdminAccess, Authenticated, LogoutCredential};
 use crate::middlewares::rate_limit::{
     LoginAttemptOutcome, begin_login_attempt, client_ip_for_request, finish_login_attempt,
 };
@@ -205,18 +205,18 @@ pub async fn logout(
 #[post("/logout_all")]
 pub async fn logout_all(
     context: AppContext,
-    user_access: ManagementAccess,
+    credential: LogoutCredential,
     req: HttpRequest,
 ) -> Result<impl Responder, ApiError> {
+    let owner = credential.all_sessions_owner(&context).await?;
     debug!(
-        message = "Logging out all tokens for {}.",
-        user_access.user.id
+        principal_id = owner.id(),
+        "Logging out all interactive sessions"
     );
-
     let delete_result = storage_handle(&context)
         .revoke_auth_sessions(
-            SessionRevocation::All(crate::models::PrincipalID::new(user_access.user.id)?),
-            user_access.event_context(&req),
+            SessionRevocation::All(owner),
+            credential.event_context(&req),
         )
         .await;
 
@@ -227,8 +227,8 @@ pub async fn logout_all(
         }
         Err(e) => {
             warn!(
-                message = "Logout of all tokens failed",
-                user_id = user_access.user.id,
+                message = "Logout of all sessions failed",
+                user_id = owner.id(),
                 error = e.to_string()
             );
             Err(ApiError::InternalServerError(

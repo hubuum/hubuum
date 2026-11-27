@@ -96,6 +96,9 @@ It requires S256 PKCE and query callbacks. It does not infer identity from OAuth
 or follow provider links, pagination, distributed claims or additional endpoints.
 Providers requiring those features need a small explicit adapter.
 
+Successful token and user-profile responses require one `application/json`
+Content-Type header. Parameters such as `charset=utf-8` are accepted.
+
 Optional `profile_headers` permits at most eight bounded lowercase `accept`,
 `user-agent` or `x-*` headers. These headers select the identity namespace. Changing a
 header requires a new scope. Authentication, host, cookies, framing and
@@ -122,9 +125,17 @@ does not extend the cached membership lifetime.
 
 This profile does **not** perform refresh-token grants. GitHub OAuth Apps may
 issue expiring tokens and refresh tokens; the adapter honors access-token expiry
-and retires the expired grant. A due eligibility check tries another retained
-grant for the same principal when available. Once all access tokens have
-expired, the user must sign in again. Existing Hubuum sessions and personal
+and retires the expired grant. A profile HTTP 401 during renewal also retires
+that bearer as soon as the response headers arrive, even if the body is incomplete.
+A due eligibility check tries another retained
+grant for the same principal when available. One request checks at most eight
+grants with a shared 25-second deadline. If the budget runs out, Hubuum returns
+HTTP 503. The bearer becomes eligible for retry as soon as the worker releases
+its claim. Exhausting this local budget preserves the verification timestamps
+and does not grant access under the cached-membership outage policy. The worker
+finishes recording any provider response it already received before releasing
+its restore guard. Once all access tokens have expired, the user must sign in
+again. Existing Hubuum sessions and personal
 access tokens remain subject to the same identity freshness check. The adapter
 does not retain a returned refresh token.
 Do not request `offline_access` expecting automatic renewal.

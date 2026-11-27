@@ -40,13 +40,13 @@ impl Transport {
     }
 
     pub async fn send(self, request: HttpRequest) -> Result<HttpResponse, ProtocolError> {
-        self.send_with_dispatch(request, || {}).await
+        self.send_with_dispatch(request, || true).await
     }
 
     pub async fn send_with_dispatch(
         self,
         request: HttpRequest,
-        dispatch: impl FnOnce(),
+        dispatch: impl FnOnce() -> bool,
     ) -> Result<HttpResponse, ProtocolError> {
         let _permit = REQUESTS
             .try_acquire()
@@ -83,14 +83,20 @@ impl Transport {
         headers: OutboundHeaders,
         body: String,
         url: String,
-        dispatch: impl FnOnce(),
+        dispatch: impl FnOnce() -> bool,
     ) -> Result<HttpResponse, ProtocolError> {
-        let response = OutboundRequest::new(method, url, Duration::from_secs(5))
+        let request = OutboundRequest::new(method, url, Duration::from_secs(5))
             .headers(headers)
             .body((!body.is_empty()).then_some(body))
             .max_response_bytes(RESPONSE_LIMIT)
             .require_complete_body()
-            .allow_private_targets(self.allow_private_targets)
+            .allow_private_targets(self.allow_private_targets);
+        let request = if method == OutboundMethod::Get {
+            request.skip_body_for_status(401)
+        } else {
+            request
+        };
+        let response = request
             .send_with_dispatch(dispatch)
             .await
             .map_err(transport_error)?;

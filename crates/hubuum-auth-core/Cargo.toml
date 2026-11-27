@@ -11,6 +11,7 @@ rust-api = "workspace-internal"
 [dependencies]
 hubuum-domain = { version = "=0.11.0", path = "../hubuum-domain" }
 hmac = "0.13"
+mediatype = "0.23"
 sha2 = "0.11"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"

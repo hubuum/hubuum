@@ -1,10 +1,26 @@
 //! Decode a bounded profile without allowing an object member to overwrite an
 //! earlier observation. Keep scalar decoding in serde_json for exact integers.
+use mediatype::{
+    MediaType,
+    names::{APPLICATION, JSON},
+};
+use oauth2::http::{HeaderMap, header::CONTENT_TYPE};
 use serde::de::{Error, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value, value::RawValue};
 
 use super::ProtocolError;
+
+/// Require one JSON media type, including when the provider sends parameters.
+pub fn has_json_content_type(headers: &HeaderMap) -> bool {
+    let mut values = headers.get_all(CONTENT_TYPE).iter();
+    let content_type = values
+        .next()
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| MediaType::parse(value.trim()).ok());
+    values.next().is_none()
+        && content_type.is_some_and(|mime| mime.essence() == MediaType::new(APPLICATION, JSON))
+}
 
 pub fn parse(bytes: &[u8]) -> Result<Value, ProtocolError> {
     let raw: &RawValue =

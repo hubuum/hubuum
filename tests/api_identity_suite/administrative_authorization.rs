@@ -526,7 +526,7 @@ async fn external_admin_denial_preserves_self_settings(
 #[actix_web::test]
 async fn external_admin_grant_preserves_human_unscoped_management_boundary(
     #[values(false, true)] service_account: bool,
-    #[values("credentials", "settings", "service_accounts")] operation: &str,
+    #[values("credentials", "settings", "service_accounts", "logout_all")] operation: &str,
 ) {
     let mut fixture = AdminFixture::new(false, Some(true)).await;
     let owner_group = fixture.owner_group().await;
@@ -560,6 +560,10 @@ async fn external_admin_grant_preserves_human_unscoped_management_boundary(
         "settings" => (
             settings_request(fixture.other_human_id(), "put").0,
             StatusCode::NOT_FOUND,
+        ),
+        "logout_all" => (
+            test::TestRequest::post().uri("/api/v1/auth/logout_all"),
+            StatusCode::FORBIDDEN,
         ),
         "service_accounts" => (
             test::TestRequest::patch()

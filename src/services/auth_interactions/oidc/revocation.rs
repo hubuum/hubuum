@@ -14,30 +14,6 @@ use hubuum_storage_core::{
 use std::{collections::BTreeMap, future::Future, time::Duration};
 use tokio::sync::OnceCell;
 
-pub(super) fn revoke_uninstalled_oidc(
-    provider: &StorageAuthenticationProvider,
-    grant: Option<RetainedCredentials>,
-) {
-    // OAuth profile reads leave the same bearer available to the winning claim.
-    let Some(grant @ RetainedCredentials::Oidc(_)) = grant else {
-        return;
-    };
-    let provider = provider.clone();
-    tokio::spawn(async move {
-        dispatch_revocations(vec![grant], |grant| {
-            bounded_revocation(async {
-                configured_adapter(&provider)
-                    .await?
-                    .revoke(grant)
-                    .await
-                    .map_err(error)?;
-                Ok(())
-            })
-        })
-        .await;
-    });
-}
-
 /// Invoke only after local revocation has committed. Provider failure cannot
 /// restore local credentials or delay the local response.
 pub(crate) fn revoke_best_effort(records: Vec<StorageUpstreamSession>, context: AppContext) {

@@ -61,6 +61,20 @@ fn fixture() -> (OidcAdapter, Discovered, ExternalAuthenticationContext) {
     .unwrap();
     (adapter, discovered, context)
 }
+fn retained_credentials(
+    adapter: &OidcAdapter,
+    auth_time: Option<DateTime<Utc>>,
+) -> RetainedCredentials {
+    RetainedCredentials {
+        refresh: "original".into(),
+        nonce: "nonce".into(),
+        subject: "stable-subject".into(),
+        issuer: adapter.definition.issuer().as_str().into(),
+        client_id: adapter.definition.client_id().into(),
+        auth_time,
+    }
+}
+
 fn signing_key(id: &str) -> CoreRsaPrivateSigningKey {
     // Public, disposable test fixture; never a production signing credential.
     CoreRsaPrivateSigningKey::from_pem(
@@ -368,6 +382,99 @@ async fn initial_login_requires_nonce() {
 }
 
 #[rstest]
+#[case::malformed_id_token(200, r#"{"access_token":"access","token_type":"Bearer","refresh_token":"replacement","id_token":"malformed"}"#, OidcError::InvalidResponse)]
+#[case::contradictory_grant(200, r#"{"error":"invalid_grant","access_token":"access","token_type":"Bearer","refresh_token":"replacement","id_token":"malformed"}"#, OidcError::InvalidResponse)]
+#[case::missing_id_token(200, r#"{"error":"invalid_grant","access_token":"access","token_type":"Bearer","refresh_token":"replacement"}"#, OidcError::InvalidResponse)]
+#[case::non_rotating(
+    200,
+    r#"{"access_token":"access","token_type":"Bearer","id_token":"malformed"}"#,
+    OidcError::InvalidResponse
+)]
+#[case::duplicate_refresh_token(200, r#"{"access_token":"access","token_type":"Bearer","refresh_token":"one","refresh_token":"two"}"#, OidcError::InvalidResponse)]
+#[case::mixed_error_and_refresh(
+    200,
+    r#"{"error":"invalid_grant","refresh_token":"replacement"}"#,
+    OidcError::InvalidResponse
+)]
+#[case::error_only(200, r#"{"error":"temporarily_unavailable"}"#, OidcError::Unavailable)]
+#[case::error_status(400, r#"{"error":"invalid_grant"}"#, OidcError::Denied)]
+#[case::ambiguous_outage(
+    200,
+    r#"{"error":"unavailable","error":"unavailable"}"#,
+    OidcError::Unavailable
+)]
+#[case::unreadable_endpoint(200, "<html>unavailable", OidcError::Unavailable)]
+#[tokio::test]
+async fn refresh_classifies_wire_responses(
+    #[case] status: u16,
+    #[case] wire: &'static str,
+    #[case] failure: OidcError,
+) {
+    let (adapter, discovered, context) = fixture();
+    let result = adapter
+        .refresh_using(
+            &discovered,
+            retained_credentials(&adapter, None),
+            &context,
+            |_| {
+                std::future::ready(Ok(openidconnect::http::Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(wire.as_bytes().to_vec())
+                    .unwrap()))
+            },
+        )
+        .await;
+    assert_eq!(result.err(), Some(failure));
+}
+
+#[rstest]
+#[case::grant(false, &["application/json"], None)]
+#[case::parameters(false, &["Application/JSON; charset=UTF-8"], None)]
+#[case::parameter_whitespace(false, &["application/json ; charset=UTF-8"], None)]
+#[case::quoted_parameter(false, &[r#"application/json; note="a,b""#], None)]
+#[case::combined_types(false, &["application/json; charset=utf-8, text/plain"], Some(OidcError::Unavailable))]
+#[case::contradictory_grant(true, &["application/json"], Some(OidcError::InvalidResponse))]
+#[case::contradictory_wrong_type(true, &["text/plain"], Some(OidcError::InvalidResponse))]
+#[case::incorrect_media_type(false, &["text/plain"], Some(OidcError::Unavailable))]
+#[case::different_json_format(false, &["application/json-seq"], Some(OidcError::Unavailable))]
+#[case::missing_media_type(false, &[], Some(OidcError::Unavailable))]
+#[case::ambiguous_media_type(false, &["text/plain", "application/json"], Some(OidcError::Unavailable))]
+#[tokio::test]
+async fn classifies_decodable_refresh_grants(
+    #[case] error_member: bool,
+    #[case] content_types: &[&str],
+    #[case] expected: Option<OidcError>,
+) {
+    let (adapter, discovered, context) = fixture();
+    let claims = claims();
+    let retained = retained_credentials(
+        &adapter,
+        DateTime::from_timestamp(claims["auth_time"].as_i64().unwrap(), 0),
+    );
+    let mut wire = serde_json::to_value(response(
+        claims,
+        "current",
+        CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
+        false,
+    ))
+    .unwrap();
+    if error_member {
+        wire["error"] = json!("invalid_grant");
+    }
+    let result = adapter
+        .refresh_using(&discovered, retained, &context, |_| {
+            let mut reply = openidconnect::http::Response::builder().status(200);
+            for value in content_types {
+                reply = reply.header("content-type", *value);
+            }
+            std::future::ready(Ok(reply.body(serde_json::to_vec(&wire).unwrap()).unwrap()))
+        })
+        .await;
+    assert_eq!(result.err(), expected);
+}
+
+#[rstest]
 #[case::rotated(Some("replacement"), "replacement")]
 #[case::non_rotating(None, "original")]
 #[tokio::test]
@@ -377,14 +484,10 @@ async fn verified_refresh_retains_usable_token(
 ) {
     let (adapter, discovered, context) = fixture();
     let mut claims = claims();
-    let original = RetainedCredentials {
-        refresh: "original".into(),
-        nonce: "nonce".into(),
-        subject: "stable-subject".into(),
-        issuer: adapter.definition.issuer().as_str().into(),
-        client_id: adapter.definition.client_id().into(),
-        auth_time: DateTime::from_timestamp(claims["auth_time"].as_i64().unwrap(), 0),
-    };
+    let original = retained_credentials(
+        &adapter,
+        DateTime::from_timestamp(claims["auth_time"].as_i64().unwrap(), 0),
+    );
     let original_time = original.auth_time;
     claims.as_object_mut().unwrap().remove("auth_time");
     let mut response = response(
@@ -401,6 +504,36 @@ async fn verified_refresh_retains_usable_token(
     let credential = verified.credentials.unwrap();
     assert_eq!(credential.refresh, expected);
     assert_eq!(credential.auth_time, original_time);
+}
+
+#[rstest]
+#[case::rotating(Some("replacement"))]
+#[case::non_rotating(None)]
+#[tokio::test]
+async fn unavailable_userinfo_discards_the_renewal(#[case] replacement: Option<&str>) {
+    let (mut adapter, mut discovered, context) = fixture();
+    let mut config = serde_json::to_value(&adapter.definition).unwrap();
+    config["membership"]["claim_source"] = json!("userinfo");
+    adapter.definition = serde_json::from_value(config).unwrap();
+    // Private outbound targets are disabled in this fixture; the UserInfo
+    // request fails deterministically without contacting the network.
+    discovered.userinfo = Some("https://127.0.0.1/userinfo".into());
+    let claims = claims();
+    let retained = retained_credentials(
+        &adapter,
+        DateTime::from_timestamp(claims["auth_time"].as_i64().unwrap(), 0),
+    );
+    let mut response = response(
+        claims,
+        "current",
+        CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256,
+        false,
+    );
+    response.set_refresh_token(replacement.map(|token| RefreshToken::new(token.into())));
+    let result = adapter
+        .verify_refresh(&discovered, response, retained, &context)
+        .await;
+    assert_eq!(result.err(), Some(OidcError::Unavailable));
 }
 
 #[rstest]
