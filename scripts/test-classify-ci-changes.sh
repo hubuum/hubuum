@@ -284,6 +284,7 @@ done
 assert_flag "$(bash "$classifier" new-build-input.bin)" regex_fuzz true
 
 for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/comprehensive.manifest.json \
+  tests/python/integration/api_admission.py \
   test-corpora/recipe.json test-corpora/README.md tests/python/integration/corpus.py tests/python/unit/tooling/test_corpus.py \
   docs/assets/atlas/atlas.import.json docs/assets/atlas/atlas.backup.json \
   docs/assets/atlas/atlas.manifest.json docs/getting-started/example-dataset.md \
