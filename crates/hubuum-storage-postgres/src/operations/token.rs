@@ -4,6 +4,8 @@ use hubuum_storage_core::StorageTokenRevocations;
 use std::collections::HashMap;
 
 use chrono::NaiveDateTime;
+use diesel::dsl::sql;
+use diesel::expression::SqlLiteral;
 use diesel::pg::Pg;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel::sql_types::{BigInt, Nullable, Text, Timestamp};
@@ -187,6 +189,11 @@ struct NewTokenClassScope {
 struct NewTokenObjectScope {
     token_id: i32,
     object_id: i32,
+}
+
+// A revoking transaction can start before a token that it later locks.
+fn revocation_time() -> SqlLiteral<Nullable<Timestamp>> {
+    sql("GREATEST(issued, clock_timestamp() AT TIME ZONE 'UTC')")
 }
 
 type TokenQuery<'query> = crate::schema::tokens::BoxedQuery<'query, Pg>;
@@ -648,7 +655,7 @@ pub async fn revoke_token(
                         .filter(crate::schema::tokens::principal_id.eq(principal_id))
                         .filter(crate::schema::tokens::revoked_at.is_null()),
                 )
-                .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
+                .set(crate::schema::tokens::revoked_at.eq(revocation_time()))
                 .returning(TokenRow::as_returning())
                 .get_result::<TokenRow>(connection)
                 .await
@@ -785,7 +792,7 @@ pub async fn revoke_token_by_hash(
             let after = diesel::update(
                 crate::schema::tokens::table.filter(crate::schema::tokens::id.eq(before.id)),
             )
-            .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
+            .set(crate::schema::tokens::revoked_at.eq(revocation_time()))
             .returning(TokenRow::as_returning())
             .get_result::<TokenRow>(connection)
             .await?;
@@ -860,7 +867,7 @@ pub async fn revoke_all_principal_tokens(
             let mut after = diesel::update(
                 crate::schema::tokens::table.filter(crate::schema::tokens::id.eq_any(token_ids)),
             )
-            .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
+            .set(crate::schema::tokens::revoked_at.eq(revocation_time()))
             .returning(TokenRow::as_returning())
             .get_results::<TokenRow>(connection)
             .await?;
@@ -910,7 +917,7 @@ pub async fn revoke_all_principal_tokens_on_connection(
             .filter(crate::schema::tokens::principal_id.eq(principal_id))
             .filter(crate::schema::tokens::revoked_at.is_null()),
     )
-    .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
+    .set(crate::schema::tokens::revoked_at.eq(revocation_time()))
     .execute(connection)
     .await
     .map_err(PostgresStorageError::from)

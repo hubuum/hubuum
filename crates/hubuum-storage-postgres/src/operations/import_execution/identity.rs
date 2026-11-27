@@ -3,10 +3,10 @@ use super::{
     import_timestamp_pair, imported_timestamps, updated_or_current,
     with_imported_timestamp_override,
 };
-use crate::operations::auth_sessions;
 use crate::operations::group::GroupRow;
 use crate::operations::principal::PrincipalRow;
 use crate::operations::service_account::ServiceAccountRow;
+use crate::operations::token::revoke_all_principal_tokens_on_connection;
 use crate::operations::user_row::UserRow;
 use crate::{PostgresConnection, PostgresRevision, PostgresStorageError};
 use argon2::Argon2;
@@ -557,15 +557,7 @@ async fn upsert_principal(
                 .unwrap_or_else(|| imported_timestamps(None));
             if let Some(existing) = existing {
                 if supplied_password.is_some() || anonymized_at.is_some() {
-                    auth_sessions::revoke_principal(connection, principal_id).await?;
-                    diesel::update(
-                        crate::schema::tokens::table
-                            .filter(crate::schema::tokens::principal_id.eq(principal_id))
-                            .filter(crate::schema::tokens::revoked_at.is_null()),
-                    )
-                    .set(crate::schema::tokens::revoked_at.eq(diesel::dsl::now))
-                    .execute(connection)
-                    .await?;
+                    revoke_all_principal_tokens_on_connection(connection, principal_id).await?;
                 }
                 with_imported_timestamp_override(connection, async |connection| {
                     diesel::update(

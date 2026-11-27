@@ -90,6 +90,13 @@
           "auth_interactions_document_check1"
         ]
       }
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-27-000001_token_revocation_order/up.sql",
+      "sha256": "8a88bd2b57ce9facb6a67dac36562514e33c4cb527cddf4275dddd306e8da888",
+      "reason": "Older PostgreSQL writers can record revocation before issuance when their transaction waits for a concurrent login. The new constraint rejects that write.",
+      "upgrade_action": "Stop API and worker replicas, back up the database and apply the migration before starting matching binaries. The migration repairs inverted timestamps on retained revoked tokens. Use the pre-upgrade snapshot for downgrade.",
+      "drop_constraints": {}
     }
   ]
 }

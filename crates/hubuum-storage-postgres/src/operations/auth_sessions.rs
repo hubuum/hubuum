@@ -282,7 +282,7 @@ pub async fn revoke_family(
         .bind::<Text, _>(reason)
         .execute(connection)
         .await?;
-    diesel::sql_query("UPDATE tokens SET revoked_at=clock_timestamp() AT TIME ZONE 'UTC' WHERE auth_session_id=$1 AND revoked_at IS NULL")
+    diesel::sql_query("UPDATE tokens SET revoked_at=GREATEST(issued, clock_timestamp() AT TIME ZONE 'UTC') WHERE auth_session_id=$1 AND revoked_at IS NULL")
         .bind::<SqlUuid, _>(id)
         .execute(connection)
         .await?;

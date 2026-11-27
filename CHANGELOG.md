@@ -92,6 +92,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- PostgreSQL records token revocations at or after issuance when password resets,
+  logouts and other revocations overlap token creation. The offline migration
+  repairs retained tokens whose revocation timestamp preceded issuance, so their
+  metadata can be read again. These tokens stay revoked.
+
 - GitHub rate-limit headers now preserve the cached-authority outage window
   even when GitHub sends an unreadable error page. An interrupted HTTP 403
   response from another provider still counts as an outage.
@@ -223,8 +228,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   key and display name limits.
 - **Breaking for mixed-version preview deployments and external storage
   adapters.** Stop API and worker replicas, back up the database, apply
-  migration `2026-11-23-000001_verification_group_budget`, and restart matching
-  binaries. Keep OAuth bearers recoverable during profile reads and return
+  all pending migrations through `2026-11-27-000001_token_revocation_order`,
+  and restart matching binaries. Keep OAuth bearers recoverable during profile reads and return
   `AuthenticationRequired` when a session or claim fence rejects renewal.
   **Breaking for external storage adapters on the unreleased 0.11 SDK.** Handle
   the new `StorageUpstreamFailure::Interrupted` variant by releasing the fenced
