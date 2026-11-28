@@ -6,8 +6,8 @@ use crate::services::archive::{
     HistoryArchiveAdmission, HistoryArchiveQuery, HistoryArchiveRequest,
 };
 use crate::services::history::segments::{
-    HistorySegment, RetainedHistorySegment, SegmentRecord, SegmentRewriteSelection, SegmentScope,
-    VersionInterval,
+    HistorySegment, RetainedHistorySegment, SEGMENT_BYTES, SegmentRecord, SegmentRewriteSelection,
+    SegmentScope, VersionInterval,
 };
 use crate::storage::storage_handle;
 use chrono::{Duration as TimeDelta, Utc};
@@ -613,7 +613,7 @@ async fn rewrite_verifies_the_pinned_copy_and_the_relocated_catalog_copy() {
                 let active = current.versions()[0].location();
                 assert_ne!(prior, active);
                 let store = ctx.storage.artifact_store();
-                let mut budget = ByteLimit::new(1024 * 1024).start();
+                let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
                 let old = RetainedHistorySegment::open(store.as_ref(), prior, &mut budget)
                     .await
                     .unwrap();
