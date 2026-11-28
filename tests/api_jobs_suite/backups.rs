@@ -98,7 +98,7 @@ mod tests {
             header_value(&response, "Cache-Control").expect("backup output cache policy");
         let content_disposition =
             header_value(&response, "Content-Disposition").expect("backup attachment policy");
-        let bytes = test::read_body(response).await;
+        let bytes = super::super::read_verified_output(response).await;
         let actual_sha = Sha256::digest(&bytes)
             .iter()
             .map(|byte| format!("{byte:02x}"))

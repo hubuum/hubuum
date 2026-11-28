@@ -13,6 +13,7 @@ pub mod groups;
 pub mod history;
 pub mod imports;
 pub mod me;
+mod output_download;
 pub mod principals;
 pub mod relations;
 pub mod remote_targets;

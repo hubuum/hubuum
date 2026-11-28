@@ -124,8 +124,11 @@ async fn unconfirmed_task_work_preserves_native_owner_and_shutdown_obligation(
 #[derive(Clone, Copy)]
 enum ReadMode {
     Normal,
+    Empty,
+    EmptyWithBlock,
     Pending,
     Corrupt,
+    LateCorruption,
     Truncated,
     Trailing,
     Panic,
@@ -143,6 +146,7 @@ struct DownloadStore {
     storage: StorageHandle,
     manifest: ArtifactManifest,
     mode: ReadMode,
+    release_final_block: tokio::sync::Notify,
     entered: AtomicBool,
     dropped: AtomicBool,
     observed_stops: Mutex<Vec<Option<TaskStopReason>>>,
@@ -189,8 +193,14 @@ impl ArtifactStore for DownloadStore {
             ReadMode::Pending => std::future::pending().await,
             ReadMode::Panic => panic!("injected reader failure"),
             ReadMode::Corrupt => Ok(Some(b"corrupt".to_vec())),
+            ReadMode::LateCorruption if ordinal == 0 => Ok(Some(PAYLOAD.to_vec())),
+            ReadMode::LateCorruption => {
+                self.release_final_block.notified().await;
+                Ok(Some(b"corrupt".to_vec()))
+            }
             ReadMode::Truncated => Ok(None),
-            ReadMode::Trailing => Ok(Some(PAYLOAD.to_vec())),
+            ReadMode::Empty => Ok(None),
+            ReadMode::Trailing | ReadMode::EmptyWithBlock => Ok(Some(PAYLOAD.to_vec())),
             ReadMode::Normal => Ok((ordinal == 0).then(|| PAYLOAD.to_vec())),
         }
     }
@@ -225,14 +235,26 @@ impl TaskArtifactStore for DownloadStore {
 fn fixture(mode: ReadMode) -> (StorageHandle, Arc<DownloadStore>, ArtifactReference) {
     let storage = StorageHandle::memory();
     let identity = ArtifactIdentity::new(DestinationId::generate());
-    let mut builder = ManifestBuilder::new(identity.clone(), ArtifactLimits::default());
-    builder.push(PAYLOAD).unwrap();
+    let limits = ArtifactLimits::builder()
+        .block_bytes(PAYLOAD.len() as u32)
+        .artifact_bytes(2 * PAYLOAD.len() as u64)
+        .blocks(2)
+        .build()
+        .unwrap();
+    let mut builder = ManifestBuilder::new(identity.clone(), limits);
+    if matches!(mode, ReadMode::LateCorruption) {
+        builder.push(PAYLOAD).unwrap();
+    }
+    if !matches!(mode, ReadMode::Empty | ReadMode::EmptyWithBlock) {
+        builder.push(PAYLOAD).unwrap();
+    }
     let manifest = builder.finish().unwrap();
     let reference = ArtifactReference::from_catalog(identity, manifest.manifest_digest());
     let store = Arc::new(DownloadStore {
         storage: storage.clone(),
         manifest,
         mode,
+        release_final_block: tokio::sync::Notify::new(),
         entered: AtomicBool::new(false),
         dropped: AtomicBool::new(false),
         observed_stops: Mutex::new(Vec::new()),
@@ -253,7 +275,7 @@ fn fixture(mode: ReadMode) -> (StorageHandle, Arc<DownloadStore>, ArtifactRefere
 #[actix_web::test]
 async fn last_block_requires_successful_verification(#[case] mode: ReadMode, #[case] valid: bool) {
     let (storage, _, reference) = fixture(mode);
-    let mut body = Box::pin(download(&storage, reference));
+    let mut body = download(&storage, reference).await.unwrap().into_stream();
     let block = body
         .next()
         .await
@@ -269,10 +291,86 @@ async fn last_block_requires_successful_verification(#[case] mode: ReadMode, #[c
     assert!(body.next().await.is_none());
 }
 
+#[rstest]
+#[case::empty(ReadMode::Empty, true)]
+#[case::trailing_block(ReadMode::EmptyWithBlock, false)]
+#[actix_web::test]
+async fn empty_download_checks_exact_eof_before_headers(
+    #[case] mode: ReadMode,
+    #[case] valid: bool,
+) {
+    let (storage, _, reference) = fixture(mode);
+    assert_eq!(download(&storage, reference).await.is_ok(), valid);
+}
+
+#[actix_web::test]
+async fn wrong_manifest_fails_before_download_headers() {
+    let (storage, store, reference) = fixture(ReadMode::Normal);
+    let wrong = ArtifactReference::from_catalog(reference.identity().clone(), [0; 32]);
+    assert!(download(&storage, wrong).await.is_err());
+    assert!(!store.entered.load(Ordering::Acquire));
+}
+
+#[actix_web::test]
+async fn http_client_observes_an_incomplete_body_after_a_verified_prefix() {
+    use actix_web::{App, HttpResponse, HttpServer, web};
+    use std::net::TcpListener;
+
+    let (storage, store, reference) = fixture(ReadMode::LateCorruption);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = HttpServer::new(move || {
+        let (storage, reference) = (storage.clone(), reference.clone());
+        App::new().route(
+            "/output",
+            web::get().to(move || {
+                let (storage, reference) = (storage.clone(), reference.clone());
+                async move {
+                    let output = download(&storage, reference).await.unwrap();
+                    output.respond(&mut HttpResponse::Ok())
+                }
+            }),
+        )
+    })
+    .workers(1)
+    .listen(listener)
+    .unwrap()
+    .run();
+    let handle = server.handle();
+    let server = actix_web::rt::spawn(server);
+    let mut response = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap()
+        .get(format!("http://{address}/output"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.content_length(), Some(2 * PAYLOAD.len() as u64));
+    let mut prefix = Vec::new();
+    while prefix.len() < PAYLOAD.len() {
+        prefix.extend_from_slice(
+            &response
+                .chunk()
+                .await
+                .unwrap()
+                .expect("first verified block"),
+        );
+    }
+    assert_eq!(prefix, PAYLOAD);
+    store.release_final_block.notify_one();
+    let failure = response.chunk().await.unwrap_err();
+    assert!(failure.is_decode() && !failure.is_timeout(), "{failure:?}");
+    handle.stop(false).await;
+    server.await.unwrap().unwrap();
+}
+
 #[actix_web::test]
 async fn dropping_download_drops_the_pending_reader() {
     let (storage, store, reference) = fixture(ReadMode::Pending);
-    let mut body = Box::pin(download(&storage, reference));
+    let mut body = download(&storage, reference).await.unwrap().into_stream();
     assert!(body.next().now_or_never().is_none());
     assert!(store.entered.load(Ordering::Acquire));
     drop(body);
@@ -288,7 +386,11 @@ async fn download_keeps_its_original_scope_after_the_handler_returns() {
     let scope = storage
         .current_execution_scope()
         .with_task_execution(Some(original));
-    let mut body = Box::pin(storage.run_in_scope_sync(scope, || download(&storage, reference)));
+    let mut body = storage
+        .run_in_scope(scope, download(&storage, reference))
+        .await
+        .unwrap()
+        .into_stream();
     stop.request_stop(TaskStopReason::Cancelled);
     let (later, _) = TaskExecutionContext::new(Duration::from_secs(5)).unwrap();
     let later_scope = storage
@@ -303,8 +405,12 @@ async fn download_keeps_its_original_scope_after_the_handler_returns() {
         .await;
     assert_eq!(
         *store.observed_stops.lock().unwrap(),
-        [Some(TaskStopReason::Cancelled); 3],
-        "manifest, payload and exact-EOF reads must retain the original scope"
+        [
+            None,
+            Some(TaskStopReason::Cancelled),
+            Some(TaskStopReason::Cancelled)
+        ],
+        "the manifest is checked before headers, later payload and EOF reads see the original cancellation"
     );
 }
 
@@ -351,7 +457,11 @@ async fn artifact_producer_inherits_the_download_scope_for_all_reads() {
     let scope = storage
         .current_execution_scope()
         .with_application_access(permit.clone());
-    let mut stream = Box::pin(storage.run_in_scope_sync(scope, || download(&storage, reference)));
+    let mut stream = storage
+        .run_in_scope(scope, download(&storage, reference))
+        .await
+        .unwrap()
+        .into_stream();
     while let Some(block) = stream.next().await {
         block.unwrap();
     }
