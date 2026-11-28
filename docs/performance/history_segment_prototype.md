@@ -477,7 +477,7 @@ For the low-compression description, p95 exact reads exceeded the P2 allowance
 by 2,080,212 bytes and as-of reads exceeded it by 155,092 bytes. PostgreSQL
 reply traffic stayed within both allowances. The runtime executed 421 to 757
 top-level statements per lookup. All 40 measured lookups recorded zero
-temporary blocks read or written. Both low-compression lookups exceeded the budget on this baseline.
+temporary blocks read or written.
 
 ### Large description observations in PostgreSQL
 
@@ -485,8 +485,8 @@ At `974928f9`, PostgreSQL served the stored digest and JSON-encoded length
 for eligible primary descriptions. The reader still verified the archived
 payload before delivery. On the same two-CPU, 2 GiB PostgreSQL 18.7 profile,
 one warm-up and five fresh split-role databases each returned the expected
-revision in all eight complete lookups. Across 40 measured lookups,
-0 exceeded the shared-buffer read allowance.
+revision in all eight complete lookups. All 40 measured lookups met their
+shared-buffer read and PostgreSQL reply allowances.
 
 | Low-compression 3 MiB lookup | Earlier read p95 (bytes) | Read p95 with observations (bytes) | Reply p95 (bytes) | P2 allowance (bytes) |
 | --- | ---: | ---: | ---: | ---: |
@@ -503,13 +503,21 @@ record size as its denominator.
 | 10,000 | 1,143,544 | 1,143,845 | 1,834,346 | 16,384 | 0/5 |
 | 100,000 | 8,809,208 | 8,818,669 | 8,916,091 | 16,384 | 0/5 |
 
+The 100,000-version workload left 97,422 bytes of headroom at p95. Its sparse
+description table occupied 16,384 bytes including indexes. To measure how that
+cost changes when more descriptions qualify, a separate PostgreSQL 18.7 fixture
+inserted one digest and encoded length under distinct history IDs into a
+temporary copy of the table and indexes. After `ANALYZE`,
+`pg_total_relation_size` returned 1,048,576 bytes for 10,000 observations and
+9,953,280 bytes for 100,000. These figures cover the description table and its
+indexes alone.
+
 ## Remaining acceptance
 
 Project #3 tracks the remaining #514 work on `project/workload-lifecycle`.
-Production qualification still needs worker RSS on constrained deployments,
-complete online catalog/index allocation at 10,000 and 100,000 versions,
-end-to-end cold reads within P2, and subset-rewrite measurements. See the
-[lifecycle budgets](lifecycle_budgets.md) for the profiles and pass rules.
-The fixture holds artifact bytes in memory. Durable storage and reader
-compatibility across future format versions require separate evidence before
-production deployment or primary-copy retirement.
+The collection fixtures above cover packed metadata allocation and complete
+exact and as-of reads. The deployment qualification still needs worker RSS
+under concurrent load, catalog and read costs for other supported history
+families and their dependencies, and subset rewrites on durable storage.
+Primary-copy retirement also requires fenced publication and recovery evidence.
+See the [lifecycle budgets](lifecycle_budgets.md) for the workload and pass rules.
