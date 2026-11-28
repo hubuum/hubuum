@@ -1,5 +1,6 @@
 //! Short native catalog/capture transactions; external segment I/O is service-owned.
 mod cleanup;
+mod pins;
 use super::*;
 use crate::PostgresConnection;
 use chrono::{DateTime, Utc};
@@ -258,6 +259,19 @@ impl PostgresStorage {
 }
 #[async_trait]
 impl HistoryArchiveStorage for PostgresStorage {
+    async fn history_archive_pinned_copies(
+        &self,
+        target: StorageRecordIdentity,
+        fence: ApplicationFence,
+    ) -> Result<HistoryArchivePinnedCopies, StorageError> {
+        self.runtime()
+            .with_control_connection(async |connection| {
+                pins::read_on(connection, target, fence).await
+            })
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn load_history_archive_cleanup(
         &self,
         request: &HistoryArchiveCleanupRequest,

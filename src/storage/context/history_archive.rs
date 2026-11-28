@@ -1,15 +1,34 @@
 use super::*;
 use hubuum_domain::{PrincipalIdentity, ResourceIdentity};
 use hubuum_storage_core::{
-    HistoryArchiveCapture, HistoryArchiveCaptureRequest, HistoryArchiveCatalog,
+    ApplicationFence, HistoryArchiveCapture, HistoryArchiveCaptureRequest, HistoryArchiveCatalog,
     HistoryArchiveCatalogGeneration, HistoryArchiveCleanupClaim, HistoryArchiveCleanupRequest,
     HistoryArchiveCleanupSettlement, HistoryArchiveDescriptor, HistoryArchiveExecutionPermit,
-    HistoryArchivePublicationClaim, HistoryArchivePublicationRequest, HistoryArchiveStorage,
+    HistoryArchivePinnedCopies, HistoryArchivePublicationClaim, HistoryArchivePublicationRequest,
+    HistoryArchiveStorage, StorageRecordIdentity,
 };
 use uuid::Uuid;
 
 #[async_trait]
 impl HistoryArchiveStorage for StorageHandle {
+    async fn history_archive_pinned_copies(
+        &self,
+        target: StorageRecordIdentity,
+        fence: ApplicationFence,
+    ) -> Result<HistoryArchivePinnedCopies, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "history_archive_pinned_copies",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .history_archive_pinned_copies(target, fence)
+                    .await)
+            },
+        )
+        .await
+    }
+
     async fn load_history_archive_cleanup(
         &self,
         request: &HistoryArchiveCleanupRequest,

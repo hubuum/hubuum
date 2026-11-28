@@ -227,6 +227,27 @@ fn cleanup_claim(
 
 #[async_trait]
 impl HistoryArchiveStorage for MemoryStorage {
+    async fn history_archive_pinned_copies(
+        &self,
+        target: StorageRecordIdentity,
+        fence: ApplicationFence,
+    ) -> Result<HistoryArchivePinnedCopies, StorageError> {
+        let state = self.state.read_control().await;
+        if state.application_control.fence() != fence {
+            return Err(StorageError::conflict(
+                "Archive pin observation fence changed",
+            ));
+        }
+        let pins = state
+            .history_archive
+            .captures
+            .values()
+            .filter_map(HistoryArchiveCapture::archive)
+            .filter(|descriptor| descriptor.identity() == target)
+            .map(|descriptor| descriptor.location().clone());
+        HistoryArchivePinnedCopies::from_locations(target, fence, pins)
+    }
+
     async fn load_history_archive_cleanup(
         &self,
         request: &HistoryArchiveCleanupRequest,
