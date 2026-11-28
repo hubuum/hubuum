@@ -4,6 +4,7 @@ use std::fmt;
 
 use chrono::NaiveDateTime;
 use hubuum_events_core::EventSubscriptionFilter;
+use hubuum_storage_core::ApiRequestRejection;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -698,7 +699,56 @@ pub struct ImportRequest {
     pub graph: ImportGraph,
 }
 
+/// The number of top-level task items in an import admitted for HTTP preparation.
+/// Nested candidates consume the request budget but do not create task progress rows.
+pub(crate) struct AdmittedImportItems(i32);
+
+impl AdmittedImportItems {
+    const MAX_CANDIDATES: usize = 10_000;
+
+    pub(crate) const fn task_items(&self) -> i32 {
+        self.0
+    }
+}
+
 impl ImportRequest {
+    pub(crate) fn admit_items(&self) -> Result<AdmittedImportItems, ApiError> {
+        let too_many = || ApiError::ApiRequestAdmission(ApiRequestRejection::Candidates);
+        let items = self.total_items();
+        let mut remaining = AdmittedImportItems::MAX_CANDIDATES
+            .checked_sub(items)
+            .ok_or_else(too_many)?;
+        let mut charge = |count| -> Result<(), ApiError> {
+            remaining = remaining.checked_sub(count).ok_or_else(too_many)?;
+            Ok(())
+        };
+        for membership in &self.graph.group_memberships {
+            charge(membership.sources.len())?;
+        }
+        for permission in &self.graph.collection_permissions {
+            charge(permission.permissions.len())?;
+        }
+        for template in &self.graph.export_templates {
+            if let Some(related) = template
+                .include
+                .as_ref()
+                .and_then(|include| include.related_objects.as_ref())
+            {
+                charge(related.len())?;
+            }
+        }
+        for target in &self.graph.remote_targets {
+            charge(target.allowed_subject_types.len())?;
+        }
+        for subscription in &self.graph.event_subscriptions {
+            charge(subscription.entity_types.len())?;
+            charge(subscription.actions.len())?;
+        }
+        Ok(AdmittedImportItems(
+            i32::try_from(items).map_err(|_| too_many())?,
+        ))
+    }
+
     /// Credential-bearing submissions require approval even for dry runs.
     pub fn contains_credentials(&self) -> bool {
         self.graph.principals.iter().any(|principal| matches!(&principal.subtype, ImportPrincipalSubtype::Human { password, password_hash, .. } if password.is_some() || password_hash.is_some()))
@@ -947,8 +997,8 @@ impl ImportRequest {
         Ok(())
     }
 
-    pub fn total_items(&self) -> i32 {
-        (self.graph.collections.len()
+    pub fn total_items(&self) -> usize {
+        self.graph.collections.len()
             + self.graph.identity_scopes.len()
             + self.graph.groups.len()
             + self.graph.principals.len()
@@ -962,7 +1012,7 @@ impl ImportRequest {
             + self.graph.export_templates.len()
             + self.graph.remote_targets.len()
             + self.graph.event_sinks.len()
-            + self.graph.event_subscriptions.len()) as i32
+            + self.graph.event_subscriptions.len()
     }
 
     pub fn dry_run(&self) -> bool {
@@ -1228,6 +1278,32 @@ mod tests {
         let mut graph = serde_json::Map::new();
         graph.insert(section.field_name().to_string(), serde_json::json!([item]));
         assert!(serde_json::from_value::<ImportGraph>(serde_json::Value::Object(graph)).is_err());
+    }
+
+    #[rstest]
+    #[case::membership(serde_json::json!({"group_memberships": [{"sources": [{"source":"sync","source_key":"k"}]}]}))]
+    #[case::permission(serde_json::json!({"collection_permissions": [{"group_key":{"groupname":"g"},"permissions":["ReadClass"]}]}))]
+    #[case::template(serde_json::json!({"export_templates": [{"name":"t","description":"","content_type":"text/plain","template":"","kind":"export","include":{"related_objects":{"a":{"class_id":1}}}}]}))]
+    #[case::target(serde_json::json!({"remote_targets": [{"name":"t","description":"","method":"get","url_template":"","allowed_subject_types":["class"],"timeout_ms":500,"enabled":false}]}))]
+    #[case::entities(serde_json::json!({"event_subscriptions":[{"name":"s","description":"","entity_types":["class"],"actions":[],"enabled":false}]}))]
+    #[case::actions(serde_json::json!({"event_subscriptions":[{"name":"s","description":"","entity_types":[],"actions":["delete"],"enabled":false}]}))]
+    fn nested_import_preparation_candidates_share_one_graph_budget(
+        #[case] graph: serde_json::Value,
+    ) {
+        use crate::models::ImportCollectionInput;
+        use hubuum_storage_core::ApiRequestRejection;
+        let row: ImportCollectionInput =
+            serde_json::from_value(serde_json::json!({"name":"c","description":""})).unwrap();
+        let mut request = request_with_graph(serde_json::from_value(graph).unwrap());
+        request.graph.collections = vec![row.clone(); 9_998];
+        assert_eq!(request.admit_items().unwrap().task_items(), 9_999);
+        request.graph.collections.push(row);
+        assert!(matches!(
+            request.admit_items(),
+            Err(crate::errors::ApiError::ApiRequestAdmission(
+                ApiRequestRejection::Candidates
+            ))
+        ));
     }
 
     fn request_with_graph(graph: ImportGraph) -> ImportRequest {

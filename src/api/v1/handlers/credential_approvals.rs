@@ -22,6 +22,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         (status = 400, description = "Invalid operation", body = ApiErrorResponse),
         (status = 401, description = "Authentication failed", body = ApiErrorResponse),
         (status = 403, description = "Human or administrative authority required", body = ApiErrorResponse),
+        (status = 413, description = "Import credential approval exceeds 10,000 preparation candidates (api_capacity_candidates). Reduce the import. Cache-Control: no-store; no Retry-After.", body = crate::api::response::ApiRequestAdmissionErrorResponse),
         (status = 429, description = "Reauthentication throttled", body = ApiErrorResponse),
         (status = 503, description = "Authentication provider unavailable", body = ApiErrorResponse)))]
 #[post("")]

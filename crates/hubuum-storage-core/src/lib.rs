@@ -554,9 +554,9 @@ impl StorageError {
             ApiRequestRejection::Deployment | ApiRequestRejection::Principal => {
                 StorageErrorKind::RateLimited
             }
-            ApiRequestRejection::InputBytes | ApiRequestRejection::OutputBytes => {
-                StorageErrorKind::InputTooLarge
-            }
+            ApiRequestRejection::InputBytes
+            | ApiRequestRejection::Candidates
+            | ApiRequestRejection::OutputBytes => StorageErrorKind::InputTooLarge,
             ApiRequestRejection::DeadlineExceeded => StorageErrorKind::InvalidInput,
             ApiRequestRejection::IdentityUnavailable
             | ApiRequestRejection::ReconciliationRequired => StorageErrorKind::Unavailable,

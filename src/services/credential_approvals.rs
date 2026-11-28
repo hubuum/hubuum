@@ -179,6 +179,9 @@ pub async fn issue(
         return Err(ApiError::Unauthorized("Authentication failed".into()));
     }
     actor.authorize(context, &operation).await?;
+    if let CredentialOperation::ImportCredentials { import } = &operation {
+        import.admit_items()?;
+    }
     operation.resolve_defaults()?;
     if let CredentialOperation::CreateToken {
         principal_id,
@@ -377,12 +380,11 @@ fn observe_consumption<T>(
 pub(crate) fn approved_import(
     approved: ApprovedCredentialOperation,
     context: &EventContext,
-) -> Result<(crate::models::ImportRequest, StorageCredentialUse), ApiError> {
+) -> Result<StorageCredentialUse, ApiError> {
     match approved.operation {
-        CredentialOperation::ImportCredentials { import } => Ok((
-            *import,
-            StorageCredentialUse::new(approved.claim, context.clone()),
-        )),
+        CredentialOperation::ImportCredentials { .. } => {
+            Ok(StorageCredentialUse::new(approved.claim, context.clone()))
+        }
         _ => Err(ApiError::InternalServerError(
             "Invalid approved import operation".into(),
         )),

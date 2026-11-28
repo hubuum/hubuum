@@ -761,7 +761,11 @@ impl Modify for OperationDefaults {
                     for (status, description) in [
                         (
                             "413",
-                            "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+                            if path == "/api/v1/imports" {
+                                "The import exceeds 10,000 preparation candidates (api_capacity_candidates), or input/output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes). Reduce the request. Cache-Control: no-store; no Retry-After."
+                            } else {
+                                "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After."
+                            },
                         ),
                         (
                             "422",

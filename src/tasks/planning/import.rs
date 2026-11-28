@@ -430,7 +430,7 @@ pub(super) async fn plan_import_with_admin_status<C: AuthorizationContext>(
         mode: request.mode(),
         state,
         outcome: PlanningOutcome {
-            planned_items: Vec::with_capacity(request.total_items() as usize),
+            planned_items: Vec::with_capacity(request.total_items()),
             failures: Vec::new(),
             aborted: false,
         },
