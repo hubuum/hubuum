@@ -192,6 +192,14 @@ pub struct AppConfig {
     #[command(flatten)]
     #[serde(default)]
     pub artifacts: artifacts::ArtifactOptions,
+    /// Registered warm archive destination and private directory (UUID=ABSOLUTE_DIRECTORY).
+    #[arg(
+        long,
+        env = "HUBUUM_HISTORY_ARCHIVE_FILESYSTEM",
+        value_name = "UUID=ABSOLUTE_DIRECTORY",
+        hide_env_values = true
+    )]
+    pub(crate) history_archive_filesystem: Option<artifacts::HistoryArchiveFilesystem>,
     #[command(flatten)]
     #[serde(default)]
     pub control_recovery: ControlRecoveryOptions,

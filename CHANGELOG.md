@@ -19,6 +19,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   database, apply the archive migrations, reconcile grants and start matching
   writers. Roll forward once displaced locations are recorded. The migrations
   cannot reconstruct locations lost before installation.
+- The internal collection history service can read exact versions and as-of
+  snapshots from a registered Unix filesystem archive. Set
+  `HUBUUM_HISTORY_ARCHIVE_FILESYSTEM` to its destination UUID and private
+  directory, joined by `=`. Only published copies are readable. Erasure planning
+  checks each observed copy in its recorded destination before admitting a rewrite.
 
 - Offline recovery can reconcile an interrupted filesystem archive publication
   against its original private root and committed v2 intent, including a crash

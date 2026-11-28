@@ -1,6 +1,7 @@
 //! Admit the archive inputs to an exact erasure batch before staging any output.
 use super::*;
 use crate::errors::ApiError;
+use crate::services::archive::HistoryArchiveReaders;
 use crate::services::artifacts::error as artifact_error;
 use hubuum_storage_core::{
     ApplicationFence, HistoryArchiveCatalogGeneration, HistoryArchiveStorage,
@@ -40,10 +41,10 @@ impl SegmentRewriteSelection {
     /// Observe every selected version through the privileged storage capability.
     /// Group shared segments before reading their indexes, and charge each
     /// physical selected frame and its bytes to the same batch.
-    pub async fn admit_observed_archive_copies<S: ArtifactStore + ?Sized>(
+    pub async fn admit_observed_archive_copies(
         &self,
         operator: &impl HistoryArchiveStorage,
-        store: &S,
+        readers: &HistoryArchiveReaders,
         fence: ApplicationFence,
         index_budget: &mut ByteBudget,
     ) -> Result<ObservedArchiveRewrite, ApiError> {
@@ -93,7 +94,8 @@ impl SegmentRewriteSelection {
         }
         let mut locations = Vec::with_capacity(physical.len());
         for (location, targets) in physical.into_values() {
-            let source = RetainedHistorySegment::open(store, &location, index_budget)
+            let store = readers.for_reference(&location);
+            let source = RetainedHistorySegment::open(store.as_ref(), &location, index_budget)
                 .await
                 .map_err(artifact_error)?;
             admission = admission

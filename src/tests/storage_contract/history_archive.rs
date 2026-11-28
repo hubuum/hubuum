@@ -993,7 +993,7 @@ async fn rewrite_verifies_displaced_and_current_copies_without_a_query_id(
         let plan = batch
             .admit_observed_archive_copies(
                 &pin_operator(ctx),
-                store.as_ref(),
+                ctx.context.history_archive_readers(),
                 ctx.permit.fence(),
                 &mut budget,
             )
@@ -1100,7 +1100,7 @@ async fn observed_rewrite_admits_shared_segments_once(#[case] include_hot_only: 
             .unwrap()
             .admit_observed_archive_copies(
                 &pin_operator(ctx),
-                store.as_ref(),
+                ctx.context.history_archive_readers(),
                 ctx.permit.fence(),
                 &mut budget,
             )
@@ -1886,3 +1886,6 @@ mod allocation;
 
 #[cfg(all(unix, feature = "integration-test-support"))]
 mod claim_crash;
+
+#[cfg(unix)]
+mod filesystem;

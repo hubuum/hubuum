@@ -1,7 +1,9 @@
 //! Inactive public-path, collection-only query service. A caller must already
 //! own a registered Legacy runtime; this module never advertises online expiry.
 use chrono::{DateTime, Utc};
-use hubuum_artifacts::ArtifactError;
+use std::sync::Arc;
+
+use hubuum_artifacts::{ArtifactError, ArtifactReference, ArtifactStore, DestinationId};
 use hubuum_budget::ByteLimit;
 use hubuum_domain::{CollectionId, PrincipalIdentity, ResourceId, ResourceIdentity};
 use hubuum_storage_core::{
@@ -18,6 +20,7 @@ use uuid::Uuid;
 
 use super::access::authorize_history_snapshot;
 use super::segments::{RetainedHistorySegment, SegmentScope};
+use crate::config::artifacts::HistoryArchiveFilesystem;
 use crate::errors::ApiError;
 use crate::models::{HistoryAuthorizationSnapshot, Permissions, TokenScope};
 use crate::permissions::AppContext;
@@ -25,6 +28,42 @@ use crate::storage::{StorageHandle, storage_handle};
 use crate::traits::AuthzSubject;
 
 const ATTEMPT_BYTES: usize = 16 * 1024 * 1024;
+
+/// Reader selection for immutable archive references captured by this process.
+#[derive(Clone)]
+pub struct HistoryArchiveReaders {
+    primary: Arc<dyn ArtifactStore>,
+    filesystem: Option<(DestinationId, Arc<dyn ArtifactStore>)>,
+}
+
+impl HistoryArchiveReaders {
+    pub(crate) fn new(primary: Arc<dyn ArtifactStore>) -> Self {
+        Self {
+            primary,
+            filesystem: None,
+        }
+    }
+
+    pub(crate) async fn configure_filesystem(
+        &mut self,
+        config: Option<&HistoryArchiveFilesystem>,
+    ) -> Result<(), ApiError> {
+        self.filesystem = match config {
+            Some(config) => Some(config.open().await?),
+            None => None,
+        };
+        Ok(())
+    }
+
+    pub fn for_reference(&self, reference: &ArtifactReference) -> Arc<dyn ArtifactStore> {
+        if let Some((id, store)) = &self.filesystem
+            && *id == reference.identity().destination()
+        {
+            return store.clone();
+        }
+        self.primary.clone()
+    }
+}
 
 pub struct HistoryArchiveRequest {
     collection: CollectionId,
@@ -73,6 +112,7 @@ pub struct HistoryArchiveQuery {
     permit: HistoryArchiveExecutionPermit,
     owner: HistoryArchiveExecutionOwner,
     storage: StorageHandle,
+    archive_reader: Option<Arc<dyn ArtifactStore>>,
 }
 
 async fn principal<S: AuthzSubject + ?Sized>(
@@ -271,6 +311,11 @@ impl HistoryArchiveQuery {
                     permit: permit.clone(),
                     owner,
                     storage: storage.clone(),
+                    archive_reader: capture.archive().map(|descriptor| {
+                        context
+                            .history_archive_readers()
+                            .for_reference(descriptor.location())
+                    }),
                 };
                 // Configured authorization may outlive the original runtime or
                 // application fence. Never admit a handle using stale authority.
@@ -390,7 +435,9 @@ impl HistoryArchiveQuery {
                     Err(error) => return Err(error.into()),
                 };
                 let descriptor = capture.archive().expect("captured pin");
-                let store = self.storage.artifact_store();
+                let store = self.archive_reader.as_ref().ok_or_else(|| {
+                    ApiError::ServiceUnavailable("Captured archive destination unavailable".into())
+                })?;
                 let mut budget = ByteLimit::new(ATTEMPT_BYTES).start();
                 let read = async {
                     let segment = RetainedHistorySegment::open(
