@@ -25,16 +25,23 @@ intervals and read epochs through typed error evidence and restore remapping.
 Preserve both archive-budget and lifecycle-gap evidence through adapter errors;
 API request rejection reasons keep their existing priority.
 
-**Breaking archive pin lookup.** Implement `history_archive_pinned_copies`
-under operator database authority. Observe the exact resource, version, and
-application fence together. Include every retained capture across principals,
-including expired captures that still occupy storage. When reclaiming a capture,
-retain its exact physical reference for erasure review in the same transaction.
-Store only the resource/version pair, immutable physical identities and manifest
-digest. Repeated captures of the same reference share one entry. Lookups reject
-more than 1,024 distinct locations. Preserve distinct physical
-locations and reject conflicting manifests for one immutable identity. Catalog,
-backup and unreferenced artifact discovery require separate observations.
+**Breaking archive copy history lookup.** Implement `history_archive_copy_history`
+under operator database authority. This replaces the unreleased
+`history_archive_pinned_copies` method and returns `HistoryArchiveCopyHistory`.
+Update any dashboards using the draft operation label to `history_archive_copy_history`.
+Observe the exact resource, version and application fence together. Include
+retained query captures across principals, and keep their immutable references
+when reclaiming them. Record each former catalog location in the same transaction
+as the replacement, including copies never captured by a query. Complete adapters
+can use `HistoryArchiveCatalog::publication` to derive the next generation and
+its displaced locations from the same validated input. A failed publication must
+roll back its evidence. A repeat of the same location adds no obligation.
+
+Return each immutable location once and reject conflicting manifests. Lookups
+allow up to 1,024 capture references, 1,024 historical references and 1,024
+distinct physical locations in total. The current catalog, backups and unpublished
+artifacts need their own observations. History begins when the relevant migration
+is installed.
 
 **Breaking archive recovery capability.** Complete adapters must implement
 `load_history_archive_cleanup` and `settle_history_archive_cleanup` under

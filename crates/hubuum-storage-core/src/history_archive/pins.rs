@@ -6,40 +6,40 @@ use super::{
     StorageRecordIdentity,
 };
 
-/// Immutable locations named by stored captures or by the compact evidence left on reclamation.
+/// Immutable locations named by query captures or retained after reclamation or catalog replacement.
 /// A pin may outlive its query or original image. The observation grants no retirement authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HistoryArchivePinnedCopies {
+pub struct HistoryArchiveCopyHistory {
     target: StorageRecordIdentity,
     fence: ApplicationFence,
     locations: Vec<ArtifactReference>,
 }
 
-impl HistoryArchivePinnedCopies {
+impl HistoryArchiveCopyHistory {
     pub fn from_locations(
         target: StorageRecordIdentity,
         fence: ApplicationFence,
         locations: impl IntoIterator<Item = ArtifactReference>,
     ) -> Result<Self, StorageError> {
-        Self::from_capture_sources(target, fence, locations, std::iter::empty())
+        Self::from_sources(target, fence, locations, std::iter::empty())
     }
 
-    pub fn from_capture_sources(
+    pub fn from_sources(
         target: StorageRecordIdentity,
         fence: ApplicationFence,
         live: impl IntoIterator<Item = ArtifactReference>,
-        reclaimed: impl IntoIterator<Item = ArtifactReference>,
+        historical: impl IntoIterator<Item = ArtifactReference>,
     ) -> Result<Self, StorageError> {
         let mut distinct = BTreeMap::new();
         // Bound each source before deduplication, and the physical union after it.
         for (index, reference) in live
             .into_iter()
             .enumerate()
-            .chain(reclaimed.into_iter().enumerate())
+            .chain(historical.into_iter().enumerate())
         {
             if index >= HISTORY_ARCHIVE_MAX_CAPTURES {
                 return Err(StorageError::input_too_large(
-                    "Retained archive pin count exceeds capacity",
+                    "Archive copy history exceeds its source limit",
                 ));
             }
             let id = reference.identity();
@@ -55,7 +55,7 @@ impl HistoryArchivePinnedCopies {
                 }
                 Entry::Occupied(entry) if entry.get() != &reference => {
                     return Err(StorageError::conflict(
-                        "Retained archive pins disagree on the immutable manifest",
+                        "Archive copy references disagree on the immutable manifest",
                     ));
                 }
                 Entry::Occupied(_) => {}
@@ -88,8 +88,8 @@ mod tests {
 
     fn observe(
         locations: impl IntoIterator<Item = ArtifactReference>,
-    ) -> Result<HistoryArchivePinnedCopies, StorageError> {
-        HistoryArchivePinnedCopies::from_locations(
+    ) -> Result<HistoryArchiveCopyHistory, StorageError> {
+        HistoryArchiveCopyHistory::from_locations(
             StorageRecordIdentity::new(ResourceIdentity::generate(), VersionIdentity::generate()),
             ApplicationFence::new(Uuid::new_v4(), 0).unwrap(),
             locations,
@@ -120,7 +120,7 @@ mod tests {
         } else {
             ArtifactReference::from_catalog(ArtifactIdentity::new(destination), [1; 32])
         };
-        let observation = HistoryArchivePinnedCopies::from_capture_sources(
+        let observation = HistoryArchiveCopyHistory::from_sources(
             StorageRecordIdentity::new(ResourceIdentity::generate(), VersionIdentity::generate()),
             ApplicationFence::new(Uuid::new_v4(), 0).unwrap(),
             live,

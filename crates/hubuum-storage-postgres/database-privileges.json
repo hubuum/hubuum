@@ -87,6 +87,7 @@
     "hubuum_history_archive_resource_available",
     "hubuum_history_archive_catalog_read",
     "hubuum_history_archive_catalog_publish",
+    "hubuum_history_archive_record_displacements",
     "hubuum_history_archive_capture_read",
     "hubuum_history_archive_capture_save",
     "hubuum_history_producer_claim_execution",

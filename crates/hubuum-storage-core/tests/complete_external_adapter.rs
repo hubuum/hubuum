@@ -2806,11 +2806,11 @@ impl TaskArtifactStore for CompleteExternalAdapter {
 
 #[async_trait]
 impl HistoryArchiveStorage for CompleteExternalAdapter {
-    async fn history_archive_pinned_copies(
+    async fn history_archive_copy_history(
         &self,
         target: StorageRecordIdentity,
         fence: ApplicationFence,
-    ) -> Result<HistoryArchivePinnedCopies, StorageError> {
+    ) -> Result<HistoryArchiveCopyHistory, StorageError> {
         fixture_result()
     }
 

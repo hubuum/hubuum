@@ -14,13 +14,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   a file. Existing backup digest headers remain available.
 
 - **Breaking storage SDK 0.20 change.** Complete adapters must implement
-  `history_archive_pinned_copies` for privileged erasure review. Upgrade
-  adapters and run the migration that indexes retained archive captures by
-  resource and version. When an expired query capture is reclaimed, the database
-  retains its immutable location for erasure review. The lookup includes each
-  physical location once. Apply the capture reclamation migration before
-  reopening writers. Roll forward after the first such record has been stored.
-  Earlier reclaimed pins cannot be reconstructed by this migration.
+  `history_archive_copy_history` for privileged erasure review. This replaces
+  the unreleased `history_archive_pinned_copies` method and metric label.
+  Update draft-branch dashboards to the new label. Query reclamation and catalog
+  replacement preserve the immutable location of each former copy, including
+  copies never held by queries. Stop API and worker processes, back up the
+  database, apply the archive migrations, reconcile grants and start matching
+  writers. Roll forward once displaced locations are recorded. The migrations
+  cannot reconstruct locations lost before installation.
 
 - Offline recovery can reconcile an interrupted filesystem archive publication
   against its original private root and committed v2 intent, including a crash

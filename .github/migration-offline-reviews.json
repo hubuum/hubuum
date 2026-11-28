@@ -139,6 +139,13 @@
           "tasks_wait_shape"
         ]
       }
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-28-000003_archive_catalog_displacements/up.sql",
+      "sha256": "3e215be157480b25f0018837e504ff3c24c23bd9e64484e48712e81737f9b522",
+      "reason": "Catalog replacements must record displaced immutable locations in the same transaction. Earlier writers cannot provide that evidence.",
+      "upgrade_action": "Stop API and worker processes, back up the database, run hubuum-admin --migrate, reconcile runtime grants and start matching writers. Roll forward after the first displaced location. See docs/history_archive_reads.md.",
+      "drop_constraints": {}
     }
   ]
 }
