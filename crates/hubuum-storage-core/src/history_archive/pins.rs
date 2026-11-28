@@ -6,7 +6,7 @@ use super::{
     StorageRecordIdentity,
 };
 
-/// Immutable locations still named by retained query captures in one observation.
+/// Immutable locations named by stored captures or by the compact evidence left on reclamation.
 /// A pin may outlive its query or original image. The observation grants no retirement authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HistoryArchivePinnedCopies {
@@ -21,8 +21,22 @@ impl HistoryArchivePinnedCopies {
         fence: ApplicationFence,
         locations: impl IntoIterator<Item = ArtifactReference>,
     ) -> Result<Self, StorageError> {
+        Self::from_capture_sources(target, fence, locations, std::iter::empty())
+    }
+
+    pub fn from_capture_sources(
+        target: StorageRecordIdentity,
+        fence: ApplicationFence,
+        live: impl IntoIterator<Item = ArtifactReference>,
+        reclaimed: impl IntoIterator<Item = ArtifactReference>,
+    ) -> Result<Self, StorageError> {
         let mut distinct = BTreeMap::new();
-        for (index, reference) in locations.into_iter().enumerate() {
+        // Bound each source before deduplication, and the physical union after it.
+        for (index, reference) in live
+            .into_iter()
+            .enumerate()
+            .chain(reclaimed.into_iter().enumerate())
+        {
             if index >= HISTORY_ARCHIVE_MAX_CAPTURES {
                 return Err(StorageError::input_too_large(
                     "Retained archive pin count exceeds capacity",
@@ -33,6 +47,11 @@ impl HistoryArchivePinnedCopies {
             match distinct.entry(key) {
                 Entry::Vacant(entry) => {
                     entry.insert(reference);
+                    if distinct.len() > HISTORY_ARCHIVE_MAX_CAPTURES {
+                        return Err(StorageError::input_too_large(
+                            "Archive copy inventory exceeds capacity",
+                        ));
+                    }
                 }
                 Entry::Occupied(entry) if entry.get() != &reference => {
                     return Err(StorageError::conflict(
@@ -86,6 +105,38 @@ mod tests {
         ])
         .unwrap_err();
         assert_eq!(error.kind(), crate::StorageErrorKind::Conflict);
+    }
+
+    #[rstest::rstest]
+    #[case::same_physical_identity(true)]
+    #[case::additional_physical_identity(false)]
+    fn union_at_the_distinct_location_bound(#[case] shared: bool) {
+        let destination = DestinationId::generate();
+        let live: Vec<_> = (0..HISTORY_ARCHIVE_MAX_CAPTURES)
+            .map(|_| ArtifactReference::from_catalog(ArtifactIdentity::new(destination), [1; 32]))
+            .collect();
+        let historical = if shared {
+            live[0].clone()
+        } else {
+            ArtifactReference::from_catalog(ArtifactIdentity::new(destination), [1; 32])
+        };
+        let observation = HistoryArchivePinnedCopies::from_capture_sources(
+            StorageRecordIdentity::new(ResourceIdentity::generate(), VersionIdentity::generate()),
+            ApplicationFence::new(Uuid::new_v4(), 0).unwrap(),
+            live,
+            [historical],
+        );
+        if shared {
+            assert_eq!(
+                observation.unwrap().locations().len(),
+                HISTORY_ARCHIVE_MAX_CAPTURES
+            );
+        } else {
+            assert_eq!(
+                observation.unwrap_err().kind(),
+                crate::StorageErrorKind::InputTooLarge
+            );
+        }
     }
 
     #[test]

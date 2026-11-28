@@ -289,7 +289,8 @@ Complete adapters must implement `register_history_runtime`, `capture_history_li
 adapter clock with application incarnation and history/deletion revision fences.
 The unreleased 0.20 archive contract requires `history_archive_pinned_copies`.
 Upgrade complete adapters to return the fenced set of immutable locations from
-retained captures for one resource/version pair under operator database authority.
+current and reclaimed captures for one resource/version pair under operator database
+authority. Preserve a compact copy reference when releasing a capture.
 
 The unreleased 0.20 archive contract also requires `load_history_archive_cleanup`
 and `settle_history_archive_cleanup`. Upgrade every complete adapter to compare

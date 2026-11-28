@@ -680,6 +680,62 @@ async fn expired_archive_pin_remains_visible_until_capture_storage_reclaims_it()
 
 #[cfg(feature = "integration-test-support")]
 #[actix_web::test]
+async fn erasure_lookup_retains_relocated_copy_after_last_query_capture_is_reclaimed() {
+    with_overflow_backend(async |ctx| {
+        let row = ctx.closed().await;
+        let point = HistoryArchivePoint::Exact {
+            version: row.identity().version(),
+        };
+        let old = ctx.descriptor(&row, false, vec![]).await;
+        let original = ctx.publish(old.clone()).await;
+        let expiry = Utc::now() + TimeDelta::seconds(2);
+        let query = ctx
+            .with_archive(ctx.storage.capture_history_archive(
+                HistoryArchiveCaptureRequest::new(
+                    ctx.principal,
+                    HistoryArchiveSelection::new(
+                        StorageBackupHistorySection::CollectionHistory,
+                        ctx.resource,
+                        point.clone(),
+                    ),
+                    original.generation(),
+                    expiry,
+                ),
+                &ctx.archive_permit,
+            ))
+            .await
+            .unwrap();
+        let replacement = ctx.descriptor(&row, false, vec![]).await;
+        ctx.publish(replacement.clone()).await;
+        if let Ok(remaining) = (expiry - Utc::now()).to_std() {
+            tokio::time::sleep(remaining).await;
+        }
+        ctx.capture(point).await;
+        let reclaimed = ctx
+            .with_archive(ctx.storage.history_archive_capture(
+                query.id(),
+                ctx.principal,
+                &ctx.archive_permit,
+            ))
+            .await
+            .unwrap();
+        assert!(
+            reclaimed.is_none(),
+            "the original query capture was not reclaimed"
+        );
+        let observation = pin_operator(ctx)
+            .history_archive_pinned_copies(row.identity(), ctx.permit.fence())
+            .await
+            .unwrap();
+        assert_eq!(observation.locations().len(), 2);
+        assert!(observation.locations().contains(old.location()));
+        assert!(observation.locations().contains(replacement.location()));
+    })
+    .await;
+}
+
+#[cfg(feature = "integration-test-support")]
+#[actix_web::test]
 async fn application_role_cannot_read_private_archive_pin_locations() {
     if !hubuum_storage_postgres::test_support::database_role_tests_enabled() {
         return;

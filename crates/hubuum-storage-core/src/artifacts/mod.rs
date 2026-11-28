@@ -109,7 +109,7 @@ pub type ArtifactResult<T> = Result<T, ArtifactError>;
 
 /// Retained catalog reference. Readers resolve it against durable publication
 /// state and verify its manifest digest before releasing any bytes.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactReference {
     identity: ArtifactIdentity,

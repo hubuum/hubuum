@@ -1028,7 +1028,7 @@ pub use pins::HistoryArchivePinnedCopies;
 #[async_trait]
 pub trait HistoryArchiveStorage: Send + Sync {
     /// Privileged, read-only discovery across retained captures for one exact version.
-    /// Includes expired pins until they are physically removed from capture storage.
+    /// Includes expired captures and the immutable reference evidence preserved on reclamation.
     async fn history_archive_pinned_copies(
         &self,
         target: StorageRecordIdentity,

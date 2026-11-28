@@ -28,7 +28,11 @@ API request rejection reasons keep their existing priority.
 **Breaking archive pin lookup.** Implement `history_archive_pinned_copies`
 under operator database authority. Observe the exact resource, version, and
 application fence together. Include every retained capture across principals,
-including expired captures that still occupy storage. Preserve distinct physical
+including expired captures that still occupy storage. When reclaiming a capture,
+retain its exact physical reference for erasure review in the same transaction.
+Store only the resource/version pair, immutable physical identities and manifest
+digest. Repeated captures of the same reference share one entry. Lookups reject
+more than 1,024 distinct locations. Preserve distinct physical
 locations and reject conflicting manifests for one immutable identity. Catalog,
 backup and unreferenced artifact discovery require separate observations.
 
