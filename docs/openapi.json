@@ -3041,11 +3041,25 @@
                 },
                 "description": "Always no-store for credential-bearing artifacts"
               },
+              "Content-Digest": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "RFC 9530 SHA-256 digest of the complete response content"
+              },
               "Content-Disposition": {
                 "schema": {
                   "type": "string"
                 },
                 "description": "Attachment filename for the backup document"
+              },
+              "Content-Length": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Exact byte count of the complete backup document"
               },
               "Digest": {
                 "schema": {
@@ -20141,6 +20155,28 @@
         "responses": {
           "200": {
             "description": "Stored export output",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store"
+              },
+              "Content-Digest": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "RFC 9530 SHA-256 digest of the complete response content"
+              },
+              "Content-Length": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Exact byte count of the complete output"
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

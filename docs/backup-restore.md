@@ -49,25 +49,37 @@ snapshots and are restorable, including after further changes or deletions.
 
 The response is a background task. Poll `GET /api/v1/backups/{task_id}` and,
 after it succeeds, download `GET /api/v1/backups/{task_id}/output`. The output
-response includes `Digest` and `X-Hubuum-Backup-SHA256` headers. Stored outputs
-are served as attachments with `Cache-Control: no-store` and expire according
-to `HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS`.
+response includes `Content-Length` and `Content-Digest` alongside the legacy
+`Digest` and `X-Hubuum-Backup-SHA256` headers. Check the downloaded file's
+length and SHA-256 before staging it for restore. Stored outputs are served
+as attachments with `Cache-Control: no-store` and expire according to
+`HUBUUM_BACKUP_OUTPUT_RETENTION_HOURS`.
+See [download verification and retries](artifact_staging.md#integrity-and-downloads).
 
 Full backups contain integration configuration but exclude password hashes,
 authentication tokens, and token scopes. Passwords and tokens must be reset or
 reissued after a restore. Environment-backed secret values are also outside the
 database backup.
 
-Backup version `10` adds authoritative shared computed-definition history.
-Upgrade the restore server before using a version `10` backup; retain a
-pre-upgrade backup and matching binaries for rollback. Versions `6`
-through `9` remain accepted. Missing computed-definition history starts at the
-restore boundary, preserving older unavailable intervals. Versions `6` through
-`8` restore with no query usage declarations; legacy event defaults and sink
-grants are backfilled where needed. Collection sink ownership, explicit use grants, delivery
-policy, system subscriptions and terminal test deliveries remain preserved.
-Transient sink admission schedules reset on restore. Older servers cannot read
-version `10`, even when its definition history is empty. The format preserves
+The server writes format 12 and accepts formats 6 through 12. Upgrade restore
+readers before producing format 12 backups. Format 12 carries retained export
+artifacts in bounded frames. Restore verifies the frames and assigns new
+physical artifact identities. Retained backup outputs are excluded.
+[Artifact backup and restore](artifact_staging.md#backup-restore-and-upgrades)
+
+Format 11 introduced stable logical resource, version, principal and task
+identities. Older backups are upgraded during restore. Retained deletion or
+deduplication evidence can require a backup with provable identity correspondence.
+[Logical identity compatibility](logical_identity.md#upgrade-and-backup-compatibility)
+
+Format 10 introduced authoritative shared computed-definition history.
+For earlier backups, missing definition history starts at the restore boundary.
+Formats 6 through 8 also lack query usage declarations. Restore backfills legacy
+event defaults and sink grants where needed. Collection sink ownership, explicit
+use grants, delivery policy, system subscriptions and terminal test deliveries
+are preserved. Transient sink admission schedules reset on restore.
+
+The format preserves
 authoritative resource revisions, collection authorization-set revisions,
 temporal-history revisions, and event before/after
 revisions. It identifies sections by Hubuum resources rather than database
@@ -267,11 +279,14 @@ password and issue a new token before exercising authenticated endpoints.
 
 Treat a restorable backup as an upgrade prerequisite, especially when adopting
 the split database roles described in
-[PostgreSQL Database Roles](database_roles.md). The query usage update accepts
-formats 6 through 8 and emits format 9. Upgrade every API, worker, and restore
-executor before producing format 9 backups, and retain a pre-upgrade backup for
-rollback. Query usage declarations are portable; adapter-owned indexes and their
-ownership records are not. See [query usage recovery](query_usage.md#storage-and-recovery).
+[PostgreSQL Database Roles](database_roles.md). Stop older producers, preserve
+the database snapshot and independent control repository, and deploy matching
+API, worker and restore binaries with the project migrations and grants. Keep
+the old binaries and a pre-upgrade backup. Use the updated reader for format 12
+backups. Format 9 introduced portable query usage declarations. Reconcile
+adapter-owned indexes on the restore target.
+[Query usage recovery](query_usage.md#storage-and-recovery)
+
 When also crossing the collection integration update, stop all APIs, workers,
 and restore executors and take a PostgreSQL snapshot before migration. Binary-only
 rollback is unsupported: restore that snapshot and matching old binaries to recover,
