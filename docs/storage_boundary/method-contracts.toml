@@ -343,6 +343,19 @@ bounds = "validated QueryOptions limit and cursor-byte bounds"
 invalid_error = "InvalidInput"
 unsupported_error = "InvalidInput"
 
+[collection_profiles.archive_capture_pins]
+shape = "complete"
+ordering = "immutable destination, artifact, attempt, and object version ascending"
+duplicate_inputs = "one exact resource and version pair"
+missing_inputs = "an exact target without retained captures yields an empty set"
+multiplicity = "one reference per physical identity, with conflicting manifests rejected"
+completeness = "all still-stored captures naming the exact target, including expired captures"
+bounds = "at most 1024 physical pin rows before duplicate elimination"
+visibility = "operator control storage across principals and capture generations"
+snapshot = "one observation of the expected application incarnation and deletion revision together with the matching pins"
+invalid_error = "InvalidInput"
+unsupported_error = "InvalidInput"
+
 [collection_profiles.tree_children]
 shape = "complete"
 ordering = "collection id ascending"
@@ -1180,3 +1193,8 @@ unsupported_error = "InvalidInput"
 effect = "candidate_read"
 carrier = "HistoryLifecycleScan"
 profile = "history_lifecycle_candidates"
+
+[methods."HistoryArchiveStorage::history_archive_pinned_copies"]
+effect = "complete_read"
+carrier = "StorageRecordIdentity and ApplicationFence"
+profile = "archive_capture_pins"

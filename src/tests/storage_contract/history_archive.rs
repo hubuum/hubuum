@@ -576,6 +576,182 @@ async fn catalog_replacement_keeps_admitted_location_and_generation() {
     }
 }
 
+#[cfg(feature = "integration-test-support")]
+fn pin_operator(ctx: &TestContext) -> StorageHandle {
+    match ctx.storage.descriptor().kind() {
+        StorageBackendKind::Memory => ctx.storage.clone(),
+        StorageBackendKind::Postgres => {
+            StorageHandle::postgres(crate::test_support::postgres_test_pool(
+                &crate::test_support::archive_test_migration_database_url(),
+                2,
+            ))
+        }
+    }
+}
+
+#[cfg(feature = "integration-test-support")]
+#[actix_web::test]
+async fn pin_observation_finds_prior_locations_across_principals() {
+    with_overflow_backend(async |ctx| {
+        let row = ctx.closed().await;
+        let point = HistoryArchivePoint::Exact {
+            version: row.identity().version(),
+        };
+        let first = ctx.descriptor(&row, false, vec![]).await;
+        ctx.publish(first.clone()).await;
+        ctx.capture(point.clone()).await;
+        let second = ctx.descriptor(&row, false, vec![]).await;
+        let catalog = ctx.publish(second.clone()).await;
+        for _ in 0..2 {
+            ctx.with_archive(ctx.storage.capture_history_archive(
+                HistoryArchiveCaptureRequest::new(
+                    PrincipalIdentity::generate(),
+                    HistoryArchiveSelection::new(
+                        StorageBackupHistorySection::CollectionHistory,
+                        ctx.resource,
+                        point.clone(),
+                    ),
+                    catalog.generation(),
+                    Utc::now() + TimeDelta::hours(1),
+                ),
+                &ctx.archive_permit,
+            ))
+            .await
+            .unwrap();
+        }
+        ctx.publish(ctx.descriptor(&row, false, vec![]).await).await;
+        let pins = pin_operator(ctx)
+            .history_archive_pinned_copies(row.identity(), ctx.permit.fence())
+            .await
+            .unwrap();
+        assert_eq!(pins.target(), row.identity());
+        assert_eq!(pins.fence(), ctx.permit.fence());
+        assert_eq!(pins.locations().len(), 2);
+        assert!(pins.locations().contains(first.location()));
+        assert!(pins.locations().contains(second.location()));
+    })
+    .await;
+}
+
+#[cfg(feature = "integration-test-support")]
+#[actix_web::test]
+async fn expired_archive_pin_remains_visible_until_capture_storage_reclaims_it() {
+    with_overflow_backend(async |ctx| {
+        let row = ctx.closed().await;
+        let descriptor = ctx.descriptor(&row, false, vec![]).await;
+        let catalog = ctx.publish(descriptor.clone()).await;
+        let expiry = Utc::now() + TimeDelta::seconds(2);
+        let capture = ctx
+            .with_archive(ctx.storage.capture_history_archive(
+                HistoryArchiveCaptureRequest::new(
+                    ctx.principal,
+                    HistoryArchiveSelection::new(
+                        StorageBackupHistorySection::CollectionHistory,
+                        ctx.resource,
+                        HistoryArchivePoint::Exact {
+                            version: row.identity().version(),
+                        },
+                    ),
+                    catalog.generation(),
+                    expiry,
+                ),
+                &ctx.archive_permit,
+            ))
+            .await
+            .unwrap();
+        if let Ok(remaining) = (expiry - Utc::now()).to_std() {
+            tokio::time::sleep(remaining).await;
+        }
+        assert_eq!(
+            capture.coverage(Utc::now()),
+            HistoryArchiveCoverageState::Expired
+        );
+        let pins = pin_operator(ctx)
+            .history_archive_pinned_copies(row.identity(), ctx.permit.fence())
+            .await
+            .unwrap();
+        assert_eq!(
+            pins.locations(),
+            std::slice::from_ref(descriptor.location())
+        );
+    })
+    .await;
+}
+
+#[cfg(feature = "integration-test-support")]
+#[actix_web::test]
+async fn application_role_cannot_read_private_archive_pin_locations() {
+    if !hubuum_storage_postgres::test_support::database_role_tests_enabled() {
+        return;
+    }
+    let _guard = crate::test_support::RESTORE_TEST_LOCK.lock().await;
+    let pool = crate::test_support::postgres_test_pool(
+        &crate::test_support::archive_test_runtime_database_url(),
+        2,
+    );
+    let runtime = StorageHandle::postgres(pool);
+    let fence = runtime.read_application_control().await.unwrap().fence();
+    let target =
+        StorageRecordIdentity::new(ResourceIdentity::generate(), VersionIdentity::generate());
+    assert!(
+        runtime
+            .history_archive_pinned_copies(target, fence)
+            .await
+            .is_err()
+    );
+}
+
+#[cfg(feature = "integration-test-support")]
+#[rstest]
+#[case::another_resource(true)]
+#[case::another_version(false)]
+#[actix_web::test]
+async fn archive_pin_observation_matches_both_identities(#[case] another_resource: bool) {
+    with_overflow_backend(async |ctx| {
+        let row = ctx.closed().await;
+        ctx.publish(ctx.descriptor(&row, false, vec![]).await).await;
+        ctx.capture(HistoryArchivePoint::Exact {
+            version: row.identity().version(),
+        })
+        .await;
+        let target = if another_resource {
+            StorageRecordIdentity::new(ResourceIdentity::generate(), row.identity().version())
+        } else {
+            row.identity().next_version()
+        };
+        let pins = pin_operator(ctx)
+            .history_archive_pinned_copies(target, ctx.permit.fence())
+            .await
+            .unwrap();
+        assert!(pins.locations().is_empty());
+    })
+    .await;
+}
+
+#[cfg(feature = "integration-test-support")]
+#[rstest]
+#[case::incarnation(true)]
+#[case::revision(false)]
+#[actix_web::test]
+async fn stale_archive_pin_observation_fails_even_for_an_empty_result(#[case] changed_image: bool) {
+    with_overflow_backend(async |ctx| {
+        let current = ctx.permit.fence();
+        let stale = if changed_image {
+            ApplicationFence::new(uuid::Uuid::new_v4(), current.revision())
+        } else {
+            ApplicationFence::new(current.incarnation(), current.revision() + 1)
+        }
+        .unwrap();
+        let target = StorageRecordIdentity::new(ctx.resource, VersionIdentity::generate());
+        let error = pin_operator(ctx)
+            .history_archive_pinned_copies(target, stale)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), StorageErrorKind::Conflict);
+    })
+    .await;
+}
+
 #[rstest]
 #[case::missing(0, HistoryArchiveCoverageState::Unavailable)]
 #[case::corrupt(1, HistoryArchiveCoverageState::Corrupt)]
