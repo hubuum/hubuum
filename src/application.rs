@@ -530,6 +530,14 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
             )
         });
         let app_context = AppContext::new(storage, permission_backend)
+            .with_history_archive_filesystem(config.history_archive_filesystem.as_ref())
+            .await
+            .unwrap_or_else(|error| {
+                fatal_error(
+                    &format!("History archive configuration: {error}"),
+                    EXIT_CODE_CONFIG_ERROR,
+                )
+            })
             .with_task_receipts(task_receipts)
             .with_history_retention(config.control_recovery.clone())
             .with_configured_deployment_authorization(config.permission_backend);

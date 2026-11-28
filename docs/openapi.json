@@ -43205,6 +43205,7 @@
         "required": [
           "artifacts",
           "control_recovery_required",
+          "history_archive_filesystem_configured",
           "schema_validation",
           "query_observations",
           "server",
@@ -43244,6 +43245,9 @@
           },
           "exports": {
             "$ref": "#/components/schemas/ExportConfig"
+          },
+          "history_archive_filesystem_configured": {
+            "type": "boolean"
           },
           "network": {
             "$ref": "#/components/schemas/NetworkConfig"

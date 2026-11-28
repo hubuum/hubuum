@@ -1297,3 +1297,6 @@ mod supervision;
 
 #[cfg(all(unix, feature = "integration-test-support"))]
 mod claim_crash;
+
+#[cfg(unix)]
+mod filesystem;

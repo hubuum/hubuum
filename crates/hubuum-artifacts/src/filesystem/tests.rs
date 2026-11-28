@@ -1620,3 +1620,42 @@ async fn cleanup_receipt_waits_for_the_last_bounded_batch() {
             .exists()
     );
 }
+
+#[tokio::test]
+async fn registered_archive_reader_rejects_an_unknown_destination() {
+    let fixture = Fixture::new().await;
+    let root = fixture.root.path().canonicalize().unwrap();
+    assert!(matches!(
+        FilesystemArtifactStore::open_registered_destination(root, DestinationId::generate()).await,
+        Err(ArtifactError::NotFound)
+    ));
+}
+
+#[tokio::test]
+async fn registered_archive_reader_does_not_initialize_an_empty_root() {
+    let root = tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir()
+        .unwrap();
+    let path = root.path().canonicalize().unwrap();
+    assert!(
+        FilesystemArtifactStore::open_registered_destination(&path, DestinationId::generate())
+            .await
+            .is_err()
+    );
+    assert_eq!(path.read_dir().unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn registered_archive_reader_does_not_recreate_a_lost_lock() {
+    let fixture = Fixture::new().await;
+    let path = fixture.root.path().canonicalize().unwrap();
+    let store =
+        FilesystemArtifactStore::open_registered_destination(&path, fixture.destination.id())
+            .await
+            .unwrap();
+    let lock = path.join("lock");
+    std::fs::remove_file(&lock).unwrap();
+    assert!(store.manifest(&fixture.identity()).await.is_err());
+    assert!(!lock.exists());
+}

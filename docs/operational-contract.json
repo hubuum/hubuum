@@ -5392,6 +5392,26 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_HISTORY_ARCHIVE_FILESYSTEM",
+      "owner": "operations",
+      "exposure": "sensitive_metadata",
+      "value_kind": "string",
+      "default_is_set": false,
+      "default": [],
+      "dynamic_default": null,
+      "allowed_values": [],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER",
       "owner": "tasks",
       "exposure": "public",
@@ -8822,6 +8842,23 @@
           "default": [
             "4294967296"
           ],
+          "dynamic_default": null,
+          "allowed_values": [],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
+          "id": "history_archive_filesystem",
+          "long": "history-archive-filesystem",
+          "short": null,
+          "environment": "HUBUUM_HISTORY_ARCHIVE_FILESYSTEM",
+          "value_kind": "string",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [],
           "dynamic_default": null,
           "allowed_values": [],
           "required": false,
