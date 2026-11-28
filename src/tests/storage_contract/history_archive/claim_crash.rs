@@ -29,10 +29,20 @@ use uuid::Uuid;
 #[tokio::test]
 #[ignore = "subprocess for a committed archive claim interrupted during file staging"]
 async fn archive_producer() {
+    run_archive_producer(false).await;
+}
+
+#[tokio::test]
+#[ignore = "subprocess for an archive claim interrupted after independent readback"]
+async fn sealed_archive_producer() {
+    run_archive_producer(true).await;
+}
+
+async fn run_archive_producer(sealed: bool) {
     let root = std::env::current_dir().unwrap();
     let storage =
         StorageHandle::postgres(postgres_test_pool(&claim_test_runtime_database_url(), 4));
-    let (id, _lifetime) = if std::env::var_os("HUBUUM_TEST_SEALED_CLAIM").is_some() {
+    let (id, _lifetime) = if sealed {
         let source = archive_source(storage, &root).await;
         let attempt = source.reserve().await;
         let result = attempt.seal(&source.store).await.unwrap();
@@ -242,18 +252,13 @@ async fn retained_claim(pool: &PostgresPool, id: Uuid) -> (ArtifactCreationInten
 }
 
 async fn interrupted_claim(root: &Path, sealed: bool) -> Uuid {
-    let mut command = Command::new(std::env::current_exe().unwrap());
-    command.env_remove("HUBUUM_TEST_SEALED_CLAIM");
-    if sealed {
-        command.env("HUBUUM_TEST_SEALED_CLAIM", "1");
-    }
-    let mut producer = command
-        .args([
-            "--exact",
-            "tests::storage_contract::history_archive::claim_crash::archive_producer",
-            "--ignored",
-            "--nocapture",
-        ])
+    let test = if sealed {
+        "tests::storage_contract::history_archive::claim_crash::sealed_archive_producer"
+    } else {
+        "tests::storage_contract::history_archive::claim_crash::archive_producer"
+    };
+    let mut producer = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--ignored", "--nocapture"])
         .current_dir(root)
         .kill_on_drop(true)
         .spawn()
