@@ -1,6 +1,8 @@
 //! PostgreSQL shared-buffer counters for one complete service lookup.
 use crate::config::DEFAULT_DB_STATEMENT_TIMEOUT_MS;
-use crate::test_support::{archive_test_runtime_database_url, postgres_test_pool_with_timeout};
+use crate::test_support::{
+    archive_test_observer_url, archive_test_runtime_database_url, postgres_test_pool_with_timeout,
+};
 use chrono::{DateTime, Utc};
 use diesel::sql_types::{BigInt, Text, Timestamptz};
 use diesel::{QueryableByName, sql_query};
@@ -38,21 +40,15 @@ pub(super) struct Counters {
 
 impl PageProbe {
     pub(super) async fn new() -> Self {
-        let mut url = Url::parse(&archive_test_runtime_database_url()).unwrap();
+        let url = Url::parse(&archive_test_runtime_database_url()).unwrap();
         let database = IsolatedRestoreTarget::new(url.as_str(), &integration_test_database_url())
             .expect("page diagnostics require the separate archive fixture database");
         let runtime_login = url.username().to_owned();
-        let observer_login =
-            std::env::var("HUBUUM_TEST_DB_USER").unwrap_or_else(|_| "postgres".into());
-        assert_ne!(
-            runtime_login, observer_login,
-            "use split roles for the page diagnostic"
+        let observer = postgres_test_pool_with_timeout(
+            archive_test_observer_url(&url).as_str(),
+            1,
+            DEFAULT_DB_STATEMENT_TIMEOUT_MS,
         );
-        url.set_username(&observer_login).unwrap();
-        url.set_password(Some(&std::env::var("HUBUUM_TEST_DB_PASSWORD").unwrap()))
-            .unwrap();
-        let observer =
-            postgres_test_pool_with_timeout(url.as_str(), 1, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
         {
             let mut connection = observer.get().await.unwrap();
             database.validate_connection(&mut connection).await.unwrap();

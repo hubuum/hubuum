@@ -294,6 +294,8 @@ pub const PROCESS_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_MEASUREMENT_CPU_AFFINITY", Operations),
     option!("HUBUUM_MIGRATION_DATABASE_URL", Database, sensitive),
     option!("HUBUUM_DATABASE_ROLE_TESTS", Operations),
+    option!("HUBUUM_TEST_DB_USER", Operations, metadata),
+    option!("HUBUUM_TEST_DB_PASSWORD", Operations, sensitive),
     option!(
         "HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL",
         Operations,
