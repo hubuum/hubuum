@@ -208,6 +208,28 @@ impl FilesystemArtifactStore {
         Self::open_layout(root.as_ref(), false).await
     }
 
+    /// Open an initialized root only if its registry contains the requested destination.
+    pub async fn open_registered_destination(
+        root: impl AsRef<Path>,
+        destination: DestinationId,
+    ) -> ArtifactResult<Self> {
+        let store = Self::open_existing(root).await?;
+        store
+            .run(move |store| {
+                if store
+                    .destinations()?
+                    .iter()
+                    .any(|(id, _)| *id == destination)
+                {
+                    Ok(())
+                } else {
+                    Err(ArtifactError::NotFound.into())
+                }
+            })
+            .await?;
+        Ok(store)
+    }
+
     async fn open_layout(root: &Path, initialize: bool) -> Result<Self> {
         let root = root.to_owned();
         tokio::task::spawn_blocking(move || {
@@ -228,11 +250,16 @@ impl FilesystemArtifactStore {
                 #[cfg(test)]
                 fail_sync: Arc::new(std::sync::atomic::AtomicIsize::new(-1)),
             };
-            if initialize {
-                store.locked(|store| store.initialize_layout())?;
+            let flags = if initialize {
+                OFlags::RDWR | OFlags::CREATE
             } else {
-                let lock = open_file(&store.root, "lock", OFlags::RDWR)?;
-                fs::flock(&lock, FlockOperation::LockExclusive)?;
+                OFlags::RDWR
+            };
+            let lock = open_file(&store.root, "lock", flags)?;
+            fs::flock(&lock, FlockOperation::LockExclusive)?;
+            if initialize {
+                store.initialize_layout()?;
+            } else {
                 if read(&store.root, "format", ROOT_FORMAT.len())? != ROOT_FORMAT {
                     return Err(invalid());
                 }
@@ -258,7 +285,7 @@ impl FilesystemArtifactStore {
     fn locked<T>(&self, operation: impl FnOnce(&Self) -> Result<T>) -> Result<T> {
         // Open a distinct file description per operation: flock on a duplicated
         // descriptor would not exclude other operations in this process.
-        let lock = open_file(&self.root, "lock", OFlags::RDWR | OFlags::CREATE)?;
+        let lock = open_file(&self.root, "lock", OFlags::RDWR)?;
         fs::flock(&lock, FlockOperation::LockExclusive)?;
         operation(self)
     }
