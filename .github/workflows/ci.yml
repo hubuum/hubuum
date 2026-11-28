@@ -1521,6 +1521,8 @@ jobs:
         run: docker load --input "$RUNNER_TEMP/production-container.tar"
       - name: Verify committed functional corpus against the production image
         run: python3 tests/python/run.py integration corpus verify --image hubuum-server:ci
+      - name: Verify export discovery and download after logout and API restart
+        run: python3 -I -S tests/python/run.py integration task-reconnect --image hubuum-server:ci
       - name: Verify the Atlas documentation corpus against the production image
         run: python3 tests/python/run.py integration atlas verify --image hubuum-server:ci
       - name: Verify request capacity and crash recovery across two API replicas

@@ -291,7 +291,8 @@ for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/c
   test-corpora/recipe.json test-corpora/README.md tests/python/integration/corpus.py tests/python/unit/tooling/test_corpus.py \
   docs/assets/atlas/atlas.import.json docs/assets/atlas/atlas.backup.json \
   docs/assets/atlas/atlas.manifest.json docs/getting-started/example-dataset.md \
-  tests/python/integration/atlas.py tests/python/unit/tooling/test_atlas.py; do
+  tests/python/integration/atlas.py tests/python/unit/tooling/test_atlas.py \
+  tests/python/integration/task_reconnect.py; do
   corpus_output="$(bash "$classifier" "$corpus_path")"
   assert_flag "$corpus_output" code true
   assert_flag "$corpus_output" container true
