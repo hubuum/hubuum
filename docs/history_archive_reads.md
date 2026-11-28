@@ -209,7 +209,11 @@ manifest. New unclaimed segments use the compressed format-3 index.
 Sealing leaves the primary row authoritative. The archive catalog gains a
 location only through a separate handoff. Process death leaves the reservation
 and capture pin in the recovery ledger. Offline recovery can discard the
-unpublished attempt using its original private root and issuer.
+unpublished attempt using its original private root and issuer. Recovery checks
+the target version’s catalog, query pins and previously recorded locations before
+touching the filesystem. A reference to the claimed object version preserves the
+attempt and its reservation, including when the recorded manifest digest differs.
+Settlement checks the references again before it releases ownership.
 
 ## Bounds and remaining qualification
 

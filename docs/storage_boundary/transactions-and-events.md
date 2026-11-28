@@ -591,7 +591,7 @@ current claim admission cannot retire its physical obligation. Production remain
 Legacy, and generic expiry remains disabled.
 
 After readback through the original owned filesystem session,
-`checkpoint_verified_history_archive` records the SHA-256 digest of the
+`HistoryArchiveStorage::checkpoint_verified_history_archive` records the SHA-256 digest of the
 encoded artifact manifest on the same claim. Each attempt, including an
 identical retry, requires the original live producer, capture, deadline and
 catalog generation. A competing digest conflicts. Recovery reconstructs
@@ -601,11 +601,13 @@ The provider phase, catalog handoff and hot-copy retirement each require
 independent evidence. A recording alone leaves the capture and bytes charged.
 
 During isolated offline recovery, `HistoryArchiveStorage::load_history_archive_cleanup`
-reads the original claim and pinned capture under the quarantined application
-fence. Provider I/O runs outside database transactions.
+reads the original claim, pinned capture and target version’s copy history under
+the quarantined application fence. A matching physical identity keeps the claim
+charged, even if the recorded digest differs. Provider I/O runs outside database
+transactions.
 `HistoryArchiveStorage::settle_history_archive_cleanup` locks and compares the
-same claim and retires its reservation, child and parent while unpinning the
-capture in a single transaction. Only an exact physical cleanup receipt for
+same claim, rechecks its copy history and retires its reservation, child and
+parent while unpinning the capture in a single transaction. Only an exact physical cleanup receipt for
 the precommitted filesystem intent permits this transition. Signed reapplication
 checks exposure separately.
 

@@ -298,7 +298,9 @@ the active location and the bounded union of physical references. Publish catalo
 The unreleased 0.20 archive contract also requires `load_history_archive_cleanup`
 and `settle_history_archive_cleanup`. Upgrade every complete adapter to compare
 the provider receipt with the original claim and atomically retire its ownership
-under the same quarantined application fence. Preserve the capture after unpinning.
+under the same quarantined application fence. Pass the copy history for the exact
+version and recovery fence to `HistoryArchiveCleanupClaim::from_retained` when
+loading and rechecking the claim. Preserve the capture after unpinning.
 
 The unreleased 0.20 contract also requires `reapply_history_expiry`, a trusted
 quarantined exact-copy recovery operation taking `HistoryExpiryReapplication`.

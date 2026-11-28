@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **Breaking storage SDK 0.20 change.** Pass the target version’s fenced copy
+  history to `HistoryArchiveCleanupClaim::from_retained`. Upgrade recovery tools
+  and adapters together. Offline filesystem cleanup preserves a claimed attempt
+  when the version’s catalog, a query pin, or displacement history names it.
+  The claim stays charged for reconciliation.
+
 - **Breaking archive catalog reader change.** Newly published collection
   descriptors with descriptions of at least 1 MiB include
   `primary_commitment_v1`. PostgreSQL can then verify the observed primary

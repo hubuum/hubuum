@@ -14,9 +14,9 @@ use crate::test_support::{
 use diesel::{QueryableByName, sql_query, sql_types};
 use diesel_async::RunQueryDsl;
 use hubuum_artifacts::{
-    ArtifactCreationIntent, ArtifactManifest, ArtifactStore, FilesystemArtifactStore,
-    ManifestBuilder, OwnedArtifactAdmission, OwnedArtifactPhase, OwnedArtifactResolution,
-    OwnedArtifactStore, VerifiedArtifact,
+    ArtifactCleanupReceipt, ArtifactCreationIntent, ArtifactManifest, ArtifactStore,
+    FilesystemArtifactStore, ManifestBuilder, OwnedArtifactAdmission, OwnedArtifactPhase,
+    OwnedArtifactResolution, OwnedArtifactStore, VerifiedArtifact,
 };
 use hubuum_storage_postgres::test_support::{IsolatedRestoreTarget, integration_test_database_url};
 use hubuum_storage_postgres::{PostgresPool, PostgresStorageError, with_connection};
@@ -217,6 +217,25 @@ async fn stage_archive(
 }
 
 impl ArchiveSource {
+    async fn record_location(
+        &self,
+        generation: HistoryArchiveCatalogGeneration,
+        location: ArtifactReference,
+        format: u16,
+    ) -> HistoryArchiveCatalog {
+        let descriptor =
+            HistoryArchiveDescriptor::new(self.capture.hot().unwrap(), vec![], format, location)
+                .unwrap();
+        self.storage
+            .run_in_scope(
+                self.permit.execution_scope().clone(),
+                self.storage
+                    .publish_history_archive(generation, vec![descriptor], &self.permit),
+            )
+            .await
+            .unwrap()
+    }
+
     async fn reserve(&self) -> ClaimedFilesystemHistory {
         ClaimedFilesystemHistory::reserve(
             &self.storage,
@@ -397,6 +416,9 @@ async fn recover_interrupted_claim(
     // retire the original native claim and unpin its capture.
     let receipt = store.discard_owned_step(&intent).await.unwrap().unwrap();
     assert_eq!(receipt.encoded_intent(), intent.encode().unwrap());
+    if sealed {
+        assert_settlement_rechecks_copy_history(fixture, admin, id, &receipt).await;
+    }
     assert_claim_blocks_release(fixture).await;
     after_repository_release(|| {
         recover_with_archive_cleanup(
@@ -427,6 +449,66 @@ async fn recover_interrupted_claim(
     }).await.unwrap();
     assert!(released.complete);
     fixture.storage.admit_application_work().await.unwrap();
+}
+
+// Restore one retained pin after cleanup was admitted. Settlement must observe
+// it before releasing the original reservation, even with a genuine receipt.
+async fn assert_settlement_rechecks_copy_history(
+    fixture: &Fixture,
+    admin: &PostgresPool,
+    id: Uuid,
+    receipt: &ArtifactCleanupReceipt,
+) {
+    let isolation = fixture.exclusive_isolation().await;
+    let fence = fixture
+        .storage
+        .read_application_control()
+        .await
+        .unwrap()
+        .fence();
+    let request = HistoryArchiveCleanupRequest::new(id, fence, isolation.domain()).unwrap();
+    let claim = fixture
+        .storage
+        .load_history_archive_cleanup(&request)
+        .await
+        .unwrap();
+    let target = claim.manifest().identity();
+    let location = claim.manifest().location();
+    let pin = json!({
+        "resource": target.resource(),
+        "version": target.version(),
+        "destination": location.destination(),
+        "artifact": location.artifact(),
+        "attempt": location.attempt(),
+        "object_version": location.version(),
+        "manifest_digest": format!("\\x{}", "00".repeat(32)),
+    });
+    let settlement = claim.after_cleanup(receipt).unwrap();
+    with_connection(admin, async |connection| {
+        sql_query("INSERT INTO hubuum_control.history_archive_reclaimed_pins
+            (resource, version, destination, artifact, attempt, object_version, manifest_digest)
+            SELECT resource, version, destination, artifact, attempt, object_version, manifest_digest
+            FROM jsonb_populate_record(NULL::hubuum_control.history_archive_reclaimed_pins, $1)")
+            .bind::<sql_types::Jsonb, _>(&pin).execute(connection).await.map_err(PostgresStorageError::from)
+    }).await.unwrap();
+    let result = fixture
+        .storage
+        .settle_history_archive_cleanup(settlement)
+        .await;
+    let removed = with_connection(admin, async |connection| {
+        sql_query(
+            "DELETE FROM hubuum_control.history_archive_reclaimed_pins AS p
+            WHERE to_jsonb(p) @> $1",
+        )
+        .bind::<sql_types::Jsonb, _>(&pin)
+        .execute(connection)
+        .await
+        .map_err(PostgresStorageError::from)
+    })
+    .await
+    .unwrap();
+    assert_eq!(removed, 1);
+    assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Conflict);
 }
 
 #[rstest::rstest]
@@ -598,6 +680,58 @@ async fn sealed_memory_claim_preserves_first_verified_output_through_recovery() 
         .await
         .unwrap();
     assert_recovered_reference(&fixture, id, Some(expected)).await;
+}
+
+#[rstest]
+#[case::current(false, false)]
+#[case::displaced(true, false)]
+#[case::disagreeing_manifest(false, true)]
+#[tokio::test]
+async fn recovery_preserves_a_sealed_attempt_named_by_copy_history(
+    #[case] displaced: bool,
+    #[case] disagreeing_manifest: bool,
+) {
+    let (fixture, source) = memory_source().await;
+    let attempt = source.reserve().await;
+    let sealed = attempt.seal(&source.store).await.unwrap();
+    let reference = sealed.artifact().reference();
+    let location = if disagreeing_manifest {
+        ArtifactReference::from_catalog(reference.identity().clone(), [0; 32])
+    } else {
+        reference
+    };
+    let catalog = source
+        .record_location(source.capture.generation(), location, 2)
+        .await;
+    if displaced {
+        publish_other_segment_at(&source, catalog.generation()).await;
+    }
+
+    let id = attempt.claim().manifest().publication_id();
+    let intent =
+        ArtifactCreationIntent::decode(attempt.claim().request().intent().encoded()).unwrap();
+    source.lifetime.release();
+    let provider = fixture.root.join("provider");
+    let result = after_repository_release(|| {
+        recover_with_archive_cleanup(
+            &fixture.storage,
+            &fixture.directory,
+            &fixture.key,
+            Some((id, &provider)),
+        )
+    })
+    .await;
+    assert!(
+        matches!(result, Err(ApiError::Conflict(message)) if message.contains("retained archive location"))
+    );
+    assert!(matches!(
+        source.store.resolve_owned(&intent).await.unwrap(),
+        OwnedArtifactResolution::Established {
+            phase: OwnedArtifactPhase::Sealed,
+            ..
+        }
+    ));
+    assert_claim_blocks_release(&fixture).await;
 }
 
 async fn memory_source() -> (Fixture, ArchiveSource) {
@@ -796,7 +930,7 @@ async fn claimed_segment_refuses_a_different_store_before_creating_bytes() {
 async fn claimed_segment_rechecks_catalog_generation_before_creating_an_attempt() {
     let (_fixture, source) = memory_source().await;
     let attempt = source.reserve().await;
-    publish_other_segment(&source).await;
+    publish_other_segment_at(&source, source.capture.generation()).await;
     assert!(matches!(
         attempt.seal(&source.store).await,
         Err(ApiError::Conflict(_))
@@ -814,7 +948,7 @@ async fn identical_verified_checkpoint_rechecks_catalog_generation() {
     let (_fixture, source) = memory_source().await;
     let attempt = source.reserve().await;
     let sealed = attempt.seal(&source.store).await.unwrap();
-    publish_other_segment(&source).await;
+    publish_other_segment_at(&source, source.capture.generation()).await;
     let checkpoint = attempt
         .claim()
         .verified_checkpoint(sealed.artifact())
@@ -832,28 +966,15 @@ async fn identical_verified_checkpoint_rechecks_catalog_generation() {
     assert_eq!(error.kind(), StorageErrorKind::Conflict);
 }
 
-async fn publish_other_segment(source: &ArchiveSource) {
+async fn publish_other_segment_at(
+    source: &ArchiveSource,
+    generation: HistoryArchiveCatalogGeneration,
+) {
     let replacement = other_segment(source).await;
     let reference = source.store.publish(replacement.proof()).await.unwrap();
-    let descriptor = HistoryArchiveDescriptor::new(
-        source.capture.hot().unwrap(),
-        vec![],
-        replacement.format_version(),
-        reference,
-    )
-    .unwrap();
     source
-        .storage
-        .run_in_scope(
-            source.permit.execution_scope().clone(),
-            source.storage.publish_history_archive(
-                source.capture.generation(),
-                vec![descriptor],
-                &source.permit,
-            ),
-        )
-        .await
-        .unwrap();
+        .record_location(generation, reference, replacement.format_version())
+        .await;
 }
 
 #[tokio::test]

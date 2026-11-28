@@ -88,6 +88,7 @@ pub(super) async fn claim_on(
         return Err(invalid());
     }
     let capture = serde_json::from_value(row.capture).map_err(|_| invalid())?;
+    let copies = super::pins::read_on(connection, manifest.identity(), request.fence()).await?;
     Ok(HistoryArchiveCleanupClaim::from_retained(
         request,
         manifest,
@@ -97,6 +98,7 @@ pub(super) async fn claim_on(
         row.verified_manifest_digest
             .map(|bytes| bytes.try_into().map_err(|_| invalid()))
             .transpose()?,
+        &copies,
     )?)
 }
 

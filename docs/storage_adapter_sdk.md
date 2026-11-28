@@ -1349,6 +1349,10 @@ producer has read back its sealed output. Atomically check original ownership,
 pinned capture, deadline, and current catalog generation. Persist the first
 manifest digest and accept an identical retry under the same checks. Load
 this optional digest alongside the immutable destination in isolated recovery.
+Pass the target version’s `HistoryArchiveCopyHistory` to
+`HistoryArchiveCleanupClaim::from_retained` while holding the original recovery
+gate. Read it again at settlement. Any observed reference to the claimed physical
+identity blocks discard, including a reference with a different manifest digest.
 PostgreSQL uses a fresh statement snapshot after the resource lock. A runtime
 configured for repeatable read or serializable isolation rejects this write.
 Apply the migration and reconcile runtime function grants before deployment.

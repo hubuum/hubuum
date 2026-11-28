@@ -45,6 +45,7 @@ pub struct HistoryArchiveCleanupClaim {
 impl HistoryArchiveCleanupClaim {
     /// Complete adapter boundary. The transaction must check process isolation,
     /// quarantined application, native parent/child ownership and capture pin.
+    /// Observe the target version’s catalog and retained copies under that same fence.
     pub fn from_retained(
         request: &HistoryArchiveCleanupRequest,
         manifest: HistoryArchivePublicationManifest,
@@ -52,6 +53,7 @@ impl HistoryArchiveCleanupClaim {
         encoded_intent: Vec<u8>,
         ownership: [Uuid; 2],
         verified_manifest_digest: Option<[u8; 32]>,
+        copies: &HistoryArchiveCopyHistory,
     ) -> Result<Self, StorageError> {
         if request.publication != manifest.publication_id()
             || request.fence.incarnation() == manifest.original_history().incarnation()
@@ -66,6 +68,20 @@ impl HistoryArchiveCleanupClaim {
             ));
         }
         manifest.validate_retained_capture(capture)?;
+        if copies.target() != manifest.identity() || copies.fence() != request.fence() {
+            return Err(StorageError::conflict(
+                "Archive copy observation differs from the original target or recovery fence",
+            ));
+        }
+        if copies
+            .locations()
+            .iter()
+            .any(|copy| copy.identity() == manifest.location())
+        {
+            return Err(StorageError::conflict(
+                "A retained archive location still names the claimed filesystem attempt",
+            ));
+        }
         Ok(Self {
             request: request.clone(),
             manifest,
