@@ -176,6 +176,8 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
+      HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF: fixture
+      HUBUUM_RUNTIME_SETTINGS_KEY_FIXTURE: "0123456789abcdef0123456789abcdef"
       HUBUUM_BIND_IP: 0.0.0.0
       HUBUUM_BIND_PORT: 8080
       HUBUUM_DATABASE_ROLE_MODE: split

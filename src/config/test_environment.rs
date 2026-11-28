@@ -95,6 +95,7 @@ pub(super) fn get_config_from_env() -> Result<AppConfig, ApiError> {
     }
 
     let config = AppConfig {
+        validation: None,
         runtime_managed_groups: BTreeSet::new(),
         schema_validation: SchemaValidationOptions::from_environment()?,
         query_observations: QueryObservationOptions::from_environment()?,

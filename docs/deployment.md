@@ -52,6 +52,11 @@ installation, read [Updates](#updates) before running an installer or updater.
 
 This creates `/opt/hubuum` by default, generates `/opt/hubuum/.env`, writes `compose.yml` and `Caddyfile`, pulls published images, and starts the stack.
 
+The installer stores the runtime encryption key in the mode-0600 deployment
+`.env` and supplies it to both backend replicas. Back up this file securely
+alongside database backups. Refreshes and recreations retain the active key
+and older keys used to decrypt stored credentials.
+
 ### HTTP Availability Model
 
 Single-host installations run a primary and standby backend behind Caddy. The

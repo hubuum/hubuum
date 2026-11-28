@@ -22164,6 +22164,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Credential import encryption key unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [

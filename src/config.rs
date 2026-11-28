@@ -177,9 +177,20 @@ impl LoginRateLimitBackendKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum ValidationMode {
+    Full,
+    Local,
+}
+
 #[derive(Parser, Deserialize, Clone)]
 #[command(version = env!("CARGO_PKG_VERSION"), about = "Hubuum server", long_about = None)]
 pub struct AppConfig {
+    /// Check configuration and storage readiness, then exit. Use --validate=local to check local configuration without connecting to storage.
+    #[arg(long = "validate", value_enum, num_args = 0..=1, require_equals = true, default_missing_value = "full")]
+    #[serde(skip)]
+    pub(crate) validation: Option<ValidationMode>,
+
     // Ownership travels with resolved values across request/job boundaries.
     #[clap(skip)]
     #[serde(skip)]
@@ -1114,7 +1125,7 @@ pub struct AppConfig {
     #[clap(long, env = "HUBUUM_AUTH_CONFIG_PATH", default_value = None)]
     pub auth_config_path: Option<String>,
 
-    /// Secret-source name of the active key for runtime-stored credentials.
+    /// Required secret-source name of the active 32-byte encryption key for all API and worker roles.
     #[clap(
         long,
         env = "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF",

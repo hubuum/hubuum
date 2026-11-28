@@ -421,7 +421,7 @@ mod tests {
                     last_sync_attempted_at: None,
                     last_sync_success_at: None,
                     subtype: ImportPrincipalSubtype::Human {
-                        password: Some("benchmark-password".to_string()),
+                        password: None,
                         password_hash: None,
                         proper_name: Some("Benchmark User".to_string()),
                         email: None,

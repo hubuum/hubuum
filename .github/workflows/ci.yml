@@ -1420,10 +1420,26 @@ jobs:
             --tuples-only \
             --no-align \
             --command "SELECT to_regclass('public.users') IS NOT NULL")" = "t"
+          if timeout 30 docker run --rm --env HUBUUM_DATABASE_URL="$RUNTIME_DATABASE_URL" "$IMAGE" \
+              > "$RUNNER_TEMP/missing-runtime-key.log" 2>&1; then
+            echo "server started without its required runtime encryption key" >&2
+            exit 1
+          fi
+          grep --quiet 'HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF' "$RUNNER_TEMP/missing-runtime-key.log"
+          docker run --rm --network host \
+            --env HUBUUM_DATABASE_URL="$RUNTIME_DATABASE_URL" \
+            --env HUBUUM_DATABASE_ROLE_MODE=split \
+            --env HUBUUM_DATABASE_PRIVILEGE_MODE=strict \
+            --env HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF=fixture \
+            --env HUBUUM_RUNTIME_SETTINGS_KEY_FIXTURE=0123456789abcdef0123456789abcdef \
+            --env 'PGOPTIONS=-c default_transaction_read_only=on' \
+            "$IMAGE" --validate
           container_id="$(docker run --rm --detach --network host \
             --env HUBUUM_DATABASE_URL="$RUNTIME_DATABASE_URL" \
             --env HUBUUM_DATABASE_ROLE_MODE=split \
             --env HUBUUM_DATABASE_PRIVILEGE_MODE=strict \
+            --env HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF=fixture \
+            --env HUBUUM_RUNTIME_SETTINGS_KEY_FIXTURE=0123456789abcdef0123456789abcdef \
             --env HUBUUM_BIND_IP=127.0.0.1 \
             "$IMAGE")"
           trap 'docker stop "$container_id"' EXIT

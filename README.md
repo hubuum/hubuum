@@ -48,6 +48,11 @@ database role mode uses the existing `HUBUUM_DATABASE_URL`; separate owner, migr
 and runtime roles are optional. Web restores also require a separately supervised
 `hubuum-admin --restore-executor` process.
 
+When deploying the development branch, provision the same 32-byte runtime
+encryption key on every API and worker and set
+`HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF` to its alias. After migrating,
+run `hubuum-server --validate` with the settings for each replica.
+
 - Follow [Run your first server](docs/getting-started/first-server.md) for a local
   evaluation and first-time administrator setup; see the
   [configuration reference](docs/quick_start.md) for all settings.

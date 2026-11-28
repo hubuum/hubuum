@@ -174,6 +174,15 @@ When a task is created:
 - counters are initialized to zero
 - a `queued` event is appended
 
+Credential imports store an AES-256-GCM envelope for the request and a keyed
+fingerprint for idempotency. Configure `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF`
+and its 32-byte key before starting any API or worker, including deployments
+that only submit dry runs. Keep each alias and its original key
+available while its tasks can still execute. Complete outstanding idempotent
+retries before switching the active alias. Drain existing credential imports
+before upgrading workers and API servers. Previously captured database backups
+retain the protection in effect when they were created.
+
 ## Worker model
 
 The worker implementation lives in:
@@ -304,7 +313,9 @@ Import execution happens in four major phases:
 
 ### 1. Load payload
 
-The worker deserializes `tasks.request_payload` into `ImportRequest`.
+The import worker opens credential-bearing envelopes with their persisted key
+reference and verifies the principal and request fingerprint. It then
+deserializes the authenticated bytes into `ImportRequest`.
 
 If the payload is missing or invalid, the task is marked failed.
 

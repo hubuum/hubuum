@@ -21,6 +21,20 @@ precedence rules, environment/file mapping, and complete server, migration,
 and restore-executor deployment examples. Use `hubuum-server --help` or
 `hubuum-admin --help` to list each binary's CLI options.
 
+### Validate a deployment
+
+Run `hubuum-server --validate` with the same arguments, environment and secret
+mounts as the process you intend to start. It checks the selected runtime role,
+required encryption key, token key configuration, authentication configuration,
+TLS certificate and private key, database connectivity, schema readiness,
+configured database privilege policy and the effective authorization backend. It exits without bootstrapping identities,
+binding the listener or running jobs. Run it on each replica after migrating
+the database. Provision the same active key and retained key versions on every
+API and worker. Use `--validate=local` before migrating or when the database
+is offline. It checks local configuration and required secrets. The container
+entrypoint runs this check before waiting for the database. External identity
+providers have their own connection preflight.
+
 ### Health Probes
 
 Hubuum exposes unauthenticated probe endpoints for container schedulers and load balancers:
@@ -34,12 +48,15 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 
 ### Local Docker Compose
 
-The development Compose stack requires a local, untracked `.env` file instead
-of using a password committed to the repository:
+The development Compose stack reads the database password and the key for the
+`deployment` alias from a local, untracked `.env` file. To use another alias,
+pass its matching key to the `hubuum` service in a Compose override.
 
 ```bash
 printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)" > .env
+printf 'HUBUUM_RUNTIME_SETTINGS_KEY_DEPLOYMENT=base64:%s\n' "$(openssl rand -base64 32)" >> .env
 docker compose --profile administration run --rm hubuum-migrate --migrate
+docker compose run --rm hubuum --validate
 docker compose up --build -d hubuum-restore-executor hubuum
 ```
 
@@ -101,6 +118,7 @@ examples.
 | `HUBUUM_DATABASE_OWNER_ROLE` | `hubuum_owner` | Non-login schema-owner role used in `split` mode |
 | `HUBUUM_DATABASE_MIGRATOR_ROLE` | `hubuum_migrator` | Migration and isolated restore-executor role used in `split` mode |
 | `HUBUUM_DATABASE_RUNTIME_ROLE` | `hubuum_runtime` | Non-owning API and worker role used in `split` mode |
+| `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF` | Required | Active runtime encryption key alias shared by every API and worker. Provision the corresponding 32-byte key through the [selected secret source](secret_sources.md). |
 | `HUBUUM_DATABASE_PRIVILEGE_MODE` | `warn` | Split-role runtime privilege audit behavior: `warn` or startup-failing `strict`; ignored in `single` mode |
 | `HUBUUM_DB_POOL_SIZE` | `10` | Maximum number of database connections in the pool |
 | `HUBUUM_DB_POOL_ACQUIRE_TIMEOUT_MS` | `2000` | Maximum wait for a free pooled connection before failing the request |
