@@ -65,8 +65,7 @@ async fn data_processing_is_bounded_by_fuel(#[case] source: &str, #[case] contex
     assert!(error.to_string().contains("fuel"), "{error}");
 }
 
-#[tokio::test]
-async fn packaged_worker_renders_with_the_service_environment() {
+async fn render_with_packaged_worker() {
     use std::process::Stdio;
     use std::time::Duration;
     use tokio::io::AsyncWriteExt;
@@ -116,6 +115,26 @@ async fn packaged_worker_renders_with_the_service_environment() {
     sent.unwrap();
     let response: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(response["Ok"][0]["output"], "Hello Hubuum");
+}
+
+#[tokio::test]
+async fn packaged_worker_renders_with_the_service_environment() {
+    render_with_packaged_worker().await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn packaged_workers_render_during_concurrent_windows_startup() {
+    // The service admits four workers at once. Repeat the same benign render
+    // across successive process lifetimes, including initial profile setup.
+    for _ in 0..16 {
+        tokio::join!(
+            render_with_packaged_worker(),
+            render_with_packaged_worker(),
+            render_with_packaged_worker(),
+            render_with_packaged_worker()
+        );
+    }
 }
 
 #[cfg(windows)]
