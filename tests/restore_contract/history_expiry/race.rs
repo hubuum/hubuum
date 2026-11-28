@@ -30,13 +30,24 @@ async fn recovery_session() -> (PostgresStorage, i32) {
 
 enum Waiter {
     Backend(i32),
+    RestoreCheckingDrain,
     RestoreReplacingTables,
     RestoreRotatingApplication,
 }
 
 async fn wait_for_waiter(connection: &mut PostgresConnection, blocker: i32, waiter: Waiter) -> i32 {
+    // The preparatory wait also spans loading and validating the backup. The
+    // two transactions participating in the race keep their usual timeouts.
+    let timeout_seconds = match waiter {
+        Waiter::RestoreCheckingDrain => 120,
+        _ => 30,
+    };
     let (pid, condition) = match waiter {
         Waiter::Backend(pid) => (Some(pid), "TRUE"),
+        Waiter::RestoreCheckingDrain => (
+            None,
+            "locktype='relation' AND relation='public.server_instances'::regclass AND mode='AccessShareLock'",
+        ),
         Waiter::RestoreReplacingTables => (
             None,
             "locktype='relation' AND relation='public.export_templates_history'::regclass AND mode='AccessExclusiveLock'",
@@ -50,7 +61,7 @@ async fn wait_for_waiter(connection: &mut PostgresConnection, blocker: i32, wait
         "SELECT DISTINCT pid FROM pg_locks WHERE NOT granted
         AND $1=ANY(pg_blocking_pids(pid)) AND ($2::integer IS NULL OR pid=$2) AND {condition}"
     );
-    timeout(Duration::from_secs(30), async {
+    timeout(Duration::from_secs(timeout_seconds), async {
         loop {
             let waits = sql_query(&query)
                 .bind::<Integer, _>(blocker)
@@ -185,6 +196,16 @@ pub(super) async fn replay_with_queued_restore(
     tokio::pin!(replay, restore);
     let mut observer = pool.get().await.unwrap();
     assert!(copy_present(&mut observer, family, target).await);
+    // Restore reads and validates the backup before checking whether instances
+    // have drained. Let it reach that check before starting the audit lock.
+    // The pinned restore cannot issue its rotation until we poll it again.
+    with_table_lock(pool, "LOCK TABLE public.server_instances IN ACCESS EXCLUSIVE MODE", async |gate, release| {
+        tokio::select! {
+            result = &mut restore => panic!("restore finished before checking drain state: {result:?}"),
+            _ = wait_for_waiter(&mut observer, gate, Waiter::RestoreCheckingDrain) => {},
+        }
+        release.send(()).unwrap();
+    }).await;
     // The required first-removal audit holds expiry inside its transaction.
     // Only poll restore through the observed wait until we read the first receipt.
     with_table_lock(pool, "LOCK TABLE public.events IN SHARE MODE", async |gate, release| {
@@ -193,7 +214,7 @@ pub(super) async fn replay_with_queued_restore(
             _ = wait_for_waiter(&mut observer, gate, Waiter::Backend(recovery_pid)) => {},
         }
         tokio::select! {
-            _ = &mut replay => panic!("expiry escaped its audit lock"),
+            result = &mut replay => panic!("expiry escaped its audit lock: {result:?}"),
             result = &mut restore => panic!("restore escaped expiry: {result:?}"),
             _ = wait_for_waiter(&mut observer, recovery_pid, Waiter::RestoreRotatingApplication) => {},
         }
