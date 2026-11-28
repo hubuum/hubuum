@@ -58,14 +58,14 @@ pub(crate) fn enter() -> Result<Worker, Box<dyn Error>> {
         ..Default::default()
     };
     let mut child = match launch_in_container_with_io(&security, &options) {
+        // The launcher probes its diagnostic environment before reporting a
+        // creation error. Its last-error code can describe that probe instead
+        // of CreateProcessW. On this stage only, provision the package's
+        // read/execute ACE for this binary and retry once under the same policy.
         Err(rappct::AcError::LaunchFailed {
             stage: "CreateProcessW",
-            ref source,
             ..
-        }) if source
-            .downcast_ref::<io::Error>()
-            .is_some_and(|e| e.kind() == io::ErrorKind::PermissionDenied) =>
-        {
+        }) => {
             prepare()?;
             launch_in_container_with_io(&security, &options)?
         }

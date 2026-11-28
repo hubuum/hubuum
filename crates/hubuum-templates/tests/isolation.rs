@@ -75,7 +75,12 @@ async fn packaged_worker_renders_with_the_service_environment() {
     let mut command = Command::new(env!("CARGO_BIN_EXE_hubuum-template-worker"));
     command.env_clear().kill_on_drop(true);
     #[cfg(windows)]
-    command.env("SystemRoot", std::env::var_os("SystemRoot").unwrap());
+    {
+        command.env("SystemRoot", std::env::var_os("SystemRoot").unwrap());
+        // Preserve the original CreateProcessW HRESULT in the test log. The
+        // broker constructs a separate, SystemRoot-only rendering environment.
+        command.env("RAPPCT_DEBUG_LAUNCH", "1");
+    }
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
