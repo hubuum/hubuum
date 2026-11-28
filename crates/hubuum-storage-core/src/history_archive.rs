@@ -1,6 +1,6 @@
 //! Collection-only archive query snapshots. These catalog values are not lifecycle
 //! authorization proofs. Public task/API activation and source retirement are off.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use async_trait::async_trait;
@@ -478,6 +478,16 @@ impl HistoryArchiveCatalog {
             return Err(invalid("Archive publication requires 1..1000 versions"));
         }
         history_archive_encoded_bytes(&additions, HISTORY_ARCHIVE_BATCH_BYTES)?;
+        let mut submitted = BTreeMap::new();
+        for descriptor in &additions {
+            if let Some(previous) = submitted.insert(descriptor.identity.version(), descriptor)
+                && previous != descriptor
+            {
+                return Err(invalid(
+                    "Conflicting descriptors for one version in an archive publication",
+                ));
+            }
+        }
         let mut next = self.clone();
         for addition in additions {
             if let Some(old) = next

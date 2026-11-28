@@ -65,6 +65,10 @@ format version and immutable artifact reference. Locations contain destination,
 object version, attempt and trusted manifest digest. Catalog descriptors contain
 no payload. Publication checks the exact retained primary version and uses a
 short generation-checked transaction. A stale generation requires replanning.
+Within one publication, repeated entries for a version must agree on every
+descriptor field, including its format and immutable location. Conflicting
+entries reject the entire batch and preserve the previous catalog generation.
+A later generation can still relocate a version whose logical content matches.
 
 Admission takes a short snapshot of at most one matching hot collection version
 and pins the selected catalog descriptor in the same transaction. PostgreSQL uses
