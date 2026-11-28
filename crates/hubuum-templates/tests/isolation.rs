@@ -76,7 +76,9 @@ async fn packaged_worker_renders_with_the_service_environment() {
     command.env_clear().kill_on_drop(true);
     #[cfg(windows)]
     {
-        command.env("SystemRoot", std::env::var_os("SystemRoot").unwrap());
+        for name in ["SystemRoot", "LOCALAPPDATA"] {
+            command.env(name, std::env::var_os(name).unwrap());
+        }
         // Preserve the original CreateProcessW HRESULT in the test log. The
         // broker constructs a separate, SystemRoot-only rendering environment.
         command.env("RAPPCT_DEBUG_LAUNCH", "1");

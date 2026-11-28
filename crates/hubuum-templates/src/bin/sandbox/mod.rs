@@ -9,6 +9,8 @@ mod windows;
 #[cfg(windows)]
 pub(super) use windows::{enter, prepare};
 
+pub(super) const ISOLATION_FAILED: i32 = 71;
+
 pub(super) enum Worker {
     Render,
     #[cfg(windows)]

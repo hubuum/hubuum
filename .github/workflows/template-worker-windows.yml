@@ -25,3 +25,4 @@ jobs:
         with:
           toolchain: stable
       - run: cargo test --locked -p hubuum-templates --test isolation packaged_worker_renders_with_the_service_environment
+      - run: cargo test --locked -p hubuum-templates --test batching entries_keep_their_own_include_sources_and_rendering_settings

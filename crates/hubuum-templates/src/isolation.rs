@@ -437,8 +437,13 @@ impl WorkerRuntime {
         let mut command = Command::new(worker_executable()?);
         command.env_clear();
         #[cfg(windows)]
-        if let Some(root) = std::env::var_os("SystemRoot") {
-            command.env("SystemRoot", root);
+        for name in ["SystemRoot", "LOCALAPPDATA"] {
+            // Windows resolves the AppContainer profile from the broker's
+            // LOCALAPPDATA during CreateProcessW. The rendering child receives
+            // a separate environment constructed by the broker.
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
         }
         let (response, result) = oneshot::channel();
         let span = info_span!("template_execution", operation_id = NEXT_OPERATION.fetch_add(1, Ordering::Relaxed), operation = ?request.operation, pid = tracing::field::Empty);

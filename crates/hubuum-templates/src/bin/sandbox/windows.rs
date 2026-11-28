@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::io::{self, PipeReader};
+use std::io::{self, PipeReader, Read};
 use std::os::windows::io::OwnedHandle;
 use std::path::Path;
 
@@ -35,6 +35,11 @@ pub(crate) fn enter() -> Result<Worker, Box<dyn Error>> {
             return Ok(Worker::Render);
         }
         return Err("unexpected template worker AppContainer token".into());
+    }
+    if std::env::var_os("LOCALAPPDATA").is_none() {
+        return Err(
+            "Windows AppContainer startup requires LOCALAPPDATA for the service account".into(),
+        );
     }
     let profile = AppContainerProfile::ensure(
         PROFILE,
@@ -79,8 +84,17 @@ pub(crate) fn enter() -> Result<Worker, Box<dyn Error>> {
     let output = child.stdout.take().ok_or("missing isolated output pipe")?;
     let mut output = PipeReader::from(OwnedHandle::from(output));
     let received = io::copy(&mut output, &mut io::stdout().lock());
+    let diagnostics = child.stderr.take();
     let status = child.wait(None)?;
     if status != 0 {
+        if status == super::ISOLATION_FAILED as u32
+            && let Some(pipe) = diagnostics
+        {
+            // Startup diagnostics precede template processing. Keep them on
+            // the broker's stderr, which the API supervisor discards.
+            let mut error = PipeReader::from(OwnedHandle::from(pipe)).take(1024);
+            io::copy(&mut error, &mut io::stderr().lock())?;
+        }
         return Err(format!("isolated template worker exited with status 0x{status:08x}").into());
     }
     sent?;
