@@ -2,16 +2,18 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
 use super::{
-    ApplicationFence, ArtifactReference, HISTORY_ARCHIVE_MAX_CAPTURES, StorageError,
-    StorageRecordIdentity,
+    ApplicationFence, ArtifactReference, HISTORY_ARCHIVE_MAX_CAPTURES, HistoryArchiveCatalog,
+    HistoryArchiveCatalogGeneration, StorageError, StorageRecordIdentity,
 };
 
-/// Immutable locations named by query captures or retained after reclamation or catalog replacement.
+/// Current and historical immutable locations observed in one catalog and application snapshot.
 /// A pin may outlive its query or original image. The observation grants no retirement authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HistoryArchiveCopyHistory {
     target: StorageRecordIdentity,
     fence: ApplicationFence,
+    catalog_generation: HistoryArchiveCatalogGeneration,
+    current: Option<ArtifactReference>,
     locations: Vec<ArtifactReference>,
 }
 
@@ -19,23 +21,36 @@ impl HistoryArchiveCopyHistory {
     pub fn from_locations(
         target: StorageRecordIdentity,
         fence: ApplicationFence,
+        catalog: &HistoryArchiveCatalog,
         locations: impl IntoIterator<Item = ArtifactReference>,
     ) -> Result<Self, StorageError> {
-        Self::from_sources(target, fence, locations, std::iter::empty())
+        Self::from_sources(target, fence, catalog, locations, std::iter::empty())
     }
 
     pub fn from_sources(
         target: StorageRecordIdentity,
         fence: ApplicationFence,
+        catalog: &HistoryArchiveCatalog,
         live: impl IntoIterator<Item = ArtifactReference>,
         historical: impl IntoIterator<Item = ArtifactReference>,
     ) -> Result<Self, StorageError> {
+        if catalog.resource() != target.resource() {
+            return Err(StorageError::invalid_input(
+                "Archive copy history catalog resource mismatch",
+            ));
+        }
+        let current = catalog
+            .versions()
+            .iter()
+            .find(|descriptor| descriptor.identity() == target)
+            .map(|descriptor| descriptor.location());
         let mut distinct = BTreeMap::new();
         // Bound each source before deduplication, and the physical union after it.
         for (index, reference) in live
             .into_iter()
             .enumerate()
             .chain(historical.into_iter().enumerate())
+            .chain(current.into_iter().cloned().enumerate())
         {
             if index >= HISTORY_ARCHIVE_MAX_CAPTURES {
                 return Err(StorageError::input_too_large(
@@ -64,6 +79,8 @@ impl HistoryArchiveCopyHistory {
         Ok(Self {
             target,
             fence,
+            catalog_generation: catalog.generation(),
+            current: current.cloned(),
             locations: distinct.into_values().collect(),
         })
     }
@@ -74,6 +91,13 @@ impl HistoryArchiveCopyHistory {
     pub const fn fence(&self) -> ApplicationFence {
         self.fence
     }
+    pub const fn catalog_generation(&self) -> HistoryArchiveCatalogGeneration {
+        self.catalog_generation
+    }
+    pub fn current_location(&self) -> Option<&ArtifactReference> {
+        self.current.as_ref()
+    }
+    /// Every distinct published or recorded location for the target in this snapshot.
     pub fn locations(&self) -> &[ArtifactReference] {
         &self.locations
     }
@@ -89,9 +113,12 @@ mod tests {
     fn observe(
         locations: impl IntoIterator<Item = ArtifactReference>,
     ) -> Result<HistoryArchiveCopyHistory, StorageError> {
+        let target =
+            StorageRecordIdentity::new(ResourceIdentity::generate(), VersionIdentity::generate());
         HistoryArchiveCopyHistory::from_locations(
-            StorageRecordIdentity::new(ResourceIdentity::generate(), VersionIdentity::generate()),
+            target,
             ApplicationFence::new(Uuid::new_v4(), 0).unwrap(),
+            &HistoryArchiveCatalog::empty(target.resource()),
             locations,
         )
     }
@@ -120,9 +147,12 @@ mod tests {
         } else {
             ArtifactReference::from_catalog(ArtifactIdentity::new(destination), [1; 32])
         };
+        let target =
+            StorageRecordIdentity::new(ResourceIdentity::generate(), VersionIdentity::generate());
         let observation = HistoryArchiveCopyHistory::from_sources(
-            StorageRecordIdentity::new(ResourceIdentity::generate(), VersionIdentity::generate()),
+            target,
             ApplicationFence::new(Uuid::new_v4(), 0).unwrap(),
+            &HistoryArchiveCatalog::empty(target.resource()),
             live,
             [historical],
         );
@@ -136,6 +166,54 @@ mod tests {
                 observation.unwrap_err().kind(),
                 crate::StorageErrorKind::InputTooLarge
             );
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::already_recorded(true, false, None)]
+    #[case::additional(false, false, Some(crate::StorageErrorKind::InputTooLarge))]
+    #[case::conflicting_digest(true, true, Some(crate::StorageErrorKind::Conflict))]
+    fn current_catalog_location_shares_the_bounded_physical_inventory(
+        #[case] already_recorded: bool,
+        #[case] conflicting_digest: bool,
+        #[case] expected_error: Option<crate::StorageErrorKind>,
+    ) {
+        use super::super::{HistoryArchiveDescriptor, HistoryArchiveRow, tests::row};
+        let original = row();
+        let row = HistoryArchiveRow::new(
+            original.identity(),
+            original.valid_from(),
+            Some(original.valid_from() + chrono::Duration::seconds(1)),
+            original.payload().clone(),
+        )
+        .unwrap();
+        let destination = DestinationId::generate();
+        let historical: Vec<_> = (0..HISTORY_ARCHIVE_MAX_CAPTURES)
+            .map(|_| ArtifactReference::from_catalog(ArtifactIdentity::new(destination), [1; 32]))
+            .collect();
+        let id = if already_recorded {
+            historical[0].identity().clone()
+        } else {
+            ArtifactIdentity::new(destination)
+        };
+        let current =
+            ArtifactReference::from_catalog(id, if conflicting_digest { [2; 32] } else { [1; 32] });
+        let empty = HistoryArchiveCatalog::empty(row.identity().resource());
+        let descriptor = HistoryArchiveDescriptor::new(&row, vec![], 1, current.clone()).unwrap();
+        let catalog = empty.publish(empty.generation(), vec![descriptor]).unwrap();
+        let result = HistoryArchiveCopyHistory::from_locations(
+            row.identity(),
+            ApplicationFence::new(Uuid::new_v4(), 0).unwrap(),
+            &catalog,
+            historical,
+        );
+        match expected_error {
+            Some(expected) => assert_eq!(result.unwrap_err().kind(), expected),
+            None => {
+                let observed = result.unwrap();
+                assert_eq!(observed.current_location(), Some(&current));
+                assert_eq!(observed.locations().len(), HISTORY_ARCHIVE_MAX_CAPTURES);
+            }
         }
     }
 
