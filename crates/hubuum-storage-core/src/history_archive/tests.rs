@@ -1,4 +1,5 @@
 use super::*;
+use crate::artifacts::{ArtifactIdentity, DestinationId};
 use crate::{RuntimeRegistration, StorageIdentitySubject};
 use hubuum_domain::IdentityReference;
 use rstest::rstest;
@@ -7,6 +8,37 @@ use serde_json::json;
 fn at(value: i64) -> DateTime<Utc> {
     DateTime::from_timestamp(value, 0).unwrap()
 }
+
+#[rstest]
+#[case::identical(1, [1; 32], true)]
+#[case::different_manifest(1, [2; 32], false)]
+#[case::different_format(2, [1; 32], false)]
+fn one_publication_has_one_descriptor_per_version(
+    #[case] format: u16,
+    #[case] manifest: [u8; 32],
+    #[case] accepted: bool,
+) {
+    let mut row = row();
+    row.valid_to = Some(at(20));
+    let object = ArtifactIdentity::new(DestinationId::generate());
+    let descriptor = |format, manifest| {
+        let location = ArtifactReference::from_catalog(object.clone(), manifest);
+        HistoryArchiveDescriptor::new(&row, vec![], format, location).unwrap()
+    };
+    let first = descriptor(1, [1; 32]);
+    let second = descriptor(format, manifest);
+    let catalog = HistoryArchiveCatalog::empty(row.identity().resource());
+    let result = catalog.publish(catalog.generation(), vec![first.clone(), second]);
+    if accepted {
+        assert_eq!(result.unwrap().versions(), &[first]);
+    } else {
+        assert_eq!(
+            result.unwrap_err().kind(),
+            crate::StorageErrorKind::InvalidInput
+        );
+    }
+}
+
 pub(super) fn row() -> HistoryArchiveRow {
     let identity =
         StorageRecordIdentity::new(ResourceIdentity::generate(), VersionIdentity::generate());

@@ -452,6 +452,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- Archive catalog publication rejects a batch that gives one history version
+  conflicting formats or locations. Both adapters preserve the previous catalog
+  and generation when they reject the batch.
 - History recovery rejects missing policy revisions and expiry selections or
   size-pressure observations that cite a policy before it could have existed.
   Policy previews also reject false coverage, repeated versions, and eligibility
