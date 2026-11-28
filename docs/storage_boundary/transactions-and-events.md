@@ -591,7 +591,7 @@ current claim admission cannot retire its physical obligation. Production remain
 Legacy, and generic expiry remains disabled.
 
 After readback through the original owned filesystem session,
-`checkpoint_verified_history_archive` records the SHA-256 digest of the
+`HistoryArchiveStorage::checkpoint_verified_history_archive` records the SHA-256 digest of the
 encoded artifact manifest on the same claim. Each attempt, including an
 identical retry, requires the original live producer, capture, deadline and
 catalog generation. A competing digest conflicts. Recovery reconstructs
