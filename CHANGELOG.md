@@ -13,6 +13,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   SHA-256 `Content-Digest`. Clients can verify the downloaded bytes before using
   a file. Existing backup digest headers remain available.
 
+- Offline recovery can release a filesystem archive claim when the producer
+  stopped before its first provider create. The original registered destination
+  records a durable cancellation that also fences late retries.
+  **Breaking recovery compatibility during an interrupted cancellation.**
+  Finish the cancellation with the upgraded recovery binary before restarting
+  older writers.
+
 - The internal collection history service can read exact versions and as-of
   snapshots from a registered Unix filesystem archive. Set
   `HUBUUM_HISTORY_ARCHIVE_FILESYSTEM` to its destination UUID and private

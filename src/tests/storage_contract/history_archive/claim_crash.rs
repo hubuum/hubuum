@@ -42,6 +42,15 @@ async fn stage_archive(
     root: &Path,
     bound: bool,
 ) -> (Uuid, RuntimeRecoveryLifetime) {
+    stage_until(storage, root, bound, false).await
+}
+
+async fn stage_until(
+    storage: StorageHandle,
+    root: &Path,
+    bound: bool,
+    before_create: bool,
+) -> (Uuid, RuntimeRecoveryLifetime) {
     let options = serde_json::from_value(json!({
         "directory": root.join("repository"),
         "key": root.join("key"),
@@ -113,7 +122,7 @@ async fn stage_archive(
     let store = FilesystemArtifactStore::open(root.join("provider"))
         .await
         .unwrap();
-    let destination = Destination::new(DestinationId::generate(), "claim-crash").unwrap();
+    let destination = Destination::new(DestinationId::generate(), prefix("claim-crash")).unwrap();
     store.register_destination(&destination).await.unwrap();
     let manifest = HistoryArchivePublicationManifest::from_capture(
         &capture,
@@ -154,6 +163,9 @@ async fn stage_archive(
         )
         .await
         .unwrap();
+    if before_create {
+        return (permit.producer().parent().id(), isolation);
+    }
     let intent = ArtifactCreationIntent::decode(claim.request().intent().encoded()).unwrap();
     let OwnedArtifactAdmission::Created(receipt) = store.create_owned(&intent).await.unwrap()
     else {
@@ -234,8 +246,7 @@ async fn assert_claim_blocks_release(fixture: &Fixture) {
     assert!(fixture.storage.admit_application_work().await.is_err());
 }
 
-#[tokio::test]
-async fn interrupted_filesystem_publication_requires_exact_cleanup_before_release() {
+async fn isolated_claim_database() -> (PostgresPool, StorageHandle) {
     let runtime = claim_test_runtime_database_url();
     let target = IsolatedRestoreTarget::new(&runtime, &integration_test_database_url()).unwrap();
     for unrelated in [
@@ -254,6 +265,16 @@ async fn interrupted_filesystem_publication_requires_exact_cleanup_before_releas
         .validate_connection(&mut postgres_test_pool(&runtime, 1).get().await.unwrap())
         .await
         .unwrap();
+    (
+        admin,
+        StorageHandle::postgres(postgres_test_pool(&runtime, 4)),
+    )
+}
+
+#[tokio::test]
+async fn interrupted_filesystem_publication_requires_exact_cleanup_before_release() {
+    let _guard = crate::test_support::RESTORE_TEST_LOCK.lock().await;
+    let (admin, runtime) = isolated_claim_database().await;
     let fixture = Fixture::with_storage(StorageHandle::postgres(admin.clone())).await;
     let provider = fixture.root.join("provider");
     fs::DirBuilder::new().mode(0o700).create(&provider).unwrap();
@@ -319,6 +340,9 @@ async fn interrupted_filesystem_publication_requires_exact_cleanup_before_releas
     }).await.unwrap();
     assert!(released.complete);
     fixture.storage.admit_application_work().await.unwrap();
+    // Continue through another interruption using the same signed authority.
+    // Reapplication has advanced the database beyond its pristine state.
+    recover_unstarted_claim(&fixture, runtime, &provider).await;
 }
 
 #[rstest::rstest]
@@ -421,4 +445,67 @@ async fn rotated_recovery_fence_rejects_verified_cleanup_settlement() {
         .await
         .unwrap();
     assert_eq!(retained.encoded_intent(), receipt.encoded_intent());
+}
+
+#[tokio::test]
+async fn recovery_fences_a_committed_claim_before_its_first_provider_create() {
+    let storage = StorageHandle::memory();
+    let fixture = Fixture::with_storage(storage.clone()).await;
+    let provider = fixture.root.canonicalize().unwrap().join("provider");
+    fs::DirBuilder::new().mode(0o700).create(&provider).unwrap();
+    recover_unstarted_claim(&fixture, storage, &provider).await;
+}
+
+async fn recover_unstarted_claim(fixture: &Fixture, runtime: StorageHandle, provider: &Path) {
+    let root = fixture.root.canonicalize().unwrap();
+    let (id, lifetime) = stage_until(runtime, &root, true, true).await;
+    lifetime.release();
+    after_repository_release(|| recover(&fixture.storage, &fixture.directory, &fixture.key))
+        .await
+        .unwrap();
+    assert_claim_blocks_release(fixture).await;
+    let isolation = fixture.exclusive_isolation().await;
+    let fence = fixture
+        .storage
+        .read_application_control()
+        .await
+        .unwrap()
+        .fence();
+    let request = HistoryArchiveCleanupRequest::new(id, fence, isolation.domain()).unwrap();
+    let claim = fixture
+        .storage
+        .load_history_archive_cleanup(&request)
+        .await
+        .unwrap();
+    let intent = ArtifactCreationIntent::decode(claim.encoded_intent()).unwrap();
+    drop(isolation);
+    let store = FilesystemArtifactStore::open_existing(provider)
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.resolve_owned(&intent).await.unwrap(),
+        OwnedArtifactResolution::Pending
+    ));
+    after_repository_release(|| {
+        recover_with_archive_cleanup(
+            &fixture.storage,
+            &fixture.directory,
+            &fixture.key,
+            Some((id, provider)),
+        )
+    })
+    .await
+    .unwrap();
+    let OwnedArtifactAdmission::ResumedSameOwner {
+        artifact,
+        phase: OwnedArtifactPhase::Fenced,
+    } = store.create_owned(&intent).await.unwrap()
+    else {
+        panic!("late producer must be fenced");
+    };
+    assert!(store.append_owned(&artifact, 0, b"late").await.is_err());
+    after_repository_release(|| reapply(&fixture.storage, &fixture.directory, &fixture.key))
+        .await
+        .unwrap();
+    fixture.storage.admit_application_work().await.unwrap();
 }

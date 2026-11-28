@@ -308,11 +308,12 @@ async fn reconcile_archive_cleanup(
             "Filesystem intent differs from the original archive claim",
         ));
     }
-    let provider = FilesystemArtifactStore::open_existing(root)
-        .await
-        .map_err(|_| unavailable("Cannot open the original filesystem provider"))?;
+    let provider =
+        FilesystemArtifactStore::open_registered_destination(root, intent.identity().destination())
+            .await
+            .map_err(|_| unavailable("Cannot open the original filesystem provider"))?;
     loop {
-        if let Some(receipt) = provider.discard_owned_step(&intent).await.map_err(|_| {
+        if let Some(receipt) = provider.cancel_owned_step(&intent).await.map_err(|_| {
             unavailable("Cannot prove cleanup of the original filesystem attempt; keep quarantine")
         })? {
             storage

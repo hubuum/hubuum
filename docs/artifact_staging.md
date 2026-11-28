@@ -303,6 +303,16 @@ before the version index. Under the same root lock, cleanup verifies the
 existing indexes, finishes reserving the pair and writes a `Discarded`
 tombstone. A later create for the same intent observes the fence.
 
+Offline recovery can also cancel a committed v2 claim before its first
+filesystem create. In the original registered destination, it checks the
+artifact directory and both identity indexes for prior ownership. It records
+the intended tombstone in a private, issuer-bound temporary file, syncs that
+file and its directory, reserves both identity indexes, then atomically installs
+the tombstone. A delayed create sees the cancellation. Recovery can repeat each
+step after interruption. Conflicting indexes, unexplained files and foreign
+issuers keep the claim in quarantine. Finish interrupted cancellation with
+the upgraded recovery binary before restarting older writers.
+
 A newly staged `state` is UTF-8 JSON with these fields (example IDs and timestamp):
 
 ```json
