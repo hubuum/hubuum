@@ -235,6 +235,7 @@ class Deployment:
         self.containers = []
         self.password = secrets.token_hex(16)
         self.token_key = secrets.token_hex(32)
+        self.runtime_key = secrets.token_urlsafe(24)
         self.api_container = None
 
     def docker(self, *args, check=True, timeout=300):
@@ -243,7 +244,7 @@ class Deployment:
         )
         if check and result.returncode:
             diagnostic = result.stderr[-2000:].replace(self.password, "[redacted]")
-            diagnostic = diagnostic.replace(self.token_key, "[redacted]")
+            diagnostic = diagnostic.replace(self.token_key, "[redacted]").replace(self.runtime_key, "[redacted]")
             raise RuntimeError(f"Docker {args[0]} failed ({result.returncode}): {diagnostic}")
         return result
 
@@ -286,6 +287,8 @@ class Deployment:
             "HUBUUM_CLIENT_ALLOWLIST": "*",
             "HUBUUM_LOG_LEVEL": "warn",
             "HUBUUM_TOKEN_HASH_KEY": self.token_key,
+            "HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF": "fixture",
+            "HUBUUM_RUNTIME_SETTINGS_KEY_FIXTURE": self.runtime_key,
             "HUBUUM_EVENT_RETENTION_PURGE_ENABLED": "false",
         }
         return [item for key, value in values.items() for item in ("--env", f"{key}={value}")]

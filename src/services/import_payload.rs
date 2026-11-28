@@ -8,7 +8,9 @@ use sha2::Sha256;
 use crate::config::get_config;
 use crate::errors::ApiError;
 use crate::models::{ImportRequest, PrincipalID};
-use crate::runtime_settings_secrets::{self, ALIAS_KEY_VERSION, EncryptedSecret};
+use crate::runtime_settings_secrets::{
+    self, ALIAS_KEY_VERSION, EncryptedSecret, RuntimeEncryptionKey,
+};
 use crate::secrets::resolve_runtime_settings_key;
 use crate::tasks::request_hash;
 
@@ -34,7 +36,7 @@ pub(crate) async fn prepare(
     let key = resolve_runtime_settings_key(&key_ref, None)
         .await
         .map_err(|_| key_unavailable())?;
-    seal(request, actor, digest, key_ref, key.value())
+    seal(request, actor, digest, key_ref, &key)
 }
 
 fn key_unavailable() -> ApiError {
@@ -50,7 +52,7 @@ fn seal(
     actor: PrincipalID,
     digest: String,
     key_ref: String,
-    key: &SecretValue,
+    key: &RuntimeEncryptionKey,
 ) -> Result<(Value, String), ApiError> {
     // Persist a keyed fingerprint. An ordinary digest of a predictable import
     // would allow offline checks of password guesses against a database copy.
@@ -101,14 +103,14 @@ pub(crate) async fn open(
     let digest = digest.ok_or_else(|| {
         ApiError::InternalServerError("Missing credential import fingerprint".into())
     })?;
-    unseal(&envelope, actor, digest, key.value())
+    unseal(&envelope, actor, digest, &key)
 }
 
 fn unseal(
     envelope: &EncryptedSecret,
     actor: PrincipalID,
     digest: &str,
-    key: &SecretValue,
+    key: &RuntimeEncryptionKey,
 ) -> Result<ImportRequest, ApiError> {
     let plaintext = runtime_settings_secrets::decrypt(envelope, key, &context(actor, digest))
         .map_err(|_| {
@@ -134,7 +136,7 @@ mod tests {
     fn queue_representation_round_trips_without_storing_the_password_or_unkeyed_digest() {
         let request = request();
         let actor = PrincipalID::new(1).unwrap();
-        let key = SecretValue::new(vec![7; 32]).unwrap();
+        let key = RuntimeEncryptionKey::parse(&[7; 32]).unwrap();
         let digest = request_hash(&serde_json::to_value(&request).unwrap()).unwrap();
         let (payload, fingerprint) =
             seal(&request, actor, digest.clone(), "key1".into(), &key).unwrap();
@@ -159,7 +161,7 @@ mod tests {
         #[case] id: i32,
         #[case] change_digest: bool,
     ) {
-        let key = SecretValue::new(vec![7; 32]).unwrap();
+        let key = RuntimeEncryptionKey::parse(&[7; 32]).unwrap();
         let (payload, digest) = seal(
             &request(),
             PrincipalID::new(1).unwrap(),

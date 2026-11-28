@@ -55,6 +55,7 @@ File paths below are relative to `HUBUUM_SECRET_FILE_ROOT` (or
 | --- | --- | --- | --- |
 | Runtime/shared PostgreSQL URL | `HUBUUM_DATABASE_URL` | `database/url` | `--database-url` |
 | Admin migration/restore PostgreSQL URL | `HUBUUM_MIGRATION_DATABASE_URL` | `database/migration-url` | `--migration-database-url` (admin only) |
+| Active runtime encryption key named `deployment` | `HUBUUM_RUNTIME_SETTINGS_KEY_DEPLOYMENT` | `runtime-settings/deployment` | None |
 | Compatible single token-hash key | `HUBUUM_TOKEN_HASH_KEY` | `token/key` | None |
 | Token key-ring ID `primary` | `HUBUUM_TOKEN_HASH_KEY_PRIMARY` | `token/primary` | None |
 | Event sink alias `inventory-api` | `HUBUUM_EVENT_SINK_SECRET_INVENTORY_API` | `event-sink/inventory-api` | None |
@@ -72,6 +73,15 @@ The optional administrator migration URL treats an empty environment or CLI
 value as unset for compatibility with existing deployment automation. Empty
 URL files are errors.
 
+Every API and worker requires `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF`.
+Set it to the alias of a 32-byte key in the selected source. For printable
+environment values use `base64:` followed by the output of `openssl rand -base64 32`.
+For a mounted file use `openssl rand 32` to generate raw bytes. Generate once
+and securely distribute the same key to all API and worker replicas. Preserve
+old aliases and their values while stored credentials or backups rely on them.
+The single-host installer provisions a key on first install or legacy upgrade
+and keeps existing versions during refresh and recreation.
+
 ## Mounted File Source
 
 Set the source and root in the environment:
@@ -79,6 +89,7 @@ Set the source and root in the environment:
 ```bash
 export HUBUUM_SECRET_SOURCE=file
 export HUBUUM_SECRET_FILE_ROOT=/run/secrets/hubuum
+export HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF=deployment
 ```
 
 Or supply the equivalent options to either binary:
@@ -92,6 +103,8 @@ For example, a single-role workload's mounted directory can contain:
 
 ```text
 /run/secrets/hubuum/
+├── runtime-settings/
+│   └── deployment
 ├── database/
 │   └── url
 ├── event-sink/
@@ -132,7 +145,8 @@ ephemeral-key fallback if `token/key` is absent.
 ## Single-Role Deployment Example
 
 Prepare `./secrets/database/url` for an existing PostgreSQL database and
-`./secrets/token/key` with a stable key. Add integration files as needed.
+`./secrets/token/key` with a stable token key. Store the runtime encryption key
+in `./secrets/runtime-settings/deployment`. Add integration files as needed.
 For native binaries, export the source/root above, run
 `hubuum-admin --migrate`, then supervise `hubuum-admin --restore-executor` and
 `hubuum-server` as separate processes using those same settings. `single` is
@@ -177,6 +191,7 @@ services:
     <<: *hubuum
     environment:
       <<: *secret-environment
+      HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF: deployment
       HUBUUM_BIND_IP: 0.0.0.0
       HUBUUM_CLIENT_ALLOWLIST: "*"
     ports:
@@ -201,7 +216,8 @@ For `HUBUUM_DATABASE_ROLE_MODE=split`, first provision and adopt the roles using
 [the database role guide](database_roles.md#adopting-an-existing-single-role-database).
 Set split mode consistently on the server, migration job, and restore executor.
 Give API/worker workloads a directory containing `database/url` with only the
-runtime login, the shared token keys, and their required integration secrets.
+runtime login, the shared token keys, the active and retained `runtime-settings/`
+encryption keys, and their required integration secrets.
 Give the migration job and restore executor a separate directory containing
 `database/migration-url` with the migrator login. Each workload may mount its
 own directory at the same `/run/secrets/hubuum` path; do not mount the migrator

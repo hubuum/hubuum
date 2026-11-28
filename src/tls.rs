@@ -99,37 +99,56 @@ fn validate_openssl_key_pair(builder: &openssl::ssl::SslAcceptorBuilder) -> std:
     })
 }
 
-pub fn configure_server<F, I, S, B>(
-    server: HttpServer<F, I, S, B>,
-    bind_address: &str,
-    cert: &str,
-    key: &str,
-    pass: Option<&str>,
-    backend: Option<TlsBackend>,
-) -> ServerResult<F, I, S, B>
-where
-    F: Fn() -> I + Send + Clone + 'static,
-    I: IntoServiceFactory<S, Request>,
-    S: ServiceFactory<Request, Config = AppConfig> + 'static,
-    S::Error: Into<Error>,
-    S::InitError: std::fmt::Debug,
-    S::Response: Into<Response<B>>,
-    B: MessageBody + 'static,
-{
-    let selected_backend = resolve_backend(backend)?;
-
+pub(crate) enum PreparedListener {
+    Plain,
     #[cfg(feature = "tls-rustls")]
-    if selected_backend == TlsBackend::Rustls {
-        return tls_rustls::configure_server(server, bind_address, cert, key, pass);
-    }
-
+    Rustls(Box<rustls::ServerConfig>),
     #[cfg(feature = "tls-openssl")]
-    if selected_backend == TlsBackend::Openssl {
-        return tls_openssl::configure_server(server, bind_address, cert, key, pass);
+    Openssl(openssl::ssl::SslAcceptorBuilder),
+}
+
+impl PreparedListener {
+    pub(crate) fn from_config(config: &crate::config::AppConfig) -> std::io::Result<Self> {
+        let Some((cert, key)) = config.tls_key_pair().map_err(std::io::Error::other)? else {
+            return Ok(Self::Plain);
+        };
+        let backend = resolve_backend(config.tls_backend)?;
+        #[cfg(feature = "tls-rustls")]
+        if backend == TlsBackend::Rustls {
+            return tls_rustls::load(cert, key, config.tls_key_passphrase.as_deref())
+                .map(|value| Self::Rustls(Box::new(value)));
+        }
+        #[cfg(feature = "tls-openssl")]
+        if backend == TlsBackend::Openssl {
+            return tls_openssl::load(cert, key, config.tls_key_passphrase.as_deref())
+                .map(Self::Openssl);
+        }
+        let _ = (backend, cert, key);
+        unreachable!("resolved TLS backend without a compiled implementation")
     }
 
-    let _ = (server, bind_address, cert, key, pass, selected_backend);
-    unreachable!("resolved TLS backend without a compiled implementation")
+    pub(crate) fn bind<F, I, S, B>(
+        self,
+        server: HttpServer<F, I, S, B>,
+        bind_address: &str,
+    ) -> ServerResult<F, I, S, B>
+    where
+        F: Fn() -> I + Send + Clone + 'static,
+        I: IntoServiceFactory<S, Request>,
+        S: ServiceFactory<Request, Config = AppConfig> + 'static,
+        S::Error: Into<Error>,
+        S::InitError: std::fmt::Debug,
+        S::Response: Into<Response<B>>,
+        B: MessageBody + 'static,
+    {
+        match self {
+            Self::Plain => server.bind(bind_address),
+            #[cfg(feature = "tls-rustls")]
+            Self::Rustls(settings) => server.bind_rustls_0_23(bind_address, *settings),
+            #[cfg(feature = "tls-openssl")]
+            Self::Openssl(settings) => server.bind_openssl(bind_address, settings),
+        }
+    }
 }
 
 #[cfg(feature = "tls-rustls")]
@@ -139,7 +158,6 @@ mod tls_rustls {
         ServerConfig,
         pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
     };
-    use tracing::info;
 
     fn parse_certificate_chain(
         certificate_bytes: &[u8],
@@ -161,22 +179,7 @@ mod tls_rustls {
         Ok(cert_chain)
     }
 
-    pub fn configure_server<F, I, S, B>(
-        server: HttpServer<F, I, S, B>,
-        bind_address: &str,
-        cert: &str,
-        key: &str,
-        pass: Option<&str>,
-    ) -> ServerResult<F, I, S, B>
-    where
-        F: Fn() -> I + Send + Clone + 'static,
-        I: IntoServiceFactory<S, Request>,
-        S: ServiceFactory<Request, Config = AppConfig> + 'static,
-        S::Error: Into<Error>,
-        S::InitError: std::fmt::Debug,
-        S::Response: Into<Response<B>>,
-        B: MessageBody + 'static,
-    {
+    pub(super) fn load(cert: &str, key: &str, pass: Option<&str>) -> std::io::Result<ServerConfig> {
         if pass.is_some() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -200,7 +203,7 @@ mod tls_rustls {
             )
         })?;
 
-        let rustls_config = ServerConfig::builder()
+        ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(cert_chain, key_der)
             .map_err(|e| {
@@ -208,12 +211,7 @@ mod tls_rustls {
                     std::io::ErrorKind::InvalidData,
                     format!("Failed to configure TLS: {e}"),
                 )
-            })?;
-
-        info!("Server binding with rustls to https://{}", bind_address);
-        server
-            .bind_rustls_0_23(bind_address, rustls_config)
-            .map_err(|e| std::io::Error::other(format!("Failed to bind server: {e}")))
+            })
     }
 
     #[cfg(test)]
@@ -256,7 +254,6 @@ mod tls_openssl {
         ssl::{SslAcceptor, SslAcceptorBuilder, SslMethod},
         x509::X509,
     };
-    use tracing::info;
 
     pub(super) fn build_acceptor(
         certificate_bytes: &[u8],
@@ -319,22 +316,11 @@ mod tls_openssl {
         Ok(builder)
     }
 
-    pub fn configure_server<F, I, S, B>(
-        server: HttpServer<F, I, S, B>,
-        bind_address: &str,
+    pub(super) fn load(
         cert: &str,
         key: &str,
         pass: Option<&str>,
-    ) -> ServerResult<F, I, S, B>
-    where
-        F: Fn() -> I + Send + Clone + 'static,
-        I: IntoServiceFactory<S, Request>,
-        S: ServiceFactory<Request, Config = AppConfig> + 'static,
-        S::Error: Into<Error>,
-        S::InitError: std::fmt::Debug,
-        S::Response: Into<Response<B>>,
-        B: MessageBody + 'static,
-    {
+    ) -> std::io::Result<SslAcceptorBuilder> {
         let key_bytes =
             read_bounded_regular_file(Path::new(key), "TLS private key", MAX_PRIVATE_KEY_BYTES)?;
         let certificate_bytes = read_bounded_regular_file(
@@ -342,12 +328,7 @@ mod tls_openssl {
             "TLS certificate chain",
             MAX_CERTIFICATE_BUNDLE_BYTES,
         )?;
-        let builder = build_acceptor(&certificate_bytes, &key_bytes, pass)?;
-
-        info!("Server binding with openssl to https://{}", bind_address);
-        server
-            .bind_openssl(bind_address, builder)
-            .map_err(|e| std::io::Error::other(format!("Failed to bind server: {e}")))
+        build_acceptor(&certificate_bytes, &key_bytes, pass)
     }
 }
 

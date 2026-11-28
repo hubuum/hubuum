@@ -190,7 +190,7 @@ fn production_container_has_a_healthcheck() {
 #[rstest]
 #[case("all", "worker")]
 #[case("worker", "all")]
-fn entrypoint_uses_only_the_readiness_probe_before_starting_the_server(
+fn entrypoint_validates_locally_before_waiting_for_storage(
     #[case] environment_role: &str,
     #[case] cli_role: &str,
 ) {
@@ -201,11 +201,27 @@ fn entrypoint_uses_only_the_readiness_probe_before_starting_the_server(
     let stdout = String::from_utf8(output.stdout).unwrap();
 
     assert!(output.status.success(), "entrypoint failed: {stdout}");
-    assert!(stdout.contains("admin:--database-ready"));
+    let forwarded = format!("--runtime-role {cli_role} --log-level debug");
+    let preflight = stdout
+        .find(&format!("server:--validate=local {forwarded}"))
+        .unwrap();
+    let readiness = stdout.find("admin:--database-ready").unwrap();
+    let server = stdout.find(&format!("server:{forwarded}")).unwrap();
+    assert!(preflight < readiness && readiness < server);
     assert!(!stdout.contains("admin:--migrate"));
-    assert!(stdout.contains(&format!(
-        "server:--runtime-role {cli_role} --log-level debug"
-    )));
+}
+
+#[cfg(unix)]
+#[rstest]
+#[case("--validate")]
+#[case("--validate=local")]
+fn entrypoint_delegates_one_shot_validation_without_waiting(#[case] validation: &str) {
+    let output = run_entrypoint("api", &[validation]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        format!("server:{validation}")
+    );
 }
 
 #[cfg(unix)]

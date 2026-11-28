@@ -552,6 +552,24 @@ POSTGRES_PASSWORD=""
 POSTGRES_MIGRATOR_PASSWORD=""
 POSTGRES_RUNTIME_PASSWORD=""
 HUBUUM_TOKEN_HASH_KEY=""
+# These keys protect durable ciphertext. Preserve every version, including on
+# --recreate, and never replace the material behind an existing reference.
+runtime_key_ref="$(read_env_value HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF || true)"
+runtime_key_lines=""
+if [[ -f "$ENV_FILE" ]]; then
+  runtime_key_lines="$(grep -E '^HUBUUM_RUNTIME_SETTINGS_KEY_[A-Z0-9_]+=' "$ENV_FILE" || true)"
+fi
+if [[ -n "$runtime_key_ref" ]]; then
+  [[ "$runtime_key_ref" =~ ^[a-zA-Z0-9_-]{1,128}$ ]] || die "invalid runtime settings encryption key reference"
+  runtime_active_var="HUBUUM_RUNTIME_SETTINGS_KEY_$(printf '%s' "$runtime_key_ref" | tr '[:lower:]-' '[:upper:]_')"
+  [[ -n "$(read_env_value "$runtime_active_var" || true)" ]] ||
+    die "restore the configured runtime settings encryption key before updating"
+elif [[ -n "$runtime_key_lines" ]]; then
+  die "set HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF to an existing runtime settings key before updating"
+else
+  runtime_key_ref=deployment
+  runtime_key_lines="HUBUUM_RUNTIME_SETTINGS_KEY_DEPLOYMENT=base64:$(openssl rand -base64 32)"
+fi
 EXISTING_POSTGRES_PASSWORD="$(read_env_value POSTGRES_PASSWORD || true)"
 EXISTING_POSTGRES_MIGRATOR_PASSWORD="$(read_env_value POSTGRES_MIGRATOR_PASSWORD || true)"
 EXISTING_POSTGRES_RUNTIME_PASSWORD="$(read_env_value POSTGRES_RUNTIME_PASSWORD || true)"
@@ -650,6 +668,8 @@ write_deployment_env() {
   printf 'POSTGRES_MIGRATOR_PASSWORD=%s\n' "$POSTGRES_MIGRATOR_PASSWORD"
   printf 'POSTGRES_RUNTIME_PASSWORD=%s\n' "$POSTGRES_RUNTIME_PASSWORD"
   printf '\n'
+  printf 'HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF=%s\n' "$runtime_key_ref"
+  printf '%s\n' "$runtime_key_lines"
   printf 'HUBUUM_DATABASE_ROLE_MODE=%s\n' "$DATABASE_ROLE_MODE"
   printf 'HUBUUM_DATABASE_URL=%s\n' "$(quote_env "$HUBUUM_DATABASE_URL")"
   printf 'HUBUUM_MIGRATION_DATABASE_URL=%s\n' "$(quote_env "$HUBUUM_MIGRATION_DATABASE_URL")"
@@ -1114,6 +1134,12 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       HUBUUM_DATABASE_PRIVILEGE_MODE: ${HUBUUM_DATABASE_PRIVILEGE_MODE}
       HUBUUM_LOG_LEVEL: ${HUBUUM_LOG_LEVEL}
       HUBUUM_TOKEN_HASH_KEY: ${HUBUUM_TOKEN_HASH_KEY}
+      HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF: ${HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF}
+EOF
+while IFS='=' read -r runtime_key_name _; do
+  printf '      %s: ${%s}\n' "$runtime_key_name" "$runtime_key_name" >> "$INSTALL_DIR/compose.yml"
+done <<< "$runtime_key_lines"
+cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       HUBUUM_CLIENT_ALLOWLIST: ${HUBUUM_CLIENT_ALLOWLIST}
       HUBUUM_TRUST_IP_HEADERS: ${HUBUUM_TRUST_IP_HEADERS}
       HUBUUM_TOKEN_LIFETIME_HOURS: ${HUBUUM_TOKEN_LIFETIME_HOURS}

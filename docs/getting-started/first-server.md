@@ -18,7 +18,7 @@ The following commands use a POSIX shell on Linux or macOS. Windows archives
 contain the same executables with `.exe` suffixes; set equivalent environment
 variables in your shell.
 
-## 2. Configure the database and token key
+## 2. Configure the database and keys
 
 Set the connection string for your evaluation database. The example values
 below are placeholders; the database must already exist.
@@ -29,8 +29,12 @@ export HUBUUM_BIND_IP='127.0.0.1'
 export HUBUUM_BIND_PORT='8080'
 export HUBUUM_TOKEN_HASH_KEY="$(openssl rand -hex 32)"
 export HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY=true
+export HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF=deployment
+export HUBUUM_RUNTIME_SETTINGS_KEY_DEPLOYMENT="base64:$(openssl rand -base64 32)"
 ```
 
+Generate the encryption key once, save it securely, and use the same value
+on every API and worker. Losing it makes stored credentials unreadable.
 Keep the same token hash key across restarts. Regenerating it invalidates existing
 tokens. Store production credentials using the
 [secret-source configuration](../secret_sources.md); the environment above is
@@ -41,6 +45,7 @@ lists all supported options.
 
 ```sh
 ./hubuum-admin --migrate
+./hubuum-server --validate
 ./hubuum-server
 ```
 

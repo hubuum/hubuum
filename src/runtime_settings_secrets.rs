@@ -13,6 +13,37 @@ const KEY_BYTES: usize = 32;
 const NONCE_BYTES: usize = 12;
 pub(crate) const ALIAS_KEY_VERSION: &str = "alias-v1";
 
+/// Validated AES-256 material. The encoded form transports a full random key
+/// through environment variables while existing 32-byte keys keep their value.
+pub(crate) struct RuntimeEncryptionKey(SecretValue);
+
+impl RuntimeEncryptionKey {
+    pub(crate) fn parse(value: &[u8]) -> Result<Self, SecretProtectionError> {
+        let bytes = if value.len() == KEY_BYTES {
+            value.to_vec()
+        } else {
+            let encoded = value
+                .strip_prefix(b"base64:")
+                .ok_or(SecretProtectionError::InvalidKey)?;
+            if base64::encoded_len(KEY_BYTES, true) != Some(encoded.len()) {
+                return Err(SecretProtectionError::InvalidKey);
+            }
+            STANDARD
+                .decode(encoded)
+                .map_err(|_| SecretProtectionError::InvalidKey)?
+        };
+        let secret = SecretValue::new(bytes).map_err(|_| SecretProtectionError::InvalidKey)?;
+        if secret.len() != KEY_BYTES {
+            return Err(SecretProtectionError::InvalidKey);
+        }
+        Ok(Self(secret))
+    }
+
+    pub(crate) fn expose(&self) -> &[u8] {
+        self.0.expose()
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct EncryptedSecret {
@@ -76,11 +107,10 @@ impl std::error::Error for SecretProtectionError {}
 pub(crate) fn encrypt(
     key_ref: String,
     key_version: String,
-    wrapping_key: &SecretValue,
+    wrapping_key: &RuntimeEncryptionKey,
     context: &str,
     plaintext: &SecretValue,
 ) -> Result<EncryptedSecret, SecretProtectionError> {
-    validate_key(wrapping_key)?;
     let data_key = random_secret(KEY_BYTES)?;
     let data_nonce = random_nonce()?;
     let wrapped_key_nonce = random_nonce()?;
@@ -112,10 +142,9 @@ pub(crate) fn encrypt(
 
 pub(crate) fn decrypt(
     envelope: &EncryptedSecret,
-    wrapping_key: &SecretValue,
+    wrapping_key: &RuntimeEncryptionKey,
     context: &str,
 ) -> Result<SecretValue, SecretProtectionError> {
-    validate_key(wrapping_key)?;
     if envelope.version != ENVELOPE_VERSION {
         return Err(SecretProtectionError::InvalidEnvelope);
     }
@@ -134,14 +163,6 @@ pub(crate) fn decrypt(
     }
     let mut ciphertext = decode(&envelope.ciphertext)?;
     open(data_key.expose(), &data_nonce, &data_aad, &mut ciphertext)
-}
-
-fn validate_key(key: &SecretValue) -> Result<(), SecretProtectionError> {
-    if key.len() == KEY_BYTES {
-        Ok(())
-    } else {
-        Err(SecretProtectionError::InvalidKey)
-    }
 }
 
 fn associated_data(context: &str, key_ref: &str, key_version: &str) -> Vec<u8> {
@@ -223,8 +244,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn encoded_key_has_the_same_material_as_a_raw_key() {
+        let bytes = [0xab; KEY_BYTES];
+        let encoded = format!("base64:{}", STANDARD.encode(bytes));
+        let key = RuntimeEncryptionKey::parse(encoded.as_bytes()).unwrap();
+        assert_eq!(key.expose(), bytes);
+    }
+
+    #[test]
     fn envelope_round_trips_and_authenticates_its_context() {
-        let wrapping_key = SecretValue::new(vec![7; KEY_BYTES]).unwrap();
+        let wrapping_key = RuntimeEncryptionKey::parse(&[7; KEY_BYTES]).unwrap();
         let plaintext = SecretValue::new(b"bind-password".to_vec()).unwrap();
         let envelope = encrypt(
             "key-v1".to_string(),
@@ -244,7 +273,7 @@ mod tests {
 
     #[test]
     fn envelope_debug_redacts_key_metadata_and_ciphertext() {
-        let wrapping_key = SecretValue::new(vec![7; KEY_BYTES]).unwrap();
+        let wrapping_key = RuntimeEncryptionKey::parse(&[7; KEY_BYTES]).unwrap();
         let plaintext = SecretValue::new(b"bind-password".to_vec()).unwrap();
         let envelope = encrypt(
             "active-key".to_string(),

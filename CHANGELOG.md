@@ -7,17 +7,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- `hubuum-server --validate` checks the selected role, required secrets,
+  listener configuration and storage readiness, then exits before starting
+  workers or serving traffic.
+
 ### Changed
+
+- **Breaking deployment change.** Every API and worker requires a resolvable
+  32-byte key named by `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF` at
+  startup. Provision the same key on all replicas before upgrading. The
+  single-host installer generates and preserves it. Credential-bearing import
+  requests are encrypted when queued. Drain older requests before upgrading.
 
 - PostgreSQL computed-field rebuild and read-repair workers now read only the
   task settings row when selecting the size of each batch.
 
 ### Security
-
-- **Breaking change:** Credential-bearing imports now require a configured
-  `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF` on API and worker processes.
-  Configure its 32-byte key and drain credential imports before upgrading.
-  Queued passwords and password hashes are encrypted until terminal redaction.
 
 - Remove the unused Actix Web cookie feature and its dependency on
   `cookie` 0.16.2 (RUSTSEC-2026-0594).

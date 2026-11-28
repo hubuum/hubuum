@@ -96,6 +96,17 @@ database_ready() {
     hubuum-admin "$@"
 }
 
+# One-shot commands report configuration errors directly, even with an
+# unavailable database. The server owns their argument parsing and exit status.
+for argument do
+    case "$argument" in
+        --validate|--validate=*|--help|-h|--version|-V) exec hubuum-server "$@" ;;
+    esac
+done
+
+# Reject missing keys and invalid local configuration before retrying a database.
+hubuum-server --validate=local "$@"
+
 echo "Waiting for database to be ready..."
 until database_ready "$@"; do
     echo "Database is unavailable - sleeping"

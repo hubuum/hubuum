@@ -231,7 +231,7 @@ pub(crate) async fn protect_runtime_authentication_settings(
                 let envelope = crate::runtime_settings_secrets::encrypt(
                     key_ref.clone(),
                     crate::runtime_settings_secrets::ALIAS_KEY_VERSION.to_string(),
-                    wrapping_key.value(),
+                    &wrapping_key,
                     &format!("authentication:{name}:bind_password"),
                     &plaintext,
                 )
@@ -332,7 +332,7 @@ async fn runtime_provider_configuration(
                 })?;
         let plaintext = crate::runtime_settings_secrets::decrypt(
             &envelope,
-            wrapping_key.value(),
+            &wrapping_key,
             &format!("authentication:{}:bind_password", provider.name()),
         )
         .map_err(|_| {
@@ -613,7 +613,7 @@ impl AuthProviderRegistry {
         self.unavailable.is_empty()
     }
 
-    async fn preflight(&self) -> Result<(), ApiError> {
+    fn check_availability(&self) -> Result<(), ApiError> {
         if self.unavailable.values().any(|unavailable| *unavailable) {
             return Err(ApiError::ServiceUnavailable(
                 "A runtime authentication secret is unavailable".to_string(),
@@ -624,6 +624,11 @@ impl AuthProviderRegistry {
                 "One or more authentication providers are invalid".to_string(),
             ));
         }
+        Ok(())
+    }
+
+    async fn preflight(&self) -> Result<(), ApiError> {
+        self.check_availability()?;
         for provider in self.providers.values() {
             provider.backend.preflight().await?;
         }
@@ -1017,13 +1022,7 @@ pub async fn ensure_configured_identity_scopes(
 pub(crate) async fn apply_runtime_authentication_settings(
     providers: Option<&StorageAuthenticationProviders>,
 ) -> Result<bool, ApiError> {
-    let registry = match providers {
-        Some(providers) => {
-            AuthProviderRegistry::from_runtime_providers(providers, &runtime_deployment_config())
-                .await
-        }
-        None => build_auth_provider_registry(),
-    };
+    let registry = registry_for_settings(providers).await;
     let registry = match registry {
         Ok(registry) => registry,
         Err(error) => {
@@ -1083,6 +1082,24 @@ fn auth_provider_registry() -> Result<Arc<AuthProviderRegistry>, ApiError> {
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     Ok(current.get_or_insert(registry).clone())
+}
+
+pub(crate) async fn validate_authentication_settings(
+    providers: Option<&StorageAuthenticationProviders>,
+) -> Result<(), ApiError> {
+    registry_for_settings(providers).await?.check_availability()
+}
+
+async fn registry_for_settings(
+    providers: Option<&StorageAuthenticationProviders>,
+) -> Result<AuthProviderRegistry, ApiError> {
+    match providers {
+        Some(providers) => {
+            AuthProviderRegistry::from_runtime_providers(providers, &runtime_deployment_config())
+                .await
+        }
+        None => build_auth_provider_registry(),
+    }
 }
 
 fn build_auth_provider_registry() -> Result<AuthProviderRegistry, ApiError> {

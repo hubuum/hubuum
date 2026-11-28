@@ -303,7 +303,9 @@ existing provider of the same name preserves its encrypted password; setting it
 to `null` clears it. A supplied password is encrypted using AES-256-GCM with a
 random data key wrapped by the secret resolved from
 `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF`. The key must resolve to exactly
-32 bytes. The envelope pins the secret reference used for encryption. Treat
+32 bytes of key material. Supply 32 raw bytes or `base64:` followed by
+standard Base64 encoding of 32 random bytes. All API and worker processes
+resolve this key during startup. The envelope pins the secret reference used for encryption. Treat
 each reference as an immutable key version: use a new reference when rotating
 the key, and keep old references and their original key material resolvable
 until all dependent ciphertext is replaced. This API does not provide key

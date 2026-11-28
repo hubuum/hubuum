@@ -291,6 +291,9 @@ identity or behavior. In particular:
   material) must be equivalent on all replicas except during the documented
   staged rotation boundary. Compare the redacted ring identity in runtime
   configuration before advancing a rollout.
+- Set `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF` on every API and worker.
+  Distribute the same active key and any keys still needed to decrypt stored
+  credentials. Run `hubuum-server --validate` on each replica before rollout.
 - Authentication-provider configuration and referenced credentials must be
   equivalent on every API and worker replica.
 - Task lease and event lock durations should be consistent across worker

@@ -39,9 +39,7 @@ Authentication:
 - Creating collections inside an import, and importing identity, template, or
   integration records, requires an unscoped runtime administrator.
 
-Before submitting an import containing credentials, configure a 32-byte
-encryption key through `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF` on every
-API and worker instance. This also applies to dry runs. Queued tasks retain
+Every API and worker requires a 32-byte encryption key at startup. Set `HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF` to its secret-source name. Credential-bearing dry runs also use it. Queued tasks retain
 the key reference until execution, so keep prior key material available.
 
 Imports carrying a human `password` or `password_hash`, including dry runs,

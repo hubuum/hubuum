@@ -126,6 +126,11 @@ impl ManagedServer {
         let mut command = ProcessCommand::new(binary);
         command
             .env_clear()
+            .env("HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF", "fixture")
+            .env(
+                "HUBUUM_RUNTIME_SETTINGS_KEY_FIXTURE",
+                "0123456789abcdef0123456789abcdef",
+            )
             .env("HUBUUM_DATABASE_URL", database_url)
             .env("HUBUUM_BIND_IP", "127.0.0.1")
             .env("HUBUUM_BIND_PORT", port.to_string())

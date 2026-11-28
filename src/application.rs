@@ -11,7 +11,8 @@ use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 
-use std::{sync::Arc, time::Duration};
+use hubuum_storage_core::RuntimeSettingsStorage;
+use std::{net::ToSocketAddrs, sync::Arc, time::Duration};
 use tracing::{error, info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
@@ -22,8 +23,8 @@ use crate::config::get_config;
 use crate::config::initialize_config;
 use crate::config::running::RunningConfig;
 use crate::config::{
-    AppConfig, ClientAllowlist, DatabasePrivilegeMode, LoginRateLimitBackendKind,
-    token_hash_key_ring,
+    AppConfig, ClientAllowlist, DatabasePrivilegeMode, LoginRateLimitBackendKind, TokenHashKeyRing,
+    ValidationMode, token_hash_key_ring,
 };
 use crate::errors::{
     EXIT_CODE_CONFIG_ERROR, EXIT_CODE_DATABASE_ERROR, EXIT_CODE_INIT_ERROR,
@@ -45,9 +46,10 @@ use crate::secrets::DatabaseCredential;
 use crate::services::event_administration::count_enabled_event_sinks;
 use crate::storage::{
     OperationalStateStorage, StorageBackendKind, StorageDatabaseRole, StorageDatabaseRoleNames,
-    StorageSettings, initialize_storage, inspect_storage_database_privileges,
+    StorageHandle, StorageSettings, initialize_storage, inspect_storage_database_privileges,
 };
 use crate::tasks::{ensure_task_worker_running_with_settings, initialize_task_worker_settings};
+use crate::tls::PreparedListener;
 use crate::token_retention::ensure_token_retention_worker_running;
 use crate::utilities::is_valid_log_level;
 use crate::{api, logger, middlewares, observability, tls, utilities};
@@ -57,12 +59,75 @@ use crate::{api, logger, middlewares, observability, tls, utilities};
 /// This is the workspace-internal composition boundary used by the server
 /// binary. It is not a supported third-party embedding API.
 pub async fn run_runtime_from_environment() -> std::io::Result<()> {
-    let (mut config, mut trace_runtime) = initialize_runtime().await;
+    let mut config = load_runtime_config().await;
+    let token_hash_key_ring = token_hash_key_ring().unwrap_or_else(|error| {
+        fatal_error(
+            &format!("Failed to configure token hash keys: {error}"),
+            EXIT_CODE_CONFIG_ERROR,
+        )
+    });
+    let listener = PreparedListener::from_config(&config).unwrap_or_else(|error| {
+        fatal_error(
+            &format!("Failed to configure TLS: {error}"),
+            EXIT_CODE_TLS_ERROR,
+        )
+    });
+    let tracing_settings = observability::tracing::TracingSettings::from_config(&config)
+        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
+    let storage_settings = config
+        .runtime_storage_settings()
+        .await
+        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
+    if let Some(mode) = config.validation {
+        (config.bind_ip.as_str(), config.port)
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| {
+                std::io::Error::other("Configured listener address cannot be resolved")
+            })?;
+        if mode == ValidationMode::Full {
+            let storage = connect_ready_storage(&config, &storage_settings).await;
+            let snapshot = storage
+                .load_runtime_settings()
+                .await
+                .map_err(std::io::Error::other)?;
+            let effective = crate::config::runtime::resolve(config.clone(), Some(&snapshot))
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            login_rate_limit_store_settings(&effective).map_err(std::io::Error::other)?;
+            match snapshot.authorization() {
+                Some(selected) => {
+                    crate::permissions::build_permission_backend_for_runtime(
+                        &effective, storage, selected,
+                    )
+                    .await
+                }
+                None => build_permission_backend(&effective, storage).await,
+            }
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+            crate::auth::validate_authentication_settings(snapshot.authentication())
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            println!(
+                "Configuration and storage readiness validated for role {}.",
+                config.runtime_role.as_str()
+            );
+        } else {
+            login_rate_limit_store_settings(&config).map_err(std::io::Error::other)?;
+            println!(
+                "Local configuration validated for role {}.",
+                config.runtime_role.as_str()
+            );
+        }
+        return Ok(());
+    }
+    let mut trace_runtime =
+        initialize_runtime(&config, &tracing_settings, token_hash_key_ring).await;
+    let storage = connect_ready_storage(&config, &storage_settings).await;
     let RuntimeServices {
         app_context,
         backup_settings,
         restore_settings,
-    } = initialize_services(&mut config).await;
+    } = initialize_services(&config, storage).await;
     let storage_backend = app_context.storage_backend_descriptor();
     if config.metrics_enabled {
         observability::metrics::storage_backend_identity(storage_backend.kind().as_str());
@@ -91,10 +156,18 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
             &backup_settings,
             &restore_settings,
             active_event_sinks,
+            listener,
         )
         .await
     } else {
-        run_worker_role(&config, &app_context, &backup_settings, active_event_sinks).await
+        run_worker_role(
+            &config,
+            &app_context,
+            &backup_settings,
+            active_event_sinks,
+            listener,
+        )
+        .await
     };
     shutdown_background_workers(Duration::from_secs(30)).await;
     hubuum_templates::shutdown_template_workers().await;
@@ -108,8 +181,7 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     result
 }
 
-async fn initialize_runtime() -> (AppConfig, observability::tracing::TraceRuntime) {
-    hubuum_templates::set_worker_event_handler(observability::metrics::template_worker_event);
+async fn load_runtime_config() -> AppConfig {
     if let Err(e) = tls::install_default_crypto_provider() {
         fatal_error(
             &format!("Failed to initialize TLS cryptography: {e}"),
@@ -139,9 +211,34 @@ async fn initialize_runtime() -> (AppConfig, observability::tracing::TraceRuntim
             EXIT_CODE_CONFIG_ERROR,
         );
     }
-    let tracing_settings = observability::tracing::TracingSettings::from_config(&config)
-        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
-    let trace_runtime = observability::tracing::initialize(&tracing_settings)
+    if let Err(error) = crate::secrets::initialize(&config.secrets) {
+        fatal_error(
+            &format!("Failed to configure secret sources: {error}"),
+            EXIT_CODE_CONFIG_ERROR,
+        );
+    }
+
+    let alias = config.runtime_settings_encryption_key_ref.as_deref().unwrap_or_else(|| {
+        fatal_error("HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF or --runtime-settings-encryption-key-ref is required for every API and worker", EXIT_CODE_CONFIG_ERROR)
+    });
+    crate::secrets::resolve_runtime_settings_key(alias, None)
+        .await
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Cannot resolve HUBUUM_RUNTIME_SETTINGS_ENCRYPTION_KEY_REF: {error}"),
+                EXIT_CODE_CONFIG_ERROR,
+            )
+        });
+    config
+}
+
+async fn initialize_runtime(
+    config: &AppConfig,
+    tracing_settings: &observability::tracing::TracingSettings,
+    token_hash_key_ring: &TokenHashKeyRing,
+) -> observability::tracing::TraceRuntime {
+    hubuum_templates::set_worker_event_handler(observability::metrics::template_worker_event);
+    let trace_runtime = observability::tracing::initialize(tracing_settings)
         .await
         .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_INIT_ERROR));
     if let Err(err) =
@@ -150,19 +247,6 @@ async fn initialize_runtime() -> (AppConfig, observability::tracing::TraceRuntim
         fatal_error(&err, EXIT_CODE_CONFIG_ERROR);
     }
 
-    if let Err(error) = crate::secrets::initialize(&config.secrets) {
-        fatal_error(
-            &format!("Failed to configure secret sources: {error}"),
-            EXIT_CODE_CONFIG_ERROR,
-        );
-    }
-
-    let token_hash_key_ring = token_hash_key_ring().unwrap_or_else(|error| {
-        fatal_error(
-            &format!("Failed to configure token hash keys: {error}"),
-            EXIT_CODE_CONFIG_ERROR,
-        )
-    });
     if !token_hash_key_ring.is_stable() {
         warn!(
             message = "The token hash key is unavailable; using an ephemeral in-memory key. Existing tokens will be invalid after restart.",
@@ -199,7 +283,7 @@ async fn initialize_runtime() -> (AppConfig, observability::tracing::TraceRuntim
             u64::try_from(token_hash_key_ring.previous_key_ids().count()).unwrap_or(u64::MAX),
         );
     }
-    (config, trace_runtime)
+    trace_runtime
 }
 
 struct RuntimeServices {
@@ -248,13 +332,11 @@ impl AppConfig {
     }
 }
 
-async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
-    let storage_settings = config
-        .runtime_storage_settings()
-        .await
-        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
-    utilities::auth::initialize_dummy_password_hash();
-    let storage = initialize_storage(&storage_settings)
+async fn connect_ready_storage(
+    config: &AppConfig,
+    storage_settings: &StorageSettings,
+) -> StorageHandle {
+    let storage = initialize_storage(storage_settings)
         .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR))
         .with_query_observations(config.query_observation_settings());
     let readiness = storage
@@ -277,7 +359,7 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
         .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR))
     {
         let privilege_report = inspect_storage_database_privileges(
-            &storage_settings,
+            storage_settings,
             StorageDatabaseRole::Runtime,
             &database_roles,
         )
@@ -291,6 +373,13 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
                 );
             }
             Ok(Some(report)) => {
+                if config.validation.is_some() {
+                    eprintln!(
+                        "Database runtime privilege audit found {} dangerous and {} missing privileges.",
+                        report.dangerous().len(),
+                        report.missing().len()
+                    );
+                }
                 for finding in report.dangerous() {
                     warn!(
                         message = "Dangerous database runtime privilege detected",
@@ -318,6 +407,9 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
             }
             Ok(None) => {}
             Err(error) => {
+                if config.validation.is_some() {
+                    eprintln!("Database runtime privilege inspection failed: {error}");
+                }
                 warn!(
                     message = "Database runtime privilege inspection failed",
                     role = database_roles.runtime(),
@@ -333,6 +425,11 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
         }
     }
 
+    storage
+}
+
+async fn initialize_services(config: &AppConfig, storage: StorageHandle) -> RuntimeServices {
+    utilities::auth::initialize_dummy_password_hash();
     let backup_settings = BackupSettings::new(
         config.backup_output_retention_hours,
         config.backup_max_active_tasks_per_user,
@@ -421,10 +518,11 @@ async fn run_worker_role(
     app_context: &AppContext,
     backup_settings: &BackupSettings,
     active_event_sinks: Option<i64>,
+    listener: PreparedListener,
 ) -> std::io::Result<()> {
     let storage_backend = app_context.storage_backend_descriptor();
     let authorization_backend = app_context.permission_backend().kind();
-    let metrics_server = start_worker_metrics_server(config, app_context.clone())?;
+    let metrics_server = start_worker_metrics_server(config, app_context.clone(), listener)?;
     start_background_workers(app_context, backup_settings);
     info!(
         message = "worker startup",
@@ -456,6 +554,7 @@ async fn run_http_role(
     backup_settings: &BackupSettings,
     restore_settings: &RestoreSettings,
     active_event_sinks: Option<i64>,
+    listener: PreparedListener,
 ) -> std::io::Result<()> {
     let storage_backend = app_context.storage_backend_descriptor();
     let authorization_backend = app_context.permission_backend().kind();
@@ -518,30 +617,8 @@ async fn run_http_role(
 
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
 
-    let tls_paths = config.tls_key_pair().unwrap_or_else(|message| {
-        fatal_error(
-            &format!("{message}. Please provide both --tls-cert-path and --tls-key-path"),
-            EXIT_CODE_TLS_ERROR,
-        )
-    });
-
-    let server = match tls_paths {
-        Some((cert, key)) => match tls::configure_server(
-            server,
-            &bind_address,
-            cert,
-            key,
-            config.tls_key_passphrase.as_deref(),
-            config.tls_backend,
-        ) {
-            Ok(srv) => srv,
-            Err(e) => fatal_error(
-                &format!("Failed to configure TLS server: {}", e),
-                EXIT_CODE_TLS_ERROR,
-            ),
-        },
-        None => server.bind(&bind_address)?,
-    };
+    let tls_enabled = !matches!(listener, PreparedListener::Plain);
+    let server = listener.bind(server, &bind_address)?;
 
     if config.runtime_role.runs_background_workers() {
         start_background_workers(&background_worker_context, backup_settings);
@@ -553,7 +630,7 @@ async fn run_http_role(
         git_sha = crate::build_git_sha(),
         runtime_role = config.runtime_role.as_str(),
         bind_address = bind_address.as_str(),
-        tls = tls_paths.is_some(),
+        tls = tls_enabled,
         log_format = "json",
         log_level = config.log_level.as_str(),
         actix_workers = config.actix_workers,
@@ -630,7 +707,11 @@ fn worker_metrics_service(
         .default_service(web::to(observability::metrics::runtime_endpoint))
 }
 
-fn start_worker_metrics_server(config: &AppConfig, context: AppContext) -> std::io::Result<Server> {
+fn start_worker_metrics_server(
+    config: &AppConfig,
+    context: AppContext,
+    listener: PreparedListener,
+) -> std::io::Result<Server> {
     let client_allowlist = config.client_allowlist.clone();
     let proxy_trust = middlewares::ProxyTrust::new(
         config.trust_ip_headers,
@@ -645,20 +726,7 @@ fn start_worker_metrics_server(config: &AppConfig, context: AppContext) -> std::
         ))
     });
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
-    let tls_paths = config
-        .tls_key_pair()
-        .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
-    let server = match tls_paths {
-        Some((cert, key)) => tls::configure_server(
-            server,
-            &bind_address,
-            cert,
-            key,
-            config.tls_key_passphrase.as_deref(),
-            config.tls_backend,
-        )?,
-        None => server.bind(&bind_address)?,
-    };
+    let server = listener.bind(server, &bind_address)?;
 
     // The worker supervisor owns SIGINT/SIGTERM handling and initiates a
     // graceful stop through the server handle. Letting Actix install a second

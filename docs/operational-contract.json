@@ -7852,6 +7852,26 @@
       "command": "hubuum-server",
       "options": [
         {
+          "id": "validation",
+          "long": "validate",
+          "short": null,
+          "environment": null,
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 0,
+            "maximum": 1
+          },
+          "default": [],
+          "dynamic_default": null,
+          "allowed_values": [
+            "full",
+            "local"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
+        {
           "id": "schema_max_bytes",
           "long": "schema-max-bytes",
           "short": null,

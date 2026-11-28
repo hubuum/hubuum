@@ -8,6 +8,7 @@ use hubuum_secrets::{
 };
 
 use crate::config::{CommandLineDatabaseUrl, SecretSourceOptions, SecretSourceSettings};
+use crate::runtime_settings_secrets::RuntimeEncryptionKey;
 
 static APPLICATION_SECRETS: OnceLock<Result<ApplicationSecrets, SecretError>> = OnceLock::new();
 
@@ -317,11 +318,14 @@ pub(crate) async fn resolve_ldap_secret(alias: &str) -> Result<ResolvedSecret, S
 pub(crate) async fn resolve_runtime_settings_key(
     alias: &str,
     version: Option<&SecretVersion>,
-) -> Result<ResolvedSecret, SecretError> {
-    configured()?
+) -> Result<RuntimeEncryptionKey, SecretError> {
+    let resolved = configured()?
         .runtime_settings
         .resolve_version(alias, version)
-        .await
+        .await?;
+    RuntimeEncryptionKey::parse(resolved.value().expose()).map_err(|_| SecretError::new(
+        SecretErrorKind::InvalidValue, "Runtime settings encryption key must be exactly 32 bytes or base64: followed by its standard Base64 encoding",
+    ))
 }
 
 pub(crate) fn resolve_token_hash_key() -> Result<Vec<u8>, SecretError> {
