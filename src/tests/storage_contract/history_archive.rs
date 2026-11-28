@@ -910,6 +910,81 @@ async fn rewrite_verifies_the_pinned_copy_and_the_relocated_catalog_copy() {
     }
 }
 
+#[cfg(feature = "integration-test-support")]
+#[rstest]
+#[case::uncaptured(false)]
+#[case::previously_captured(true)]
+#[actix_web::test]
+async fn rewrite_verifies_displaced_and_current_copies_without_a_query_id(
+    #[case] capture_before_relocation: bool,
+) {
+    with_overflow_backend(async |ctx| {
+        let row = ctx.closed().await;
+        let selected = [row.identity()];
+        let original = ctx.descriptor(&row, false, vec![]).await;
+        ctx.publish(original.clone()).await;
+        if capture_before_relocation {
+            ctx.capture(HistoryArchivePoint::Exact {
+                version: row.identity().version(),
+            })
+            .await;
+        }
+        let replacement = ctx.descriptor(&row, false, vec![]).await;
+        ctx.publish(replacement.clone()).await;
+
+        let history = pin_operator(ctx)
+            .history_archive_copy_history(row.identity(), ctx.permit.fence())
+            .await
+            .unwrap();
+        let catalog = ctx
+            .with_archive(
+                ctx.storage
+                    .history_archive_catalog(ctx.resource, &ctx.archive_permit),
+            )
+            .await
+            .unwrap();
+        let current = catalog
+            .versions()
+            .iter()
+            .find(|descriptor| descriptor.identity() == row.identity())
+            .unwrap();
+        assert_eq!(
+            history.locations(),
+            std::slice::from_ref(original.location())
+        );
+        assert_eq!(current.location(), replacement.location());
+        assert_ne!(current.location(), original.location());
+
+        let store = ctx.storage.artifact_store();
+        let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+        let batch = SegmentRewriteSelection::new(selected).unwrap();
+        let mut admission = batch.start_admission();
+        let locations = [history.locations().first().unwrap(), current.location()];
+        for location in locations {
+            let segment = RetainedHistorySegment::open(store.as_ref(), location, &mut budget)
+                .await
+                .unwrap();
+            admission = admission.include(&segment, selected).unwrap();
+        }
+        let admitted = admission.finish().unwrap();
+        for location in locations {
+            let segment = RetainedHistorySegment::open(store.as_ref(), location, &mut budget)
+                .await
+                .unwrap();
+            let evidence = segment
+                .verify_fully_selected(
+                    store.as_ref(),
+                    admitted.for_source(&segment).unwrap(),
+                    &mut budget,
+                )
+                .await
+                .unwrap();
+            assert_eq!(evidence.source(), location);
+        }
+    })
+    .await;
+}
+
 #[rstest]
 #[case::missing(0, HistoryArchiveCoverageState::Unavailable)]
 #[case::corrupt(1, HistoryArchiveCoverageState::Corrupt)]

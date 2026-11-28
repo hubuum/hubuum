@@ -345,9 +345,16 @@ impl HistoryArchiveStorage for PostgresStorage {
                         ));
                     }
                 }
-                catalog::store(connection, publication.catalog(), expected, permit.application()).await?;
+                catalog::store(
+                    connection,
+                    publication.catalog(),
+                    expected,
+                    permit.application(),
+                )
+                .await?;
                 if expected.value() != 0 {
-                    pins::record_displacements(connection, &publication, permit.application()).await?;
+                    pins::record_displacements(connection, &publication, permit.application())
+                        .await?;
                 }
                 Ok::<_, PostgresStorageError>(publication.into_catalog())
             })
