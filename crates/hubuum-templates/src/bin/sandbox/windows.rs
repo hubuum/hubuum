@@ -1,3 +1,5 @@
+mod token;
+
 use std::error::Error;
 use std::io::{self, PipeReader, Read};
 use std::os::windows::io::OwnedHandle;
@@ -28,13 +30,18 @@ pub(crate) fn prepare() -> Result<(), Box<dyn Error>> {
 pub(crate) fn enter() -> Result<Worker, Box<dyn Error>> {
     let token = rappct::token::query_current_process_token()?;
     if token.is_appcontainer {
-        if token.is_lpac
-            && token.capability_sids.is_empty()
-            && token.package_sid == Some(derive_sid_from_name(PROFILE)?)
-        {
-            return Ok(Worker::Render);
+        if token.package_sid != Some(derive_sid_from_name(PROFILE)?) {
+            return Err("unexpected template worker package SID".into());
         }
-        return Err("unexpected template worker AppContainer token".into());
+        if !token.capability_sids.is_empty() {
+            return Err(format!(
+                "expected a capability-free worker token, found {} capabilities",
+                token.capability_sids.len()
+            )
+            .into());
+        }
+        token::verify_package_opt_out()?;
+        return Ok(Worker::Render);
     }
     if std::env::var_os("LOCALAPPDATA").is_none() {
         return Err(

@@ -117,3 +117,62 @@ async fn packaged_worker_renders_with_the_service_environment() {
     let response: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(response["Ok"][0]["output"], "Hello Hubuum");
 }
+
+#[cfg(windows)]
+#[test]
+fn ordinary_appcontainer_is_refused_before_rendering() {
+    use std::io::{PipeReader, Read};
+    use std::os::windows::io::OwnedHandle;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::time::Duration;
+
+    use rappct::{
+        AppContainerProfile, JobLimits, LaunchOptions, SecurityCapabilitiesBuilder, StdioConfig,
+        launch_in_container_with_io,
+    };
+
+    let exe = env!("CARGO_BIN_EXE_hubuum-template-worker");
+    let profile = AppContainerProfile::ensure(
+        "Hubuum.TemplateWorker",
+        "Hubuum template worker",
+        Some("Isolated Hubuum template rendering"),
+    )
+    .unwrap();
+    assert!(
+        Command::new(exe)
+            .arg("--prepare-sandbox")
+            .status()
+            .unwrap()
+            .success()
+    );
+    let ordinary = SecurityCapabilitiesBuilder::new(&profile.sid)
+        .lpac(false)
+        .build()
+        .unwrap();
+    let options = LaunchOptions {
+        exe: PathBuf::from(exe),
+        cwd: Some(PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32")),
+        env: Some(hubuum_templates::windows_worker_environment()),
+        stdio: StdioConfig::Pipe,
+        join_job: Some(JobLimits {
+            kill_on_job_close: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let mut child = launch_in_container_with_io(&ordinary, &options).unwrap();
+    drop(child.stdin.take());
+    let diagnostics = child.stderr.take().unwrap();
+    let status = child.wait(Some(Duration::from_secs(30))).unwrap();
+    let mut message = String::new();
+    PipeReader::from(OwnedHandle::from(diagnostics))
+        .take(1024)
+        .read_to_string(&mut message)
+        .unwrap();
+    assert_eq!(status, 71, "{message}");
+    assert!(
+        message.contains("restricted-package access check"),
+        "{message}"
+    );
+}

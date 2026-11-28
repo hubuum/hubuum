@@ -26,6 +26,13 @@ seccompiler = "0.5"
 
 [target.'cfg(windows)'.dependencies]
 rappct = "0.13.3"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 rstest = "0.28"
