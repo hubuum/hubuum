@@ -9,6 +9,8 @@ use diesel::sql_types::Integer;
 use diesel_async::SimpleAsyncConnection;
 use rstest::rstest;
 
+mod descriptions;
+
 #[rstest]
 #[case::retained_collection("collection", true, false)]
 #[case::other_collection("collection", false, true)]

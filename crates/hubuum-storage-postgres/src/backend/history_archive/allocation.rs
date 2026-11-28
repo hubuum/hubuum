@@ -1,7 +1,7 @@
 //! Session-local accounting of the native archive catalog, including TOAST and indexes.
 use diesel::QueryableByName;
 use diesel::sql_query;
-use diesel::sql_types::{BigInt, Binary, Integer, Jsonb, Text, Uuid as SqlUuid};
+use diesel::sql_types::{Array, BigInt, Binary, Integer, Jsonb, Text, Uuid as SqlUuid};
 use diesel_async::{RunQueryDsl, SimpleAsyncConnection};
 use futures_util::{Stream, StreamExt};
 use hubuum_storage_core::artifacts::ArtifactManifest;
@@ -88,17 +88,30 @@ pub struct ArchiveCatalogAllocation {
     table_bytes_including_toast: i64,
     #[diesel(sql_type = BigInt)]
     index_bytes: i64,
+    #[diesel(sql_type = BigInt)]
+    description_history_bytes_including_indexes: i64,
 }
 
 impl ArchiveCatalogAllocation {
     pub fn total_bytes(&self) -> u64 {
         (self.table_bytes_including_toast + self.index_bytes) as u64
     }
+
+    pub fn online_bytes(&self) -> u64 {
+        self.total_bytes() + self.description_history_bytes_including_indexes as u64
+    }
 }
 
 /// Measure the production encoding and physical table definition in a disposable table.
 pub async fn measure_archive_catalog_allocation(
-    publications: impl Stream<Item = (HistoryArchiveCatalog, ArtifactManifest, Vec<Vec<u8>>)> + Send,
+    publications: impl Stream<
+        Item = (
+            HistoryArchiveCatalog,
+            ArtifactManifest,
+            Vec<Vec<u8>>,
+            Vec<String>,
+        ),
+    > + Send,
     expected_versions: usize,
 ) -> Result<
     (
@@ -125,15 +138,28 @@ pub async fn measure_archive_catalog_allocation(
              (LIKE hubuum_control.history_archive_catalogs INCLUDING ALL) ON COMMIT DROP;
              CREATE TEMP TABLE catalog_packed
              (LIKE hubuum_control.history_archive_catalogs INCLUDING ALL) ON COMMIT DROP;
+             CREATE TEMP TABLE description_history
+             (LIKE public.collection_description_digest_history INCLUDING ALL) ON COMMIT DROP;
              CREATE TEMP TABLE archive_destinations (LIKE public.artifact_destinations INCLUDING ALL) ON COMMIT DROP;
              CREATE TEMP TABLE archive_attempts (LIKE public.artifact_attempts INCLUDING ALL) ON COMMIT DROP;
              CREATE TEMP TABLE archive_chunks (LIKE public.artifact_chunks INCLUDING ALL) ON COMMIT DROP",
         ).await?;
         let mut resources = 0;
+        let mut history_rows = 0_i64;
         let mut expected_segment_bytes = 0;
         let mut publications = std::pin::pin!(publications);
-        while let Some((catalog, manifest, blocks)) = publications.next().await {
+        while let Some((catalog, manifest, blocks, descriptions)) = publications.next().await {
             resources += 1;
+            if descriptions.len() != catalog.versions().len() {
+                return Err(PostgresStorageError::database("Archive allocation description count mismatch"));
+            }
+            sql_query("INSERT INTO pg_temp.description_history(history_id,digest,encoded_bytes)
+                       SELECT $1 + i, digest, encoded_bytes
+                       FROM unnest($2::text[]) WITH ORDINALITY AS d(value,i)
+                       CROSS JOIN LATERAL public.hubuum_observe_collection_description(d.value) o
+                       WHERE octet_length(d.value) BETWEEN 1048576 AND 4194304")
+                .bind::<BigInt,_>(history_rows).bind::<Array<Text>,_>(&descriptions).execute(conn).await?;
+            history_rows += descriptions.len() as i64;
             expected_segment_bytes += manifest.byte_size() as i64;
             insert_publication(conn, &manifest, blocks).await?;
             let material = json(&catalog, HISTORY_ARCHIVE_CATALOG_BYTES)?;
@@ -153,17 +179,19 @@ pub async fn measure_archive_catalog_allocation(
                 .bind::<Integer, _>(catalog.versions().len() as i32)
                 .execute(conn).await?;
         }
-        conn.batch_execute("ANALYZE pg_temp.catalog_allocation; ANALYZE pg_temp.catalog_packed;
+        conn.batch_execute("ANALYZE pg_temp.catalog_allocation; ANALYZE pg_temp.catalog_packed; ANALYZE pg_temp.description_history;
             ANALYZE pg_temp.archive_destinations; ANALYZE pg_temp.archive_attempts; ANALYZE pg_temp.archive_chunks").await?;
         let legacy = sql_query(
             "SELECT count(*)::bigint AS resources, coalesce(sum(jsonb_array_length(material->'versions')),0)::bigint AS versions,
              pg_table_size('pg_temp.catalog_allocation') AS table_bytes_including_toast,
-             pg_indexes_size('pg_temp.catalog_allocation') AS index_bytes FROM pg_temp.catalog_allocation"
+             pg_indexes_size('pg_temp.catalog_allocation') AS index_bytes,
+             pg_total_relation_size('pg_temp.description_history') AS description_history_bytes_including_indexes FROM pg_temp.catalog_allocation"
         ).get_result::<ArchiveCatalogAllocation>(conn).await?;
         let packed = sql_query(
             "SELECT count(*)::bigint AS resources, coalesce(sum(version_count),0)::bigint AS versions,
              pg_table_size('pg_temp.catalog_packed') AS table_bytes_including_toast,
-             pg_indexes_size('pg_temp.catalog_packed') AS index_bytes FROM pg_temp.catalog_packed"
+             pg_indexes_size('pg_temp.catalog_packed') AS index_bytes,
+             pg_total_relation_size('pg_temp.description_history') AS description_history_bytes_including_indexes FROM pg_temp.catalog_packed"
         ).get_result::<ArchiveCatalogAllocation>(conn).await?;
         let provider = sql_query(
             "SELECT pg_total_relation_size('pg_temp.archive_destinations') AS destination_bytes,

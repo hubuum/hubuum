@@ -11,8 +11,13 @@ WITH candidates AS (
     ORDER BY valid_from DESC, history_id DESC
     LIMIT 2
 ), encoded AS MATERIALIZED (
-    SELECT id, name, description, logical_identity, project_description,
-        CASE WHEN fits_raw AND project_description THEN to_json(description)::text END AS quoted_description,
+    SELECT id, name, logical_identity, project_description,
+        CASE WHEN fits_raw AND project_description THEN
+            COALESCE(o.digest, sha256(convert_to(description, 'UTF8')))
+        END AS description_digest,
+        CASE WHEN fits_raw AND project_description THEN
+            COALESCE(o.encoded_bytes, octet_length(convert_to(to_json(description)::text, 'UTF8')) - 2)
+        END AS encoded_description_bytes,
         CASE WHEN fits_raw THEN
             jsonb_build_object(
                 'identity', jsonb_build_object(
@@ -30,12 +35,14 @@ WITH candidates AS (
                 )
             )
         END AS row
-    FROM candidates
+    FROM candidates c
+    LEFT JOIN public.collection_description_digest_history o
+        ON c.project_description AND o.history_id = c.history_id
 ), bounded AS MATERIALIZED (
     -- The projected row already includes the two quotes around the empty
     -- description. Restore the exact original JSON byte count for admission.
     SELECT *, row IS NULL OR
-        octet_length(row::text) + COALESCE(octet_length(quoted_description) - 2, 0) > 4194304 AS oversized
+        octet_length(row::text) + COALESCE(encoded_description_bytes, 0) > 4194304 AS oversized
     FROM encoded
 )
 SELECT COALESCE((
@@ -52,9 +59,9 @@ SELECT COALESCE((
             )
         )) FROM bounded
     ), '[]'::jsonb) AS authorization,
-    (SELECT sha256(convert_to(description, 'UTF8')) FROM bounded
+    (SELECT description_digest FROM bounded
         WHERE project_description AND NOT oversized LIMIT 1) AS description_digest,
-    (SELECT octet_length(convert_to(quoted_description, 'UTF8')) - 2 FROM bounded
+    (SELECT encoded_description_bytes FROM bounded
         WHERE project_description AND NOT oversized LIMIT 1) AS encoded_description_bytes,
     EXISTS(SELECT 1 FROM public.collections
         WHERE logical_identity #>> '{subject,identity,identity}' = $1

@@ -148,6 +148,14 @@ diesel::table! {
 }
 
 diesel::table! {
+    collection_description_digest_history (history_id) {
+        history_id -> Int8,
+        digest -> Bytea,
+        encoded_bytes -> Int4,
+    }
+}
+
+diesel::table! {
     collections (id) {
         id -> Int4,
         name -> Varchar,
@@ -1208,6 +1216,7 @@ diesel::joinable!(class_computation_state -> tasks (active_task_id));
 diesel::joinable!(class_schema_revisions -> hubuumclass (class_id));
 diesel::joinable!(class_schema_state -> hubuumclass (class_id));
 diesel::joinable!(collection_authorization_state -> collections (collection_id));
+diesel::joinable!(collection_description_digest_history -> collections_history (history_id));
 diesel::joinable!(computed_field_definitions -> hubuumclass (class_id));
 diesel::joinable!(computed_field_definitions -> users (owner_user_id));
 diesel::joinable!(credential_activity -> auth_sessions (session_id));
@@ -1283,6 +1292,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     class_schema_state,
     collection_authorization_state,
     collection_closure,
+    collection_description_digest_history,
     collections,
     collections_history,
     computed_field_definitions,

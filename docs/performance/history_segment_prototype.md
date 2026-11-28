@@ -238,6 +238,12 @@ The original v2 measurements above count encoded manifests and exclude other
 provider allocations. The current diagnostic also copies the migrated
 PostgreSQL destination, attempt and chunk tables into the temporary schema.
 It inserts the published manifests and the verified bytes of each block.
+The current diagnostic includes the table, TOAST and index allocation for
+the primary description observations in both online metadata totals. It
+populates the same physical layout from the fixture's source descriptions.
+The 256-byte and 64 KiB descriptions in this workload keep that table empty,
+so its fixed allocation still contributes to P1.
+
 It counts the physical destination and attempt relations, including manifests
 and indexes. For the chunk relation it subtracts the physical content column
 sizes from the full table, TOAST and index allocation. The difference includes
