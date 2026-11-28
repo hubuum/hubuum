@@ -25,7 +25,7 @@ const LIFECYCLE_DOWN: &str =
 const PACKED_CATALOG_DOWN: &str =
     include_str!("../migrations/2026-11-27-000001_packed_history_catalogs/down.sql");
 const DESCRIPTION_OBSERVATIONS_DOWN: &str = include_str!(
-    "../migrations/2026-11-28-000002_collection_history_description_observations/down.sql"
+    "../migrations/2026-11-28-000005_collection_history_description_observations/down.sql"
 );
 const SCHEDULER_UP: &str =
     include_str!("../migrations/2026-11-19-000001_idle_task_scheduling/up.sql");
@@ -98,7 +98,7 @@ async fn revert_to_lifecycle(
         .batch_execute(DESCRIPTION_OBSERVATIONS_DOWN)
         .await?;
     connection.batch_execute(PACKED_CATALOG_DOWN).await?;
-    sql_query("DELETE FROM public.__diesel_schema_migrations WHERE version IN ('20261127000001', '20261128000002')")
+    sql_query("DELETE FROM public.__diesel_schema_migrations WHERE version IN ('20261127000001', '20261128000005')")
         .execute(connection)
         .await?;
     Ok(())

@@ -28,7 +28,7 @@ const OFFLINE_MIGRATIONS: &[&str] = &[
     "20261110000001",
     "20261119000002",
     "20261127000001",
-    "20261128000002",
+    "20261128000005",
 ];
 
 /// Whether pending migrations permit the previous API to remain online.
@@ -313,7 +313,10 @@ fn run_embedded_migrations_with_roles(
 
 #[cfg(test)]
 mod tests {
-    use super::{MigrationMode, OFFLINE_MIGRATIONS, migration_mode_for_versions};
+    use super::{MIGRATIONS, MigrationMode, OFFLINE_MIGRATIONS, migration_mode_for_versions};
+    use diesel::migration::MigrationSource;
+    use diesel::pg::Pg;
+    use diesel_migrations::EmbeddedMigrations;
     use rstest::rstest;
 
     #[rstest]
@@ -334,7 +337,7 @@ mod tests {
     #[case::before_history_lifecycle(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008", "20261101000001", "20261103000002", "20261103000004", "20261106000001", "20261110000001", "20261111000001", "20261119000001"], MigrationMode::Offline)]
     #[case::before_packed_history_catalogs(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008", "20261101000001", "20261103000002", "20261103000004", "20261106000001", "20261110000001", "20261111000001", "20261119000001", "20261119000002"], MigrationMode::Offline)]
     #[case::before_description_observations(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008", "20261101000001", "20261103000002", "20261103000004", "20261106000001", "20261110000001", "20261111000001", "20261119000001", "20261119000002", "20261127000001"], MigrationMode::Offline)]
-    #[case::current(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008", "20261101000001", "20261103000002", "20261103000004", "20261106000001", "20261110000001", "20261111000001", "20261119000001", "20261119000002", "20261127000001", "20261128000002"], MigrationMode::Rolling)]
+    #[case::current(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008", "20261101000001", "20261103000002", "20261103000004", "20261106000001", "20261110000001", "20261111000001", "20261119000001", "20261119000002", "20261127000001", "20261128000005"], MigrationMode::Rolling)]
     fn pending_offline_migrations_determine_mode(
         #[case] applied: Vec<&str>,
         #[case] expected: MigrationMode,
@@ -366,7 +369,7 @@ mod tests {
             "20261119000001",
             "20261119000002",
             "20261127000001",
-            "20261128000002",
+            "20261128000005",
         ]
         .map(str::to_owned);
         assert_eq!(
@@ -380,6 +383,23 @@ mod tests {
         let error = migration_mode_for_versions(&["20990101000001".to_string()], &[])
             .expect_err("unknown database history must fail closed");
         assert!(error.to_string().contains("pre-upgrade database snapshot"));
+    }
+
+    #[test]
+    fn each_embedded_migration_has_its_own_diesel_version() {
+        let migrations =
+            <EmbeddedMigrations as MigrationSource<Pg>>::migrations(&MIGRATIONS).unwrap();
+        let mut versions: Vec<_> = migrations
+            .iter()
+            .map(|migration| migration.name().version())
+            .collect();
+        versions.sort_unstable();
+        for pair in versions.windows(2) {
+            assert_ne!(
+                pair[0], pair[1],
+                "Two embedded migrations share a Diesel version"
+            );
+        }
     }
 
     #[test]

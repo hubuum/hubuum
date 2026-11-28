@@ -148,7 +148,7 @@
       "drop_constraints": {}
     },
     {
-      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-28-000002_collection_history_description_observations/up.sql",
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-28-000005_collection_history_description_observations/up.sql",
       "sha256": "9a5f4c626a924a43795b19b4f81c47514b4ada3dbe8475b76be048ea84c901d9",
       "reason": "Installing the history triggers and backfilling existing large descriptions holds a write-conflicting lock on collection history until the transaction commits. Updated archive readers require the new relation.",
       "upgrade_action": "Stop history writers, take a database backup, apply the migration with the migrator and reconcile runtime grants before starting updated readers and writers. For a downgrade stop the updated readers, revert the migration and start the preceding reader version. See docs/history_archive_reads.md.",

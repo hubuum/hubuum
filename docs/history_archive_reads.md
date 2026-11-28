@@ -93,7 +93,12 @@ of the primary from one statement snapshot. Admission charges the original
 encoded row size. Changed data fails verification. The verified archive frame
 still has to match the original full-payload SHA-256 digest before delivery.
 
-Apply `2026-11-28-000002_collection_history_description_observations` before
+For a disposable test database provisioned from an earlier draft of #678,
+revert the description migration with that draft's migrator before upgrading,
+or recreate the test database. The earlier draft used the version now assigned
+to retained erasure pins.
+
+Apply `2026-11-28-000005_collection_history_description_observations` before
 starting the updated PostgreSQL reader. The migration scans collection history
 and derives a SHA-256 digest and JSON-encoded byte count for descriptions from
 1 through 4 MiB. The updater selects an offline migration. Stop history writers,
