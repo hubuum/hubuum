@@ -2,13 +2,13 @@ use std::sync::{Arc, RwLock};
 
 use actix_web::{FromRequest, HttpMessage, HttpRequest, dev::Payload, web::Data};
 use futures_util::future::{Ready, ready};
-use hubuum_artifacts::{ArtifactStore, DestinationId};
 use hubuum_domain::ResourceRevision;
 
 use crate::config::artifacts::HistoryArchiveFilesystem;
 
 use crate::config::{ControlRecoveryOptions, PermissionBackendKind};
 use crate::errors::ApiError;
+use crate::services::archive::HistoryArchiveReaders;
 use crate::services::deletion_recovery::TaskReceiptService;
 use crate::services::{
     ClassRelationService, ClassService, CollectionService, ObjectRelationService, ObjectService,
@@ -303,12 +303,13 @@ pub struct AppContext {
     services: Services,
     task_receipts: TaskReceiptService,
     history_retention: ControlRecoveryOptions,
-    history_archive_filesystem: Option<(DestinationId, Arc<dyn ArtifactStore>)>,
+    history_archive_readers: HistoryArchiveReaders,
 }
 
 impl AppContext {
     pub(crate) fn new(backend: StorageHandle, permissions: Arc<dyn PermissionBackend>) -> Self {
         let services = Services::from_storage(backend.clone());
+        let history_archive_readers = HistoryArchiveReaders::new(backend.artifact_store());
         Self {
             backend,
             deployment_authorization: DeploymentAuthorization::Supplied(permissions.clone()),
@@ -322,7 +323,7 @@ impl AppContext {
             services,
             task_receipts: TaskReceiptService::default(),
             history_retention: ControlRecoveryOptions::default(),
-            history_archive_filesystem: None,
+            history_archive_readers,
         }
     }
 
@@ -345,23 +346,14 @@ impl AppContext {
         mut self,
         config: Option<&HistoryArchiveFilesystem>,
     ) -> Result<Self, ApiError> {
-        self.history_archive_filesystem = match config {
-            Some(config) => Some(config.open().await?),
-            None => None,
-        };
+        self.history_archive_readers
+            .configure_filesystem(config)
+            .await?;
         Ok(self)
     }
 
-    pub(crate) fn history_archive_store(
-        &self,
-        destination: DestinationId,
-    ) -> Arc<dyn ArtifactStore> {
-        if let Some((id, store)) = &self.history_archive_filesystem
-            && *id == destination
-        {
-            return store.clone();
-        }
-        self.backend.artifact_store()
+    pub(crate) fn history_archive_readers(&self) -> &HistoryArchiveReaders {
+        &self.history_archive_readers
     }
 
     pub(crate) fn with_history_retention(mut self, options: ControlRecoveryOptions) -> Self {

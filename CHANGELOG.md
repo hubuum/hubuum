@@ -57,7 +57,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - The internal collection history service can read exact versions and as-of
   snapshots from a registered Unix filesystem archive. Set
   `HUBUUM_HISTORY_ARCHIVE_FILESYSTEM` to its destination UUID and private
-  directory, joined by `=`. Only published copies are readable.
+  directory, joined by `=`. Only published copies are readable. Erasure planning
+  verifies each observed copy in its recorded destination before admitting a rewrite.
 
 - **Breaking storage SDK 0.20 change.** Complete storage adapters must implement
   `checkpoint_verified_history_archive` and load the optional verified manifest
@@ -367,6 +368,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   64 KiB blocks and a v3 index. Only the fixed-width index is compressed.
   Upgrade every archive reader and recovery tool before publishing v3 segments.
   Readers continue to open the JSON v1 and fixed-width v2 formats.
+
+- Experimental archive erasure can verify the same selected resource version
+  in several published segments. Each physical copy counts toward one shared
+  limit of 1,000 selected frames and 16 MiB before staging a replacement.
 
 - Opening a retained history segment now reuses verified header and footer
   blocks while loading the index. Each new open and each subsequent record

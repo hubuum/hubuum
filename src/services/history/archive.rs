@@ -8,7 +8,7 @@ pub use publication::{ClaimedFilesystemHistory, SealedFilesystemHistory};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
-use hubuum_artifacts::{ArtifactError, ArtifactStore};
+use hubuum_artifacts::{ArtifactError, ArtifactReference, ArtifactStore, DestinationId};
 use hubuum_budget::ByteLimit;
 use hubuum_domain::{CollectionId, PrincipalIdentity, ResourceId, ResourceIdentity};
 use hubuum_storage_core::{
@@ -26,6 +26,7 @@ use uuid::Uuid;
 
 use super::access::authorize_history_snapshot;
 use super::segments::{RetainedHistorySegment, SegmentScope};
+use crate::config::artifacts::HistoryArchiveFilesystem;
 use crate::errors::ApiError;
 use crate::models::{HistoryAuthorizationSnapshot, Permissions, TokenScope};
 use crate::permissions::AppContext;
@@ -33,6 +34,42 @@ use crate::storage::{StorageHandle, storage_handle};
 use crate::traits::AuthzSubject;
 
 const ATTEMPT_BYTES: usize = 16 * 1024 * 1024;
+
+/// Reader selection for immutable archive references captured by this process.
+#[derive(Clone)]
+pub struct HistoryArchiveReaders {
+    primary: Arc<dyn ArtifactStore>,
+    filesystem: Option<(DestinationId, Arc<dyn ArtifactStore>)>,
+}
+
+impl HistoryArchiveReaders {
+    pub(crate) fn new(primary: Arc<dyn ArtifactStore>) -> Self {
+        Self {
+            primary,
+            filesystem: None,
+        }
+    }
+
+    pub(crate) async fn configure_filesystem(
+        &mut self,
+        config: Option<&HistoryArchiveFilesystem>,
+    ) -> Result<(), ApiError> {
+        self.filesystem = match config {
+            Some(config) => Some(config.open().await?),
+            None => None,
+        };
+        Ok(())
+    }
+
+    pub fn for_reference(&self, reference: &ArtifactReference) -> Arc<dyn ArtifactStore> {
+        if let Some((id, store)) = &self.filesystem
+            && *id == reference.identity().destination()
+        {
+            return store.clone();
+        }
+        self.primary.clone()
+    }
+}
 
 pub struct HistoryArchiveRequest {
     collection: CollectionId,
@@ -283,7 +320,8 @@ impl HistoryArchiveQuery {
                     storage: storage.clone(),
                     archive_reader: capture.archive().map(|descriptor| {
                         context
-                            .history_archive_store(descriptor.location().identity().destination())
+                            .history_archive_readers()
+                            .for_reference(descriptor.location())
                     }),
                 };
                 // Configured authorization may outlive the original runtime or

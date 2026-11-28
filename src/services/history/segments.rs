@@ -21,7 +21,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, from_slice, to_writer};
 
 mod index;
+mod rewrite;
 use index::{IndexedEntry, KeyWidth, SegmentFormat, VersionKey};
+pub use rewrite::{
+    AdmittedRewriteSources, FullySelectedHistorySegment, ObservedArchiveRewrite,
+    RewriteSourceAdmission, SegmentRewriteSelection, VerifiedSegmentRewrite,
+};
 
 const MARKER_BYTES: usize = 5 + size_of::<u32>();
 // Retained format v1 must not follow future artifact write-policy defaults.
@@ -200,9 +205,9 @@ fn write_segment<W: Write>(
     records: impl IntoIterator<Item = SegmentRecord>,
     format: SegmentFormat,
 ) -> ArtifactResult<()> {
-    output.write_all(format.header()).map_err(io_error)?;
-    let header = encode(scope, 512)?;
-    write_frame(output, &header)?;
+    output
+        .write_all(&segment_header(scope, format)?)
+        .map_err(io_error)?;
     let mut entries = Vec::new();
     for record in records {
         if &record.scope != scope {
@@ -234,12 +239,9 @@ fn write_segment<W: Write>(
             interval.valid_to,
         )
     }))?;
-    let index = format.encode_index(&entries)?;
-    output.write_all(&index).map_err(io_error)?;
     output
-        .write_all(&(index.len() as u32).to_le_bytes())
+        .write_all(&segment_index(&entries, format)?)
         .map_err(io_error)?;
-    output.write_all(format.footer()).map_err(io_error)?;
     Ok(())
 }
 
@@ -257,6 +259,14 @@ pub(super) fn encode_claimed_record(
 }
 
 impl HistorySegment {
+    /// Producer limits used for new segments and for an owned rewrite intent.
+    pub fn write_limits() -> ArtifactResult<ArtifactLimits> {
+        ArtifactLimits::builder()
+            .block_bytes(BLOCK_BYTES)
+            .artifact_bytes(SEGMENT_BYTES as u64)
+            .build()
+    }
+
     /// Stage and read back the entire segment without publishing it. The owner
     /// still owes catalog/claim/generation fencing before publication.
     pub async fn stage<S, I>(
@@ -269,10 +279,7 @@ impl HistorySegment {
         S: ArtifactStore + ?Sized,
         I: IntoIterator<Item = SegmentRecord> + Send + 'static,
     {
-        let limits = ArtifactLimits::builder()
-            .block_bytes(BLOCK_BYTES)
-            .artifact_bytes(SEGMENT_BYTES as u64)
-            .build()?;
+        let limits = Self::write_limits()?;
         let (proof, ()) = stage_producer(store, identity, limits, move |output| {
             let mut output = LimitedWriter::new(output, ByteLimit::new(SEGMENT_BYTES));
             write_segment(&mut output, &scope, records, SegmentFormat::CompressedIndex)
@@ -556,6 +563,10 @@ impl RetainedHistorySegment {
         let bytes = SegmentBlockReader::new(store, &self.manifest, budget)
             .range(u64::from(entry.offset), entry.length as usize)
             .await?;
+        self.decode_frame(entry, &bytes)
+    }
+
+    fn decode_frame(&self, entry: &IndexedEntry, bytes: &[u8]) -> ArtifactResult<SegmentRecord> {
         if bytes.len() < 4
             || u32::from_le_bytes(bytes[..4].try_into().expect("checked length")) as usize
                 != bytes.len() - 4
@@ -601,6 +612,19 @@ fn validate_intervals<K: Ord>(
     Ok(())
 }
 
+fn segment_header(scope: &SegmentScope, format: SegmentFormat) -> ArtifactResult<Vec<u8>> {
+    let mut header = format.header().to_vec();
+    write_frame(&mut header, &encode(scope, 512)?)?;
+    Ok(header)
+}
+
+fn segment_index(entries: &[Entry], format: SegmentFormat) -> ArtifactResult<Vec<u8>> {
+    let mut index = format.encode_index(entries)?;
+    index.extend_from_slice(&(index.len() as u32).to_le_bytes());
+    index.extend_from_slice(format.footer());
+    Ok(index)
+}
+
 fn encode(value: &impl Serialize, limit: usize) -> ArtifactResult<Vec<u8>> {
     let mut output = LimitedWriter::new(Vec::new(), ByteLimit::new(limit));
     let result = to_writer(&mut output, value);
@@ -631,13 +655,14 @@ fn io_error(error: io::Error) -> ArtifactError {
     }
 }
 
-/// One operation on one immutable manifest. Only the two nine-byte framing
-/// reads retain verified blocks. Payload and index ranges never populate the map.
+/// Index discovery caches header/footer blocks. A sequential frame scan instead
+/// retains just the last intersecting block for the following frame.
 struct SegmentBlockReader<'a, S: ?Sized> {
     store: &'a S,
     manifest: &'a ArtifactManifest,
     budget: &'a mut ByteBudget,
-    marker_blocks: BTreeMap<u32, Vec<u8>>,
+    cached: BTreeMap<u32, Vec<u8>>,
+    sequential: bool,
 }
 
 impl<'a, S: ArtifactStore + ?Sized> SegmentBlockReader<'a, S> {
@@ -646,7 +671,8 @@ impl<'a, S: ArtifactStore + ?Sized> SegmentBlockReader<'a, S> {
             store,
             manifest,
             budget,
-            marker_blocks: BTreeMap::new(),
+            cached: BTreeMap::new(),
+            sequential: false,
         }
     }
 
@@ -663,7 +689,7 @@ impl<'a, S: ArtifactStore + ?Sized> SegmentBlockReader<'a, S> {
             let ordinal = ordinal as u32;
             let from = offset.saturating_sub(start) as usize;
             let to = (end - start).min(block_bytes) as usize;
-            if let Some(bytes) = self.marker_blocks.get(&ordinal) {
+            if let Some(bytes) = self.cached.get(&ordinal) {
                 output.extend_from_slice(&bytes[from..to]);
                 continue;
             }
@@ -678,8 +704,11 @@ impl<'a, S: ArtifactStore + ?Sized> SegmentBlockReader<'a, S> {
                 .ok_or_else(|| ArtifactError::Corrupt("Missing history artifact block".into()))?;
             self.manifest.verify_block(ordinal, &bytes)?;
             output.extend_from_slice(&bytes[from..to]);
-            if is_marker {
-                self.marker_blocks.insert(ordinal, bytes);
+            if self.sequential && u64::from(ordinal) == (end - 1) / block_bytes {
+                self.cached.clear();
+                self.cached.insert(ordinal, bytes);
+            } else if is_marker {
+                self.cached.insert(ordinal, bytes);
             }
         }
         Ok(output)

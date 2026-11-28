@@ -6,7 +6,8 @@ use crate::services::archive::{
     HistoryArchiveAdmission, HistoryArchiveQuery, HistoryArchiveRequest,
 };
 use crate::services::history::segments::{
-    HistorySegment, RetainedHistorySegment, SegmentRecord, SegmentScope, VersionInterval,
+    HistorySegment, RetainedHistorySegment, SEGMENT_BYTES, SegmentRecord, SegmentRewriteSelection,
+    SegmentScope, VersionInterval,
 };
 use crate::storage::storage_handle;
 use chrono::{Duration as TimeDelta, Utc};
@@ -966,6 +967,224 @@ async fn stale_archive_pin_observation_fails_even_for_an_empty_result(#[case] ch
             .await
             .unwrap_err();
         assert_eq!(error.kind(), StorageErrorKind::Conflict);
+    })
+    .await;
+}
+
+#[actix_web::test]
+async fn rewrite_verifies_the_pinned_copy_and_the_relocated_catalog_copy() {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        TestContext::run(backend, async |ctx| {
+            let row = ctx.closed().await;
+            ctx.publish(ctx.descriptor(&row, false, vec![]).await).await;
+            let pin = ctx
+                .capture(HistoryArchivePoint::Exact {
+                    version: row.identity().version(),
+                })
+                .await;
+            let current = ctx.publish(ctx.descriptor(&row, false, vec![]).await).await;
+            ctx.with_archive(async {
+                let pin = ctx
+                    .storage
+                    .history_archive_capture(pin.id(), ctx.principal, &ctx.archive_permit)
+                    .await
+                    .unwrap()
+                    .expect("original query pin");
+                let prior = pin.archive().unwrap().location();
+                let active = current.versions()[0].location();
+                assert_ne!(prior, active);
+                let store = ctx.storage.artifact_store();
+                let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+                let old = RetainedHistorySegment::open(store.as_ref(), prior, &mut budget)
+                    .await
+                    .unwrap();
+                let new = RetainedHistorySegment::open(store.as_ref(), active, &mut budget)
+                    .await
+                    .unwrap();
+                let selected = [row.identity()];
+                let batch = SegmentRewriteSelection::new(selected).unwrap();
+                let admitted = batch
+                    .start_admission()
+                    .include(&old, selected)
+                    .unwrap()
+                    .include(&new, selected)
+                    .unwrap()
+                    .finish()
+                    .unwrap();
+                for (segment, expected) in [(&old, prior), (&new, active)] {
+                    let evidence = segment
+                        .verify_fully_selected(
+                            store.as_ref(),
+                            admitted.for_source(segment).unwrap(),
+                            &mut budget,
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(evidence.source(), expected);
+                }
+            })
+            .await;
+        })
+        .await;
+    }
+}
+
+#[cfg(feature = "integration-test-support")]
+#[rstest]
+#[case::uncaptured(false)]
+#[case::previously_captured(true)]
+#[actix_web::test]
+async fn rewrite_verifies_displaced_and_current_copies_without_a_query_id(
+    #[case] capture_before_relocation: bool,
+) {
+    with_overflow_backend(async |ctx| {
+        let row = ctx.closed().await;
+        let selected = [row.identity()];
+        let original = ctx.descriptor(&row, false, vec![]).await;
+        ctx.publish(original.clone()).await;
+        if capture_before_relocation {
+            ctx.capture(HistoryArchivePoint::Exact {
+                version: row.identity().version(),
+            })
+            .await;
+        }
+        let replacement = ctx.descriptor(&row, false, vec![]).await;
+        let published = ctx.publish(replacement.clone()).await;
+
+        let store = ctx.storage.artifact_store();
+        let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+        let batch = SegmentRewriteSelection::new(selected).unwrap();
+        let plan = batch
+            .admit_observed_archive_copies(
+                &pin_operator(ctx),
+                ctx.context.history_archive_readers(),
+                ctx.permit.fence(),
+                &mut budget,
+            )
+            .await
+            .unwrap();
+        assert_eq!(plan.fence(), ctx.permit.fence());
+        assert_eq!(
+            plan.catalogs().get(&ctx.resource),
+            Some(&published.generation())
+        );
+        assert_eq!(plan.locations().len(), 2);
+        assert!(
+            plan.locations().contains(original.location())
+                && plan.locations().contains(replacement.location())
+        );
+        for location in plan.locations() {
+            let segment = RetainedHistorySegment::open(store.as_ref(), location, &mut budget)
+                .await
+                .unwrap();
+            let evidence = segment
+                .verify_fully_selected(
+                    store.as_ref(),
+                    plan.for_source(&segment).unwrap(),
+                    &mut budget,
+                )
+                .await
+                .unwrap();
+            assert_eq!(evidence.source(), location);
+        }
+    })
+    .await;
+}
+
+#[cfg(feature = "integration-test-support")]
+#[rstest]
+#[case::shared_segment(false)]
+#[case::shared_segment_and_hot_only_version(true)]
+#[actix_web::test]
+async fn observed_rewrite_admits_shared_segments_once(#[case] include_hot_only: bool) {
+    with_overflow_backend(async |ctx| {
+        let rows = [ctx.closed().await, ctx.closed().await];
+        let mut selected: Vec<_> = rows.iter().map(HistoryArchiveRow::identity).collect();
+        if include_hot_only {
+            selected.push(ctx.closed().await.identity());
+        }
+        let store = ctx.storage.artifact_store();
+        let scope = SegmentScope::new(StorageBackupHistorySection::CollectionHistory, ctx.resource);
+        let records: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                SegmentRecord::new(
+                    scope.clone(),
+                    VersionInterval::new(
+                        ctx.resource,
+                        row.identity().version(),
+                        row.valid_from(),
+                        row.valid_to().unwrap(),
+                    )
+                    .unwrap(),
+                    row.payload().clone(),
+                )
+            })
+            .collect();
+        let destination =
+            Destination::new(DestinationId::generate(), prefix("shared_rewrite")).unwrap();
+        let (reference, generation) = ctx
+            .with_archive(async {
+                store.register_destination(&destination).await.unwrap();
+                let segment = HistorySegment::stage(
+                    store.as_ref(),
+                    ArtifactIdentity::new(destination.id()),
+                    scope,
+                    records,
+                )
+                .await
+                .unwrap();
+                let reference = store.publish(segment.proof()).await.unwrap();
+                let descriptors = rows
+                    .iter()
+                    .map(|row| {
+                        HistoryArchiveDescriptor::new(
+                            row,
+                            vec![],
+                            segment.format_version(),
+                            reference.clone(),
+                        )
+                        .unwrap()
+                    })
+                    .collect();
+                let catalog = ctx
+                    .storage
+                    .publish_history_archive(
+                        HistoryArchiveCatalogGeneration::default(),
+                        descriptors,
+                        &ctx.archive_permit,
+                    )
+                    .await
+                    .unwrap();
+                (reference, catalog.generation())
+            })
+            .await;
+        let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+        let plan = SegmentRewriteSelection::new(selected)
+            .unwrap()
+            .admit_observed_archive_copies(
+                &pin_operator(ctx),
+                ctx.context.history_archive_readers(),
+                ctx.permit.fence(),
+                &mut budget,
+            )
+            .await
+            .unwrap();
+        assert_eq!(plan.locations(), std::slice::from_ref(&reference));
+        assert_eq!(plan.catalogs().get(&ctx.resource), Some(&generation));
+        let segment = RetainedHistorySegment::open(store.as_ref(), &reference, &mut budget)
+            .await
+            .unwrap();
+        let verified = segment
+            .verify_fully_selected(
+                store.as_ref(),
+                plan.for_source(&segment).unwrap(),
+                &mut budget,
+            )
+            .await
+            .unwrap();
+        assert_eq!(verified.source(), &reference);
     })
     .await;
 }

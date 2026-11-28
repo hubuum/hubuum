@@ -112,6 +112,29 @@ async fn filesystem_archive_reads_published_history(#[case] as_of: bool) {
     }
 }
 
+async fn sealed_with_primary_twin(
+    ctx: &TestContext,
+    destination: &Destination,
+    store: &FilesystemArtifactStore,
+    row: &HistoryArchiveRow,
+) -> HistoryArchiveDescriptor {
+    let identity = ArtifactIdentity::new(destination.id());
+    let sealed = stage(store, identity.clone(), row, ctx.resource).await;
+    let reference = ctx
+        .with_archive(async {
+            let primary = ctx.storage.artifact_store();
+            primary.register_destination(destination).await.unwrap();
+            let copy = stage(primary.as_ref(), identity, row, ctx.resource).await;
+            primary.publish(copy.proof()).await.unwrap()
+        })
+        .await;
+    assert_eq!(
+        *reference.manifest_digest(),
+        sealed.proof().manifest().manifest_digest()
+    );
+    HistoryArchiveDescriptor::new(row, vec![], sealed.format_version(), reference).unwrap()
+}
+
 #[actix_web::test]
 async fn filesystem_archive_sealed_history_is_unavailable_even_with_a_published_primary_copy() {
     let _permit = postgres_permit().await;
@@ -122,25 +145,8 @@ async fn filesystem_archive_sealed_history_is_unavailable_even_with_a_published_
             let destination =
                 Destination::new(DestinationId::generate(), prefix("sealed")).unwrap();
             let store = configure(ctx, &root, &destination).await;
-            let identity = ArtifactIdentity::new(destination.id());
-            let sealed = stage(&store, identity.clone(), &row, ctx.resource).await;
-            let reference = ctx
-                .with_archive(async {
-                    let primary = ctx.storage.artifact_store();
-                    primary.register_destination(&destination).await.unwrap();
-                    let copy = stage(primary.as_ref(), identity, &row, ctx.resource).await;
-                    primary.publish(copy.proof()).await.unwrap()
-                })
-                .await;
-            assert_eq!(
-                *reference.manifest_digest(),
-                sealed.proof().manifest().manifest_digest()
-            );
-            ctx.publish(
-                HistoryArchiveDescriptor::new(&row, vec![], sealed.format_version(), reference)
-                    .unwrap(),
-            )
-            .await;
+            let sealed = sealed_with_primary_twin(ctx, &destination, &store, &row).await;
+            ctx.publish(sealed).await;
             let query = ctx
                 .query(HistoryArchivePoint::Exact {
                     version: row.identity().version(),
@@ -269,4 +275,97 @@ async fn filesystem_archive_preserves_reads_from_other_destinations() {
         })
         .await;
     }
+}
+
+#[cfg(feature = "integration-test-support")]
+#[rstest]
+#[case::filesystem_replaces_primary(false)]
+#[case::primary_replaces_filesystem(true)]
+#[actix_web::test]
+async fn erasure_checks_displaced_and_current_copies_on_their_own_stores(#[case] warm_first: bool) {
+    with_overflow_backend(async |ctx| {
+        let row = ctx.closed().await;
+        let root = ArchiveRoot::create();
+        let destination = Destination::new(DestinationId::generate(), prefix("rewrite")).unwrap();
+        let warm = configure(ctx, &root, &destination).await;
+        let segment = stage(
+            &warm,
+            ArtifactIdentity::new(destination.id()),
+            &row,
+            ctx.resource,
+        )
+        .await;
+        let reference = warm.publish(segment.proof()).await.unwrap();
+        let warm = HistoryArchiveDescriptor::new(&row, vec![], segment.format_version(), reference)
+            .unwrap();
+        let primary = ctx.descriptor(&row, false, vec![]).await;
+        let (first, latest) = if warm_first {
+            (warm, primary)
+        } else {
+            (primary, warm)
+        };
+        ctx.publish(first.clone()).await;
+        let catalog = ctx.publish(latest.clone()).await;
+
+        let readers = ctx.context.history_archive_readers();
+        let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+        let plan = SegmentRewriteSelection::new([row.identity()])
+            .unwrap()
+            .admit_observed_archive_copies(
+                &pin_operator(ctx),
+                readers,
+                ctx.permit.fence(),
+                &mut budget,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            plan.catalogs().get(&ctx.resource),
+            Some(&catalog.generation())
+        );
+        assert_eq!(plan.locations().len(), 2);
+        for reference in [first.location(), latest.location()] {
+            assert!(plan.locations().contains(reference));
+            let store = readers.for_reference(reference);
+            let source = RetainedHistorySegment::open(store.as_ref(), reference, &mut budget)
+                .await
+                .unwrap();
+            let verified = source
+                .verify_fully_selected(
+                    store.as_ref(),
+                    plan.for_source(&source).unwrap(),
+                    &mut budget,
+                )
+                .await
+                .unwrap();
+            assert_eq!(verified.source(), reference);
+        }
+    })
+    .await;
+}
+
+#[cfg(feature = "integration-test-support")]
+#[actix_web::test]
+async fn erasure_checks_displaced_sealed_copy_even_when_primary_has_identical_published_bytes() {
+    with_overflow_backend(async |ctx| {
+        let row = ctx.closed().await;
+        let root = ArchiveRoot::create();
+        let destination = Destination::new(DestinationId::generate(), prefix("displaced")).unwrap();
+        let warm = configure(ctx, &root, &destination).await;
+        let sealed = sealed_with_primary_twin(ctx, &destination, &warm, &row).await;
+        ctx.publish(sealed).await;
+        ctx.publish(ctx.descriptor(&row, false, vec![]).await).await;
+        let mut budget = ByteLimit::new(SEGMENT_BYTES).start();
+        let plan = SegmentRewriteSelection::new([row.identity()])
+            .unwrap()
+            .admit_observed_archive_copies(
+                &pin_operator(ctx),
+                ctx.context.history_archive_readers(),
+                ctx.permit.fence(),
+                &mut budget,
+            )
+            .await;
+        assert!(matches!(plan, Err(crate::errors::ApiError::Conflict(_))));
+    })
+    .await;
 }
