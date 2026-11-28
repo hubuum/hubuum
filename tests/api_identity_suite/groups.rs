@@ -67,6 +67,37 @@ mod tests {
         assert_eq!(returned.2, created.updated_at);
     }
 
+    #[rstest]
+    #[case::member_list(false, false, StatusCode::FORBIDDEN)]
+    #[case::member_point(false, true, StatusCode::FORBIDDEN)]
+    #[case::own_group_list(true, false, StatusCode::OK)]
+    #[case::own_group_point(true, true, StatusCode::OK)]
+    #[actix_web::test]
+    async fn group_membership_reads_require_group_access(
+        #[case] belongs: bool,
+        #[case] point: bool,
+        #[case] expected: StatusCode,
+    ) {
+        let context = TestContext::new().await;
+        let group = create_test_group(&context.pool).await;
+        group
+            .add_member_without_events(&context.pool, &context.admin_user)
+            .await
+            .unwrap();
+        if belongs {
+            group
+                .add_member_without_events(&context.pool, &context.normal_user)
+                .await
+                .unwrap();
+        }
+        let mut url = format!("{GROUPS_ENDPOINT}/{}/members", group.id);
+        if point {
+            url.push_str(&format!("/{}", context.admin_user.id));
+        }
+        let response = get_request(&context.pool, &context.normal_token, &url).await;
+        assert_response_status(response, expected).await;
+        group.delete_without_events(&context.pool).await.unwrap();
+    }
     async fn check_show_group(
         context: &TestContext,
         target: &Group,

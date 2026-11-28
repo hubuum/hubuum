@@ -118,7 +118,7 @@ pub async fn get_backup(
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     let task_id = task_id.into_inner();
-    let task = load_authorized_backup(&context, admin.principal(), task_id).await?;
+    let task = load_authorized_backup(&context, admin.principal(), task_id, None).await?;
     let output = backup_output_summary(&context, task_id).await?;
     Ok(ApiResponse::new(
         task.to_response_with_backup_output(output.as_ref())?,
@@ -154,7 +154,7 @@ pub async fn get_backup_output(
     task_id: web::Path<TaskID>,
 ) -> Result<HttpResponse, ApiError> {
     let task_id = task_id.into_inner();
-    load_authorized_backup(&context, admin.principal(), task_id).await?;
+    load_authorized_backup(&context, admin.principal(), task_id, None).await?;
     match backup_output(&context, task_id).await? {
         BackupOutputLookup::Available(output) => {
             let digest = digest_header_from_sha256(&output.sha256)?;

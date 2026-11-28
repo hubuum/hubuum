@@ -148,27 +148,32 @@ pub(crate) async fn authenticate_local(
     login: ValidatedLogin,
 ) -> Result<StorageUser, ApiError> {
     let name = login.name().to_owned();
+    let identity_scope = login.identity_scope().to_owned();
+    let password = login.into_password();
     let user = match storage_handle(context)
-        .get_user_by_name(login.identity_scope().to_owned(), name.clone())
+        .get_user_by_name(identity_scope, name.clone())
         .await
     {
         Ok(user) => user,
         Err(_) => {
             // Unknown users still perform one expensive verification.
-            let _ = verify_dummy_password_async(login.into_password()).await;
+            let _ = verify_dummy_password_async(password).await;
             warn!(message = "Login failed (user not found)", user = name);
             return Err(auth_failure());
         }
     };
     let parts = user.clone().into_parts();
     let Some(hash) = parts.password_hash() else {
+        // Accounts without a usable hash must not answer faster than a normal
+        // password mismatch, or the response becomes an account-state oracle.
+        let _ = verify_dummy_password_async(password).await;
         warn!(
             message = "Login failed (local password missing)",
             user = name
         );
         return Err(auth_failure());
     };
-    match verify_password_async(login.into_password(), hash.to_owned()).await {
+    match verify_password_async(password, hash.to_owned()).await {
         Ok(true) => Ok(user),
         Ok(false) => {
             warn!(message = "Login failed (password mismatch)", user = name);

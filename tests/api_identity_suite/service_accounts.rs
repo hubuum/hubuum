@@ -2622,7 +2622,7 @@ mod tests {
         };
         let subject = PrincipalID::new(subject_id).unwrap();
 
-        let result = task_id.load_authorized(pool, &subject).await;
+        let result = task_id.load_authorized(pool, &subject, None).await;
         assert_eq!(result.is_ok(), allowed);
     }
 

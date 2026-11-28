@@ -396,6 +396,74 @@ mod tests {
         );
     }
     #[rstest]
+    #[case::list("list")]
+    #[case::task("task")]
+    #[case::events("events")]
+    #[case::import_results("results")]
+    #[actix_web::test]
+    async fn scoped_task_visibility_precedes_backend_grants(
+        #[case] operation: &str,
+        #[values(false, true)] delegated: bool,
+    ) {
+        use crate::models::Permissions;
+        use crate::permissions::test_support::mock_treetop::MockTreetopBackend;
+        use crate::tests::api_operations::get_request_with_permission_backend;
+        use crate::tests::scoped_token;
+        use std::sync::Arc;
+
+        let context = TestContext::new().await;
+        let fixture = context.collection_fixture("scoped_task_reads").await;
+        let token = scoped_token(
+            &context.pool,
+            context.admin_user.id,
+            &[Permissions::ReadCollection],
+        )
+        .await;
+        let id = create_synthetic_task(
+            &context,
+            context.normal_user.id,
+            TaskKind::Import,
+            TaskStatus::Succeeded,
+            "foreign",
+        )
+        .await;
+        let url = match operation {
+            "list" => format!(
+                "{TASKS_ENDPOINT}?submitted_by={}&sort=id.desc&limit=1",
+                context.normal_user.id
+            ),
+            "task" => format!("{TASKS_ENDPOINT}/{id}"),
+            "events" => format!("{TASKS_ENDPOINT}/{id}/events"),
+            "results" => format!("/api/v1/imports/{id}/results"),
+            _ => unreachable!(),
+        };
+        let response = if delegated {
+            let backend = Arc::new(MockTreetopBackend::new());
+            backend.add_admin_rule(fixture.owner_group.id);
+            backend.add_task_read_rule(fixture.owner_group.id, None);
+            get_request_with_permission_backend(&context.pool, &token, &url, backend).await
+        } else {
+            get_request(&context.pool, &token, &url).await
+        };
+        if operation == "list" {
+            let response = assert_response_status(response, StatusCode::OK).await;
+            let rows: Vec<TaskResponse> = test::read_body_json(response).await;
+            assert!(
+                rows.iter()
+                    .all(|row| row.submitted_by == Some(context.admin_user.id))
+            );
+        } else {
+            assert_response_status(response, StatusCode::NOT_FOUND).await;
+        }
+        hubuum_storage_postgres::test_support::delete_task(
+            &context.pool,
+            hubuum_domain::TaskId::new(id).unwrap(),
+        )
+        .await
+        .unwrap();
+        fixture.cleanup().await.unwrap();
+    }
+    #[rstest]
     #[actix_web::test]
     async fn external_task_list_pages_before_policy_checks(
         #[values(false, true)] include_total: bool,

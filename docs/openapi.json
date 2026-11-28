@@ -18271,6 +18271,16 @@
               }
             }
           },
+          "403": {
+            "description": "Not an administrator or group member",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Group not found",
             "content": {
@@ -18340,6 +18350,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator or group member",
             "content": {
               "application/json": {
                 "schema": {

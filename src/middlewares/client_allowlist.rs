@@ -261,10 +261,13 @@ fn resolve_client_source(
         .chain(forwarded_for.iter().rev().copied())
         .collect();
     let index = if !policy.trusted_proxies.is_empty() {
+        // If every hop looks like a trusted proxy, the chain carries no
+        // trustworthy client address. Fall back to the connection peer rather
+        // than the left-most (fully attacker-controlled) entry.
         chain
             .iter()
             .position(|ip| !ip_in_nets(*ip, &policy.trusted_proxies))
-            .unwrap_or(chain.len() - 1)
+            .unwrap_or(0)
     } else if policy.hops > 0 {
         policy.hops.min(chain.len() - 1)
     } else {
@@ -432,6 +435,24 @@ mod resolve_tests {
             &policy,
         );
         assert_eq!(client, Some(ip("198.51.100.9")));
+    }
+
+    #[test]
+    fn fully_trusted_chain_falls_back_to_the_peer() {
+        // A client inside the trusted range can prepend any other trusted
+        // address. When no untrusted hop exists, the left-most entry must not
+        // become the resolved client.
+        let policy = ProxyTrust {
+            trust_headers: true,
+            trusted_proxies: proxies(&["10.0.0.0/8"]),
+            hops: 0,
+        };
+        let client = resolve_client_ip(
+            Some(ip("10.0.0.2")),
+            &xff(&["10.9.9.9", "10.0.0.3"]),
+            &policy,
+        );
+        assert_eq!(client, Some(ip("10.0.0.2")));
     }
 
     #[test]

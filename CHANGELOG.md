@@ -17,6 +17,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Remove the unused Actix Web cookie feature and its dependency on
   `cookie` 0.16.2 (RUSTSEC-2026-0594).
 
+- **Breaking change:** Scoped credentials can list and read only tasks
+  submitted by their principal, including with delegated authorization. Use
+  an authorized unscoped credential for cross-principal task management.
+- Login performs the dummy password verification for accounts with a missing
+  or unusable hash, removing a timing oracle for anonymized accounts.
+- **Breaking change:** Reading group membership now requires an administrator
+  or a member of that group. Use an authorized identity for directory queries.
+- Trusted-proxy resolution falls back to the connection peer when every
+  forwarded hop is trusted, and the documentation warns against broad
+  `HUBUUM_TRUSTED_PROXIES` ranges.
+
 - Require `url` 2.5.9 or later to fix a stack overflow during URL origin
   calculation (RUSTSEC-2026-0592).
 

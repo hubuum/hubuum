@@ -11,7 +11,7 @@ use crate::models::{
     GroupPointResponse, GroupResponse, Principal, PrincipalID, PrincipalMemberResponse,
 };
 use crate::pagination::prepare_db_pagination;
-use crate::permissions::AppContext;
+use crate::permissions::{AppContext, PrincipalRef};
 use crate::services::groups::list as list_groups;
 use crate::services::identity::get_principal_group;
 use crate::storage::with_revision_precondition;
@@ -220,6 +220,27 @@ pub async fn delete_group(
     Ok(ApiResponse::no_content_with_etag(etag))
 }
 
+/// Membership is visible to administrators and to members of that group.
+///
+/// Group names are intentionally discoverable by any human token, but the
+/// member list identifies people and must not double as a directory for
+/// unrelated principals.
+async fn ensure_can_view_membership(
+    context: &AppContext,
+    user: &crate::models::User,
+    group_id: i32,
+) -> Result<(), ApiError> {
+    if context.is_admin(user).await? {
+        return Ok(());
+    }
+    let principal = PrincipalRef::load(context, user).await?;
+    if principal.group_ids.contains(&group_id) {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden("Permission denied".to_string()))
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/iam/groups/{group_id}/members",
@@ -231,6 +252,7 @@ pub async fn delete_group(
     responses(
         (status = 200, description = "Members of group", body = [PrincipalMemberResponse]),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Not an administrator or group member", body = ApiErrorResponse),
         (status = 404, description = "Group not found", body = ApiErrorResponse)
     )
 )]
@@ -244,6 +266,7 @@ pub async fn get_group_members(
     let params = parse_query_parameter(req.query_string())?;
 
     let group = group_id.group(&context).await?;
+    ensure_can_view_membership(&context, &requestor.user, group.id).await?;
 
     debug!(
         message = "Group members requested",
@@ -271,6 +294,7 @@ pub async fn get_group_members(
     responses(
         (status = 200, description = "Membership", body = PrincipalMemberResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
+        (status = 403, description = "Not an administrator or group member", body = ApiErrorResponse),
         (status = 404, description = "Membership not found", body = ApiErrorResponse)
     )
 )]
@@ -281,6 +305,7 @@ pub async fn get_group_member(
     requestor: UserAccess,
 ) -> Result<impl Responder, ApiError> {
     let group = user_group_ids.group_id.group(&context).await?;
+    ensure_can_view_membership(&context, &requestor.user, group.id).await?;
     let principal = user_group_ids.principal_id.principal(&context).await?;
     let membership = get_principal_group(&context, principal.id, group.id).await?;
 

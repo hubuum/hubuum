@@ -126,7 +126,13 @@ pub async fn get_import(
     task_id: web::Path<TaskID>,
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
-    let task = load_authorized_import(&context, &requestor.principal, task_id.into_inner()).await?;
+    let task = load_authorized_import(
+        &context,
+        &requestor.principal,
+        task_id.into_inner(),
+        requestor.scopes(),
+    )
+    .await?;
     Ok(ApiResponse::new(task.to_response()?, StatusCode::OK))
 }
 
@@ -154,7 +160,7 @@ pub async fn get_import_results(
 ) -> Result<impl Responder, ApiError> {
     ensure_task_worker_running(context.clone());
     let task_id = task_id.into_inner();
-    load_authorized_import(&context, &requestor.principal, task_id).await?;
+    load_authorized_import(&context, &requestor.principal, task_id, requestor.scopes()).await?;
     let params = parse_query_parameter(req.query_string())?;
     let search_params = prepare_db_pagination::<ImportTaskResultResponse>(&params)?;
     let (results, total_count) = list_import_results(&context, task_id, search_params).await?;

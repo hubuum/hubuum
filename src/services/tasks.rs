@@ -448,17 +448,19 @@ pub(crate) async fn load_authorized_task<S>(
     backend: &impl AuthorizationContext,
     requestor: &S,
     task_id: TaskID,
+    scopes: Option<&TokenScope>,
 ) -> Result<TaskRecord, ApiError>
 where
     S: AuthzSubject + ?Sized,
 {
-    load_authorized_task_of_kind(backend, requestor, task_id, None, "Task", false).await
+    load_authorized_task_of_kind(backend, requestor, task_id, None, "Task", false, scopes).await
 }
 
 pub(crate) async fn load_authorized_import<S>(
     backend: &impl AuthorizationContext,
     requestor: &S,
     task_id: TaskID,
+    scopes: Option<&TokenScope>,
 ) -> Result<TaskRecord, ApiError>
 where
     S: AuthzSubject + ?Sized,
@@ -470,6 +472,7 @@ where
         Some(TaskKind::Import),
         "Import task",
         true,
+        scopes,
     )
     .await
 }
@@ -478,6 +481,7 @@ pub(crate) async fn load_authorized_export<S>(
     backend: &impl AuthorizationContext,
     requestor: &S,
     task_id: TaskID,
+    scopes: Option<&TokenScope>,
 ) -> Result<TaskRecord, ApiError>
 where
     S: AuthzSubject + ?Sized,
@@ -489,6 +493,7 @@ where
         Some(TaskKind::Export),
         "Export task",
         true,
+        scopes,
     )
     .await
 }
@@ -497,6 +502,7 @@ pub(crate) async fn load_authorized_backup<S>(
     backend: &impl AuthorizationContext,
     requestor: &S,
     task_id: TaskID,
+    scopes: Option<&TokenScope>,
 ) -> Result<TaskRecord, ApiError>
 where
     S: AuthzSubject + ?Sized,
@@ -508,6 +514,7 @@ where
         Some(TaskKind::Backup),
         "Backup task",
         true,
+        scopes,
     )
     .await
 }
@@ -519,6 +526,7 @@ async fn load_authorized_task_of_kind<S>(
     required_kind: Option<TaskKind>,
     label: &str,
     hide_external_denial: bool,
+    scopes: Option<&TokenScope>,
 ) -> Result<TaskRecord, ApiError>
 where
     S: AuthzSubject + ?Sized,
@@ -535,9 +543,15 @@ where
         )));
     }
 
+    let is_schema_validation = task.kind == TaskKind::SchemaValidation.as_str();
+    if scopes.is_some()
+        && (is_schema_validation || task.submitted_by != Some(requestor.principal_id()))
+    {
+        return Err(ApiError::NotFound(format!("{label} not found")));
+    }
     let principal = PrincipalRef::load(backend, requestor).await?;
     let authorization_mode = backend.authorization_mode();
-    if task.kind == TaskKind::SchemaValidation.as_str() {
+    if is_schema_validation {
         let is_admin = match &authorization_mode {
             AuthorizationMode::LocalStorage => requestor.is_admin(backend).await?,
             AuthorizationMode::Delegated(permission_backend) => {
@@ -555,8 +569,8 @@ where
                 .get_authentication_identity(requestor.validated_principal_id()?)
                 .await?
                 .into_parts();
-            requestor.is_admin(backend).await?
-                || task.submitted_by == Some(principal.user_id)
+            task.submitted_by == Some(principal.user_id)
+                || (scopes.is_none() && requestor.is_admin(backend).await?)
                 || (identity.is_human()
                     && submitter_owner_group_id
                         .is_some_and(|group_id| principal.group_ids.contains(&group_id.id())))

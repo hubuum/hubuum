@@ -81,7 +81,8 @@ pub(crate) async fn get_schema_profile(
     path: web::Path<(ClassId, TaskId)>,
 ) -> Result<impl Responder, ApiError> {
     let (class_id, task_id) = path.into_inner();
-    let task = load_authorized_task(&context, &requestor.principal, task_id).await?;
+    let task =
+        load_authorized_task(&context, &requestor.principal, task_id, requestor.scopes()).await?;
     let metadata = task.discovery_metadata.as_ref().map(|m| m.details());
     if task.kind != TaskKind::SchemaProfiling.as_str()
         || !matches!(metadata, Some(TaskMetadataDetails::SchemaProfiling { class_id: Some(id), .. }) if *id == class_id)

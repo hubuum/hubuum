@@ -1,7 +1,7 @@
 //! Application behavior for backend-neutral task identifiers.
 
 use crate::errors::ApiError;
-use crate::models::{TaskID, TaskRecord};
+use crate::models::{TaskID, TaskRecord, TokenScope};
 use crate::permissions::AuthorizationContext;
 use crate::traits::AuthzSubject;
 
@@ -14,24 +14,28 @@ pub trait TaskAuthorizationExt {
         &self,
         backend: &impl AuthorizationContext,
         requestor: &(impl AuthzSubject + ?Sized),
+        scopes: Option<&TokenScope>,
     ) -> Result<TaskRecord, ApiError>;
 
     async fn load_authorized_export(
         &self,
         backend: &impl AuthorizationContext,
         requestor: &(impl AuthzSubject + ?Sized),
+        scopes: Option<&TokenScope>,
     ) -> Result<TaskRecord, ApiError>;
 
     async fn load_authorized_backup(
         &self,
         backend: &impl AuthorizationContext,
         requestor: &(impl AuthzSubject + ?Sized),
+        scopes: Option<&TokenScope>,
     ) -> Result<TaskRecord, ApiError>;
 
     async fn load_authorized_import(
         &self,
         backend: &impl AuthorizationContext,
         requestor: &(impl AuthzSubject + ?Sized),
+        scopes: Option<&TokenScope>,
     ) -> Result<TaskRecord, ApiError>;
 }
 
@@ -40,31 +44,35 @@ impl TaskAuthorizationExt for TaskID {
         &self,
         backend: &impl AuthorizationContext,
         requestor: &(impl AuthzSubject + ?Sized),
+        scopes: Option<&TokenScope>,
     ) -> Result<TaskRecord, ApiError> {
-        crate::services::tasks::load_authorized_task(backend, requestor, *self).await
+        crate::services::tasks::load_authorized_task(backend, requestor, *self, scopes).await
     }
 
     async fn load_authorized_export(
         &self,
         backend: &impl AuthorizationContext,
         requestor: &(impl AuthzSubject + ?Sized),
+        scopes: Option<&TokenScope>,
     ) -> Result<TaskRecord, ApiError> {
-        crate::services::tasks::load_authorized_export(backend, requestor, *self).await
+        crate::services::tasks::load_authorized_export(backend, requestor, *self, scopes).await
     }
 
     async fn load_authorized_backup(
         &self,
         backend: &impl AuthorizationContext,
         requestor: &(impl AuthzSubject + ?Sized),
+        scopes: Option<&TokenScope>,
     ) -> Result<TaskRecord, ApiError> {
-        crate::services::tasks::load_authorized_backup(backend, requestor, *self).await
+        crate::services::tasks::load_authorized_backup(backend, requestor, *self, scopes).await
     }
 
     async fn load_authorized_import(
         &self,
         backend: &impl AuthorizationContext,
         requestor: &(impl AuthzSubject + ?Sized),
+        scopes: Option<&TokenScope>,
     ) -> Result<TaskRecord, ApiError> {
-        crate::services::tasks::load_authorized_import(backend, requestor, *self).await
+        crate::services::tasks::load_authorized_import(backend, requestor, *self, scopes).await
     }
 }
