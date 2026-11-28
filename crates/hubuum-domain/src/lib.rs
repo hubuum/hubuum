@@ -8,6 +8,7 @@ mod event_delivery;
 mod event_policy;
 mod identifier;
 mod identity;
+mod json_digest;
 mod json_patch;
 mod json_schema;
 mod json_value;
@@ -39,6 +40,7 @@ pub use identity::{
     LOCAL_IDENTITY_SCOPE, LOCAL_PROVIDER_KIND, MANUAL_MEMBERSHIP_SOURCE, PrincipalKind,
     PrincipalKindParseError,
 };
+pub use json_digest::canonical_json_sha256;
 pub use json_patch::{
     BoundedJsonPatch, JsonPatchError, JsonPatchErrorKind, MAX_JSON_PATCH_BYTES,
     MAX_JSON_PATCH_OPERATIONS, MAX_JSON_PATCH_POINTER_DEPTH, MAX_JSON_PATCH_RESULT_NESTING_DEPTH,
