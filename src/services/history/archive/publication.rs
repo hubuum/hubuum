@@ -73,7 +73,10 @@ impl ClaimedFilesystemHistory {
             manifest.request_commitment()?,
         )
         .map_err(artifact_error)?;
-        let intent = store.bind_intent(intent).await.map_err(artifact_error)?;
+        let intent = store
+            .bind_registered_intent(intent)
+            .await
+            .map_err(artifact_error)?;
         let encoded = HistoryArchiveEncodedArtifactIntent::try_new(
             intent.identity().clone(),
             limits,

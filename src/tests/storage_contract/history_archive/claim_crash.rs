@@ -130,7 +130,7 @@ async fn archive_source(storage: StorageHandle, root: &Path) -> ArchiveSource {
     let store = FilesystemArtifactStore::open(root.join("provider"))
         .await
         .unwrap();
-    let destination = Destination::new(DestinationId::generate(), "claim-crash").unwrap();
+    let destination = Destination::new(DestinationId::generate(), prefix("claim-crash")).unwrap();
     store.register_destination(&destination).await.unwrap();
     ArchiveSource {
         storage,
@@ -276,6 +276,7 @@ async fn interrupted_claim(root: &Path, sealed: bool) -> Uuid {
     .expect("archive producer did not finish staging");
     producer.kill().await.unwrap();
     producer.wait().await.unwrap();
+    fs::remove_file(root.join("staged")).unwrap();
     id
 }
 
@@ -292,14 +293,8 @@ async fn assert_claim_blocks_release(fixture: &Fixture) {
     assert!(fixture.storage.admit_application_work().await.is_err());
 }
 
-#[rstest]
-#[case::partial(false)]
-#[case::sealed(true)]
 #[tokio::test]
-async fn interrupted_filesystem_publication_requires_exact_cleanup_before_release(
-    #[case] sealed: bool,
-) {
-    let _guard = crate::test_support::RESTORE_TEST_LOCK.lock().await;
+async fn interrupted_filesystem_publication_requires_exact_cleanup_before_release() {
     let runtime = claim_test_runtime_database_url();
     let target = IsolatedRestoreTarget::new(&runtime, &integration_test_database_url()).unwrap();
     for unrelated in [
@@ -322,14 +317,27 @@ async fn interrupted_filesystem_publication_requires_exact_cleanup_before_releas
     let provider = fixture.root.join("provider");
     fs::DirBuilder::new().mode(0o700).create(&provider).unwrap();
     let provider = provider.canonicalize().unwrap();
+    // Keep the same independent repository through both recoveries. Its
+    // authority advances after each release and must never be reinitialized.
+    for sealed in [false, true] {
+        recover_interrupted_claim(&fixture, &admin, &provider, sealed).await;
+    }
+}
+
+async fn recover_interrupted_claim(
+    fixture: &Fixture,
+    admin: &PostgresPool,
+    provider: &Path,
+    sealed: bool,
+) {
     let id = interrupted_claim(&fixture.root, sealed).await;
     after_repository_release(|| recover(&fixture.storage, &fixture.directory, &fixture.key))
         .await
         .unwrap();
-    assert_claim_blocks_release(&fixture).await;
+    assert_claim_blocks_release(fixture).await;
 
-    let (intent, capture) = retained_claim(&admin, id).await;
-    let store = FilesystemArtifactStore::open(&provider).await.unwrap();
+    let (intent, capture) = retained_claim(admin, id).await;
+    let store = FilesystemArtifactStore::open(provider).await.unwrap();
     let OwnedArtifactResolution::Established { artifact, phase } =
         store.resolve_owned(&intent).await.unwrap()
     else {
@@ -351,21 +359,21 @@ async fn interrupted_filesystem_publication_requires_exact_cleanup_before_releas
             ..
         }
     ));
-    assert_claim_blocks_release(&fixture).await;
-    assert_eq!(retained_claim(&admin, id).await, (intent.clone(), capture));
+    assert_claim_blocks_release(fixture).await;
+    assert_eq!(retained_claim(admin, id).await, (intent.clone(), capture));
 
     // Simulate a lost acknowledgement after physical removal. A fresh provider
     // session can issue the same receipt, but only the control transaction can
     // retire the original native claim and unpin its capture.
     let receipt = store.discard_owned_step(&intent).await.unwrap().unwrap();
     assert_eq!(receipt.encoded_intent(), intent.encode().unwrap());
-    assert_claim_blocks_release(&fixture).await;
+    assert_claim_blocks_release(fixture).await;
     after_repository_release(|| {
         recover_with_archive_cleanup(
             &fixture.storage,
             &fixture.directory,
             &fixture.key,
-            Some((id, &provider)),
+            Some((id, provider)),
         )
     })
     .await
@@ -379,7 +387,7 @@ async fn interrupted_filesystem_publication_requires_exact_cleanup_before_releas
         #[diesel(sql_type = sql_types::Bool)]
         complete: bool,
     }
-    let released = with_connection(&admin, async |connection| {
+    let released = with_connection(admin, async |connection| {
         sql_query("SELECT EXISTS(SELECT 1 FROM hubuum_control.history_archive_captures WHERE id=$2 AND NOT publication_claimed)
             AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_archive_publication_claims WHERE publication_id=$1)
             AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_publication_producers WHERE publication_id=$1)
@@ -691,4 +699,20 @@ async fn claimed_segment_rechecks_catalog_generation_before_creating_an_attempt(
         source.store.resolve_owned(&intent).await.unwrap(),
         OwnedArtifactResolution::Pending
     ));
+}
+
+#[tokio::test]
+async fn unknown_filesystem_destination_preserves_the_unclaimed_producer() {
+    let (_fixture, source) = memory_source().await;
+    let unknown = ArtifactIdentity::new(DestinationId::generate());
+    let result = ClaimedFilesystemHistory::reserve(
+        &source.storage,
+        &source.store,
+        &source.capture,
+        &source.permit,
+        unknown,
+    )
+    .await;
+    assert!(matches!(result, Err(ApiError::NotFound(_))));
+    source.reserve().await;
 }
