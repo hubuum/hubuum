@@ -24,8 +24,8 @@ mod index;
 mod rewrite;
 use index::{IndexedEntry, KeyWidth, SegmentFormat, VersionKey};
 pub use rewrite::{
-    AdmittedRewriteSources, FullySelectedHistorySegment, RewriteSourceAdmission,
-    SegmentRewriteSelection, VerifiedSegmentRewrite,
+    AdmittedRewriteSources, FullySelectedHistorySegment, ObservedArchiveRewrite,
+    RewriteSourceAdmission, SegmentRewriteSelection, VerifiedSegmentRewrite,
 };
 
 const MARKER_BYTES: usize = 5 + size_of::<u32>();

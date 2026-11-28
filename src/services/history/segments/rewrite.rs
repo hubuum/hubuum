@@ -1,4 +1,7 @@
 //! Stage a replacement for a mixed segment. The published source stays intact.
+mod observed;
+pub use observed::ObservedArchiveRewrite;
+
 use std::collections::{BTreeMap, BTreeSet, btree_map};
 use std::sync::Arc;
 

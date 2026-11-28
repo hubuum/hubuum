@@ -196,6 +196,13 @@ reclamation or catalog replacement. A single snapshot covers all of these reads.
 A relocation appears either before or after its commit, with the corresponding
 set of immutable copies. Physical retirement requires independent evidence.
 
+Rewrite planning observes each selected version at the supplied application fence.
+Versions of one resource must share a catalog generation. The planner groups
+selected frames by immutable artifact before opening an index, charges repeated
+physical copies to the batch, and carries the observed generations forward for
+the catalog handoff. Selected versions with no recorded archive copies still
+participate in dependency checks on surviving frames.
+
 Stop API and worker processes, back up PostgreSQL, apply the catalog-displacement
 migration with `hubuum-admin --migrate`, reconcile runtime grants, and start
 matching writers. PostgreSQL rejects an unaccounted replacement at commit.
