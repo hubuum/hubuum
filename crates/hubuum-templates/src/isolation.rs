@@ -436,6 +436,8 @@ impl WorkerRuntime {
             .map_err(|_| TemplateError::boundary("invalid template protocol input"))?;
         let mut command = Command::new(worker_executable()?);
         command.env_clear();
+        #[cfg(windows)]
+        command.envs(crate::windows_worker_environment());
         let (response, result) = oneshot::channel();
         let span = info_span!("template_execution", operation_id = NEXT_OPERATION.fetch_add(1, Ordering::Relaxed), operation = ?request.operation, pid = tracing::field::Empty);
         let job = Job {

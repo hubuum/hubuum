@@ -1,0 +1,119 @@
+mod token;
+
+use std::error::Error;
+use std::fs::File;
+use std::io::{self, PipeReader, Read};
+use std::os::windows::io::OwnedHandle;
+use std::path::Path;
+
+use rappct::acl::{AccessMask, ResourcePath, grant_to_package};
+use rappct::{
+    AppContainerProfile, JobLimits, LaunchOptions, SecurityCapabilitiesBuilder, StdioConfig,
+    derive_sid_from_name, launch_in_container_with_io,
+};
+
+use super::Worker;
+
+const PROFILE: &str = "Hubuum.TemplateWorker";
+
+/// An operator installing a read-only binary can provision its read/execute ACE once.
+pub(crate) fn prepare() -> Result<(), Box<dyn Error>> {
+    let sid = derive_sid_from_name(PROFILE)?;
+    const FILE_EXECUTE: u32 = 0x20;
+    grant_to_package(
+        ResourcePath::File(std::env::current_exe()?),
+        &sid,
+        AccessMask(AccessMask::FILE_GENERIC_READ.0 | FILE_EXECUTE),
+    )?;
+    Ok(())
+}
+
+pub(crate) fn enter() -> Result<Worker, Box<dyn Error>> {
+    let token = rappct::token::query_current_process_token()?;
+    if token.is_appcontainer {
+        if token.package_sid != Some(derive_sid_from_name(PROFILE)?) {
+            return Err("unexpected template worker package SID".into());
+        }
+        if !token.capability_sids.is_empty() {
+            return Err(format!(
+                "expected a capability-free worker token, found {} capabilities",
+                token.capability_sids.len()
+            )
+            .into());
+        }
+        token::verify_package_opt_out()?;
+        return Ok(Worker::Render);
+    }
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .ok_or("Windows AppContainer startup requires LOCALAPPDATA for the service account")?;
+    // Concurrent brokers can reach CreateAppContainerProfile before the first
+    // creation completes. Coordinate profile and executable ACL setup across
+    // processes using the same service account, including across API replicas.
+    let startup_lock = File::options()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(Path::new(&local_app_data).join("Hubuum.TemplateWorker.lock"))?;
+    startup_lock.lock()?;
+    let profile = AppContainerProfile::ensure(
+        PROFILE,
+        "Hubuum template worker",
+        Some("Isolated Hubuum template rendering"),
+    )?;
+    let security = SecurityCapabilitiesBuilder::new(&profile.sid)
+        .lpac(true)
+        .build()?;
+    let system_root =
+        std::env::var_os("SystemRoot").ok_or("Windows system directory is missing")?;
+    let options = LaunchOptions {
+        exe: std::env::current_exe()?,
+        cwd: Some(Path::new(&system_root).join("System32")),
+        env: Some(hubuum_templates::windows_worker_environment()),
+        stdio: StdioConfig::Pipe,
+        join_job: Some(JobLimits {
+            kill_on_job_close: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let mut child = match launch_in_container_with_io(&security, &options) {
+        // The launcher probes its diagnostic environment before reporting a
+        // creation error. Its last-error code can describe that probe instead
+        // of CreateProcessW. On this stage only, provision the package's
+        // read/execute ACE for this binary and retry once under the same policy.
+        Err(rappct::AcError::LaunchFailed {
+            stage: "CreateProcessW",
+            ..
+        }) => {
+            prepare()?;
+            launch_in_container_with_io(&security, &options)?
+        }
+        result => result?,
+    };
+    drop(startup_lock);
+    // Only forward bytes once the OS has placed the child into the kill-on-close
+    // job. Cancelling the broker also ends the rendering process.
+    let mut input = child.stdin.take().ok_or("missing isolated input pipe")?;
+    let sent = io::copy(&mut io::stdin().lock(), &mut input);
+    drop(input);
+    let output = child.stdout.take().ok_or("missing isolated output pipe")?;
+    let mut output = PipeReader::from(OwnedHandle::from(output));
+    let received = io::copy(&mut output, &mut io::stdout().lock());
+    let diagnostics = child.stderr.take();
+    let status = child.wait(None)?;
+    if status != 0 {
+        if status == super::ISOLATION_FAILED as u32
+            && let Some(pipe) = diagnostics
+        {
+            // Startup diagnostics precede template processing. Keep them on
+            // the broker's stderr, which the API supervisor discards.
+            let mut error = PipeReader::from(OwnedHandle::from(pipe)).take(1024);
+            io::copy(&mut error, &mut io::stderr().lock())?;
+        }
+        return Err(format!("isolated template worker exited with status 0x{status:08x}").into());
+    }
+    sent?;
+    received?;
+    Ok(Worker::BrokerFinished)
+}

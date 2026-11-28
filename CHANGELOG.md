@@ -20,6 +20,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Require `url` 2.5.9 or later to fix a stack overflow during URL origin
   calculation (RUSTSEC-2026-0592).
 
+- **Breaking deployment change.** Template rendering requires working host
+  isolation. Enable seccomp in Linux deployments, allow the worker to install
+  its macOS sandbox, or provision AppContainer access to the Windows worker
+  executable and a writable local profile for the service account as described
+  in the template worker guide.
+
 ### Fixed
 
 - Best-effort imports can resolve a parent collection by name after an

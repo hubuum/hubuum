@@ -64,3 +64,134 @@ async fn data_processing_is_bounded_by_fuel(#[case] source: &str, #[case] contex
 
     assert!(error.to_string().contains("fuel"), "{error}");
 }
+
+async fn render_with_packaged_worker() {
+    use std::process::Stdio;
+    use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::Command;
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_hubuum-template-worker"));
+    command.env_clear().kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        command.envs(hubuum_templates::windows_worker_environment());
+        // Preserve the original CreateProcessW HRESULT in the test log.
+        command.env("RAPPCT_DEBUG_LAUNCH", "1");
+    }
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let request = json!({
+        "operation": "Render",
+        "max_output_bytes": 4096,
+        "context": {"name": "Hubuum"},
+        "templates": [{
+            "source": "Hello {{ name }}", "name": "greeting", "sources": [],
+            "limits": {"recursion_limit": 16, "fuel": 10000, "max_output_bytes": 4096},
+            "auto_escape": "None", "keep_trailing_newline": false,
+            "missing_data": "Strict", "max_output_bytes": 4096
+        }]
+    });
+    let sent = child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&request).unwrap())
+        .await;
+    let output = tokio::time::timeout(Duration::from_secs(30), child.wait_with_output())
+        .await
+        .expect("worker timed out")
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "worker {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    sent.unwrap();
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["Ok"][0]["output"], "Hello Hubuum");
+}
+
+#[tokio::test]
+async fn packaged_worker_renders_with_the_service_environment() {
+    render_with_packaged_worker().await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn packaged_workers_render_during_concurrent_windows_startup() {
+    // The service admits four workers at once. Repeat the same benign render
+    // across successive process lifetimes, including initial profile setup.
+    for _ in 0..16 {
+        tokio::join!(
+            render_with_packaged_worker(),
+            render_with_packaged_worker(),
+            render_with_packaged_worker(),
+            render_with_packaged_worker()
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn ordinary_appcontainer_is_refused_before_rendering() {
+    use std::io::{PipeReader, Read};
+    use std::os::windows::io::OwnedHandle;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::time::Duration;
+
+    use rappct::{
+        AppContainerProfile, JobLimits, LaunchOptions, SecurityCapabilitiesBuilder, StdioConfig,
+        launch_in_container_with_io,
+    };
+
+    let exe = env!("CARGO_BIN_EXE_hubuum-template-worker");
+    let profile = AppContainerProfile::ensure(
+        "Hubuum.TemplateWorker",
+        "Hubuum template worker",
+        Some("Isolated Hubuum template rendering"),
+    )
+    .unwrap();
+    assert!(
+        Command::new(exe)
+            .arg("--prepare-sandbox")
+            .status()
+            .unwrap()
+            .success()
+    );
+    let ordinary = SecurityCapabilitiesBuilder::new(&profile.sid)
+        .lpac(false)
+        .build()
+        .unwrap();
+    let options = LaunchOptions {
+        exe: PathBuf::from(exe),
+        cwd: Some(PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32")),
+        env: Some(hubuum_templates::windows_worker_environment()),
+        stdio: StdioConfig::Pipe,
+        join_job: Some(JobLimits {
+            kill_on_job_close: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let mut child = launch_in_container_with_io(&ordinary, &options).unwrap();
+    drop(child.stdin.take());
+    let diagnostics = child.stderr.take().unwrap();
+    let status = child.wait(Some(Duration::from_secs(30))).unwrap();
+    let mut message = String::new();
+    PipeReader::from(OwnedHandle::from(diagnostics))
+        .take(1024)
+        .read_to_string(&mut message)
+        .unwrap();
+    assert_eq!(status, 71, "{message}");
+    assert!(
+        message.contains("restricted-package access check"),
+        "{message}"
+    );
+}

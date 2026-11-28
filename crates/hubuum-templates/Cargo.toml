@@ -20,6 +20,20 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 tokio = { version = "1", features = ["rt", "process", "io-util", "sync", "time", "macros"] }
 tracing = "0.1"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+seccompiler = "0.5"
+
+[target.'cfg(windows)'.dependencies]
+rappct = "0.13.3"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 rstest = "0.28"
 libc = "0.2"

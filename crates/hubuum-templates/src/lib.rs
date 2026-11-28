@@ -13,6 +13,8 @@
 //! app-specific warning collection.
 
 mod isolation;
+#[cfg(windows)]
+mod windows_environment;
 mod worker;
 use hubuum_budget::{ByteLimit, LimitedWriter};
 pub use isolation::{
@@ -22,6 +24,8 @@ pub use isolation::{
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io::{self, Write};
+#[cfg(windows)]
+pub use windows_environment::windows_worker_environment;
 pub use worker::serve_template_worker;
 
 use minijinja::value::Value;
