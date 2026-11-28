@@ -14,8 +14,9 @@ use crate::test_support::{
 use diesel::{QueryableByName, sql_query, sql_types};
 use diesel_async::RunQueryDsl;
 use hubuum_artifacts::{
-    ArtifactCreationIntent, ArtifactStore, FilesystemArtifactStore, OwnedArtifactAdmission,
-    OwnedArtifactPhase, OwnedArtifactResolution, OwnedArtifactStore,
+    ArtifactCreationIntent, ArtifactManifest, ArtifactStore, FilesystemArtifactStore,
+    ManifestBuilder, OwnedArtifactAdmission, OwnedArtifactPhase, OwnedArtifactResolution,
+    OwnedArtifactStore, VerifiedArtifact,
 };
 use hubuum_storage_postgres::test_support::{IsolatedRestoreTarget, integration_test_database_url};
 use hubuum_storage_postgres::{PostgresPool, PostgresStorageError, with_connection};
@@ -36,6 +37,7 @@ async fn archive_producer() {
         let source = archive_source(storage, &root).await;
         let attempt = source.reserve().await;
         let result = attempt.seal(&source.store).await.unwrap();
+        assert_checkpoint_is_write_once(&source, &attempt, result.artifact()).await;
         assert_eq!(
             result.claim().manifest().location(),
             result.artifact().manifest().identity()
@@ -351,6 +353,18 @@ async fn recover_interrupted_claim(
             OwnedArtifactPhase::Staging
         }
     );
+    let expected = if sealed {
+        let bytes = store.manifest(intent.identity()).await.unwrap();
+        let manifest =
+            ArtifactManifest::decode(&bytes, intent.identity(), intent.limits()).unwrap();
+        Some(ArtifactReference::from_catalog(
+            intent.identity().clone(),
+            manifest.manifest_digest(),
+        ))
+    } else {
+        None
+    };
+    assert_recovered_reference(fixture, id, expected).await;
     store.abort_owned(&artifact).await.unwrap();
     assert!(matches!(
         store.resolve_owned(&intent).await.unwrap(),
@@ -499,6 +513,75 @@ async fn rotated_recovery_fence_rejects_verified_cleanup_settlement() {
         .await
         .unwrap();
     assert_eq!(retained.encoded_intent(), receipt.encoded_intent());
+}
+
+async fn assert_recovered_reference(
+    fixture: &Fixture,
+    id: Uuid,
+    expected: Option<ArtifactReference>,
+) {
+    let isolation = fixture.exclusive_isolation().await;
+    let fence = fixture
+        .storage
+        .read_application_control()
+        .await
+        .unwrap()
+        .fence();
+    let request = HistoryArchiveCleanupRequest::new(id, fence, isolation.domain()).unwrap();
+    let claim = fixture
+        .storage
+        .load_history_archive_cleanup(&request)
+        .await
+        .unwrap();
+    assert_eq!(claim.verified_reference(), expected);
+}
+
+async fn assert_checkpoint_is_write_once(
+    source: &ArchiveSource,
+    attempt: &ClaimedFilesystemHistory,
+    original: &VerifiedArtifact,
+) {
+    // A separately verified stream can use the same IDs. It must never replace
+    // the original output even with the original live permit.
+    let claim = attempt.claim();
+    let other_bytes = b"different verified data";
+    let mut builder =
+        ManifestBuilder::new(source.location.clone(), claim.request().intent().limits());
+    builder.push(other_bytes).unwrap();
+    let mut verifier = builder.finish().unwrap().verifier();
+    verifier.push(other_bytes).unwrap();
+    let other = verifier.finish().unwrap();
+    let write = |output| {
+        source
+            .storage
+            .checkpoint_verified_history_archive(claim.verified_checkpoint(output).unwrap())
+    };
+    let conflict = source
+        .storage
+        .run_in_scope(source.permit.execution_scope().clone(), write(&other))
+        .await
+        .unwrap_err();
+    assert_eq!(conflict.kind(), StorageErrorKind::Conflict);
+    source
+        .storage
+        .run_in_scope(source.permit.execution_scope().clone(), write(original))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn sealed_memory_claim_preserves_first_verified_output_through_recovery() {
+    let (fixture, source) = memory_source().await;
+    let attempt = source.reserve().await;
+    let sealed = attempt.seal(&source.store).await.unwrap();
+    let expected = sealed.artifact().reference();
+    assert_checkpoint_is_write_once(&source, &attempt, sealed.artifact()).await;
+    let id = source.permit.producer().parent().id();
+    source.lifetime.release();
+    after_repository_release(|| recover(&fixture.storage, &fixture.directory, &fixture.key))
+        .await
+        .unwrap();
+    assert_recovered_reference(&fixture, id, Some(expected)).await;
 }
 
 async fn memory_source() -> (Fixture, ArchiveSource) {
@@ -668,7 +751,44 @@ async fn claimed_segment_refuses_a_different_store_before_creating_bytes() {
 async fn claimed_segment_rechecks_catalog_generation_before_creating_an_attempt() {
     let (_fixture, source) = memory_source().await;
     let attempt = source.reserve().await;
-    let replacement = other_segment(&source).await;
+    publish_other_segment(&source).await;
+    assert!(matches!(
+        attempt.seal(&source.store).await,
+        Err(ApiError::Conflict(_))
+    ));
+    let intent =
+        ArtifactCreationIntent::decode(attempt.claim().request().intent().encoded()).unwrap();
+    assert!(matches!(
+        source.store.resolve_owned(&intent).await.unwrap(),
+        OwnedArtifactResolution::Pending
+    ));
+}
+
+#[tokio::test]
+async fn identical_verified_checkpoint_rechecks_catalog_generation() {
+    let (_fixture, source) = memory_source().await;
+    let attempt = source.reserve().await;
+    let sealed = attempt.seal(&source.store).await.unwrap();
+    publish_other_segment(&source).await;
+    let checkpoint = attempt
+        .claim()
+        .verified_checkpoint(sealed.artifact())
+        .unwrap();
+    let error = source
+        .storage
+        .run_in_scope(
+            source.permit.execution_scope().clone(),
+            source
+                .storage
+                .checkpoint_verified_history_archive(checkpoint),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), StorageErrorKind::Conflict);
+}
+
+async fn publish_other_segment(source: &ArchiveSource) {
+    let replacement = other_segment(source).await;
     let reference = source.store.publish(replacement.proof()).await.unwrap();
     let descriptor = HistoryArchiveDescriptor::new(
         source.capture.hot().unwrap(),
@@ -689,16 +809,6 @@ async fn claimed_segment_rechecks_catalog_generation_before_creating_an_attempt(
         )
         .await
         .unwrap();
-    assert!(matches!(
-        attempt.seal(&source.store).await,
-        Err(ApiError::Conflict(_))
-    ));
-    let intent =
-        ArtifactCreationIntent::decode(attempt.claim().request().intent().encoded()).unwrap();
-    assert!(matches!(
-        source.store.resolve_owned(&intent).await.unwrap(),
-        OwnedArtifactResolution::Pending
-    ));
 }
 
 #[tokio::test]

@@ -1035,6 +1035,12 @@ pub trait HistoryArchiveStorage: Send + Sync {
         &self,
         settlement: HistoryArchiveCleanupSettlement,
     ) -> Result<(), StorageError>;
+    /// Record the verified manifest digest once on the original live claim.
+    /// Exact retries must still validate ownership, deadline and catalog generation.
+    async fn checkpoint_verified_history_archive(
+        &self,
+        checkpoint: HistoryArchiveVerifiedCheckpoint<'_>,
+    ) -> Result<(), StorageError>;
     async fn claim_history_archive_publication(
         &self,
         request: HistoryArchivePublicationRequest,
@@ -1084,6 +1090,7 @@ mod publication;
 pub use publication::{
     HISTORY_ARCHIVE_PUBLICATION_BYTES, HISTORY_ARCHIVE_PUBLICATION_MANIFEST_BYTES,
     HistoryArchivePublicationClaim, HistoryArchivePublicationManifest,
+    HistoryArchiveVerifiedCheckpoint,
 };
 
 mod artifact_intent;

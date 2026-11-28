@@ -5,6 +5,8 @@ use diesel::OptionalExtension;
 struct Retained {
     #[diesel(sql_type=Binary)]
     manifest: Vec<u8>,
+    #[diesel(sql_type=Nullable<Binary>)]
+    verified_manifest_digest: Option<Vec<u8>>,
     #[diesel(sql_type=Binary)]
     encoded_intent: Vec<u8>,
     #[diesel(sql_type=Jsonb)]
@@ -37,7 +39,7 @@ pub(super) async fn claim_on(
     // Productive admission takes the application gate first. Exact retirement
     // also takes parent/child locks. Fail promptly on a contending settlement.
     let row = sql_query(
-        "SELECT a.material AS manifest, a.encoded_intent, h.material AS capture, p.isolation,
+        "SELECT a.material AS manifest, a.verified_manifest_digest, a.encoded_intent, h.material AS capture, p.isolation,
             p.ownership_token AS parent_token, c.ownership_token AS child_token
          FROM hubuum_control.history_archive_publication_claims a
          JOIN hubuum_control.history_publication_owners p
@@ -92,6 +94,9 @@ pub(super) async fn claim_on(
         &capture,
         row.encoded_intent,
         [row.parent_token, row.child_token],
+        row.verified_manifest_digest
+            .map(|bytes| bytes.try_into().map_err(|_| invalid()))
+            .transpose()?,
     )?)
 }
 

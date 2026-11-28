@@ -1,7 +1,7 @@
 //! Fixed recovery metadata for one captured closed version. This is not an
 //! admission, ownership, authorization, or physical completion capability.
 use super::*;
-use crate::artifacts::ArtifactIdentity;
+use crate::artifacts::{ArtifactIdentity, VerifiedArtifact};
 use std::fmt;
 
 /// Reserve this upper bound before issuing segment work. One captured row is
@@ -311,10 +311,51 @@ impl HistoryArchivePublicationClaim {
     pub const fn manifest(&self) -> &HistoryArchivePublicationManifest {
         self.request.manifest()
     }
+    /// Bind independently checked output to this exact attempted object and its
+    /// original reservation. The producer must verify through its owned session.
+    pub fn verified_checkpoint(
+        &self,
+        verified: &VerifiedArtifact,
+    ) -> Result<HistoryArchiveVerifiedCheckpoint<'_>, StorageError> {
+        let artifact = verified.manifest();
+        let limits = self.request.intent().limits();
+        if artifact.identity() != self.manifest().location()
+            || artifact.block_bytes() != limits.block_bytes()
+            || artifact.byte_size() == 0
+            || artifact.byte_size() > limits.artifact_bytes()
+            || artifact.block_count() > limits.blocks()
+            || artifact.encoded_len() > limits.manifest_bytes() as usize
+        {
+            return Err(StorageError::conflict(
+                "Verified archive differs from its claimed location or limits",
+            ));
+        }
+        Ok(HistoryArchiveVerifiedCheckpoint {
+            claim: self,
+            manifest_digest: artifact.manifest_digest(),
+        })
+    }
     pub const fn request(&self) -> &super::HistoryArchivePublicationRequest {
         &self.request
     }
     pub const fn permit(&self) -> &HistoryArchiveExecutionPermit {
         &self.permit
+    }
+}
+
+/// Intended output of the original claimed producer. Recording this value
+/// preserves evidence for recovery and grants no authority to expose bytes.
+pub struct HistoryArchiveVerifiedCheckpoint<'a> {
+    claim: &'a HistoryArchivePublicationClaim,
+    manifest_digest: [u8; 32],
+}
+
+impl HistoryArchiveVerifiedCheckpoint<'_> {
+    pub const fn claim(&self) -> &HistoryArchivePublicationClaim {
+        self.claim
+    }
+
+    pub const fn manifest_digest(&self) -> &[u8; 32] {
+        &self.manifest_digest
     }
 }

@@ -590,6 +590,16 @@ The provider ownership/outcome bridge remains required before external effects;
 current claim admission cannot retire its physical obligation. Production remains
 Legacy, and generic expiry remains disabled.
 
+After readback through the original owned filesystem session,
+`checkpoint_verified_history_archive` records the SHA-256 digest of the
+encoded artifact manifest on the same claim. Each attempt, including an
+identical retry, requires the original live producer, capture, deadline and
+catalog generation. A competing digest conflicts. Recovery reconstructs
+the expected artifact reference from this digest and the immutable claim
+location. Claims created before this checkpoint have no verified reference.
+The provider phase, catalog handoff and hot-copy retirement each require
+independent evidence. A recording alone leaves the capture and bytes charged.
+
 During isolated offline recovery, `HistoryArchiveStorage::load_history_archive_cleanup`
 reads the original claim and pinned capture under the quarantined application
 fence. Provider I/O runs outside database transactions.
