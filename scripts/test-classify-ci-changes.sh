@@ -131,6 +131,14 @@ for policy_storage_input in crates/hubuum-storage-postgres/tests/history_lifecyc
   assert_flag "$policy_storage_output" rust true
 done
 
+for checkpoint_input in \
+  crates/hubuum-storage-postgres/migrations/2026-11-28-000004_verified_archive_checkpoint/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-28-000004_verified_archive_checkpoint/down.sql; do
+  checkpoint_output="$(bash "$classifier" "$checkpoint_input")"
+  assert_flag "$checkpoint_output" rust true
+  assert_flag "$checkpoint_output" container true
+done
+
 history_projection_output="$(bash "$classifier" src/models/history_lifecycle/operation_response_tests.rs)"
 assert_flag "$history_projection_output" code true
 assert_flag "$history_projection_output" rust true

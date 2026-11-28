@@ -30,13 +30,16 @@ BEGIN
     subject := (manifest #>> '{identity,resource}')::UUID;
     cutoff := LEAST((manifest->>'available_until')::TIMESTAMPTZ,
                     (manifest #>> '{execution,deadline}')::TIMESTAMPTZ);
-    IF public.hubuum_archive_history_entry(runtime,runtime_token,image,deletion) IS NOT TRUE
-        OR public.hubuum_history_producer_execution(parent,child,child_token) IS NOT TRUE
-        OR public.hubuum_history_publication_execution(parent,parent_token,image,deletion,
-            (manifest #>> '{execution,history,authority_revision}')::BIGINT,
-            (manifest #>> '{execution,generation}')::BIGINT,'archive_read') IS NOT TRUE THEN
-        RETURN FALSE;
-    END IF;
+    IF subject IS NULL OR public.hubuum_archive_history_entry(runtime,runtime_token,image,deletion) IS NOT TRUE
+        THEN RETURN FALSE; END IF;
+    -- Acquire child and parent in the same order as the native transaction
+    -- entry. Keep the locking calls in separate statements for raw callers too.
+    IF public.hubuum_history_producer_execution(parent,child,child_token) IS NOT TRUE
+        THEN RETURN FALSE; END IF;
+    IF public.hubuum_history_publication_execution(parent,parent_token,image,deletion,
+        (manifest #>> '{execution,history,authority_revision}')::BIGINT,
+        (manifest #>> '{execution,generation}')::BIGINT,'archive_read') IS NOT TRUE
+        THEN RETURN FALSE; END IF;
     -- Serialize with catalog publication, including its first insertion.
     PERFORM pg_advisory_xact_lock(hashtextextended('hubuum-history-archive:'||subject::text,0));
     IF COALESCE((SELECT generation FROM hubuum_control.history_archive_catalogs WHERE resource=subject),0)
@@ -52,6 +55,9 @@ BEGIN
           AND (a.verified_manifest_digest IS NULL OR a.verified_manifest_digest=digest)
           AND c.id=child AND c.ownership_token=child_token AND c.publication_claimed
           AND p.runtime_id=runtime AND p.producer_count=1 AND h.publication_claimed
+          AND (h.material #>> '{selection,resource}')::UUID=subject
+          AND h.material->'generation'=manifest->'generation'
+          AND h.material->'execution'=manifest->'execution'
           AND h.expires_at>clock_timestamp()
         FOR UPDATE OF a NOWAIT;
     IF NOT FOUND OR cutoff IS NULL OR cutoff<=clock_timestamp() THEN RETURN FALSE; END IF;
