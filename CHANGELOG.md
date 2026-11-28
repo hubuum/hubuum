@@ -328,6 +328,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Task submissions use less temporary memory when hashing large JSON requests.
   Existing idempotency keys and stored request hashes continue to work.
 
+- **Breaking for large imports and exhaustive storage SDK clients.**
+  An import submission or its credential approval accepts up to 10,000 graph
+  rows and nested preparation candidates combined. Larger requests return HTTP
+  413 with `api_capacity_candidates`. Split large imports at dependency
+  boundaries and use a distinct idempotency key for each new import.
+  Use task discovery to inspect an older ambiguous submission. Update exhaustive
+  matches on `ApiRequestRejection` to handle `Candidates`.
+  [Counting rules and upgrade guidance](docs/api_request_admission.md#import-preparation)
+
 - **Breaking for older experimental archive readers.** New history segments use
   64 KiB blocks and a v3 index. Only the fixed-width index is compressed.
   Upgrade every archive reader and recovery tool before publishing v3 segments.

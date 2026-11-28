@@ -45,6 +45,7 @@ pub async fn create_import(
     import_request: web::Json<ImportRequest>,
 ) -> Result<impl Responder, ApiError> {
     let import_request = import_request.into_inner();
+    let items = import_request.admit_items()?;
     let payload = serde_json::to_value(&import_request)?;
     let hash = request_hash(&payload)?;
     let attempt = TaskSubmissionAttempt::prepare(
@@ -60,7 +61,7 @@ pub async fn create_import(
         task
     } else {
         import_request.validate().await?;
-        let (import_request, approval) = if import_request.contains_credentials() {
+        let approval = if import_request.contains_credentials() {
             let approved = super::credential_approvals::approve_request(
                 &context,
                 &requestor,
@@ -70,14 +71,12 @@ pub async fn create_import(
                 },
             )
             .await?;
-            let (import_request, approval) =
-                crate::services::credential_approvals::approved_import(
-                    approved,
-                    &requestor.event_context(&req),
-                )?;
-            (import_request, Some(approval))
+            Some(crate::services::credential_approvals::approved_import(
+                approved,
+                &requestor.event_context(&req),
+            )?)
         } else {
-            (import_request, None)
+            None
         };
 
         let snapshot = task_scope_snapshot(
@@ -93,7 +92,7 @@ pub async fn create_import(
                     TaskKind::Import,
                     PrincipalID::new(requestor.principal.id().id())?,
                     payload,
-                    import_request.total_items(),
+                    items.task_items(),
                 )
                 .request_hash(Some(hash))
                 .scope_snapshot(snapshot)

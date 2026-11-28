@@ -219,6 +219,8 @@ pub enum ApiRequestRejection {
     Principal,
     #[serde(rename = "api_capacity_input_bytes")]
     InputBytes,
+    #[serde(rename = "api_capacity_candidates")]
+    Candidates,
     #[serde(rename = "api_capacity_output_bytes")]
     OutputBytes,
     #[serde(rename = "api_capacity_deadline_exceeded")]
@@ -230,10 +232,11 @@ pub enum ApiRequestRejection {
 }
 
 impl ApiRequestRejection {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Deployment,
         Self::Principal,
         Self::InputBytes,
+        Self::Candidates,
         Self::OutputBytes,
         Self::DeadlineExceeded,
         Self::IdentityUnavailable,
@@ -246,6 +249,7 @@ impl ApiRequestRejection {
             Self::Deployment => "api_capacity_deployment",
             Self::Principal => "api_capacity_principal",
             Self::InputBytes => "api_capacity_input_bytes",
+            Self::Candidates => "api_capacity_candidates",
             Self::OutputBytes => "api_capacity_output_bytes",
             Self::DeadlineExceeded => "api_capacity_deadline_exceeded",
             Self::IdentityUnavailable => "api_capacity_identity_unavailable",
@@ -366,6 +370,7 @@ mod tests {
 
     #[rstest]
     #[case(ApiRequestRejection::InputBytes)]
+    #[case(ApiRequestRejection::Candidates)]
     #[case(ApiRequestRejection::OutputBytes)]
     #[case(ApiRequestRejection::DeadlineExceeded)]
     fn terminal_work_failures_do_not_suggest_retry(#[case] reason: ApiRequestRejection) {

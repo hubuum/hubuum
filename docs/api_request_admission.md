@@ -1,11 +1,9 @@
 # Expensive request admission
 
-This is the **partial occupancy and fencing slice** of
-[#521](https://github.com/hubuum/hubuum/issues/521). The issue remains open.
-The [measured request inventory](performance/api_admission.md) selects the first
-paths; [lifecycle H5](performance/lifecycle_budgets.md) remains the resource
-acceptance gate. This slice does **not** establish H5 candidate/scanned-input
-limits or a hard process-heap bound.
+The server reserves shared capacity for expensive requests and limits the number
+of candidates in each import submission. The [measured request inventory](performance/api_admission.md)
+identifies the paths covered by [#521](https://github.com/hubuum/hubuum/issues/521).
+Full [H5 resource qualification](performance/lifecycle_budgets.md) remains open.
 
 ## Policy and coverage
 
@@ -51,6 +49,29 @@ pool uses shared capacity and has weaker control-path progress guarantees.
 Cancellation uses the existing isolated operational pool. Settlement uses a
 primary-pool control transaction so waiting for an owner cannot occupy the
 connection needed to cancel that owner's productive work.
+
+## Import preparation
+
+One import may contain up to 10,000 candidates. Count each row in every graph
+section, each membership source, each permission in a collection grant, each
+related-object alias in an export template, each allowed remote-target subject
+type, and each subscription entity type and action. Multiple graph sections
+share the same allowance. A membership with two sources counts as three
+candidates and contributes one row to task progress.
+
+Every submission, including a dry run or retry, checks the decoded graph before
+hashing, looking up a receipt, consuming credential approval, or creating a
+task. Credential approval issuance checks the same limit before signing the
+operation. An over-limit request returns HTTP 413 with
+`api_capacity_candidates`. A rejected retry cannot establish whether an earlier
+attempt committed. Use the existing task ID or task discovery to inspect it,
+including for imports accepted before this limit was introduced.
+
+When dividing an import, keep references within each request or use stable
+keys for already committed dependencies. Each new import has its own
+transaction and idempotency key. Nested JSON values and collection key paths
+remain subject to byte limits. Decoding, hashing and template validation still
+require separate memory and scanned-byte qualification.
 
 ## Ownership, cancellation and restore
 
@@ -116,7 +137,7 @@ other principal's identity, counts or workload appears in the body.
 | --- | --- | --- |
 | 429 | `api_capacity_deployment`, `api_capacity_principal` | Yes, after capacity drains |
 | 503 | `api_capacity_identity_unavailable`, `api_capacity_reconciliation_required` | Yes, after recovery |
-| 413 | `api_capacity_input_bytes`, `api_capacity_output_bytes` | No; reduce the request |
+| 413 | `api_capacity_input_bytes`, `api_capacity_output_bytes`, `api_capacity_candidates` | No; reduce the request |
 | 422 | `api_capacity_deadline_exceeded` | No; reduce the request |
 
 ```http
@@ -152,7 +173,7 @@ configured execution allowances; they are not measurements of scanned bytes.
 | Aggregates | Shared occupancy/time; existing 500-candidate, 8 MiB intermediate batches | PostgreSQL aggregate state, one decoded batch and serialized values | Bound/charge request-wide actual candidates and source bytes; reject unknown-cost shapes; qualify local and delegated paths against H5 |
 | History lists, population and navigation | Shared occupancy/time; returned page count | Diesel can retain a complete page, including large JSON values, before publication checking | Bound retained source production and cumulative candidates/bytes before accepting results; qualify exact totals and as-of selection |
 | Audit | Shared occupancy/time; authorization discovery has its existing candidate bound | Complete stored-event page and enrichment precede publication checking | Bound actual audit-source production and visibility work; qualify exact totals, source bytes and large event documents |
-| Import submission | Actual ingress chunks and full configured time allowance | A decoded request exists before validation/hash/planning completes | Measure and bound preparation candidates/intermediates; demonstrate retry work charges and ambiguity-safe receipt behavior |
+| Import submission | Actual ingress chunks, shared time allowance and 10,000 graph preparation candidates per attempt | JSON decoding precedes the candidate check | Measure and bound scanned bytes and intermediate allocations, including duplicate preparation |
 | Export submission | Actual ingress chunks and full configured time allowance | Decoded request and template/runtime preparation precede durable task admission | Measure and bound preparation/source loads independently of artifact production; qualify duplicate preparation |
 
 H5 remains 10,000 candidates, 64 MiB captured/scanned input and 16 MiB results.
