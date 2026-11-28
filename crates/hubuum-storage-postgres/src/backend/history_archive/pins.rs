@@ -15,7 +15,7 @@ pub(super) async fn read_on(
     connection: &mut PostgresConnection,
     target: StorageRecordIdentity,
     fence: ApplicationFence,
-) -> Result<HistoryArchivePinnedCopies, PostgresStorageError> {
+) -> Result<HistoryArchiveCopyHistory, PostgresStorageError> {
     // One MVCC statement observes the fence and every matching capture. Direct
     // access to the protected table requires the operator database role.
     let row = sql_query(
@@ -52,10 +52,31 @@ pub(super) async fn read_on(
             PostgresStorageError::invalid_persisted_value("archive pin location", error)
         })
     };
-    Ok(HistoryArchivePinnedCopies::from_capture_sources(
+    Ok(HistoryArchiveCopyHistory::from_sources(
         target,
         fence,
         locations(row.locations)?,
         locations(row.reclaimed)?,
     )?)
+}
+
+pub(super) async fn record_displacements(
+    connection: &mut PostgresConnection,
+    publication: &HistoryArchiveCatalogUpdate,
+    permit: &StorageExecutionPermit,
+) -> Result<(), PostgresStorageError> {
+    let catalog = publication.catalog();
+    let recorded = fenced!(
+        sql_query("SELECT public.hubuum_history_archive_record_displacements($1,$2,$3,$4,$5,$6,$7) AS allowed")
+            .bind::<SqlUuid,_>(Uuid::from_bytes(*catalog.resource().as_bytes()))
+            .bind::<BigInt,_>(catalog.generation().value())
+            .bind::<Jsonb,_>(json(&publication.displaced(), HISTORY_ARCHIVE_BATCH_BYTES)?),
+        permit
+    ).get_result::<Allowed>(connection).await?;
+    if !recorded.allowed {
+        return Err(PostgresStorageError::conflict(
+            "Archive catalog displacement generation changed",
+        ));
+    }
+    Ok(())
 }

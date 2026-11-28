@@ -601,3 +601,47 @@ async fn rolling_back_pin_reclamation_restores_the_query_and_its_original_obliga
     .unwrap();
     assert_eq!(observed, (true, true));
 }
+
+#[tokio::test]
+async fn catalog_replacement_without_accounting_fails_at_commit() {
+    let admin = if database_role_tests_enabled() {
+        integration_test_migration_pool(1)
+    } else {
+        integration_test_pool(1)
+    };
+    let resource = Uuid::new_v4();
+    let message = crate::with_connection(&admin, async |connection| {
+        connection.batch_execute("BEGIN").await?;
+        if database_role_tests_enabled() {
+            sql_query("SELECT set_config('role', $1, true)")
+                .bind::<Text, _>(integration_test_database_roles().owner().as_str())
+                .execute(connection)
+                .await?;
+        }
+        sql_query(
+            "INSERT INTO hubuum_control.history_archive_catalogs(resource,generation,material)
+             VALUES ($1,1,jsonb_build_object('resource',$1,'generation',1,'versions','[]'::jsonb))",
+        )
+        .bind::<SqlUuid, _>(resource)
+        .execute(connection)
+        .await?;
+        sql_query(
+            "UPDATE hubuum_control.history_archive_catalogs
+             SET generation=2, material=jsonb_set(material,'{generation}','2') WHERE resource=$1",
+        )
+        .bind::<SqlUuid, _>(resource)
+        .execute(connection)
+        .await?;
+        let error = connection
+            .batch_execute("COMMIT")
+            .await
+            .expect_err("an earlier writer omitted its accounting operation");
+        Ok::<_, PostgresStorageError>(error.to_string())
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        message,
+        "Archive catalog replacement requires matching displacement evidence"
+    );
+}

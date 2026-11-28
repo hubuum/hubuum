@@ -437,6 +437,15 @@ impl HistoryArchiveCatalog {
         expected: HistoryArchiveCatalogGeneration,
         additions: Vec<HistoryArchiveDescriptor>,
     ) -> Result<Self, StorageError> {
+        Ok(self.publication(expected, additions)?.into_catalog())
+    }
+
+    /// Compute the new catalog and any previously committed locations it displaces.
+    pub fn publication(
+        &self,
+        expected: HistoryArchiveCatalogGeneration,
+        additions: Vec<HistoryArchiveDescriptor>,
+    ) -> Result<HistoryArchiveCatalogUpdate, StorageError> {
         self.validate()?;
         if self.generation != expected {
             return Err(StorageError::conflict(
@@ -476,7 +485,39 @@ impl HistoryArchiveCatalog {
                 .ok_or_else(|| invalid("Catalog generation exhausted"))?,
         );
         next.validate()?;
-        Ok(next)
+        // Replacements keep their original slot and new versions append. Compare
+        // the committed endpoints, including when a batch revisits a slot.
+        let displaced = self
+            .versions
+            .iter()
+            .zip(&next.versions)
+            .filter(|(old, new)| old.location() != new.location())
+            .map(|(old, _)| (old.identity().version(), old.location().clone()))
+            .collect();
+        Ok(HistoryArchiveCatalogUpdate {
+            catalog: next,
+            displaced,
+        })
+    }
+}
+
+/// A validated generation change and the former locations it must account for.
+pub struct HistoryArchiveCatalogUpdate {
+    catalog: HistoryArchiveCatalog,
+    displaced: Vec<(VersionIdentity, ArtifactReference)>,
+}
+
+impl HistoryArchiveCatalogUpdate {
+    pub fn catalog(&self) -> &HistoryArchiveCatalog {
+        &self.catalog
+    }
+
+    pub fn displaced(&self) -> &[(VersionIdentity, ArtifactReference)] {
+        &self.displaced
+    }
+
+    pub fn into_catalog(self) -> HistoryArchiveCatalog {
+        self.catalog
     }
 }
 
@@ -1023,17 +1064,17 @@ impl HistoryArchiveCapture {
 }
 
 mod pins;
-pub use pins::HistoryArchivePinnedCopies;
+pub use pins::HistoryArchiveCopyHistory;
 
 #[async_trait]
 pub trait HistoryArchiveStorage: Send + Sync {
-    /// Privileged, read-only discovery across retained captures for one exact version.
-    /// Includes expired captures and the immutable reference evidence preserved on reclamation.
-    async fn history_archive_pinned_copies(
+    /// Observe query-pinned, reclaimed and displaced locations for one exact version at the fence.
+    /// The current catalog can also name a location that has never been pinned or displaced.
+    async fn history_archive_copy_history(
         &self,
         target: StorageRecordIdentity,
         fence: ApplicationFence,
-    ) -> Result<HistoryArchivePinnedCopies, StorageError>;
+    ) -> Result<HistoryArchiveCopyHistory, StorageError>;
     /// Offline control transaction under exclusive process isolation.
     async fn load_history_archive_cleanup(
         &self,

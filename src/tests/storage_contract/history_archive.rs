@@ -621,7 +621,7 @@ async fn pin_observation_finds_prior_locations_across_principals() {
         }
         ctx.publish(ctx.descriptor(&row, false, vec![]).await).await;
         let pins = pin_operator(ctx)
-            .history_archive_pinned_copies(row.identity(), ctx.permit.fence())
+            .history_archive_copy_history(row.identity(), ctx.permit.fence())
             .await
             .unwrap();
         assert_eq!(pins.target(), row.identity());
@@ -629,6 +629,36 @@ async fn pin_observation_finds_prior_locations_across_principals() {
         assert_eq!(pins.locations().len(), 2);
         assert!(pins.locations().contains(first.location()));
         assert!(pins.locations().contains(second.location()));
+    })
+    .await;
+}
+
+#[cfg(feature = "integration-test-support")]
+#[rstest]
+#[case::different_physical_copy(true)]
+#[case::same_physical_copy(false)]
+#[actix_web::test]
+async fn copy_history_accounts_for_an_uncaptured_catalog_replacement(#[case] relocate: bool) {
+    with_overflow_backend(async |ctx| {
+        let row = ctx.closed().await;
+        let original = ctx.descriptor(&row, false, vec![]).await;
+        ctx.publish(original.clone()).await;
+        let replacement = if relocate {
+            ctx.descriptor(&row, false, vec![]).await
+        } else {
+            original.clone()
+        };
+        ctx.publish(replacement).await;
+        let history = pin_operator(ctx)
+            .history_archive_copy_history(row.identity(), ctx.permit.fence())
+            .await
+            .unwrap();
+        let expected = if relocate {
+            std::slice::from_ref(original.location())
+        } else {
+            &[]
+        };
+        assert_eq!(history.locations(), expected);
     })
     .await;
 }
@@ -667,7 +697,7 @@ async fn expired_archive_pin_remains_visible_until_capture_storage_reclaims_it()
             HistoryArchiveCoverageState::Expired
         );
         let pins = pin_operator(ctx)
-            .history_archive_pinned_copies(row.identity(), ctx.permit.fence())
+            .history_archive_copy_history(row.identity(), ctx.permit.fence())
             .await
             .unwrap();
         assert_eq!(
@@ -724,7 +754,7 @@ async fn erasure_lookup_retains_relocated_copy_after_last_query_capture_is_recla
             "the original query capture was not reclaimed"
         );
         let observation = pin_operator(ctx)
-            .history_archive_pinned_copies(row.identity(), ctx.permit.fence())
+            .history_archive_copy_history(row.identity(), ctx.permit.fence())
             .await
             .unwrap();
         assert_eq!(observation.locations().len(), 2);
@@ -751,7 +781,7 @@ async fn application_role_cannot_read_private_archive_pin_locations() {
         StorageRecordIdentity::new(ResourceIdentity::generate(), VersionIdentity::generate());
     assert!(
         runtime
-            .history_archive_pinned_copies(target, fence)
+            .history_archive_copy_history(target, fence)
             .await
             .is_err()
     );
@@ -776,7 +806,7 @@ async fn archive_pin_observation_matches_both_identities(#[case] another_resourc
             row.identity().next_version()
         };
         let pins = pin_operator(ctx)
-            .history_archive_pinned_copies(target, ctx.permit.fence())
+            .history_archive_copy_history(target, ctx.permit.fence())
             .await
             .unwrap();
         assert!(pins.locations().is_empty());
@@ -800,7 +830,7 @@ async fn stale_archive_pin_observation_fails_even_for_an_empty_result(#[case] ch
         .unwrap();
         let target = StorageRecordIdentity::new(ctx.resource, VersionIdentity::generate());
         let error = pin_operator(ctx)
-            .history_archive_pinned_copies(target, stale)
+            .history_archive_copy_history(target, stale)
             .await
             .unwrap_err();
         assert_eq!(error.kind(), StorageErrorKind::Conflict);
