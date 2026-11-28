@@ -48,8 +48,9 @@ Probe paths bypass the client IP allowlist so platform health checks are not rej
 
 ### Local Docker Compose
 
-The development Compose stack requires a local, untracked `.env` file instead
-of using a password committed to the repository:
+The development Compose stack reads the database password and the key for the
+`deployment` alias from a local, untracked `.env` file. To use another alias,
+pass its matching key to the `hubuum` service in a Compose override.
 
 ```bash
 printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)" > .env
