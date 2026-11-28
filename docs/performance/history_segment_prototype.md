@@ -364,7 +364,13 @@ Fencing prevents subsequent publication. Physical cleanup requires separate evid
 
 For a batch spanning several segments, the coordinator supplies the exact batch
 of up to 1,000 resource/version pairs and identifies the members expected in
-each source. A rewrite scans the surviving frames for dependencies on any
+each source. Before staging any replacement, the coordinator totals the selected
+frame lengths from the published indexes. All touched sources share one 16 MiB
+limit. A missing member, duplicate assignment or repeated source also rejects
+the batch. Each admitted projection binds its source manifest digest. The
+subsequent frame scan checks the full resource and version identities.
+
+A rewrite scans the surviving frames for dependencies on any
 selected version, including versions in another segment. A selected frame
 encountered outside its expected membership also blocks the rewrite. The same
 bounded scan can check a retained segment that the coordinator expects to leave

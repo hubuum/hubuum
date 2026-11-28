@@ -20,6 +20,7 @@ use super::{
 pub struct SegmentRewriteSelection {
     members: Arc<BTreeMap<VersionIdentity, ResourceIdentity>>,
     source_versions: BTreeSet<VersionIdentity>,
+    source_digest: Option<[u8; 32]>,
 }
 
 impl SegmentRewriteSelection {
@@ -48,12 +49,23 @@ impl SegmentRewriteSelection {
         Ok(Self {
             source_versions: selected.keys().copied().collect(),
             members: Arc::new(selected),
+            source_digest: None,
         })
+    }
+
+    /// Accumulate the fixed batch from published indexes, one source at a time.
+    pub fn start_admission(&self) -> RewriteSourceAdmission<'_> {
+        RewriteSourceAdmission {
+            batch: self,
+            unassigned: self.members.keys().copied().collect(),
+            bytes: selected_frame_budget(),
+            projections: BTreeMap::new(),
+        }
     }
 
     /// Project the batch onto the source being rewritten. Every surviving frame
     /// is still checked against dependency targets anywhere in the original batch.
-    pub fn for_source(
+    pub(super) fn for_source(
         &self,
         members: impl IntoIterator<Item = StorageRecordIdentity>,
     ) -> ArtifactResult<Self> {
@@ -75,6 +87,7 @@ impl SegmentRewriteSelection {
         Ok(Self {
             members: Arc::clone(&self.members),
             source_versions,
+            source_digest: None,
         })
     }
 
@@ -89,8 +102,20 @@ impl SegmentRewriteSelection {
     }
 
     fn check_source_entries(&self, source: &RetainedHistorySegment) -> ArtifactResult<()> {
-        let mut removed_bytes =
-            ByteLimit::new(HistoryExpiryInputBytes::MAX_BATCH_BYTES as usize).start();
+        match self.source_digest {
+            Some(digest) if digest == source.manifest.manifest_digest() => Ok(()),
+            Some(_) => Err(ArtifactError::Conflict(
+                "Admitted rewrite source differs from the published segment".into(),
+            )),
+            None => self.charge_source_entries(source, &mut selected_frame_budget()),
+        }
+    }
+
+    fn charge_source_entries(
+        &self,
+        source: &RetainedHistorySegment,
+        removed_bytes: &mut ByteBudget,
+    ) -> ArtifactResult<()> {
         for &version in &self.source_versions {
             let resource = self.members[&version];
             let entry = source
@@ -108,6 +133,77 @@ impl SegmentRewriteSelection {
             })?;
         }
         Ok(())
+    }
+}
+
+fn selected_frame_budget() -> ByteBudget {
+    ByteLimit::new(HistoryExpiryInputBytes::MAX_BATCH_BYTES as usize).start()
+}
+
+/// No output can be obtained until every claimed version is accounted for.
+pub struct RewriteSourceAdmission<'a> {
+    batch: &'a SegmentRewriteSelection,
+    unassigned: BTreeSet<VersionIdentity>,
+    bytes: ByteBudget,
+    projections: BTreeMap<[u8; 32], SegmentRewriteSelection>,
+}
+
+impl RewriteSourceAdmission<'_> {
+    /// Charge the authenticated index lengths and release the source index.
+    /// A failed charge or assignment discards the incomplete admission.
+    pub fn include(
+        mut self,
+        source: &RetainedHistorySegment,
+        members: impl IntoIterator<Item = StorageRecordIdentity>,
+    ) -> ArtifactResult<Self> {
+        let mut projection = self.batch.for_source(members)?;
+        for version in &projection.source_versions {
+            if !self.unassigned.remove(version) {
+                return Err(ArtifactError::Conflict(
+                    "Selected history assigned to more than one rewrite source".into(),
+                ));
+            }
+        }
+        projection.charge_source_entries(source, &mut self.bytes)?;
+        let digest = source.manifest.manifest_digest();
+        projection.source_digest = Some(digest);
+        if self.projections.insert(digest, projection).is_some() {
+            return Err(ArtifactError::Invalid(
+                "Repeated history rewrite source".into(),
+            ));
+        }
+        Ok(self)
+    }
+
+    pub fn finish(self) -> ArtifactResult<AdmittedRewriteSources> {
+        if !self.unassigned.is_empty() {
+            return Err(ArtifactError::Conflict(
+                "Rewrite sources do not cover the entire selected batch".into(),
+            ));
+        }
+        Ok(AdmittedRewriteSources {
+            projections: self.projections,
+        })
+    }
+}
+
+/// Projections of one complete batch admitted under a shared input limit.
+pub struct AdmittedRewriteSources {
+    projections: BTreeMap<[u8; 32], SegmentRewriteSelection>,
+}
+
+impl AdmittedRewriteSources {
+    pub fn for_source(
+        &self,
+        source: &RetainedHistorySegment,
+    ) -> ArtifactResult<&SegmentRewriteSelection> {
+        self.projections
+            .get(&source.manifest.manifest_digest())
+            .ok_or_else(|| {
+                ArtifactError::Conflict(
+                    "Published segment is outside the admitted rewrite batch".into(),
+                )
+            })
     }
 }
 
@@ -185,6 +281,7 @@ impl RetainedHistorySegment {
         let unaffected = SegmentRewriteSelection {
             members: Arc::clone(&selection.members),
             source_versions: BTreeSet::new(),
+            source_digest: None,
         };
         self.visit_survivors(source, &unaffected, budget, async |_, _| Ok(()))
             .await

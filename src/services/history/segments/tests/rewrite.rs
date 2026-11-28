@@ -4,6 +4,7 @@ use hubuum_storage_core::StorageRecordIdentity;
 
 use super::*;
 
+mod admission;
 #[cfg(unix)]
 mod owned;
 mod whole;
@@ -410,6 +411,18 @@ async fn one_percent_subset_rewrite_traffic(#[case] versions: usize) {
     let mut touched = 0;
     let mut removed = 0;
     let mut total_segments = 0;
+    struct Input<'a> {
+        collection: usize,
+        part: usize,
+        ordinals: &'a [usize],
+        rows: Vec<SegmentRecord>,
+        targets: Vec<StorageRecordIdentity>,
+        store: MemoryStorage,
+        retained: RetainedHistorySegment,
+        source_read: ByteBudget,
+    }
+    let mut inputs = Vec::new();
+    let mut admission = batch.start_admission();
     for (collection, ordinals) in collections.iter().enumerate() {
         let scope = scope();
         for (part, ordinals) in ordinals.chunks(MAX_RECORDS).enumerate() {
@@ -442,56 +455,82 @@ async fn one_percent_subset_rewrite_traffic(#[case] versions: usize) {
             }
             touched += 1;
             removed += targets.len();
-            let selection = batch.for_source(targets.iter().copied()).unwrap();
             let (store, source) = fixture(rows.clone(), scope.clone()).await.unwrap();
             let reference = store.publish(source.proof()).await.unwrap();
             let mut source_read = ByteLimit::new(2 * SEGMENT_BYTES).start();
             let retained = RetainedHistorySegment::open(&store, &reference, &mut source_read)
                 .await
                 .unwrap();
-            let open_bytes = source_read.used();
-            let output = retained
-                .rewrite_into(
+            admission = admission
+                .include(&retained, targets.iter().copied())
+                .unwrap();
+            inputs.push(Input {
+                collection,
+                part,
+                ordinals,
+                rows,
+                targets,
+                store,
+                retained,
+                source_read,
+            });
+        }
+    }
+    let admitted = admission.finish().unwrap();
+    for Input {
+        collection,
+        part,
+        ordinals,
+        rows,
+        targets,
+        store,
+        retained,
+        mut source_read,
+    } in inputs
+    {
+        let selection = admitted.for_source(&retained).unwrap();
+        let open_bytes = source_read.used();
+        let output = retained
+            .rewrite_into(
+                &store,
+                &store,
+                ArtifactIdentity::new(retained.manifest.identity().destination()),
+                selection,
+                &mut source_read,
+            )
+            .await
+            .unwrap();
+        let replacement = output.segment();
+        let destination = replacement.proof().manifest();
+        let written = destination.byte_size() + destination.encoded_len() as u64;
+        assert!(source_read.used() as u64 + written <= 2 * SEGMENT_BYTES as u64);
+        assert_eq!(replacement.record_count() + targets.len(), rows.len());
+        println!(
+            "SUBSET_REWRITE_SEGMENT {}",
+            json!({
+                "versions": versions, "collection": collection, "part": part, "rows": rows.len(),
+                "removed": targets.len(), "source_open_bytes": open_bytes,
+                "source_frame_scan_bytes": source_read.used() - open_bytes,
+                "destination_written_bytes": written, "destination_verification_bytes": output.verification_bytes(),
+                "source_plus_destination_bytes": source_read.used() as u64 + written,
+            })
+        );
+        // Independently compare every surviving row and every omitted UUID.
+        // These diagnostic assertions run after the counted rewrite.
+        for (row, &ordinal) in rows.into_iter().zip(ordinals) {
+            let actual = replacement
+                .exact(
                     &store,
-                    &store,
-                    ArtifactIdentity::new(reference.identity().destination()),
-                    &selection,
-                    &mut source_read,
+                    row.interval.resource,
+                    row.interval.version,
+                    &mut ByteLimit::new(SEGMENT_BYTES).start(),
                 )
                 .await
                 .unwrap();
-            let replacement = output.segment();
-            let destination = replacement.proof().manifest();
-            let written = destination.byte_size() + destination.encoded_len() as u64;
-            assert!(source_read.used() as u64 + written <= 2 * SEGMENT_BYTES as u64);
-            assert_eq!(replacement.record_count() + targets.len(), rows.len());
-            println!(
-                "SUBSET_REWRITE_SEGMENT {}",
-                json!({
-                    "versions": versions, "collection": collection, "part": part, "rows": rows.len(),
-                    "removed": targets.len(), "source_open_bytes": open_bytes,
-                    "source_frame_scan_bytes": source_read.used() - open_bytes,
-                    "destination_written_bytes": written, "destination_verification_bytes": output.verification_bytes(),
-                    "source_plus_destination_bytes": source_read.used() as u64 + written,
-                })
+            assert_eq!(
+                actual,
+                (!targets_by_ordinal.contains_key(&ordinal)).then_some(row)
             );
-            // Independently compare every surviving row and every omitted UUID.
-            // These diagnostic assertions run after the counted rewrite.
-            for (row, &ordinal) in rows.into_iter().zip(ordinals) {
-                let actual = replacement
-                    .exact(
-                        &store,
-                        row.interval.resource,
-                        row.interval.version,
-                        &mut ByteLimit::new(SEGMENT_BYTES).start(),
-                    )
-                    .await
-                    .unwrap();
-                assert_eq!(
-                    actual,
-                    (!targets_by_ordinal.contains_key(&ordinal)).then_some(row)
-                );
-            }
         }
     }
     assert_eq!(removed, versions / 100);

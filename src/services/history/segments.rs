@@ -23,7 +23,10 @@ use serde_json::{Value, from_slice, to_writer};
 mod index;
 mod rewrite;
 use index::{IndexedEntry, KeyWidth, SegmentFormat, VersionKey};
-pub use rewrite::{FullySelectedHistorySegment, SegmentRewriteSelection, VerifiedSegmentRewrite};
+pub use rewrite::{
+    AdmittedRewriteSources, FullySelectedHistorySegment, RewriteSourceAdmission,
+    SegmentRewriteSelection, VerifiedSegmentRewrite,
+};
 
 const MARKER_BYTES: usize = 5 + size_of::<u32>();
 // Retained format v1 must not follow future artifact write-policy defaults.
