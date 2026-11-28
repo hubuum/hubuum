@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **Breaking storage SDK 0.20 change.** Complete adapters must implement
+  `history_archive_pinned_copies` for privileged erasure review. Upgrade
+  adapters and run the migration that indexes retained archive captures by
+  resource and version. The lookup includes each pinned physical location once.
+
 - Offline recovery can reconcile an interrupted filesystem archive publication
   against its original private root and committed v2 intent, including a crash
   while reserving IDs before staging begins. Signed reapplication

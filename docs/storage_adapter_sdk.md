@@ -25,6 +25,13 @@ intervals and read epochs through typed error evidence and restore remapping.
 Preserve both archive-budget and lifecycle-gap evidence through adapter errors;
 API request rejection reasons keep their existing priority.
 
+**Breaking archive pin lookup.** Implement `history_archive_pinned_copies`
+under operator database authority. Observe the exact resource, version, and
+application fence together. Include every retained capture across principals,
+including expired captures that still occupy storage. Preserve distinct physical
+locations and reject conflicting manifests for one immutable identity. Catalog,
+backup and unreferenced artifact discovery require separate observations.
+
 **Breaking archive recovery capability.** Complete adapters must implement
 `load_history_archive_cleanup` and `settle_history_archive_cleanup` under
 offline control authority. Load the original, uniquely pinned claim under the

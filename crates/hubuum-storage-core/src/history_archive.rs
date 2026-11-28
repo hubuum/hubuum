@@ -1022,8 +1022,18 @@ impl HistoryArchiveCapture {
     }
 }
 
+mod pins;
+pub use pins::HistoryArchivePinnedCopies;
+
 #[async_trait]
 pub trait HistoryArchiveStorage: Send + Sync {
+    /// Privileged, read-only discovery across retained captures for one exact version.
+    /// Includes expired pins until they are physically removed from capture storage.
+    async fn history_archive_pinned_copies(
+        &self,
+        target: StorageRecordIdentity,
+        fence: ApplicationFence,
+    ) -> Result<HistoryArchivePinnedCopies, StorageError>;
     /// Offline control transaction under exclusive process isolation.
     async fn load_history_archive_cleanup(
         &self,
