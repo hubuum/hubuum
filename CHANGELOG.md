@@ -59,6 +59,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `HUBUUM_HISTORY_ARCHIVE_FILESYSTEM` to its destination UUID and private
   directory, joined by `=`. Only published copies are readable.
 
+- **Breaking storage SDK 0.20 change.** Complete storage adapters must implement
+  `checkpoint_verified_history_archive` and load the optional verified manifest
+  digest during isolated cleanup. Upgrade adapters and recovery tools together.
+  Filesystem archive staging now retains the original verified output across
+  process death. Reconcile checkpointed claims before downgrading the schema.
+
 - Offline recovery can reconcile an interrupted filesystem archive publication
   against its original private root and committed v2 intent, including a crash
   while reserving IDs before staging begins. Signed reapplication

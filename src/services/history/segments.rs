@@ -27,7 +27,7 @@ const MARKER_BYTES: usize = 5 + size_of::<u32>();
 // Retained format v1 must not follow future artifact write-policy defaults.
 const MAX_BLOCK_BYTES: u32 = 1024 * 1024;
 // Leave room for the compact index, manifest, and block rounding on cold reads.
-const BLOCK_BYTES: u32 = 64 * 1024;
+pub(super) const BLOCK_BYTES: u32 = 64 * 1024;
 pub const SEGMENT_BYTES: usize = 64 * 1024 * 1024;
 pub const ROW_BYTES: usize = 4 * 1024 * 1024;
 pub const INDEX_BYTES: usize = 4 * 1024 * 1024;
@@ -194,6 +194,68 @@ pub struct RetainedHistorySegment {
     index_bytes: usize,
 }
 
+fn write_segment<W: Write>(
+    output: &mut LimitedWriter<W>,
+    scope: &SegmentScope,
+    records: impl IntoIterator<Item = SegmentRecord>,
+    format: SegmentFormat,
+) -> ArtifactResult<()> {
+    output.write_all(format.header()).map_err(io_error)?;
+    let header = encode(scope, 512)?;
+    write_frame(output, &header)?;
+    let mut entries = Vec::new();
+    for record in records {
+        if &record.scope != scope {
+            return Err(ArtifactError::Invalid(
+                "History segment contains incompatible scopes".into(),
+            ));
+        }
+        if entries.len() == MAX_RECORDS {
+            return Err(ArtifactError::Limit(
+                "History segment exceeds record budget".into(),
+            ));
+        }
+        // Include the four-byte frame prefix in the encoded-row ceiling.
+        let bytes = encode(&record, ROW_BYTES - 4)?;
+        let offset = output.budget().used() as u32; // Bounded by SEGMENT_BYTES.
+        write_frame(output, &bytes)?;
+        entries.push(Entry {
+            interval: record.interval,
+            offset,
+            length: (bytes.len() + 4) as u32,
+        });
+    }
+    validate_intervals(entries.iter().map(|entry| {
+        let interval = &entry.interval;
+        (
+            interval.version,
+            interval.resource,
+            interval.valid_from,
+            interval.valid_to,
+        )
+    }))?;
+    let index = format.encode_index(&entries)?;
+    output.write_all(&index).map_err(io_error)?;
+    output
+        .write_all(&(index.len() as u32).to_le_bytes())
+        .map_err(io_error)?;
+    output.write_all(format.footer()).map_err(io_error)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+pub(super) fn encode_claimed_record(
+    record: SegmentRecord,
+    limit: ByteLimit,
+) -> ArtifactResult<Vec<u8>> {
+    let scope = record.scope.clone();
+    let mut output = LimitedWriter::new(Vec::new(), limit);
+    // The original durable claim identifies format 2. Replaying it must reproduce
+    // the same manifest even when fresh unclaimed segments use a newer format.
+    write_segment(&mut output, &scope, [record], SegmentFormat::Compact)?;
+    Ok(output.into_inner())
+}
+
 impl HistorySegment {
     /// Stage and read back the entire segment without publishing it. The owner
     /// still owes catalog/claim/generation fencing before publication.
@@ -211,54 +273,9 @@ impl HistorySegment {
             .block_bytes(BLOCK_BYTES)
             .artifact_bytes(SEGMENT_BYTES as u64)
             .build()?;
-        let output_scope = scope;
         let (proof, ()) = stage_producer(store, identity, limits, move |output| {
             let mut output = LimitedWriter::new(output, ByteLimit::new(SEGMENT_BYTES));
-            output
-                .write_all(SegmentFormat::CompressedIndex.header())
-                .map_err(io_error)?;
-            let header = encode(&output_scope, 512)?;
-            write_frame(&mut output, &header)?;
-            let mut entries = Vec::new();
-            for record in records {
-                if record.scope != output_scope {
-                    return Err(ArtifactError::Invalid(
-                        "History segment contains incompatible scopes".into(),
-                    ));
-                }
-                if entries.len() == MAX_RECORDS {
-                    return Err(ArtifactError::Limit(
-                        "History segment exceeds record budget".into(),
-                    ));
-                }
-                // Include the four-byte frame prefix in the encoded-row ceiling.
-                let bytes = encode(&record, ROW_BYTES - 4)?;
-                let offset = output.budget().used() as u32; // Bounded by SEGMENT_BYTES.
-                write_frame(&mut output, &bytes)?;
-                entries.push(Entry {
-                    interval: record.interval,
-                    offset,
-                    length: (bytes.len() + 4) as u32,
-                });
-            }
-            validate_intervals(entries.iter().map(|entry| {
-                let interval = &entry.interval;
-                (
-                    interval.version,
-                    interval.resource,
-                    interval.valid_from,
-                    interval.valid_to,
-                )
-            }))?;
-            let index = index::encode_compressed(&entries)?;
-            output.write_all(&index).map_err(io_error)?;
-            output
-                .write_all(&(index.len() as u32).to_le_bytes())
-                .map_err(io_error)?;
-            output
-                .write_all(SegmentFormat::CompressedIndex.footer())
-                .map_err(io_error)?;
-            Ok(())
+            write_segment(&mut output, &scope, records, SegmentFormat::CompressedIndex)
         })
         .await?;
         let identity = proof.manifest().identity().clone();

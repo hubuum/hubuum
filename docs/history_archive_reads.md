@@ -192,6 +192,22 @@ not the later durable task-discovery or post-ready availability-window contract.
 PostgreSQL commits each bounded cleanup batch even when admission still lacks
 capacity, so later attempts can reclaim further expired captures.
 
+## Staging a claimed filesystem copy
+
+The internal collection-history producer commits the original capture, execution
+owner, destination, issuer binding and 16 MiB reservation before creating a byte
+attempt. It writes one closed version in 64 KiB blocks. A retry with the same
+live claim can replay matching blocks or independently verify an already sealed
+segment. Verification compares the stored manifest and every block with the
+segment derived from the original capture. The claimed producer retains the format-2
+encoding so a restart can replay a staged block or recover the same verified
+manifest. New unclaimed segments use the compressed format-3 index.
+
+Sealing leaves the primary row authoritative. The archive catalog gains a
+location only through a separate handoff. Process death leaves the reservation
+and capture pin in the recovery ledger. Offline recovery can discard the
+unpublished attempt using its original private root and issuer.
+
 ## Bounds and remaining qualification
 
 | Input or obligation | Enforced bound |

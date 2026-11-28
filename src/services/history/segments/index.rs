@@ -80,6 +80,14 @@ impl SegmentFormat {
         }
     }
 
+    pub(super) fn encode_index(self, entries: &[Entry]) -> ArtifactResult<Vec<u8>> {
+        match self {
+            Self::Json => super::encode(&entries, super::INDEX_BYTES),
+            Self::Compact => Ok(encode_rows(entries, KeyWidth::Full)),
+            Self::CompressedIndex => encode_compressed(entries),
+        }
+    }
+
     pub(super) fn decode_index(
         self,
         bytes: &[u8],
@@ -116,8 +124,7 @@ impl SegmentFormat {
     }
 }
 
-pub(super) fn encode_compressed(entries: &[Entry]) -> ArtifactResult<Vec<u8>> {
-    let width = KeyWidth::for_entries(entries);
+fn encode_rows(entries: &[Entry], width: KeyWidth) -> Vec<u8> {
     let mut index = Vec::with_capacity(entries.len() * entry_bytes(width));
     for entry in entries {
         index.extend_from_slice(entry.interval.resource.as_bytes());
@@ -129,6 +136,12 @@ pub(super) fn encode_compressed(entries: &[Entry]) -> ArtifactResult<Vec<u8>> {
         index.extend_from_slice(&entry.offset.to_le_bytes());
         index.extend_from_slice(&entry.length.to_le_bytes());
     }
+    index
+}
+
+pub(super) fn encode_compressed(entries: &[Entry]) -> ArtifactResult<Vec<u8>> {
+    let width = KeyWidth::for_entries(entries);
+    let index = encode_rows(entries, width);
     // Store one column per byte position. Adjacent timestamps and frame
     // offsets often advance by a fixed step. Differences are modulo 256,
     // so arbitrary UUIDs and non-monotonic record order also round-trip.

@@ -2826,6 +2826,12 @@ impl HistoryArchiveStorage for CompleteExternalAdapter {
     ) -> Result<(), StorageError> {
         fixture_result()
     }
+    async fn checkpoint_verified_history_archive(
+        &self,
+        checkpoint: HistoryArchiveVerifiedCheckpoint<'_>,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
     async fn claim_history_archive_publication(
         &self,
         request: HistoryArchivePublicationRequest,

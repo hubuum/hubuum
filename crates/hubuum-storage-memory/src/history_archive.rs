@@ -2,10 +2,22 @@ use super::*;
 use hubuum_storage_core::artifacts::ArtifactReference;
 use serde_json::json;
 
+#[derive(Clone)]
+pub(super) struct RetainedPublication {
+    request: HistoryArchivePublicationRequest,
+    verified_manifest_digest: Option<[u8; 32]>,
+}
+
+impl RetainedPublication {
+    pub(super) fn manifest(&self) -> &HistoryArchivePublicationManifest {
+        self.request.manifest()
+    }
+}
+
 #[derive(Clone, Default)]
 pub(super) struct MemoryHistoryArchive {
     catalogs: BTreeMap<ResourceIdentity, HistoryArchiveCatalog>,
-    pub(super) claims: BTreeMap<Uuid, HistoryArchivePublicationRequest>,
+    pub(super) claims: BTreeMap<Uuid, RetainedPublication>,
     pub(super) publication_claim_bytes: usize,
     captures: BTreeMap<Uuid, HistoryArchiveCapture>,
     historical: BTreeMap<(ResourceIdentity, VersionIdentity), BTreeSet<ArtifactReference>>,
@@ -77,12 +89,8 @@ fn row(entry: &MemoryHistoryEntry) -> Result<Option<HistoryArchiveRow>, StorageE
         "revision":collection.revision().get(), "logical_identity":entry.logical_identity
     })).map(Some)
 }
-fn select(
-    state: &MemoryState,
-    selection: &HistoryArchiveSelection,
-    examined: &mut usize,
-) -> Result<HistoryArchiveInput, StorageError> {
-    if state
+fn expiry_pending(state: &MemoryState, resource: ResourceIdentity) -> bool {
+    state
         .history_lifecycle
         .authority()
         .expiry()
@@ -91,9 +99,16 @@ fn select(
         .flat_map(|intent| intent.manifest().members())
         .any(|member| {
             member.family() == StorageIdentityHistoryKind::Collection
-                && member.target().resource() == selection.resource()
+                && member.target().resource() == resource
         })
-    {
+}
+
+fn select(
+    state: &MemoryState,
+    selection: &HistoryArchiveSelection,
+    examined: &mut usize,
+) -> Result<HistoryArchiveInput, StorageError> {
+    if expiry_pending(state, selection.resource()) {
         return Ok(HistoryArchiveInput::Unavailable);
     }
     if selection.family() != StorageBackupHistorySection::CollectionHistory {
@@ -222,8 +237,9 @@ fn cleanup_claim(
         request,
         manifest.clone(),
         capture,
-        claim.intent().encoded().to_vec(),
+        claim.request.intent().encoded().to_vec(),
         ownership,
+        claim.verified_manifest_digest,
     )
 }
 
@@ -283,7 +299,9 @@ impl HistoryArchiveStorage for MemoryStorage {
             ));
         }
         let id = claim.request().publication();
-        let bytes = state.history_archive.claims[&id].retained_manifest_bytes()?;
+        let bytes = state.history_archive.claims[&id]
+            .request
+            .retained_manifest_bytes()?;
         let remaining = state
             .history_archive
             .publication_claim_bytes
@@ -294,6 +312,54 @@ impl HistoryArchiveStorage for MemoryStorage {
             .settle_isolated_archive(&settlement)?;
         state.history_archive.claims.remove(&id);
         state.history_archive.publication_claim_bytes = remaining;
+        Ok(())
+    }
+
+    async fn checkpoint_verified_history_archive(
+        &self,
+        checkpoint: HistoryArchiveVerifiedCheckpoint<'_>,
+    ) -> Result<(), StorageError> {
+        let claim = checkpoint.claim();
+        let permit = claim.permit();
+        let mut state = self.state.write_history_archive(permit).await?;
+        entry(&state, permit)?;
+        let manifest = claim.manifest();
+        let capture = state
+            .history_archive
+            .captures
+            .get(&manifest.capture())
+            .ok_or_else(|| StorageError::unavailable("Original archive capture is unavailable"))?;
+        manifest.validate_capture(capture, permit, Utc::now())?;
+        let current = state
+            .history_archive
+            .catalogs
+            .get(&manifest.identity().resource())
+            .map(HistoryArchiveCatalog::generation)
+            .unwrap_or_default();
+        if current != manifest.generation()
+            || expiry_pending(&state, manifest.identity().resource())
+        {
+            return Err(StorageError::conflict(
+                "Archive catalog or expiry changed before checkpoint",
+            ));
+        }
+        let retained = state
+            .history_archive
+            .claims
+            .get_mut(&permit.producer().parent().id())
+            .filter(|retained| &retained.request == claim.request())
+            .ok_or_else(|| {
+                StorageError::unavailable("Original archive publication claim is unavailable")
+            })?;
+        if retained
+            .verified_manifest_digest
+            .is_some_and(|saved| saved != *checkpoint.manifest_digest())
+        {
+            return Err(StorageError::conflict(
+                "Verified archive checkpoint differs",
+            ));
+        }
+        retained.verified_manifest_digest = Some(*checkpoint.manifest_digest());
         Ok(())
     }
 
@@ -343,7 +409,13 @@ impl HistoryArchiveStorage for MemoryStorage {
             .history_publications
             .claim_archive_producer(permit.producer(), permit.producer().parent().epoch())?;
         state.history_archive.publication_claim_bytes = total;
-        state.history_archive.claims.insert(parent, request.clone());
+        state.history_archive.claims.insert(
+            parent,
+            RetainedPublication {
+                request: request.clone(),
+                verified_manifest_digest: None,
+            },
+        );
         drop(state);
         HistoryArchivePublicationClaim::from_committed(request, permit)
     }

@@ -417,7 +417,12 @@ async fn candidate_overflow_cannot_be_sealed() {
 #[tokio::test]
 async fn authentic_artifact_with_invalid_record_is_rejected(
     #[case] variant: u8,
-    #[values(SegmentFormat::Json, SegmentFormat::CompressedIndex)] format: SegmentFormat,
+    #[values(
+        SegmentFormat::Json,
+        SegmentFormat::Compact,
+        SegmentFormat::CompressedIndex
+    )]
+    format: SegmentFormat,
     #[values(false, true)] as_of: bool,
 ) {
     let scope = scope();
@@ -449,11 +454,7 @@ async fn authentic_artifact_with_invalid_record_is_rejected(
         length: (payload.len() + 4) as u32,
     };
     let entries = [entry];
-    let index = match format {
-        SegmentFormat::Json => encode(&entries, INDEX_BYTES).unwrap(),
-        SegmentFormat::CompressedIndex => index::encode_compressed(&entries).unwrap(),
-        SegmentFormat::Compact => unreachable!(),
-    };
+    let index = format.encode_index(&entries).unwrap();
     bytes.extend_from_slice(&index);
     bytes.extend_from_slice(&(index.len() as u32).to_le_bytes());
     bytes.extend_from_slice(format.footer());

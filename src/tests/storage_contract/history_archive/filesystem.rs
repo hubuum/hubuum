@@ -1,4 +1,5 @@
 use super::*;
+use crate::services::archive::ClaimedFilesystemHistory;
 use hubuum_artifacts::{ArtifactStore, FilesystemArtifactStore};
 use std::{fs, os::unix::fs::DirBuilderExt, path::PathBuf};
 
@@ -159,6 +160,83 @@ async fn filesystem_archive_sealed_history_is_unavailable_even_with_a_published_
         })
         .await;
     }
+}
+
+#[rstest]
+#[case::exact(false)]
+#[case::as_of(true)]
+#[actix_web::test]
+async fn checkpointed_copy_keeps_the_hot_version_readable(#[case] as_of: bool) {
+    // This request deliberately leaves an independently owned physical claim.
+    // Its private backend has the same lifetime as the filesystem fixture.
+    TestContext::run(StorageHandle::memory(), async |ctx| {
+        let row = ctx.closed().await;
+        let root = ArchiveRoot::create();
+        let destination = Destination::new(DestinationId::generate(), prefix("warm")).unwrap();
+        let store = configure(ctx, &root, &destination).await;
+        let owner = ctx
+            .storage
+            .run_in_scope(
+                StorageExecutionScope::default().with_application_access(ctx.permit.clone()),
+                ctx.storage.admit_history_archive_execution(),
+            )
+            .await
+            .unwrap();
+        let permit = owner.permit();
+        let exact = HistoryArchivePoint::Exact {
+            version: row.identity().version(),
+        };
+        let request = HistoryArchiveCaptureRequest::new(
+            ctx.principal,
+            HistoryArchiveSelection::new(
+                StorageBackupHistorySection::CollectionHistory,
+                ctx.resource,
+                exact.clone(),
+            ),
+            HistoryArchiveCatalogGeneration::default(),
+            Utc::now() + TimeDelta::hours(1),
+        );
+        let capture = ctx
+            .storage
+            .run_in_scope(
+                permit.execution_scope().clone(),
+                ctx.storage.capture_history_archive(request, permit),
+            )
+            .await
+            .unwrap();
+        let claim = ClaimedFilesystemHistory::reserve(
+            &ctx.storage,
+            &store,
+            &capture,
+            permit,
+            ArtifactIdentity::new(destination.id()),
+        )
+        .await
+        .unwrap();
+        claim.seal(&store).await.unwrap();
+        drop(claim);
+        drop(store);
+        let point = if as_of {
+            HistoryArchivePoint::AsOf {
+                at: row.valid_from(),
+            }
+        } else {
+            exact
+        };
+        let view = ctx
+            .query(point)
+            .await
+            .execute(&ctx.context, &ctx.subject, None)
+            .await
+            .unwrap()
+            .access(&ctx.context, &ctx.subject, None)
+            .await
+            .unwrap();
+        assert_eq!(view.coverage(), HistoryArchiveCoverageState::Complete);
+        assert_eq!(view.row(), Some(&row));
+        assert_eq!(view.charged_read_bytes(), 0);
+    })
+    .await;
 }
 
 #[actix_web::test]

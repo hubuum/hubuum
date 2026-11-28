@@ -93,7 +93,8 @@
     "hubuum_history_archive_capture_read",
     "hubuum_history_archive_capture_save",
     "hubuum_history_producer_claim_execution",
-    "hubuum_history_archive_publication_claim"
+    "hubuum_history_archive_publication_claim",
+    "hubuum_history_archive_checkpoint"
   ],
   "runtime_function_policy": "all_security_invoker_plus_allowlisted_security_definer",
   "restore": "isolated_migrator_executor",

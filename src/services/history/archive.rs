@@ -1,5 +1,10 @@
 //! Inactive public-path, collection-only query service. A caller must already
 //! own a registered Legacy runtime; this module never advertises online expiry.
+#[cfg(unix)]
+mod publication;
+#[cfg(unix)]
+pub use publication::{ClaimedFilesystemHistory, SealedFilesystemHistory};
+
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 

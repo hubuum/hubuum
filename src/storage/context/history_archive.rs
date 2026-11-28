@@ -5,7 +5,8 @@ use hubuum_storage_core::{
     HistoryArchiveCatalogGeneration, HistoryArchiveCleanupClaim, HistoryArchiveCleanupRequest,
     HistoryArchiveCleanupSettlement, HistoryArchiveCopyHistory, HistoryArchiveDescriptor,
     HistoryArchiveExecutionPermit, HistoryArchivePublicationClaim,
-    HistoryArchivePublicationRequest, HistoryArchiveStorage, StorageRecordIdentity,
+    HistoryArchivePublicationRequest, HistoryArchiveStorage, HistoryArchiveVerifiedCheckpoint,
+    StorageRecordIdentity,
 };
 use uuid::Uuid;
 
@@ -56,6 +57,22 @@ impl HistoryArchiveStorage for StorageHandle {
             async {
                 dispatch_backend!(self, |backend| backend
                     .settle_history_archive_cleanup(settlement)
+                    .await)
+            },
+        )
+        .await
+    }
+    async fn checkpoint_verified_history_archive(
+        &self,
+        checkpoint: HistoryArchiveVerifiedCheckpoint<'_>,
+    ) -> Result<(), StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::History,
+            "checkpoint_verified_history_archive",
+            async {
+                dispatch_backend!(self, |backend| backend
+                    .checkpoint_verified_history_archive(checkpoint)
                     .await)
             },
         )

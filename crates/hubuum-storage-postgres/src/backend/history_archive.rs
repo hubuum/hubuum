@@ -237,6 +237,55 @@ async fn publication_claim_on(
     Ok::<_, PostgresStorageError>(request)
 }
 
+async fn checkpoint_on(
+    connection: &mut PostgresConnection,
+    checkpoint: &HistoryArchiveVerifiedCheckpoint<'_>,
+) -> Result<(), PostgresStorageError> {
+    let claim = checkpoint.claim();
+    let permit = claim.permit();
+    let manifest = claim.manifest();
+    let capture = capture_on(
+        connection,
+        manifest.capture(),
+        manifest.principal(),
+        false,
+        permit.application(),
+    )
+    .await?
+    .ok_or_else(|| PostgresStorageError::unavailable("Original archive capture is unavailable"))?;
+    let now = sql_query("SELECT clock_timestamp() AS recorded_at")
+        .get_result::<Clock>(connection)
+        .await?
+        .recorded_at;
+    manifest.validate_capture(&capture, permit, now)?;
+    let producer = permit.producer();
+    let owner = permit
+        .application()
+        .owner()
+        .expect("validated original runtime");
+    let intent = claim.request().intent();
+    let saved = sql_query(
+        "SELECT public.hubuum_history_archive_checkpoint($1,$2,$3,$4,$5,$6,$7,$8,$9) AS allowed",
+    )
+    .bind::<SqlUuid, _>(producer.parent().id())
+    .bind::<SqlUuid, _>(producer.parent().ownership_token())
+    .bind::<SqlUuid, _>(producer.id())
+    .bind::<SqlUuid, _>(producer.ownership_token())
+    .bind::<SqlUuid, _>(owner.id())
+    .bind::<SqlUuid, _>(owner.ownership_token())
+    .bind::<Binary, _>(intent.request_commitment().as_slice())
+    .bind::<Binary, _>(intent.digest().as_slice())
+    .bind::<Binary, _>(checkpoint.manifest_digest().as_slice())
+    .get_result::<Allowed>(connection)
+    .await?;
+    if !saved.allowed {
+        return Err(PostgresStorageError::conflict(
+            "Verified archive checkpoint differs or is no longer current",
+        ));
+    }
+    Ok(())
+}
+
 impl PostgresStorage {
     fn require_archive_owner(
         &self,
@@ -290,6 +339,21 @@ impl HistoryArchiveStorage for PostgresStorage {
         self.runtime()
             .with_control_transaction(async move |connection| {
                 cleanup::settle_on(connection, settlement).await
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn checkpoint_verified_history_archive(
+        &self,
+        checkpoint: HistoryArchiveVerifiedCheckpoint<'_>,
+    ) -> Result<(), StorageError> {
+        let claim = checkpoint.claim();
+        let permit = claim.permit();
+        self.require_archive_owner(permit)?;
+        self.runtime()
+            .with_history_archive_transaction(permit, async |connection| {
+                checkpoint_on(connection, &checkpoint).await
             })
             .await
             .map_err(Into::into)
