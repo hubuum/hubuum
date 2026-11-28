@@ -39,9 +39,12 @@ roll back its evidence. A repeat of the same location adds no obligation.
 
 Return each immutable location once and reject conflicting manifests. Lookups
 allow up to 1,024 capture references, 1,024 historical references and 1,024
-distinct physical locations in total. The current catalog, backups and unpublished
-artifacts need their own observations. History begins when the relevant migration
-is installed.
+distinct physical locations in total, including the current location. Pass the
+resource catalog from the same read snapshot to the observation constructor.
+Return its generation even when the selected version has no catalog entry.
+For an absent resource catalog, pass an empty catalog for that resource. Read
+backups and unpublished artifacts from their own inventories. Recorded history
+begins when the relevant migration is installed.
 
 **Breaking archive recovery capability.** Complete adapters must implement
 `load_history_archive_cleanup` and `settle_history_archive_cleanup` under

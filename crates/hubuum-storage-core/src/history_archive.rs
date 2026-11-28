@@ -1078,8 +1078,8 @@ pub use pins::HistoryArchiveCopyHistory;
 
 #[async_trait]
 pub trait HistoryArchiveStorage: Send + Sync {
-    /// Observe query-pinned, reclaimed and displaced locations for one exact version at the fence.
-    /// The current catalog can also name a location that has never been pinned or displaced.
+    /// Observe the catalog generation, current location, query pins and retained copy history
+    /// for an exact version in a single fenced snapshot under operator database authority.
     async fn history_archive_copy_history(
         &self,
         target: StorageRecordIdentity,

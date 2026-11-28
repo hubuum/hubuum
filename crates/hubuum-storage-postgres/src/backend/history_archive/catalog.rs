@@ -35,9 +35,17 @@ pub(super) async fn load(
     let Some(row) = row else {
         return Ok(HistoryArchiveCatalog::empty(resource));
     };
-    let catalog: HistoryArchiveCatalog = match (row.material, row.packed) {
-        (Some(raw), None) => decode(&raw)?,
-        (None, Some(bytes)) => packed::decode(&bytes)?,
+    decode_catalog(resource, row.material.as_deref(), row.packed.as_deref())
+}
+
+pub(super) fn decode_catalog(
+    resource: ResourceIdentity,
+    material: Option<&str>,
+    encoded: Option<&[u8]>,
+) -> Result<HistoryArchiveCatalog, PostgresStorageError> {
+    let catalog: HistoryArchiveCatalog = match (material, encoded) {
+        (Some(raw), None) => decode(raw)?,
+        (None, Some(bytes)) => packed::decode(bytes)?,
         _ => {
             return Err(PostgresStorageError::database(
                 "Invalid history catalog representation",
