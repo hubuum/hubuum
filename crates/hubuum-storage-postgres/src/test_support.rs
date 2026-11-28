@@ -5,6 +5,9 @@
 //! `integration-test-support` feature is enabled.
 
 pub mod computed_lock_protocol;
+pub use crate::backend::history_archive::allocation::{
+    ArchiveCatalogAllocation, ArchiveProviderAllocation, measure_archive_catalog_allocation,
+};
 
 // Adapter unit tests share the runner's isolated restore database. Other test
 // binaries run sequentially and have their own fixture coordination.

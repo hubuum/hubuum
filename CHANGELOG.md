@@ -286,9 +286,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Changed
 
 - **Breaking for older experimental archive readers.** New history segments use
-  a compact v2 index and 64 KiB blocks to reduce cold exact and as-of reads.
-  Upgrade all archive readers and recovery tools before publishing v2 segments.
-  Existing v1 segments remain readable without conversion.
+  64 KiB blocks and a v3 index. Only the fixed-width index is compressed.
+  Upgrade every archive reader and recovery tool before publishing v3 segments.
+  Readers continue to open the JSON v1 and fixed-width v2 formats.
 
 - Opening a retained history segment now reuses verified header and footer
   blocks while loading the index. Each new open and each subsequent record
