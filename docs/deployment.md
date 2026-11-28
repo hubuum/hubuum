@@ -94,6 +94,15 @@ Runtime metrics are also process-local. `/metrics` targets the worker-enabled
 primary, while `/metrics/standby` targets the HTTP-only standby; scrape both as
 separate Prometheus targets. They intentionally do not fail over to one another,
 because doing so would mix independent counters and produce invalid rates.
+Caddy only forwards those paths to clients inside `--metrics-allow-cidr`
+(default: the container bridge subnet), so an external Prometheus must be
+listed explicitly and every other client receives `404`. Separate multiple CIDRs
+with commas. Updates preserve this setting. The generated API proxy also
+suppresses runtime-selected scrape paths for clients outside those networks.
+The allowlist uses Caddy's immediate connection peer. If another proxy or
+port forwarder rewrites client addresses, enforce the scraper allowlist there
+and configure Caddy to accept only the dedicated scraper peer. The bundled
+Prometheus scrapes each API container directly.
 
 The installer also creates an empty `/opt/hubuum/auth.toml` for local-only
 authentication. This empty placeholder is mode `0644` so the non-root API can
@@ -619,6 +628,7 @@ Common optional parameters:
 - `--valkey-image`: frontend session/cache image. Fresh installations use digest-pinned Valkey 9.2.0 on Alpine.
 - `--caddy-image`: reverse proxy image. Fresh installations use digest-pinned Caddy 2.11.9 on Alpine. To apply this pin to an existing installation, pass `--caddy-image docker.io/library/caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0` to the installer.
 - `--network-subnet`: container bridge subnet and backend client allowlist. Default: `172.30.42.0/24`.
+- `--metrics-allow-cidr`: client networks allowed to scrape `/metrics` through Caddy. Default: the container bridge subnet. Pass the Prometheus network explicitly to scrape from outside the host; all other clients receive `404`.
 - `--shared-host-routing`: required when `--web` and `--api` are the same in `all` mode. Accepted values: `bff`, `direct`, `prefixed`.
 - `--systemd`: install and enable a systemd service.
 - `--service-name`: systemd service name. Default: `hubuum`.
@@ -679,6 +689,11 @@ Backend:
 - `HUBUUM_TOKEN_RETENTION_PURGE_INTERVAL_SECONDS=3600`
 - `HUBUUM_TOKEN_RETENTION_PURGE_BATCH_SIZE=1000`
 - `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS=5`
+- `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP=0` and
+  `HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET=0`: the API sees every client
+  through the shared Caddy/frontend address, so those scopes would turn one
+  attacker's failures into a deployment-wide login lockout. Account-scoped
+  throttling remains enabled.
 - `HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS=300`
 - `HUBUUM_LOGIN_RATE_LIMIT_BACKEND`: `valkey` in all-in-one mode and `memory`
   in backend-only mode.

@@ -1,4 +1,5 @@
 use crate::config::runtime::current as get_config;
+use percent_encoding::percent_decode_str;
 use std::{fmt, str::FromStr};
 
 use chrono::NaiveDateTime;
@@ -119,29 +120,96 @@ impl RemoteAuthConfig {
     }
 }
 
-/// An HTTPS authority fixed by the credential owner's target definition.
-/// Invocation data may fill paths and queries, but cannot select another origin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ApprovedPath {
+    /// The template has no substitutions in its path; the rendered path must
+    /// match it exactly.
+    Exact(String),
+    /// Keep every literal byte preceding the first substitution.
+    Prefix(String),
+}
+
+/// The HTTPS authority, path boundary and query layout approved for these credentials.
 pub(crate) struct CredentialBoundDestination {
     host: String,
     port: u16,
+    path: ApprovedPath,
+    query: Option<Vec<(String, Option<String>)>>,
 }
 
 impl CredentialBoundDestination {
     pub(crate) fn from_template(template: &str) -> Result<Self, ApiError> {
-        let authority = template
-            .strip_prefix("https://")
-            .and_then(|rest| rest.split(['/', '?', '#']).next())
+        let rest = template.strip_prefix("https://").ok_or_else(|| {
+            ApiError::BadRequest(
+                "Credential-bearing targets require a literal HTTPS host and port in url_template"
+                    .to_string(),
+            )
+        })?;
+        let authority = rest
+            .split(['/', '?', '#'])
+            .next()
             .filter(|authority| !authority.contains(['{', '}', '\\']))
-            .ok_or_else(|| ApiError::BadRequest(
-                "Credential-bearing targets require a literal HTTPS host and port in url_template".to_string(),
-            ))?;
-        let parts = validate_outbound_url(&format!("https://{authority}/"))
-            .map_err(|_| ApiError::BadRequest(
-                "Credential-bearing targets require a literal HTTPS host and port without URL credentials".to_string(),
-            ))?;
+            .ok_or_else(|| {
+                ApiError::BadRequest(
+                    "Credential-bearing targets require a literal HTTPS host and port in url_template"
+                        .to_string(),
+                )
+            })?;
+        let parts = validate_outbound_url(&format!("https://{authority}/")).map_err(|_| {
+            ApiError::BadRequest(
+                "Credential-bearing targets require a literal HTTPS host and port without URL credentials"
+                    .to_string(),
+            )
+        })?;
+        // Parse literal pieces with the same URL library as dispatch. Replace
+        // expressions first so their contents cannot be mistaken for URL syntax.
+        const SLOT: &str = "hubuum-credential-url-slot";
+        if template.contains(SLOT) || template.contains("{%") || template.contains("{#") {
+            return Err(ApiError::BadRequest("Credential URL templates must use a literal path and query layout with expression substitutions".into()));
+        }
+        let mut layout = String::new();
+        let mut tail = template;
+        while let Some((literal, expression)) = tail.split_once("{{") {
+            let (_, rest) = expression
+                .split_once("}}")
+                .ok_or_else(|| ApiError::BadRequest("Unclosed credential URL expression".into()))?;
+            layout.push_str(literal);
+            layout.push_str(SLOT);
+            tail = rest;
+        }
+        layout.push_str(tail);
+        let layout = validate_outbound_url(&layout)
+            .map_err(|_| ApiError::BadRequest("Invalid credential URL template".into()))?;
+        if rendered_path_escapes(layout.original_path()) {
+            return Err(ApiError::BadRequest(
+                "Credential URL path contains an ambiguous segment".into(),
+            ));
+        }
+        let query = layout
+            .query()
+            .map(|query| {
+                query
+                    .split('&')
+                    .map(|pair| {
+                        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                        if key.contains(SLOT) {
+                            return Err(ApiError::BadRequest(
+                                "Credential URL query names must be literal".into(),
+                            ));
+                        }
+                        Ok((
+                            key.to_owned(),
+                            (!value.contains(SLOT)).then(|| value.to_owned()),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, ApiError>>()
+            })
+            .transpose()?;
         Ok(Self {
             host: parts.host().to_owned(),
             port: parts.port(),
+            path: ApprovedPath::from_template_path(layout.path(), SLOT),
+            query,
         })
     }
 
@@ -152,8 +220,56 @@ impl CredentialBoundDestination {
                     .to_string(),
             ));
         }
+        let path = parts.path();
+        if rendered_path_escapes(parts.original_path()) {
+            return Err(ApiError::Forbidden(
+                "Rendered destination contains a path escape".to_string(),
+            ));
+        }
+        let approved = match &self.path {
+            ApprovedPath::Exact(expected) => path == expected,
+            ApprovedPath::Prefix(prefix) => path.starts_with(prefix),
+        };
+        let query_matches = match (&self.query, parts.query()) {
+            (None, None) => true,
+            (Some(expected), Some(actual)) => {
+                let mut pairs = actual.split('&');
+                expected.iter().all(|(key, value)| {
+                    pairs.next().is_some_and(|pair| {
+                        let (name, rendered) = pair.split_once('=').unwrap_or((pair, ""));
+                        name == key && value.as_deref().is_none_or(|literal| literal == rendered)
+                    })
+                }) && pairs.next().is_none()
+            }
+            _ => false,
+        };
+        if !approved || !query_matches {
+            return Err(ApiError::Forbidden(
+                "Rendered destination differs from the credential owner's approved path or query"
+                    .to_string(),
+            ));
+        }
         Ok(())
     }
+}
+
+impl ApprovedPath {
+    fn from_template_path(path_template: &str, slot: &str) -> Self {
+        match path_template.find(slot) {
+            None => Self::Exact(path_template.to_string()),
+            Some(index) => Self::Prefix(path_template[..index].to_owned()),
+        }
+    }
+}
+
+/// Reject dot segments and encoded separators that a downstream server could
+/// decode into a path escape.
+fn rendered_path_escapes(path: &str) -> bool {
+    path.split('/').any(|segment| {
+        let decoded = percent_decode_str(segment).collect::<Vec<_>>();
+        matches!(decoded.as_slice(), b"." | b"..")
+            || decoded.iter().any(|byte| matches!(byte, b'/' | b'\\' | 0))
+    })
 }
 
 impl fmt::Debug for RemoteAuthConfig {
@@ -949,7 +1065,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::same_origin("https://service.example/other?asset=2", true)]
+    #[case::same_origin("https://service.example/other", true)]
     #[case::default_port("https://service.example:443/hook", true)]
     #[case::other_host("https://elsewhere.example/hook", false)]
     #[case::other_port("https://service.example:8443/hook", false)]
@@ -969,6 +1085,80 @@ mod tests {
     }
 
     use super::*;
+
+    #[rstest]
+    #[case::same_path("https://service.example/api/objects/42", true)]
+    #[case::below_prefix("https://service.example/api/objects/42/details", true)]
+    #[case::undeclared_query("https://service.example/api/objects/42?expand=1", false)]
+    #[case::sibling_endpoint("https://service.example/admin/users", false)]
+    #[case::dot_segment("https://service.example/api/objects/../admin", false)]
+    #[case::encoded_slash("https://service.example/api/objects/..%2fadmin", false)]
+    #[case::encoded_dot_segment("https://service.example/api/objects/%2e%2e/admin", false)]
+    #[case::encoded_backslash("https://service.example/api/objects/..%5cadmin", false)]
+    fn rendered_credential_destination_stays_below_approved_path(
+        #[case] url: &str,
+        #[case] valid: bool,
+    ) {
+        let destination = CredentialBoundDestination::from_template(
+            "https://service.example/api/objects/{{ parameters.id }}",
+        )
+        .unwrap();
+        let accepted = validate_outbound_url(url)
+            .is_ok_and(|parts| destination.validate_rendered(&parts).is_ok());
+        assert_eq!(accepted, valid);
+    }
+
+    #[rstest]
+    #[case("https://service.example/items/record-42", true)]
+    #[case("https://service.example/items/other-42", false)]
+    fn credential_path_preserves_a_literal_partial_segment(
+        #[case] url: &str,
+        #[case] expected: bool,
+    ) {
+        let destination = CredentialBoundDestination::from_template(
+            "https://service.example/items/record-{{ parameters.id }}",
+        )
+        .unwrap();
+        assert_eq!(
+            destination
+                .validate_rendered(&validate_outbound_url(url).unwrap())
+                .is_ok(),
+            expected
+        );
+    }
+
+    #[rstest]
+    #[case::value("https://service.example/caf%C3%A9/item?asset=42&mode=read", true)]
+    #[case::static_parameter("https://service.example/caf%C3%A9/item?asset=42&mode=write", false)]
+    #[case::extra_parameter(
+        "https://service.example/caf%C3%A9/item?asset=42&mode=read&extra=1",
+        false
+    )]
+    fn declared_query_preserves_fixed_fields(#[case] url: &str, #[case] expected: bool) {
+        let destination = CredentialBoundDestination::from_template(
+            "https://service.example/café/{{ object.id }}?asset={{ object.id }}&mode=read",
+        )
+        .unwrap();
+        assert_eq!(
+            destination
+                .validate_rendered(&validate_outbound_url(url).unwrap())
+                .is_ok(),
+            expected
+        );
+    }
+
+    #[rstest]
+    #[case::exact("https://service.example/hook", true)]
+    #[case::exact_with_unapproved_query("https://service.example/hook?asset=2", false)]
+    #[case::extra_segment("https://service.example/hook/extra", false)]
+    #[case::prefix_collision("https://service.example/hook2", false)]
+    fn literal_path_without_substitutions_is_exact(#[case] url: &str, #[case] valid: bool) {
+        let destination =
+            CredentialBoundDestination::from_template("https://service.example/hook").unwrap();
+        let accepted = validate_outbound_url(url)
+            .is_ok_and(|parts| destination.validate_rendered(&parts).is_ok());
+        assert_eq!(accepted, valid);
+    }
 
     #[rstest]
     #[case::maximum(128, true)]

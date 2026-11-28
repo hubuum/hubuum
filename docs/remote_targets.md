@@ -82,8 +82,12 @@ Collection managers can still edit the name, description and timeout, or disable
 Re-enabling a credential-bearing target requires administrator approval.
 
 Credential-bearing URL templates must start with a literal HTTPS host and optional port. Templates
-may fill the path or query; they cannot select the scheme, host or port. Before resolving a secret,
-the worker checks that the rendered URL has the approved origin. Transport-controlled headers
+may fill path segments after the approved literal path prefix and values of explicitly
+named query parameters. A literal path must match exactly. Fixed query values, parameter
+names, order, and count are also bound. A substitution in the first path segment approves
+the entire origin's path space. Use expression substitutions in credentialed URL templates;
+move conditional logic into expression values. Before resolving a secret, the worker checks
+the rendered URL against that approved layout. Transport-controlled headers
 remain forbidden, redirects are not followed, and existing DNS/address screening still applies.
 The administrator must review the permitted path, query and request-body substitutions as part of
 approving what the shared action can do.

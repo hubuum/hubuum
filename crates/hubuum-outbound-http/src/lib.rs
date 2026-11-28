@@ -143,6 +143,7 @@ impl OutboundMethod {
 #[derive(Clone, PartialEq, Eq)]
 pub struct OutboundUrlParts {
     url: Url,
+    original_path: String,
     host: String,
     port: u16,
 }
@@ -169,6 +170,21 @@ impl OutboundUrlParts {
 
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    /// Path spelling supplied by the caller, before URL normalization.
+    pub fn original_path(&self) -> &str {
+        &self.original_path
+    }
+
+    /// Percent-encoded, dot-segment-normalized request path.
+    pub fn path(&self) -> &str {
+        self.url.path()
+    }
+
+    /// Percent-encoded query string, without the leading `?`.
+    pub fn query(&self) -> Option<&str> {
+        self.url.query()
     }
 }
 
@@ -197,8 +213,17 @@ pub fn validate_outbound_url(url: &str) -> Result<OutboundUrlParts, OutboundHttp
         .port_or_known_default()
         .ok_or(OutboundHttpError::MissingKnownPort)?;
 
+    let original_path = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .split_once("://")
+        .and_then(|(_, rest)| rest.find(['/', '\\']).map(|index| &rest[index..]))
+        .unwrap_or("/")
+        .to_owned();
     Ok(OutboundUrlParts {
         url: parsed,
+        original_path,
         host,
         port,
     })
@@ -921,6 +946,14 @@ mod tests {
         assert!(debug.contains("example.com"));
         assert!(debug.contains("port: 443"));
         assert!(!debug.contains("query-secret"));
+    }
+
+    #[test]
+    fn outbound_url_parts_expose_normalized_path_and_query() {
+        let parts = validate_outbound_url("https://example.com/a/../b/c?x=1&y=2#fragment").unwrap();
+
+        assert_eq!(parts.path(), "/b/c");
+        assert_eq!(parts.query(), Some("x=1&y=2"));
     }
 
     #[test]

@@ -43,6 +43,7 @@ DATABASE_ROLE_MODE="single"
 AUTH_CONFIG_HOST_PATH=""
 AUTH_CONFIG_CONTAINER_PATH="/etc/hubuum/auth.toml"
 NETWORK_SUBNET="172.30.42.0/24"
+METRICS_ALLOW_CIDR=""
 RECREATE="false"
 PULL="true"
 ENGINE="auto"
@@ -104,6 +105,11 @@ Options:
                           Override the pinned Prometheus image
   --grafana-image IMAGE   Override the pinned Grafana image
   --network-subnet CIDR   Container bridge subnet. Default: 172.30.42.0/24
+  --metrics-allow-cidr CIDR
+                          Client networks allowed to scrape /metrics through Caddy.
+                          Default: the container bridge subnet. Pass a public
+                          Prometheus range (for example 203.0.113.0/24) to scrape
+                          from outside; every other client receives 404.
   --systemd               Install and enable a systemd service
   --service-name NAME     systemd service name. Default: hubuum
   --no-systemd            Do not install or enable a systemd service. Default
@@ -218,6 +224,7 @@ while [[ $# -gt 0 ]]; do
     --prometheus-image) PROMETHEUS_IMAGE="$2"; ARG_SET+=" PROMETHEUS_IMAGE"; shift 2 ;;
     --grafana-image) GRAFANA_IMAGE="$2"; ARG_SET+=" GRAFANA_IMAGE"; shift 2 ;;
     --network-subnet) NETWORK_SUBNET="$2"; ARG_SET+=" NETWORK_SUBNET"; shift 2 ;;
+    --metrics-allow-cidr) METRICS_ALLOW_CIDR="$2"; ARG_SET+=" METRICS_ALLOW_CIDR"; shift 2 ;;
     --systemd) INSTALL_SYSTEMD="true"; shift ;;
     --service-name) SERVICE_NAME="$2"; SERVICE_NAME_SET="true"; shift 2 ;;
     --no-systemd) INSTALL_SYSTEMD="false"; shift ;;
@@ -282,6 +289,7 @@ if generates_deployment_files && [[ -f "$ENV_FILE" ]]; then
   reuse_from_env FRONTEND_REPO FRONTEND_REPO
   reuse_from_env BUILD_FROM_SOURCE BUILD_FROM_SOURCE
   reuse_from_env NETWORK_SUBNET HUBUUM_CLIENT_ALLOWLIST
+  reuse_from_env METRICS_ALLOW_CIDR METRICS_ALLOW_CIDR
   reuse_from_env DATABASE_ROLE_MODE HUBUUM_DATABASE_ROLE_MODE
   reuse_from_env AUTH_CONFIG_HOST_PATH HUBUUM_AUTH_CONFIG_HOST_PATH
   reuse_from_env SCRIPT_BASE_URL MANAGEMENT_SCRIPT_BASE_URL
@@ -308,6 +316,11 @@ if [[ -n "$IMAGE_TAG$BACKEND_TAG$FRONTEND_TAG" ]]; then
 fi
 
 [[ "$MODE" == "all" || "$MODE" == "backend" ]] || die "--mode must be all or backend"
+METRICS_ALLOW_CIDR="${METRICS_ALLOW_CIDR:-$NETWORK_SUBNET}"
+if [[ ! "$METRICS_ALLOW_CIDR" =~ ^[0-9a-fA-F:.]+/[0-9]+(,[0-9a-fA-F:.]+/[0-9]+)*$ ]]; then
+  die "--metrics-allow-cidr requires a CIDR or comma-separated CIDRs"
+fi
+METRICS_REMOTE_IPS="${METRICS_ALLOW_CIDR//,/ }"
 [[ "$DATABASE_ROLE_MODE" == "single" || "$DATABASE_ROLE_MODE" == "split" ]] || die "--database-role-mode must be single or split"
 [[ "$ENGINE" == "auto" || "$ENGINE" == "docker" || "$ENGINE" == "podman" ]] || die "--engine must be auto, docker, or podman"
 [[ "$MONITORING_ENABLED" == "true" || "$MONITORING_ENABLED" == "false" ]] || die "MONITORING_ENABLED must be true or false"
@@ -661,6 +674,7 @@ write_deployment_env() {
   printf 'HUBUUM_BIND_PORT=%s\n' "$API_PORT"
   printf 'HUBUUM_LOG_LEVEL=info\n'
   printf 'HUBUUM_TOKEN_HASH_KEY=%s\n' "$HUBUUM_TOKEN_HASH_KEY"
+  printf 'METRICS_ALLOW_CIDR=%s\n' "$METRICS_ALLOW_CIDR"
   printf 'HUBUUM_CLIENT_ALLOWLIST=%s\n' "$NETWORK_SUBNET"
   printf 'HUBUUM_TRUST_IP_HEADERS=false\n'
   printf 'HUBUUM_TOKEN_LIFETIME_HOURS=24\n'
@@ -676,6 +690,11 @@ write_deployment_env() {
   printf 'HUBUUM_SCHEMA_MAX_INSTANCE_BYTES=2097152\n'
   printf 'HUBUUM_SCHEMA_MAX_INSTANCE_WORK=268435456\n'
   printf 'HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS=5\n'
+  # Requests reach the API from the shared Caddy/frontend container address, so
+  # per-IP and per-subnet budgets would lock out every user at once. Keep the
+  # per-account scopes and disable only the scopes that cannot see real clients.
+  printf 'HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP=0\n'
+  printf 'HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET=0\n'
   printf 'HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS=300\n'
   printf 'HUBUUM_LOGIN_RATE_LIMIT_BACKEND=%s\n' "$LOGIN_RATE_LIMIT_BACKEND"
   printf 'HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL=redis://valkey:6379/1\n'
@@ -701,7 +720,7 @@ merge_missing_env_values() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     key="${line%%=*}"
     if [[ "$key" == "BACKEND_IMAGE" || "$key" == "FRONTEND_IMAGE" ||
-      "$key" == "POSTGRES_IMAGE" || "$key" == "VALKEY_IMAGE" || "$key" == "CADDY_IMAGE" ||
+      "$key" == "METRICS_ALLOW_CIDR" || "$key" == "POSTGRES_IMAGE" || "$key" == "VALKEY_IMAGE" || "$key" == "CADDY_IMAGE" ||
       "$key" == "MONITORING_ENABLED" || "$key" == "MONITORING_ASSETS_REF" ||
       "$key" == "PROMETHEUS_IMAGE" || "$key" == "GRAFANA_IMAGE" ]] && arg_was_set "$key"; then
       line="${key}=${!key}"
@@ -774,6 +793,10 @@ cat > "$CADDYFILE_TEMP" <<EOF
 }
 
 (api_proxy) {
+	# The server owns the runtime-configurable scrape path. Signal a denial
+	# on every ordinary proxied request from outside the scraper networks.
+	@outside_scrape_network not remote_ip ${METRICS_REMOTE_IPS}
+	request_header @outside_scrape_network X-Hubuum-Deny-Metrics 1
 	reverse_proxy hubuum-api:${API_PORT} hubuum-api-standby:${API_PORT} {
 		health_uri /readyz
 		health_interval 5s
@@ -794,6 +817,29 @@ cat > "$CADDYFILE_TEMP" <<EOF
 	reverse_proxy hubuum-api-standby:${API_PORT}
 }
 EOF
+
+# Metrics are unauthenticated Prometheus output. Restrict them to the container
+# network by default so the public hostnames do not disclose build metadata,
+# inventory counts, or template names.
+append_metrics_routes() {
+  local primary_path="$1"
+  local standby_path="$2"
+  cat <<EOF
+	handle ${primary_path} {
+		@metrics_denied not remote_ip ${METRICS_REMOTE_IPS}
+		respond @metrics_denied 404
+		rewrite * /metrics
+		import metrics_primary_proxy
+	}
+
+	handle ${standby_path} {
+		@metrics_denied not remote_ip ${METRICS_REMOTE_IPS}
+		respond @metrics_denied 404
+		rewrite * /metrics
+		import metrics_standby_proxy
+	}
+EOF
+}
 
 if [[ "$MONITORING_ENABLED" == "true" ]]; then
   hubuum_monitoring_caddy >> "$CADDYFILE_TEMP"
@@ -835,15 +881,7 @@ ${WEB_FQDN} {
 ${API_FQDN} {
 	encode zstd gzip
 
-	handle /metrics {
-		import metrics_primary_proxy
-	}
-
-	handle /metrics/standby {
-		rewrite * /metrics
-		import metrics_standby_proxy
-	}
-
+$(append_metrics_routes "/metrics" "/metrics/standby")
 	handle {
 		import api_proxy
 	}
@@ -870,15 +908,7 @@ ${WEB_FQDN} {
 		import api_proxy
 	}
 
-	handle /metrics {
-		import metrics_primary_proxy
-	}
-
-	handle /metrics/standby {
-		rewrite * /metrics
-		import metrics_standby_proxy
-	}
-
+$(append_metrics_routes "/metrics" "/metrics/standby")
 	handle {
 		import web_proxy
 	}
@@ -894,16 +924,7 @@ ${WEB_FQDN} {
 		redir * /hubuum-api/
 	}
 
-	handle /hubuum-api/metrics {
-		rewrite * /metrics
-		import metrics_primary_proxy
-	}
-
-	handle /hubuum-api/metrics/standby {
-		rewrite * /metrics
-		import metrics_standby_proxy
-	}
-
+$(append_metrics_routes "/hubuum-api/metrics" "/hubuum-api/metrics/standby")
 	handle_path /hubuum-api/* {
 		import api_proxy
 	}
@@ -919,15 +940,7 @@ ${API_FQDN} {
 	encode zstd gzip
 	${MONITORING_CADDY_IMPORT}
 
-	handle /metrics {
-		import metrics_primary_proxy
-	}
-
-	handle /metrics/standby {
-		rewrite * /metrics
-		import metrics_standby_proxy
-	}
-
+$(append_metrics_routes "/metrics" "/metrics/standby")
 	handle {
 		import api_proxy
 	}
@@ -1125,6 +1138,8 @@ cat >> "$INSTALL_DIR/compose.yml" <<'EOF'
       HUBUUM_DEFAULT_PAGE_LIMIT: ${HUBUUM_DEFAULT_PAGE_LIMIT}
       HUBUUM_MAX_PAGE_LIMIT: ${HUBUUM_MAX_PAGE_LIMIT}
       HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: ${HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS}
+      HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP: ${HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP:-0}
+      HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET: ${HUBUUM_LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_SUBNET:-0}
       HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS: ${HUBUUM_LOGIN_RATE_LIMIT_WINDOW_SECONDS}
       HUBUUM_LOGIN_RATE_LIMIT_BACKEND: ${HUBUUM_LOGIN_RATE_LIMIT_BACKEND}
       HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL: ${HUBUUM_LOGIN_RATE_LIMIT_VALKEY_URL}

@@ -21,6 +21,15 @@ class MonitoringTests(InstallerFixture):
         # Last --engine takes precedence over the base fixture's Docker default.
         return super().run_script(script, *args, "--engine", self.engine, **kwargs)
 
+    def test_metrics_network_survives_configuration_refresh(self):
+        networks = "198.51.100.0/24,2001:db8::/64"
+        self.install("--metrics-allow-cidr", networks)
+        self.run_script("install-single-host.sh", "--refresh-config")
+        self.assertEqual(self.values()["METRICS_ALLOW_CIDR"], networks)
+        caddy = (self.installation / "Caddyfile").read_text()
+        self.assertIn("@metrics_denied not remote_ip 198.51.100.0/24 2001:db8::/64", caddy)
+        self.assertIn("@outside_scrape_network not remote_ip 198.51.100.0/24 2001:db8::/64", caddy)
+
     def test_backup_spools_use_disk_with_read_only_backend_roots(self):
         self.install()
         compose = (self.installation / "compose.yml").read_text()
@@ -57,6 +66,7 @@ class MonitoringTests(InstallerFixture):
                     self.assertNotIn(values["GRAFANA_ADMIN_PASSWORD"], result.stdout + result.stderr)
                     self.assertEqual((self.installation / ".env").stat().st_mode & 0o777, 0o600)
                     caddy = (self.installation / "Caddyfile").read_text()
+                    self.assert_metrics_routes(caddy, values, routing)
                     self.assertEqual(caddy.count("import monitoring"), 1)
                     self.assertIn("basic_auth", caddy)
                     self.assertNotIn(values["PROMETHEUS_PASSWORD"], caddy)
@@ -72,6 +82,22 @@ class MonitoringTests(InstallerFixture):
                             name = "hubuum.json" if asset.endswith("/alerts.json") else "hubuum-recording.json"
                             installed = self.installation / "monitoring/prometheus/rules" / name
                         self.assertEqual(installed.read_bytes(), (ROOT / "observability" / asset).read_bytes())
+
+    def assert_metrics_routes(self, caddy, values, routing):
+        prefix = "/hubuum-api" if routing == "prefixed" else ""
+        for path, proxy, service in (("/metrics", "metrics_primary_proxy", "hubuum-api"),
+                                     ("/metrics/standby", "metrics_standby_proxy", "hubuum-api-standby")):
+            handle = f"handle {prefix}{path} {{"
+            if routing == "bff":
+                self.assertNotIn(handle, caddy)
+                continue
+            self.assertIn(f"({proxy}) {{\n\treverse_proxy {service}:{values['HUBUUM_BIND_PORT']}\n}}", caddy)
+            self.assertIn(handle, caddy)
+            directives = caddy.split(handle, 1)[1].split("}", 1)[0].splitlines()
+            self.assertEqual([line.strip() for line in directives if line.strip()], [
+                f"@metrics_denied not remote_ip {values['METRICS_ALLOW_CIDR']}",
+                "respond @metrics_denied 404", "rewrite * /metrics", f"import {proxy}",
+            ])
 
     def test_update_preserves_settings_and_credentials(self):
         self.install("--monitoring")

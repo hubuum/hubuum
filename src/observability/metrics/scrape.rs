@@ -18,6 +18,11 @@ pub async fn runtime_endpoint(
     request: HttpRequest,
     context: AppContext,
 ) -> Result<HttpResponse, ApiError> {
+    // A reverse proxy can suppress metrics on its general API upstream even
+    // when the configured path changes. This marker can only deny a scrape.
+    if request.headers().contains_key("x-hubuum-deny-metrics") {
+        return Ok(HttpResponse::NotFound().finish());
+    }
     let config = crate::config::runtime::current()?;
     if !config.metrics_enabled || request.path() != config.metrics_path.as_str() {
         return Ok(HttpResponse::NotFound().finish());
