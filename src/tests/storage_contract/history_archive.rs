@@ -949,6 +949,44 @@ async fn empty_coverage_is_distinct_from_missing_history(
     }
 }
 
+#[rstest]
+#[case::first_publication(false)]
+#[case::replacement(true)]
+#[actix_web::test]
+async fn conflicting_destinations_leave_the_archive_catalog_unchanged(#[case] existing: bool) {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        TestContext::run(backend, async |ctx| {
+            let row = ctx.closed().await;
+            let first = ctx.descriptor(&row, false, vec![]).await;
+            let second = ctx.descriptor(&row, false, vec![]).await;
+            let before = if existing {
+                ctx.publish(first.clone()).await
+            } else {
+                HistoryArchiveCatalog::empty(ctx.resource)
+            };
+            let error = ctx
+                .with_archive(ctx.storage.publish_history_archive(
+                    before.generation(),
+                    vec![second, first],
+                    &ctx.archive_permit,
+                ))
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind(), StorageErrorKind::InvalidInput);
+            let after = ctx
+                .with_archive(
+                    ctx.storage
+                        .history_archive_catalog(ctx.resource, &ctx.archive_permit),
+                )
+                .await
+                .unwrap();
+            assert_eq!(after, before);
+        })
+        .await;
+    }
+}
+
 #[actix_web::test]
 async fn generation_race_has_one_catalog_winner() {
     let _permit = postgres_permit().await;
