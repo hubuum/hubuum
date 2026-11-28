@@ -14,6 +14,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Security
 
+- Remove the unused Actix Web cookie feature and its dependency on
+  `cookie` 0.16.2 (RUSTSEC-2026-0594).
+
 - **Breaking change:** Scoped credentials can list and read only tasks
   submitted by their principal, including with delegated authorization. Use
   an authorized unscoped credential for cross-principal task management.
@@ -24,9 +27,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Trusted-proxy resolution falls back to the connection peer when every
   forwarded hop is trusted, and the documentation warns against broad
   `HUBUUM_TRUSTED_PROXIES` ranges.
-
-- Remove the unused Actix Web cookie feature and its dependency on
-  `cookie` 0.16.2 (RUSTSEC-2026-0594).
 
 - Require `url` 2.5.9 or later to fix a stack overflow during URL origin
   calculation (RUSTSEC-2026-0592).
