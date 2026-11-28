@@ -12,13 +12,14 @@
 
 #[cfg(test)]
 mod tests {
-    use hubuum_domain::ClassId;
+    use hubuum_domain::{ClassId, TaskId};
     use std::time::Duration;
 
     use actix_web::{App, http::StatusCode, test, web};
     use chrono::SubsecRound;
     use diesel::sql_types::{Bool, Integer};
     use hubuum_storage_postgres::diesel_async_prelude::*;
+    use hubuum_storage_postgres::test_support::delete_task;
     use rstest::rstest;
 
     use crate::api;
@@ -3171,6 +3172,11 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(status, TaskStatus::Running.as_str());
+        // No worker owns this synthetic claim. Release its execution capacity
+        // before later suites start their real single-slot background worker.
+        delete_task(pool.get_ref(), TaskId::new(task.id).unwrap())
+            .await
+            .unwrap();
     }
 
     #[actix_web::test]

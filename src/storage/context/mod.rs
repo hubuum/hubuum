@@ -7,7 +7,11 @@ use hubuum_domain::{
     EventSubscriptionId, ExportTemplateId, GroupId, IdentityScopeId, JsonSchemaLimits, ObjectId,
     PrincipalId, RemoteTargetId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
 };
-use hubuum_storage_core::{QueryUsageAnalysisProvider, StorageQueryObservationSettings};
+use hubuum_storage_core::{
+    DeletionControlCapture, DeletionControlChange, DeletionControlState, DeletionControlStorage,
+    QueryUsageAnalysisProvider, RuntimeOwner, StorageExecutionPermit,
+    StorageQueryObservationSettings,
+};
 use hubuum_storage_core::{StorageComputedFieldHistoryQuery, StorageHistoricalComputedFields};
 use hubuum_storage_core::{
     StorageHistoryEntry, StorageHistoryEntryQuery, StorageHistoryMarker,
@@ -28,7 +32,7 @@ use crate::models::search::{FilterField, QueryOptions};
 use crate::models::{MaintenanceState, TokenRetentionSettings};
 use crate::permissions::AppContext;
 use crate::storage::observed::{
-    ApplicationStorageObserver, ObservedStorage, observe_storage_call_with,
+    ApplicationStorageObserver, ObservationError, ObservedStorage, observe_storage_call_with,
 };
 use crate::storage::{
     AuditEventStorage, AuthenticationStorage, AuthorizationDataStorage, BackupSnapshotStorage,
@@ -135,9 +139,12 @@ pub(super) mod private {
 #[derive(Clone)]
 pub struct StorageHandle {
     inner: Arc<StorageHandleInner>,
+    #[cfg(test)]
+    artifact_test_store: Option<Arc<dyn hubuum_storage_core::artifacts::TaskArtifactStore>>,
 }
 
 struct StorageHandleInner {
+    runtime_owner: Option<RuntimeOwner>,
     descriptor: StorageBackendDescriptor,
     implementation: BackendImplementation,
     resource_ports: ResourceStoragePorts,
@@ -149,6 +156,7 @@ struct StorageHandleInner {
     worker_notification_provider: Option<Arc<dyn WorkerNotificationProvider>>,
 }
 
+#[derive(Clone)]
 pub(crate) enum BackendImplementation {
     Postgres(PostgresStorage),
     Memory(MemoryStorage),
@@ -187,7 +195,12 @@ struct ResourceStoragePorts {
 }
 
 impl ResourceStoragePorts {
-    fn observed<S>(storage: S, backend: &'static str, observer: Arc<dyn StorageObserver>) -> Self
+    fn observed<S>(
+        storage: S,
+        backend: &'static str,
+        observer: Arc<dyn StorageObserver>,
+        admission: Option<execution::ApplicationAdmission>,
+    ) -> Self
     where
         S: CollectionStorage
             + ClassStorage
@@ -196,7 +209,8 @@ impl ResourceStoragePorts {
             + ObjectRelationStorage
             + 'static,
     {
-        let observed = Arc::new(ObservedStorage::new(storage, backend, observer));
+        let observed =
+            Arc::new(ObservedStorage::new(storage, backend, observer).with_admission(admission));
         Self {
             collections: observed.clone(),
             classes: observed.clone(),
@@ -223,9 +237,15 @@ macro_rules! dispatch_backend {
 }
 
 mod api;
+mod artifacts;
 mod computed_fields;
 mod events;
 mod execution;
+pub(crate) use execution::ApplicationAdmission;
+mod api_request_admission;
+mod history_lifecycle;
+
+mod history_archive;
 mod identity;
 mod identity_queries;
 mod operational;
@@ -234,6 +254,7 @@ mod query_usage;
 mod relations;
 mod runtime_settings;
 mod schema_evolution;
+mod task_retention;
 mod tasks;
 mod transaction;
 mod workflows;
@@ -242,6 +263,31 @@ pub use api::StorageContext;
 pub(crate) use api::storage_handle;
 
 impl StorageHandle {
+    /// Whether both handles preserve the same configured storage instance.
+    /// This does not reveal or select a backend implementation.
+    pub(crate) fn same_instance(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    pub(crate) fn artifact_store(
+        &self,
+    ) -> Arc<dyn hubuum_storage_core::artifacts::TaskArtifactStore> {
+        #[cfg(test)]
+        if let Some(store) = &self.artifact_test_store {
+            return store.clone();
+        }
+        Arc::new(self.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_artifact_test_store(
+        mut self,
+        store: Arc<dyn hubuum_storage_core::artifacts::TaskArtifactStore>,
+    ) -> Self {
+        self.artifact_test_store = Some(store);
+        self
+    }
+
     #[cfg(any(test, feature = "integration-test-support"))]
     pub(crate) fn memory() -> Self {
         Self::memory_with_schema_limits(JsonSchemaLimits::default())
@@ -271,9 +317,12 @@ impl StorageHandle {
     {
         let kind = S::KIND;
         let resource_ports =
-            ResourceStoragePorts::observed(backend.clone(), kind.as_str(), observer.clone());
+            ResourceStoragePorts::observed(backend.clone(), kind.as_str(), observer.clone(), None);
         Self {
+            #[cfg(test)]
+            artifact_test_store: None,
             inner: Arc::new(StorageHandleInner {
+                runtime_owner: None,
                 descriptor: StorageBackendDescriptor::new(kind),
                 implementation: backend.into_implementation(),
                 resource_ports,
@@ -365,21 +414,51 @@ impl StorageHandle {
         self.descriptor().kind().as_str()
     }
 
-    async fn observe_storage_call<T>(
+    async fn observe_storage_call<T: Send, E: ObservationError>(
         &self,
         backend: &'static str,
         capability: StorageCapability,
         operation: &'static str,
-        future: impl Future<Output = Result<T, StorageError>>,
-    ) -> Result<T, StorageError> {
-        observe_storage_call_with(
+        future: impl Future<Output = Result<T, E>> + Send,
+    ) -> Result<T, E> {
+        let observed = observe_storage_call_with(
             self.inner.observer.as_ref(),
             backend,
             capability,
             operation,
             future,
-        )
-        .await
+        );
+        // Control-plane and settlement operations must remain usable while
+        // ordinary admission is closed. Adapters still enforce their exact
+        // ownership, transaction and generation requirements.
+        if self.inner.runtime_owner.is_none()
+            || matches!(
+                capability,
+                StorageCapability::DeletionControl | StorageCapability::Restore
+            )
+            || matches!(
+                operation,
+                "get_readiness_snapshot"
+                    | "get_maintenance_state"
+                    | "settle_api_request"
+                    | "settle_history_publication"
+                    | "settle_history_producer"
+                    | "abort_task"
+                    | "poll_task_execution"
+                    | "acknowledge_task_stop"
+                    | "renew_task_lease"
+                    | "recover_expired_task_leases"
+                    | "fail_task"
+            )
+        {
+            return observed.await;
+        }
+        let scope = self.current_execution_scope().with_application_access(
+            self.admit_application_work()
+                .await
+                .map_err(E::admission_error)?,
+        );
+        self.run_in_scope_send(scope, observed).await
     }
 
     #[cfg(test)]

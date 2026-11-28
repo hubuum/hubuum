@@ -11,6 +11,7 @@ mod identity;
 mod json_patch;
 mod json_schema;
 mod json_value;
+mod logical_identity;
 mod maintenance;
 mod operational_constraint;
 mod password;
@@ -29,8 +30,9 @@ pub use event_policy::{
 pub use identifier::{
     AuthorizationGrantId, ClassId, ClassRelationId, CollectionId, ComputedFieldDefinitionId,
     EventDeliveryId, EventSinkId, EventSubscriptionId, ExportTemplateId, GroupId, HistoryRecordId,
-    IdentityScopeId, ImportTaskResultId, ObjectId, ObjectRelationId, PositiveIdError, PrincipalId,
-    RemoteTargetId, ResourceId, RestoreJobId, ServiceAccountId, TaskId, TokenId, UserId,
+    IdentityScopeId, ImportTaskResultId, LegacyRecordId, ObjectId, ObjectRelationId,
+    PositiveIdError, PrincipalId, RemoteTargetId, ResourceId, RestoreJobId, ServiceAccountId,
+    TaskId, TokenId, UserId,
 };
 pub use identity::{
     EXTERNAL_MEMBERSHIP_SOURCE, IdentityScopeName, IdentityScopeNameError, LDAP_PROVIDER_KIND,
@@ -79,4 +81,8 @@ mod event_delivery_policy;
 pub use event_delivery_policy::{EventDeliveryPolicy, EventDeliveryPurpose};
 
 mod relation_limit;
+pub use logical_identity::{
+    IdentityParseError, IdentityReference, LegacyIdentityCohort, PrincipalIdentity,
+    ResourceIdentity, TaskIdentity, UnresolvedIdentity, VersionIdentity,
+};
 pub use relation_limit::{ObjectRelationLimit, RelationLimitError};

@@ -425,5 +425,6 @@ fn marker_from_storage(row: StorageHistoryMarker) -> HistoryMarker {
         actor_kind: metadata.actor_kind,
         initiator_user_id: metadata.initiator_principal_id,
         task_id: metadata.task_id,
+        logical_identity: metadata.logical_identity,
     }
 }

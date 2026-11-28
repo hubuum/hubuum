@@ -44,12 +44,24 @@ CI supplies the matching final release binary path, including the Windows target
 directory. This keeps renderer tests independent of Cargo's internal test-binary
 layout; installed applications continue to find the worker beside their binary.
 
+API task tests use 200 completion polls by default. A remote database containing
+the full suite's fixtures can need a longer wait, especially when a full backup
+occupies the shared test worker. Set `HUBUUM_TEST_TASK_POLL_ATTEMPTS=2000` for such
+runs. This positive-integer setting changes the functional tests' polling budget;
+production deadlines and the tests' result, authorization and cancellation
+assertions stay unchanged.
+
 The runner includes PostgreSQL adapter tests and a resource-limited JSON Schema
 probe. Python applies the probe's process limits; its assertions remain in Rust.
 Destructive restore contracts use a second runner-owned database with the same
-database role configuration. This keeps their backup budgets and
-deadlines independent of history retained by other suites. The runner migrates
-and removes both databases, including on test failure.
+database role configuration. Archive overflow and retained-publication tests use
+a third database because their oversized rows and unsettled owners could interfere
+with backup and restore certification. HTTP crash recovery uses a fourth
+database so its application generation and checkpoint stay separate from restore
+fixtures. The runner migrates and removes these databases, including on failure.
+PostgreSQL adapter unit tests for rollback-only history recovery and archive
+cleanup share the restore database. Both hold `RESTORE_TEST_LOCK` through
+fixture cleanup so they can check publication state in isolation.
 
 By default, the runner provisions separate owner, migrator and runtime roles,
 requiring a test login with `CREATEDB` and `CREATEROLE`. For a disposable instance
@@ -59,7 +71,7 @@ where the login can create databases but cannot create roles, run:
 source .env && HUBUUM_DATABASE_ROLE_TESTS=false ./run_tests.sh
 ```
 
-This uses the existing login to own, migrate and access both test databases. It
+This uses the existing login to own, migrate and access all test databases. It
 keeps the workspace, PostgreSQL adapter, application, schema-budget and restore
 suites, but disables assertions guarded by the database-role fixture and the
 serial split-role reconciliation test. Those guards cover privilege isolation
@@ -69,10 +81,10 @@ this reduced coverage. Full split-role verification remains required in CI.
 Only `true` and `false` are accepted; an unset flag defaults to `true`.
 
 CI's direct Cargo jobs use `python3 tests/python/run.py integration rust-tests --`
-before the Cargo command to provision equivalent isolated restore authority on
-Linux, macOS and Windows. The driver preserves the application database settings
-and test exit status and removes its temporary database and roles on failure.
-
+before the Cargo command to provision equivalent isolated restore and archive storage on
+Linux, macOS and Windows. The driver uses the built migration binary, preserves
+the application database settings and test exit status, and removes its temporary
+databases and roles even when migration or testing fails.
 Use Rust's shared fixtures and scoped names for application data. Never replace
 database concurrency or migration coverage with a Python mock.
 

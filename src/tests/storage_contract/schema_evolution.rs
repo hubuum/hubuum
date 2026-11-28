@@ -5,6 +5,7 @@ use hubuum_storage_core::schema_evolution::*;
 use hubuum_storage_core::{
     StorageAuthenticationTokenScope, StorageMutationOutcome, StorageTaskClaim,
 };
+use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 use hubuum_storage_postgres::{PostgresStorage, test_support::claim_task_by_id_with_lease};
 use serde_json::{Value, json};
 
@@ -93,7 +94,10 @@ impl SchemaFixture {
         let duration = StorageTaskLeaseDuration::from_milliseconds(millis).unwrap();
         let claim = match &self.environment {
             BackendTestEnvironment::Memory { storage } => storage
-                .claim_next_task(duration)
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    duration,
+                ))
                 .await
                 .unwrap()
                 .expect("queued task"),

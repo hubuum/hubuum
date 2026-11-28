@@ -35,3 +35,7 @@ Thumbs.db
 # Misc
 *.tar.gz
 *.zip
+
+# Local credentials and disposable fixture settings
+.env
+.env.*

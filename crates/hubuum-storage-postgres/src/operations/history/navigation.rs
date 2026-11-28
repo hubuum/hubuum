@@ -1,6 +1,7 @@
+use diesel::SelectableHelper;
 use diesel::{
-    dsl::sql,
-    sql_types::{BigInt, Bool, Timestamptz},
+    pg::sql_types::Record,
+    sql_types::{BigInt, Timestamptz},
 };
 use hubuum_storage_core::{
     StorageHistoryEntry, StorageHistoryEntryQuery, StorageHistoryMarker,
@@ -17,6 +18,7 @@ fn timestamp_floor(at: DateTime<Utc>) -> DateTime<Utc> {
 
 #[derive(diesel::Queryable)]
 struct MarkerRow {
+    logical_identity: Option<Value>,
     collection_id: i32,
     name: String,
     op: String,
@@ -47,7 +49,8 @@ impl MarkerRow {
             self.actor_kind.clone(),
         )
         .initiator_principal_id(self.initiator_user_id.map(PrincipalId::new).transpose()?)
-        .task_id(self.task_id.map(TaskId::new).transpose()?);
+        .task_id(self.task_id.map(TaskId::new).transpose()?)
+        .with_logical_identity(history_identity(self.logical_identity)?);
         Ok(StorageHistoryMarker::new(
             resource,
             CollectionId::new(self.collection_id)?,
@@ -57,9 +60,20 @@ impl MarkerRow {
     }
 }
 
+// Preserve a PostgreSQL row comparison so timestamp ties seek the composite
+// index without expanding the cursor into separate OR predicates.
+macro_rules! history_position {
+    ($table:ident) => {
+        ($table::valid_from, $table::history_id).into_sql::<Record<(Timestamptz, BigInt)>>()
+    };
+}
+
+#[cfg(test)]
+mod tests;
+
 // Each table has a statically checked projection. Large JSON fields never enter this query.
 macro_rules! marker_page {
-    ($runtime:expr, $query:expr, $table:ident, $predicate:expr) => {{
+    ($runtime:expr, $query:expr, $table:ident, $family:literal, $predicate:expr) => {{
         use crate::schema::$table::dsl as h;
         let query = $query;
         let options = query.options();
@@ -78,7 +92,10 @@ macro_rules! marker_page {
         $runtime
             .with_read_only_snapshot(async |connection| {
                 let base_query = || {
-                    let mut records = h::$table.filter($predicate).into_boxed();
+                    let mut records = h::$table
+                        .filter($predicate)
+                        .filter(super::history_version_visible($family, h::logical_identity))
+                        .into_boxed();
                     if let Some(ids) = visible_collection_ids(query.scope()) {
                         records = records.filter(h::collection_id.eq_any(ids));
                     }
@@ -120,18 +137,10 @@ macro_rules! marker_page {
                             records.filter(h::valid_from.gt(timestamp_floor(anchor.at())))
                         }
                         StorageHistorySelection::BeforeEntry(anchor) => records.filter(
-                            sql::<Bool>("(valid_from, history_id) < (")
-                                .bind::<Timestamptz, _>(anchor.at())
-                                .sql(", ")
-                                .bind::<BigInt, _>(anchor.history_id().id())
-                                .sql(")"),
+                            history_position!(h).lt((anchor.at(), anchor.history_id().id())),
                         ),
                         StorageHistorySelection::AfterEntry(anchor) => records.filter(
-                            sql::<Bool>("(valid_from, history_id) > (")
-                                .bind::<Timestamptz, _>(anchor.at())
-                                .sql(", ")
-                                .bind::<BigInt, _>(anchor.history_id().id())
-                                .sql(")"),
+                            history_position!(h).gt((anchor.at(), anchor.history_id().id())),
                         ),
                     };
                     records
@@ -142,6 +151,7 @@ macro_rules! marker_page {
                     None
                 };
                 let mut records = base_query().select((
+                    h::logical_identity,
                     h::collection_id,
                     h::name,
                     h::op,
@@ -186,7 +196,13 @@ pub(crate) async fn list_history_markers(
 ) -> Result<StoragePage<StorageHistoryMarker>, PostgresStorageError> {
     match query.resource() {
         StorageHistoryResource::Class(id) => {
-            marker_page!(runtime, &query, hubuumclass_history, h::id.eq(id.id()))
+            marker_page!(
+                runtime,
+                &query,
+                hubuumclass_history,
+                "class",
+                h::id.eq(id.id())
+            )
         }
         StorageHistoryResource::Object {
             class_id,
@@ -195,6 +211,7 @@ pub(crate) async fn list_history_markers(
             runtime,
             &query,
             hubuumobject_history,
+            "object",
             h::id
                 .eq(object_id.id())
                 .and(h::hubuum_class_id.eq(class_id.id()))
@@ -213,6 +230,8 @@ pub(crate) async fn get_history_entry(
                 h::hubuumclass_history
                     .filter(h::id.eq(id.id()))
                     .filter(h::history_id.eq(query.history_id().id()))
+                    .filter(super::history_version_visible("class", h::logical_identity))
+                    .select(ClassHistoryRow::as_select())
                     .first::<ClassHistoryRow>(connection)
                     .await
                     .optional()?
@@ -229,6 +248,11 @@ pub(crate) async fn get_history_entry(
                     .filter(h::id.eq(object_id.id()))
                     .filter(h::hubuum_class_id.eq(class_id.id()))
                     .filter(h::history_id.eq(query.history_id().id()))
+                    .filter(super::history_version_visible(
+                        "object",
+                        h::logical_identity,
+                    ))
+                    .select(ObjectHistoryRow::as_select())
                     .first::<ObjectHistoryRow>(connection)
                     .await
                     .optional()?

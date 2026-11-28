@@ -6,7 +6,17 @@
 
 #![allow(unused_variables)]
 
-use hubuum_storage_core::StorageExternalSyncFailure;
+use hubuum_domain::PrincipalIdentity;
+use hubuum_storage_core::artifacts::TaskArtifactCleanup;
+use hubuum_storage_core::{
+    HistoryExpiryTaskAdmission, HistoryExpiryTaskSubmission, HistoryPolicyReference,
+    HistorySizeObservation, StorageTask, StorageTaskClaimRequest,
+};
+
+use hubuum_storage_core::{
+    DeletionAuditObservation, DeletionControlState, HotObjectHistoryCleanup,
+    HotObjectHistoryDeletion, RuntimeRegistration, StorageExternalSyncFailure,
+};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -23,6 +33,225 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 struct CompleteExternalAdapter;
+
+#[async_trait]
+impl HistoryLifecycleStorage for CompleteExternalAdapter {
+    async fn observe_history_size(
+        &self,
+        policy: HistoryPolicyReference,
+        actor: PrincipalIdentity,
+    ) -> Result<HistorySizeObservation, StorageError> {
+        fixture_result()
+    }
+    async fn reapply_history_expiry(
+        &self,
+        request: HistoryExpiryReapplication,
+    ) -> Result<bool, StorageError> {
+        fixture_result()
+    }
+    async fn submit_history_expiry_task(
+        &self,
+        request: HistoryExpiryTaskSubmission,
+    ) -> Result<HistoryExpiryTaskAdmission, StorageError> {
+        fixture_result()
+    }
+    async fn recover_history_expiry_task(
+        &self,
+        batch: Uuid,
+    ) -> Result<Option<StorageTask>, StorageError> {
+        fixture_result()
+    }
+    async fn process_history_expiry_task(
+        &self,
+        request: HistoryExpiryTaskRequest,
+    ) -> Result<HistoryExpiryTaskCheckpoint, StorageError> {
+        fixture_result()
+    }
+    async fn admit_history_archive_execution(
+        &self,
+    ) -> Result<HistoryArchiveExecutionOwner, StorageError> {
+        fixture_result()
+    }
+    async fn admit_history_publication(
+        &self,
+        kind: HistoryPublicationKind,
+    ) -> Result<HistoryPublicationOwner, StorageError> {
+        fixture_result()
+    }
+    async fn settle_history_publication(
+        &self,
+        settlement: HistoryPublicationSettlement,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn admit_history_producer(
+        &self,
+        context: HistoryReadContext,
+    ) -> Result<HistoryProducerOwner, StorageError> {
+        fixture_result()
+    }
+    async fn settle_history_producer(
+        &self,
+        settlement: &HistoryProducerSettlement,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn register_history_runtime(
+        &self,
+        isolation: Option<RuntimeIsolationDomain>,
+    ) -> Result<RuntimeRegistration, StorageError> {
+        fixture_result()
+    }
+    async fn scan_history_lifecycle(
+        &self,
+        scan: HistoryLifecycleScan,
+    ) -> Result<HistoryLifecycleScanResult, StorageError> {
+        fixture_result()
+    }
+    async fn admit_history_expiry(
+        &self,
+        request: HistoryExpiryAdmissionRequest,
+    ) -> Result<HistoryExpiryAdmissionResult, StorageError> {
+        fixture_result()
+    }
+    async fn recover_history_lifecycle(
+        &self,
+        recovery: HistoryLifecycleRecovery,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn capture_history_lifecycle(&self) -> Result<HistoryLifecycleSnapshot, StorageError> {
+        fixture_result()
+    }
+    async fn commit_history_lifecycle(
+        &self,
+        change: HistoryLifecycleControlChange,
+    ) -> Result<HistoryLifecycleSnapshot, StorageError> {
+        fixture_result()
+    }
+}
+
+#[async_trait]
+impl ApiRequestAdmissionStorage for CompleteExternalAdapter {
+    async fn api_request_policy(&self) -> Result<StorageApiRequestPolicy, StorageError> {
+        fixture_result()
+    }
+
+    async fn replace_api_request_policy(
+        &self,
+        update: StorageApiRequestPolicyUpdate,
+    ) -> Result<StorageApiRequestPolicy, StorageError> {
+        fixture_result()
+    }
+
+    async fn admit_api_request(
+        &self,
+        principal: PrincipalId,
+        class: ApiRequestClass,
+        input_bytes: u64,
+    ) -> Result<StorageApiRequestPermit, StorageError> {
+        fixture_result()
+    }
+
+    async fn settle_api_request(
+        &self,
+        permit: StorageApiRequestPermit,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+}
+
+#[async_trait]
+impl DeletionControlStorage for CompleteExternalAdapter {
+    async fn observe_deletion_checkpoint(
+        &self,
+        observation: DeletionAuditObservation,
+    ) -> Result<DeletionControlState, StorageError> {
+        fixture_result()
+    }
+    async fn register_runtime(&self) -> Result<RuntimeRegistration, StorageError> {
+        fixture_result()
+    }
+    async fn unregister_runtime(
+        &self,
+        registration: RuntimeRegistration,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn prepare_hot_object_history_deletion(
+        &self,
+        expected: DeletionControlState,
+        request: HotObjectHistoryDeletion,
+    ) -> Result<DeletionControlState, StorageError> {
+        fixture_result()
+    }
+    async fn cleanup_hot_object_history(
+        &self,
+        request: HotObjectHistoryCleanup,
+    ) -> Result<DeletionControlState, StorageError> {
+        fixture_result()
+    }
+    async fn register_runtime_isolated(
+        &self,
+        isolation: Option<RuntimeIsolationDomain>,
+    ) -> Result<RuntimeRegistration, StorageError> {
+        fixture_result()
+    }
+    async fn capture_application_execution(
+        &self,
+        owner: Option<RuntimeOwner>,
+    ) -> Result<StorageExecutionPermit, StorageError> {
+        fixture_result()
+    }
+    async fn capture_application_execution_with_maintenance(
+        &self,
+        owner: Option<RuntimeOwner>,
+    ) -> Result<ApplicationWorkAdmission, StorageError> {
+        fixture_result()
+    }
+
+    async fn read_application_control(&self) -> Result<ApplicationControlState, StorageError> {
+        fixture_result()
+    }
+    async fn acknowledge_runtime_drain(
+        &self,
+        owner: RuntimeOwner,
+        fence: ApplicationFence,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn reapply_deletion_decisions(
+        &self,
+        expected: DeletionControlState,
+        fence: ApplicationFence,
+        checkpoint: DeletionCheckpointIdentity,
+    ) -> Result<ApplicationReapplication, StorageError> {
+        fixture_result()
+    }
+    async fn release_application_exposure(
+        &self,
+        receipt: ApplicationExposureProof,
+        checkpoint: DeletionCheckpointIdentity,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn recover_application_control(
+        &self,
+        change: DeletionControlChange,
+        isolation: RuntimeIsolationDomain,
+    ) -> Result<ApplicationFence, StorageError> {
+        fixture_result()
+    }
+    async fn capture_deletion_control(&self) -> Result<DeletionControlCapture, StorageError> {
+        fixture_result()
+    }
+    async fn commit_deletion_control(
+        &self,
+        change: DeletionControlChange,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+}
 
 fn fixture_result<T>() -> Result<T, StorageError> {
     Err(StorageError::internal("external adapter compile fixture"))
@@ -1301,7 +1530,7 @@ impl HistoryStorage for CompleteExternalAdapter {
 
     async fn resolve_history_principal_names(
         &self,
-        principal_ids: Vec<PrincipalId>,
+        principal_ids: Vec<PrincipalIdentity>,
     ) -> Result<Vec<StorageHistoryPrincipalName>, StorageError> {
         fixture_result()
     }
@@ -1670,11 +1899,148 @@ impl RemoteTargetStorage for CompleteExternalAdapter {
 }
 
 #[async_trait]
+impl TaskCapacityStorage for CompleteExternalAdapter {
+    async fn initialize_task_policy(
+        &self,
+        policy: TaskAdmissionPolicy,
+    ) -> Result<StorageTaskPolicy, StorageError> {
+        fixture_result()
+    }
+    async fn task_policy(&self) -> Result<StorageTaskPolicy, StorageError> {
+        fixture_result()
+    }
+    async fn replace_task_policy(
+        &self,
+        update: StorageTaskPolicyUpdate,
+    ) -> Result<StorageTaskPolicy, StorageError> {
+        fixture_result()
+    }
+    async fn task_capacity_snapshot(&self) -> Result<StorageTaskCapacitySnapshot, StorageError> {
+        fixture_result()
+    }
+}
+
+#[async_trait]
+impl TaskRetentionStorage for CompleteExternalAdapter {
+    async fn prepare_expired_task_outputs(
+        &self,
+        selection: TaskPurgeSelection,
+    ) -> Result<Option<TaskPurgeTicket>, StorageError> {
+        fixture_result()
+    }
+    async fn read_task_receipt_activation(&self) -> Result<TaskReceiptActivation, StorageError> {
+        fixture_result()
+    }
+    async fn list_pending_task_admissions(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<TaskAdmissionTicket>, StorageError> {
+        fixture_result()
+    }
+    async fn read_task_control(&self) -> Result<TaskControlState, StorageError> {
+        fixture_result()
+    }
+    async fn capture_control_checkpoint(&self) -> Result<ControlCheckpointCapture, StorageError> {
+        fixture_result()
+    }
+    async fn commit_task_control(
+        &self,
+        change: TaskControlChange,
+    ) -> Result<TaskControlState, StorageError> {
+        fixture_result()
+    }
+    async fn recover_task_control(
+        &self,
+        change: TaskControlRecovery,
+    ) -> Result<TaskControlRevision, StorageError> {
+        fixture_result()
+    }
+    async fn read_task_retention_policy(&self) -> Result<TaskRetentionPolicy, StorageError> {
+        fixture_result()
+    }
+    async fn replace_task_retention_policy(
+        &self,
+        change: TaskRetentionPolicyChange,
+    ) -> Result<TaskControlRevision, StorageError> {
+        fixture_result()
+    }
+    async fn change_task_hold(
+        &self,
+        change: TaskHoldChange,
+    ) -> Result<TaskControlRevision, StorageError> {
+        fixture_result()
+    }
+    async fn select_expired_task_receipts(
+        &self,
+        request: ReceiptExpirySelection,
+    ) -> Result<Option<ReceiptExpiryBatch>, StorageError> {
+        fixture_result()
+    }
+    async fn expire_task_receipts(
+        &self,
+        request: ProtectedReceiptExpiry,
+    ) -> Result<TaskControlRevision, StorageError> {
+        fixture_result()
+    }
+    async fn prepare_task_details_purge(
+        &self,
+        selection: TaskPurgeSelection,
+    ) -> Result<Option<TaskPurgeTicket>, StorageError> {
+        fixture_result()
+    }
+    async fn purge_task_details_batch(
+        &self,
+        request: ProtectedTaskPurge,
+        budget: TaskPurgeBudget,
+    ) -> Result<TaskPurgeProgress, StorageError> {
+        fixture_result()
+    }
+    async fn list_pending_task_purges(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<TaskPurgeTicket>, StorageError> {
+        fixture_result()
+    }
+    async fn reapply_task_retention(
+        &self,
+        request: ProtectedTaskReapplication,
+        budget: TaskPurgeBudget,
+    ) -> Result<TaskReapplicationProgress, StorageError> {
+        fixture_result()
+    }
+    async fn list_legacy_task_receipts(
+        &self,
+        budget: TaskPurgeBudget,
+    ) -> Result<Vec<TaskLegacyReceiptCandidate>, StorageError> {
+        fixture_result()
+    }
+    async fn backfill_task_receipts(
+        &self,
+        expected: TaskControlRevision,
+        bindings: Vec<TaskLegacyReceiptBinding>,
+    ) -> Result<TaskControlRevision, StorageError> {
+        fixture_result()
+    }
+}
+
+#[async_trait]
 impl TaskQueueStorage for CompleteExternalAdapter {
+    async fn lookup_task_submission(
+        &self,
+        lookup: TaskSubmissionLookup,
+    ) -> Result<TaskSubmissionResolution, StorageError> {
+        fixture_result()
+    }
+    async fn activate_task_submission(
+        &self,
+        request: ProtectedTaskAdmission,
+    ) -> Result<TaskActivationOutcome, StorageError> {
+        fixture_result()
+    }
     async fn create_task(
         &self,
         request: StorageTaskCreateRequest,
-    ) -> Result<StorageTask, StorageError> {
+    ) -> Result<StorageTaskSubmissionOutcome, StorageError> {
         fixture_result()
     }
 
@@ -1748,6 +2114,20 @@ impl TaskQueueStorage for CompleteExternalAdapter {
 
 #[async_trait]
 impl TaskExecutionStorage for CompleteExternalAdapter {
+    async fn wait_task(
+        &self,
+        request: StorageTaskWaitRequest,
+    ) -> Result<StorageTaskWait, StorageError> {
+        fixture_result()
+    }
+
+    async fn resume_task(
+        &self,
+        request: StorageTaskResumeRequest,
+    ) -> Result<StorageTaskResumeOutcome, StorageError> {
+        fixture_result()
+    }
+
     async fn get_schema_profile_output(
         &self,
         task_id: hubuum_domain::TaskId,
@@ -1791,7 +2171,7 @@ impl TaskExecutionStorage for CompleteExternalAdapter {
 
     async fn claim_next_task(
         &self,
-        lease_duration: StorageTaskLeaseDuration,
+        request: StorageTaskClaimRequest,
     ) -> Result<Option<StorageTaskClaim>, StorageError> {
         fixture_result()
     }
@@ -2123,6 +2503,16 @@ impl ExportTemplateStorage for CompleteExternalAdapter {
 }
 
 impl ExecutionStorage for CompleteExternalAdapter {
+    fn current_execution_scope(&self) -> StorageExecutionScope {
+        StorageExecutionScope::default()
+    }
+    fn run_in_scope_sync<F, R>(&self, scope: StorageExecutionScope, operation: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        operation()
+    }
+
     fn run_in_scope<'a, F, R>(
         &'a self,
         scope: StorageExecutionScope,
@@ -2264,21 +2654,31 @@ impl SchemaEvolutionStorage for CompleteExternalAdapter {
 impl StorageBackend for CompleteExternalAdapter {}
 
 #[async_trait]
+impl LogicalIdentityStorage for CompleteExternalAdapter {
+    async fn resolve_logical_identity(
+        &self,
+        target: StorageIdentityTarget,
+    ) -> Result<StorageIdentityEvidence, StorageError> {
+        fixture_result()
+    }
+}
+
+#[async_trait]
 impl RuntimeSettingsStorage for CompleteExternalAdapter {
     async fn load_runtime_settings(&self) -> Result<StorageRuntimeSettingsSnapshot, StorageError> {
-        unimplemented!("compile-only adapter")
+        fixture_result()
     }
     async fn update_runtime_settings(
         &self,
         _request: StorageRuntimeSettingsUpdate,
     ) -> Result<StorageRuntimeSettingsUpdateOutcome, StorageError> {
-        unimplemented!("compile-only adapter")
+        fixture_result()
     }
     async fn list_runtime_settings_changes(
         &self,
         _query: StorageRuntimeSettingsHistoryQuery,
     ) -> Result<Vec<StorageRuntimeSettingsChange>, StorageError> {
-        unimplemented!("compile-only adapter")
+        fixture_result()
     }
 }
 
@@ -2313,5 +2713,156 @@ impl QueryUsageStorage for CompleteExternalAdapter {
         _request: StorageQueryUsageDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         unimplemented!("compile-only adapter")
+    }
+}
+
+use hubuum_storage_core::artifacts::*;
+#[async_trait]
+impl ArtifactStore for CompleteExternalAdapter {
+    async fn register_destination(&self, destination: &Destination) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn stage(
+        &self,
+        identity: &ArtifactIdentity,
+        limits: ArtifactLimits,
+    ) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn append(
+        &self,
+        identity: &ArtifactIdentity,
+        ordinal: u32,
+        bytes: &[u8],
+    ) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn seal(&self, manifest: &ArtifactManifest) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn manifest(&self, identity: &ArtifactIdentity) -> ArtifactResult<Vec<u8>> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn published_manifest(&self, reference: &ArtifactReference) -> ArtifactResult<Vec<u8>> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn block(
+        &self,
+        identity: &ArtifactIdentity,
+        ordinal: u32,
+    ) -> ArtifactResult<Option<Vec<u8>>> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn publish(&self, verified: &VerifiedArtifact) -> ArtifactResult<ArtifactReference> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn abort(&self, identity: &ArtifactIdentity) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+    async fn cleanup(&self) -> ArtifactResult<u32> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+}
+#[async_trait]
+impl TaskArtifactStore for CompleteExternalAdapter {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+
+    async fn bind_task(
+        &self,
+        identity: &ArtifactIdentity,
+        lease: &StorageTaskLease,
+        reservation: ArtifactReservation,
+        output_expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> ArtifactResult<()> {
+        Err(ArtifactError::Backend(
+            "external adapter compile fixture".into(),
+        ))
+    }
+}
+
+#[async_trait]
+impl HistoryArchiveStorage for CompleteExternalAdapter {
+    async fn load_history_archive_cleanup(
+        &self,
+        request: &HistoryArchiveCleanupRequest,
+    ) -> Result<HistoryArchiveCleanupClaim, StorageError> {
+        fixture_result()
+    }
+    async fn settle_history_archive_cleanup(
+        &self,
+        settlement: HistoryArchiveCleanupSettlement,
+    ) -> Result<(), StorageError> {
+        fixture_result()
+    }
+    async fn claim_history_archive_publication(
+        &self,
+        request: HistoryArchivePublicationRequest,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<HistoryArchivePublicationClaim, StorageError> {
+        fixture_result()
+    }
+
+    async fn history_archive_catalog(
+        &self,
+        resource: ResourceIdentity,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<HistoryArchiveCatalog, StorageError> {
+        fixture_result()
+    }
+    async fn publish_history_archive(
+        &self,
+        expected: HistoryArchiveCatalogGeneration,
+        descriptors: Vec<HistoryArchiveDescriptor>,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<HistoryArchiveCatalog, StorageError> {
+        fixture_result()
+    }
+    async fn capture_history_archive(
+        &self,
+        request: HistoryArchiveCaptureRequest,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<HistoryArchiveCapture, StorageError> {
+        fixture_result()
+    }
+    async fn history_archive_capture(
+        &self,
+        id: Uuid,
+        principal: PrincipalIdentity,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<Option<HistoryArchiveCapture>, StorageError> {
+        fixture_result()
+    }
+    async fn reserve_history_archive_read(
+        &self,
+        id: Uuid,
+        principal: PrincipalIdentity,
+        bytes: u64,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<HistoryArchiveCapture, StorageError> {
+        fixture_result()
     }
 }

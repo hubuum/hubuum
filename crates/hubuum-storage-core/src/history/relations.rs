@@ -1,9 +1,11 @@
 use chrono::{DateTime, Utc};
-use hubuum_domain::{ClassId, CollectionId, ObjectId};
+use hubuum_domain::{ClassId, CollectionId, ObjectId, ResourceIdentity};
 use hubuum_query::{CursorValue, FilterField, QueryOptions, SortParam};
 
 use super::{StorageHistoryMetadata, StorageHistoryOperation, StorageHistoryResource};
-use crate::{StorageClassRelation, StorageObjectRelation, StorageValidationError};
+use crate::{
+    StorageCapturedIdentity, StorageClassRelation, StorageObjectRelation, StorageValidationError,
+};
 
 /// The endpoint whose direct incident relationship changes are requested.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -111,6 +113,20 @@ pub struct StorageRelationHistoryRecord {
 }
 
 impl StorageRelationHistoryRecord {
+    /// Only captured correspondence may locate an endpoint across timelines.
+    /// Unresolved legacy references deliberately yield no endpoint identity.
+    pub fn endpoint_identities(&self) -> [Option<ResourceIdentity>; 2] {
+        let fields = match &self.relation {
+            StorageHistoricalRelation::Class(_) => ["/from_class_id", "/to_class_id"],
+            StorageHistoricalRelation::Object(_) => ["/from_object_id", "/to_object_id"],
+        };
+        fields.map(
+            |path| match self.metadata.logical_identity()?.references().get(path)? {
+                StorageCapturedIdentity::Resource { reference, .. } => reference.known_identity(),
+                _ => None,
+            },
+        )
+    }
     pub fn try_new(
         relation: StorageHistoricalRelation,
         metadata: StorageHistoryMetadata,
@@ -215,12 +231,24 @@ impl StorageRelationHistoryEntry {
                 at
             }
         };
-        for (endpoint, identity) in [from.as_ref(), to.as_ref()]
+        for ((endpoint, identity), captured) in [from.as_ref(), to.as_ref()]
             .into_iter()
             .zip(record.relation.endpoints())
+            .zip(record.endpoint_identities())
         {
             if endpoint.is_some_and(|endpoint| {
-                endpoint.identity() != identity || !effective(endpoint.metadata(), context_at)
+                let logical_identity_matches = record.metadata.logical_identity().is_none()
+                    || captured.is_some_and(|captured| {
+                        endpoint
+                            .metadata
+                            .logical_identity()
+                            .and_then(|evidence| evidence.subject())
+                            .and_then(|subject| subject.record_identity())
+                            .is_some_and(|actual| actual.resource() == captured)
+                    });
+                endpoint.identity() != identity
+                    || !effective(endpoint.metadata(), context_at)
+                    || !logical_identity_matches
             }) {
                 return Err(StorageValidationError::invalid(
                     "Historical relationship endpoint identity or validity does not match",

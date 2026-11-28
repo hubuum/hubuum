@@ -347,7 +347,7 @@ async fn independently_managed_matching_index_suppresses_suggestions() {
     };
     native_ddl(
         &native_pool,
-        format!("CREATE INDEX {index_name} ON hubuumobject USING hash ((data #>> '{{{path}}}'))"),
+        format!("CREATE INDEX CONCURRENTLY {index_name} ON hubuumobject USING hash ((data #>> '{{{path}}}'))"),
     )
     .await
     .unwrap();
@@ -359,7 +359,11 @@ async fn independently_managed_matching_index_suppresses_suggestions() {
             .unwrap(),
     )
     .unwrap();
-    let cleanup = native_ddl(&native_pool, format!("DROP INDEX {index_name}")).await;
+    let cleanup = native_ddl(
+        &native_pool,
+        format!("DROP INDEX CONCURRENTLY {index_name}"),
+    )
+    .await;
     delete_backend_object_fixture(&backend, fixture).await;
     cleanup.unwrap();
     assert_eq!(report["suggestions"], json!([]));
@@ -383,17 +387,20 @@ async fn native_ddl(
         database_role_tests_enabled, integration_test_database_roles,
     };
     hubuum_storage_postgres::with_connection(pool, async |connection| {
-        connection
-            .transaction::<_, diesel::result::Error, _>(async |connection| {
-                if database_role_tests_enabled() {
-                    sql_query("SELECT set_config('role', $1, true)")
-                        .bind::<Text, _>(integration_test_database_roles().owner().as_str())
-                        .execute(connection)
-                        .await?;
-                }
-                sql_query(sql).execute(connection).await
-            })
-            .await
+        // Concurrent index DDL cannot run in a transaction. A plain DROP waits
+        // behind backup snapshots while blocking unrelated parallel writers.
+        let roles = database_role_tests_enabled();
+        if roles {
+            sql_query("SELECT set_config('role', $1, false)")
+                .bind::<Text, _>(integration_test_database_roles().owner().as_str())
+                .execute(connection)
+                .await?;
+        }
+        let result = sql_query(sql).execute(connection).await;
+        if roles {
+            sql_query("RESET ROLE").execute(connection).await?;
+        }
+        result
     })
     .await
 }

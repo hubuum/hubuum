@@ -15,6 +15,16 @@ impl ImportResults {
             .unwrap_or_default()
     }
 
+    pub(crate) fn remove_last(&mut self, task: TaskId) {
+        if let std::collections::btree_map::Entry::Occupied(mut entry) =
+            self.by_task.entry(task.id())
+        {
+            entry.get_mut().pop();
+            if entry.get().is_empty() {
+                entry.remove();
+            }
+        }
+    }
     pub(crate) fn rows(&self) -> impl Iterator<Item = &StorageImportTaskResult> {
         self.by_task.values().flatten()
     }
@@ -62,7 +72,7 @@ mod tests {
             .unwrap()
             .block_on(async {
                 let storage = MemoryStorage::new();
-                let task = storage
+                let outcome = storage
                     .create_task(
                         StorageTaskCreateRequest::builder(
                             StorageTaskKind::Import,
@@ -70,12 +80,16 @@ mod tests {
                             json!({}),
                             2,
                         )
-                        .try_build(10)
+                        .try_build()
                         .unwrap(),
                     )
                     .await
-                    .unwrap()
-                    .id();
+                    .unwrap();
+                let hubuum_storage_core::StorageTaskSubmissionOutcome::CreatedReady(task) = outcome
+                else {
+                    panic!("expected ready task")
+                };
+                let task = task.id();
                 let restored = StorageImportTaskResult::builder(
                     ImportTaskResultId::new(i32::MAX - 1).unwrap(),
                     task,
@@ -89,6 +103,7 @@ mod tests {
                     .state
                     .write()
                     .await
+                    .unwrap()
                     .import_task_results
                     .insert(restored);
                 let result =
@@ -100,7 +115,7 @@ mod tests {
                         .is_err()
                 );
                 storage.record_import_results(vec![result]).await.unwrap();
-                let state = storage.state.read().await;
+                let state = storage.state.read().await.unwrap();
                 let ids: Vec<_> = state
                     .import_task_results
                     .for_task(task)

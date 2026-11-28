@@ -3,6 +3,7 @@ use super::{
     EventEntityId, EventEnvelope, EventId, MutationProvenance, PrincipalId, TaskId, TraceLink,
     is_valid_pair,
 };
+use chrono::{DateTime, Utc};
 use std::fmt;
 use uuid::Uuid;
 
@@ -210,11 +211,13 @@ impl std::error::Error for AuditDocumentError {}
 
 /// A validated event mutation ready to be appended by a storage adapter.
 ///
-/// Storage-owned columns such as the database id, occurrence timestamp, and
-/// dispatch claim state are intentionally absent. Debug output never exposes
+/// Storage assigns the database sequence and default occurrence time. Retained
+/// recovery facts may supply their original UUID and timestamp explicitly.
+/// Dispatch claim state stays storage-owned. Debug output never exposes
 /// snapshots or metadata because those values can contain credentials.
 pub struct NewEvent {
     event_id: EventId,
+    occurred_at: Option<DateTime<Utc>>,
     entity_type: EntityType,
     entity_id: Option<EventEntityId>,
     entity_name: Option<String>,
@@ -283,6 +286,7 @@ impl NewEvent {
         }
         Ok(Self {
             event_id: EventId::new(),
+            occurred_at: None,
             entity_type,
             entity_id: None,
             entity_name: None,
@@ -297,6 +301,18 @@ impl NewEvent {
             trace_link: None,
             document,
         })
+    }
+
+    #[must_use]
+    pub fn with_recorded_identity(mut self, event_id: EventId, occurred_at: DateTime<Utc>) -> Self {
+        self.event_id = event_id;
+        self.occurred_at = Some(occurred_at);
+        self
+    }
+
+    #[must_use]
+    pub const fn occurred_at(&self) -> Option<DateTime<Utc>> {
+        self.occurred_at
     }
 
     #[must_use]

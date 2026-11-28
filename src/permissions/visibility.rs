@@ -1,4 +1,6 @@
 use std::future::Future;
+#[cfg(test)]
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::errors::ApiError;
@@ -459,12 +461,30 @@ where
 fn record_candidate_fetch(rows: usize) {
     tracing::debug!(target: "hubuum::permissions", fetched_rows = rows, "authorization_candidate_page");
     #[cfg(test)]
-    let _ = CANDIDATE_FETCHES.try_with(|fetches| fetches.borrow_mut().push(rows));
+    let _ = CANDIDATE_FETCHES
+        .try_with(|fetches| fetches.lock().expect("candidate capture mutex").push(rows));
 }
 
 #[cfg(test)]
 tokio::task_local! {
-    static CANDIDATE_FETCHES: std::cell::RefCell<Vec<usize>>;
+    static CANDIDATE_FETCHES: Arc<Mutex<Vec<usize>>>;
+}
+
+#[cfg(test)]
+pub(crate) struct CandidateFetchCapture(Option<Arc<Mutex<Vec<usize>>>>);
+
+#[cfg(test)]
+impl CandidateFetchCapture {
+    pub(crate) fn current() -> Self {
+        Self(CANDIDATE_FETCHES.try_with(Clone::clone).ok())
+    }
+
+    pub(crate) async fn run<T>(self, future: impl Future<Output = T>) -> T {
+        match self.0 {
+            Some(capture) => CANDIDATE_FETCHES.scope(capture, future).await,
+            None => future.await,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -472,11 +492,12 @@ pub(crate) async fn capture_candidate_fetches<T>(
     future: impl Future<Output = T>,
 ) -> (T, Vec<usize>) {
     CANDIDATE_FETCHES
-        .scope(std::cell::RefCell::new(Vec::new()), async {
+        .scope(Arc::new(Mutex::new(Vec::new())), async {
             let result = future.await;
             (
                 result,
-                CANDIDATE_FETCHES.with(|fetches| fetches.borrow().clone()),
+                CANDIDATE_FETCHES
+                    .with(|fetches| fetches.lock().expect("candidate capture mutex").clone()),
             )
         })
         .await
@@ -551,6 +572,30 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn candidate_capture_preserves_opt_in_scope_across_send_task() {
+        let ((), counts) = capture_candidate_fetches(async {
+            let captured = CandidateFetchCapture::current();
+            tokio::spawn(captured.run(async {
+                record_candidate_fetch(3);
+            }))
+            .await
+            .unwrap();
+            record_candidate_fetch(4);
+        })
+        .await;
+        assert_eq!(counts, vec![3, 4]);
+        assert!(
+            CANDIDATE_FETCHES.try_with(|_| ()).is_err(),
+            "capture must not leak into its surrounding task"
+        );
+        let (_, empty) = capture_candidate_fetches(async {}).await;
+        assert!(
+            empty.is_empty(),
+            "a later opt-in capture starts independently"
+        );
+    }
 
     #[test]
     fn candidate_decision_count_mismatch_fails_closed() {

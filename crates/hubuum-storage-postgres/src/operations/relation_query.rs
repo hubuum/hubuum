@@ -1264,7 +1264,7 @@ impl ClassGraphQueryRow {
     }
 }
 
-#[derive(Clone, QueryableByName)]
+#[derive(Clone, QueryableByName, serde::Serialize)]
 struct ObjectGraphQueryRow {
     #[diesel(sql_type = diesel::sql_types::Integer)]
     ancestor_object_id: i32,
@@ -1349,7 +1349,7 @@ impl ObjectGraphQueryRow {
     }
 }
 
-#[derive(QueryableByName)]
+#[derive(QueryableByName, serde::Serialize)]
 struct RelatedObjectIncludeQueryRow {
     #[diesel(sql_type = diesel::sql_types::Integer)]
     root_object_id: i32,
@@ -1369,7 +1369,7 @@ impl RelatedObjectIncludeQueryRow {
     }
 }
 
-#[derive(QueryableByName)]
+#[derive(QueryableByName, serde::Serialize)]
 struct RelatedObjectForRootQueryRow {
     #[diesel(sql_type = diesel::sql_types::Integer)]
     root_object_id: i32,

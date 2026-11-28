@@ -11,6 +11,7 @@ publish = false
 rust-api = "workspace-internal"
 
 [dependencies]
+tempfile = "3"
 hubuum-budget = { path = "../hubuum-budget" }
 serde = { version = "1", features = ["derive"] }
 chrono = "0.4"
@@ -20,10 +21,11 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 tokio = { version = "1", features = ["rt", "process", "io-util", "sync", "time", "macros"] }
 tracing = "0.1"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 rstest = "0.28"
-libc = "0.2"
-tempfile = "3"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 gungraun = "0.20.0"
 

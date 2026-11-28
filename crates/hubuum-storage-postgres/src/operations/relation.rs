@@ -1,4 +1,5 @@
 //! PostgreSQL implementation of class- and object-relation lifecycles.
+use diesel::SelectableHelper;
 use hubuum_domain::{ObjectRelationLimit, TemplateAlias};
 
 use chrono::NaiveDateTime;
@@ -324,6 +325,7 @@ pub(crate) async fn update_class_relation_labels_on(
             relation::forward_label.eq(updated.forward_label().map(RelationLabel::as_str)),
             relation::reverse_label.eq(updated.reverse_label().map(RelationLabel::as_str)),
         ))
+        .returning(ClassRelationRow::as_select())
         .get_result::<ClassRelationRow>(connection)
         .await?;
     let event = class_relation_event(
@@ -815,6 +817,7 @@ async fn load_class_endpoints(
 ) -> Result<(ClassRow, ClassRow), PostgresStorageError> {
     let classes = crate::schema::hubuumclass::table
         .filter(crate::schema::hubuumclass::id.eq_any([from_class_id, to_class_id]))
+        .select(ClassRow::as_select())
         .load::<ClassRow>(connection)
         .await?;
     let from_class = classes
@@ -840,6 +843,7 @@ async fn load_object_endpoints(
 ) -> Result<(ObjectRow, ObjectRow), PostgresStorageError> {
     let objects = crate::schema::hubuumobject::table
         .filter(crate::schema::hubuumobject::id.eq_any([from_object_id, to_object_id]))
+        .select(ObjectRow::as_select())
         .load::<ObjectRow>(connection)
         .await?;
     let from_object = objects
@@ -865,6 +869,7 @@ async fn lock_class(
     crate::schema::hubuumclass::table
         .filter(crate::schema::hubuumclass::id.eq(class_id))
         .for_update()
+        .select(ClassRow::as_select())
         .first::<ClassRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -876,6 +881,7 @@ async fn load_class_relation(
 ) -> Result<ClassRelationRow, PostgresStorageError> {
     crate::schema::hubuumclass_relation::table
         .filter(crate::schema::hubuumclass_relation::id.eq(relation_id))
+        .select(ClassRelationRow::as_select())
         .first::<ClassRelationRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -888,6 +894,7 @@ async fn lock_class_relation(
     crate::schema::hubuumclass_relation::table
         .filter(crate::schema::hubuumclass_relation::id.eq(relation_id))
         .for_update()
+        .select(ClassRelationRow::as_select())
         .first::<ClassRelationRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -900,6 +907,7 @@ async fn lock_class_relation_shared(
     crate::schema::hubuumclass_relation::table
         .filter(crate::schema::hubuumclass_relation::id.eq(relation_id))
         .for_share()
+        .select(ClassRelationRow::as_select())
         .first::<ClassRelationRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -936,7 +944,7 @@ async fn load_direct_class_relation(
     let relation = crate::schema::hubuumclass_relation::table
         .filter(crate::schema::hubuumclass_relation::from_hubuum_class_id.eq(from_class_id))
         .filter(crate::schema::hubuumclass_relation::to_hubuum_class_id.eq(to_class_id))
-        .first::<ClassRelationRow>(connection)
+        .select(ClassRelationRow::as_select()).first::<ClassRelationRow>(connection)
         .await
         .map_err(|error| match error {
             diesel::result::Error::NotFound => PostgresStorageError::not_found(format!(
@@ -962,6 +970,7 @@ async fn insert_class_relation(
 ) -> Result<ClassRelationRow, PostgresStorageError> {
     diesel::insert_into(crate::schema::hubuumclass_relation::table)
         .values(NewClassRelationRow::from(command))
+        .returning(ClassRelationRow::as_select())
         .get_result::<ClassRelationRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -986,6 +995,7 @@ async fn load_object_relation(
 ) -> Result<ObjectRelationRow, PostgresStorageError> {
     crate::schema::hubuumobject_relation::table
         .filter(crate::schema::hubuumobject_relation::id.eq(relation_id))
+        .select(ObjectRelationRow::as_select())
         .first::<ObjectRelationRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -998,6 +1008,7 @@ async fn lock_object_relation(
     crate::schema::hubuumobject_relation::table
         .filter(crate::schema::hubuumobject_relation::id.eq(relation_id))
         .for_update()
+        .select(ObjectRelationRow::as_select())
         .first::<ObjectRelationRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -1013,6 +1024,7 @@ async fn load_object_relation_between(
     crate::schema::hubuumobject_relation::table
         .filter(crate::schema::hubuumobject_relation::from_hubuum_object_id.eq(from_object_id))
         .filter(crate::schema::hubuumobject_relation::to_hubuum_object_id.eq(to_object_id))
+        .select(ObjectRelationRow::as_select())
         .first::<ObjectRelationRow>(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -1024,6 +1036,7 @@ async fn insert_object_relation(
 ) -> Result<ObjectRelationRow, PostgresStorageError> {
     diesel::insert_into(crate::schema::hubuumobject_relation::table)
         .values(NewObjectRelationRow::from(command))
+        .returning(ObjectRelationRow::as_select())
         .get_result::<ObjectRelationRow>(connection)
         .await
         .map_err(PostgresStorageError::from)

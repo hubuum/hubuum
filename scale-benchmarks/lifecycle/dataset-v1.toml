@@ -1,0 +1,73 @@
+# Uses the existing scale generator with a smaller, separately versioned corpus.
+schema_version = 1
+profile_version = 1
+name = "large"
+seed = 50320261027
+
+[totals]
+collections = 32
+classes = 128
+objects = 10000
+class_relations = 208
+object_relations = 20000
+principals = 1000
+groups = 100
+memberships = 6000
+permission_grants = 96
+
+[regions.object_heavy]
+collections = 4
+classes = 8
+objects = 6000
+class_relations = 16
+object_relations = 12000
+
+[regions.class_heavy]
+collections = 12
+classes = 88
+objects = 1000
+class_relations = 128
+object_relations = 4000
+
+[regions.balanced]
+collections = 16
+classes = 32
+objects = 3000
+class_relations = 64
+object_relations = 4000
+
+[overlays]
+history_resources = 500
+history_typical_revisions = 2
+history_moderate_resources = 50
+history_moderate_revisions = 6
+history_heavy_resources = 4
+history_heavy_revisions = 48
+computed_classes = 10
+templates = 16
+remote_targets = 8
+event_sinks = 4
+event_subscriptions = 16
+event_deliveries = 1000
+terminal_tasks = 10000
+audit_events = 1000
+
+[invariants]
+minimum_hot_class_objects = 3000
+maximum_median_objects_per_class = 20
+minimum_hub_object_degree = 1000
+minimum_concentrated_relation_count = 2000
+minimum_heavy_history_revisions = 32
+maximum_sparse_visibility_percent = 10.0
+class_component_size = 8
+adversarial_component_size = 8
+maximum_graph_depth = 7
+
+[provisioning]
+lifecycle_max_resident_bytes = 536870912
+lifecycle_stage_timeout_seconds = 600
+backup_max_capture_rows = 200000
+backup_max_output_bytes = 1073741824
+restore_max_upload_bytes = 1073741824
+db_statement_timeout_ms = 120000
+db_pool_size = 8

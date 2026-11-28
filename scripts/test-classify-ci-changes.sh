@@ -44,6 +44,34 @@ assert_literal_include_is_code() {
   assert_flag "$output" rust true
 }
 
+# Filesystem adapter implementation and native fault tests remain production
+# inputs even though selecting it for task outputs is a separate activation.
+for expiry_input in .github/workflows/history-expiry-qualification.yml \
+  .github/workflows/history-census-qualification.yml tests/python/integration/history_census.py \
+  tests/python/integration/history_expiry.py tests/restore_contract/history_expiry_qualification.rs \
+  tests/restore_contract/history_expiry_qualification/replica.rs \
+  tests/restore_contract/history_expiry_qualification/metadata.rs \
+  tests/restore_contract/history_expiry_qualification/authority.rs; do
+  expiry_output="$(bash "$classifier" "$expiry_input")"
+  assert_flag "$expiry_output" code true
+  assert_flag "$expiry_output" rust true
+  assert_flag "$expiry_output" container true
+done
+
+for filesystem_path in crates/hubuum-artifacts/src/filesystem.rs \
+  crates/hubuum-artifacts/src/filesystem/tests.rs crates/hubuum-artifacts/Cargo.toml; do
+  filesystem_output="$(bash "$classifier" "$filesystem_path")"
+  assert_flag "$filesystem_output" code true
+  assert_flag "$filesystem_output" rust true
+  assert_flag "$filesystem_output" container true
+  assert_flag "$filesystem_output" artifacts true
+done
+
+filesystem_benchmark="$(bash "$classifier" crates/hubuum-artifacts/benches/filesystem_artifact_storage_criterion.rs)"
+assert_flag "$filesystem_benchmark" code true
+assert_flag "$filesystem_benchmark" rust true
+assert_flag "$filesystem_benchmark" benchmarks true
+
 for operator_path in observability/prometheus/alerts.json observability/prometheus/tests.json \
   observability/dashboards/overview.json scripts/observability.py; do
   operator_output="$(bash "$classifier" "$operator_path")"
@@ -69,23 +97,142 @@ for authorization_path in src/tasks/import_authorization.rs src/tests/permission
   assert_flag "$authorization_output" treetop_conformance true
 done
 
+for policy_input in src/models/history_lifecycle.rs src/api/v1/handlers/history_lifecycle.rs \
+  crates/hubuum-storage-core/src/history_lifecycle.rs crates/hubuum-storage-core/src/history_lifecycle/policy.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/authorization.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/authorization/tests.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/online/scan.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/task.rs \
+  crates/hubuum-storage-core/src/history_lifecycle/task/tests.rs \
+  crates/hubuum-domain/src/task_kind.rs \
+  crates/hubuum-storage-core/src/record_identity.rs crates/hubuum-storage-core/src/logical_identity.rs; do
+  policy_output="$(bash "$classifier" "$policy_input")"
+  assert_flag "$policy_output" code true
+  assert_flag "$policy_output" rust true
+  assert_flag "$policy_output" openapi true
+  assert_flag "$policy_output" operational_contract true
+  assert_flag "$policy_output" container true
+done
+
+for policy_storage_input in crates/hubuum-storage-postgres/tests/history_lifecycle.rs \
+  crates/hubuum-storage-postgres/tests/history_expiry/mod.rs \
+  crates/hubuum-storage-postgres/tests/history_expiry/bounded_scan.rs \
+  crates/hubuum-storage-postgres/tests/history_expiry/task.rs \
+  crates/hubuum-storage-postgres/tests/history_expiry/task/removal_race.rs \
+  crates/hubuum-storage-postgres/src/operations/history_expiry_task.rs \
+  crates/hubuum-storage-memory/src/history_lifecycle/expiry/task_tests.rs \
+  src/services/deletion_recovery/history_expiry.rs \
+  crates/hubuum-storage-memory/src/history_lifecycle/expiry/progress_tests.rs \
+  crates/hubuum-storage-postgres/src/runtime/history_publication.rs \
+  crates/hubuum-storage-postgres/migrations/2026-11-19-000002_history_lifecycle/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-19-000002_history_lifecycle/down.sql; do
+  policy_storage_output="$(bash "$classifier" "$policy_storage_input")"
+  assert_flag "$policy_storage_output" code true
+  assert_flag "$policy_storage_output" rust true
+done
+
+history_projection_output="$(bash "$classifier" src/models/history_lifecycle/operation_response_tests.rs)"
+assert_flag "$history_projection_output" code true
+assert_flag "$history_projection_output" rust true
+assert_flag "$history_projection_output" container true
+
+# The history capability is embedded in the finite operational metrics catalog.
+history_catalog_output="$(bash "$classifier" src/storage/context/history_lifecycle.rs)"
+assert_flag "$history_catalog_output" code true
+assert_flag "$history_catalog_output" rust true
+assert_flag "$history_catalog_output" operational_contract true
+
 for planner_test in src/tasks/tests/import_execution.rs src/tasks/tests/import_planning.rs; do
   planner_output="$(bash "$classifier" "$planner_test")"
   assert_flag "$planner_output" rust true
 done
 
-for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs src/models/runtime_settings/discovery.rs; do
+for history_handler in src/models/history/computed.rs src/api/v1/handlers/classes/history_computed.rs src/api/v1/handlers/classes/history_population.rs src/api/v1/handlers/classes/history_relations.rs crates/hubuum-storage-core/src/api_request_admission.rs src/middlewares/api_request_admission.rs src/models/runtime_settings/discovery.rs; do
   history_output="$(bash "$classifier" "$history_handler")"
   assert_flag "$history_output" openapi true
 done
 
 for cursor_input in crates/hubuum-storage-postgres/src/cursor/query_plan_tests.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000005_managed_deletion_cleanup/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000005_managed_deletion_cleanup/down.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000004_deletion_execution_fence/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000004_deletion_execution_fence/down.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000003_deletion_recovery_gate/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000003_deletion_recovery_gate/down.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000002_deletion_authority/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000002_deletion_authority/down.sql \
   crates/hubuum-storage-postgres/migrations/2026-09-13-000001_byte_ordered_cursor_indexes/up.sql \
   crates/hubuum-storage-postgres/migrations/2026-09-13-000001_byte_ordered_cursor_indexes/down.sql; do
   cursor_output="$(bash "$classifier" "$cursor_input")"
   assert_flag "$cursor_output" code true
   assert_flag "$cursor_output" container true
   assert_flag "$cursor_output" artifacts true
+done
+
+for artifact_input in crates/hubuum-artifacts/Cargo.toml \
+  crates/hubuum-storage-core/src/artifacts/error_tests.rs \
+  crates/hubuum-artifacts/src/owned.rs crates/hubuum-artifacts/src/owned/tests.rs \
+  crates/hubuum-artifacts/tests/owned_external_provider.rs \
+  crates/hubuum-artifacts/src/s3.rs crates/hubuum-artifacts/src/s3/config.rs \
+  crates/hubuum-artifacts/src/s3/tests.rs \
+  src/benchmark_support/history_segments.rs src/benchmark_support/history_segments/tests.rs \
+  src/services/history/segments.rs src/services/history/segments/tests.rs \
+  src/services/history/segments/index.rs src/services/history/archive.rs \
+  crates/hubuum-storage-core/src/history_archive.rs \
+  crates/hubuum-storage-core/src/history_archive/tests.rs \
+  crates/hubuum-storage-postgres/src/backend/history_archive.rs \
+  crates/hubuum-storage-postgres/migrations/2026-11-03-000004_history_archive_reads/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-03-000004_history_archive_reads/down.sql \
+  examples/history_segments.rs \
+  crates/hubuum-storage-core/src/artifacts/manifest.rs crates/hubuum-artifacts/tests/protocol.rs \
+  crates/hubuum-artifacts/src/producer.rs src/backups/producer.rs \
+  src/backups/producer/tests.rs \
+  crates/hubuum-storage-core/src/artifacts/backup.rs crates/hubuum-storage-memory/src/artifacts.rs \
+  crates/hubuum-storage-postgres/src/operations/backup_artifacts.rs \
+  crates/hubuum-templates/src/spool.rs crates/hubuum-templates/src/spool/file.rs \
+  src/config/artifacts.rs src/services/artifacts.rs \
+  src/storage/context/artifacts.rs src/tasks/tests/artifact_pipeline.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000001_artifact_outputs/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-29-000001_artifact_outputs/down.sql \
+  crates/hubuum-storage-postgres/src/artifacts.rs crates/hubuum-storage-postgres/tests/artifacts.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-27-000002_artifact_staging/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-10-27-000002_artifact_staging/down.sql; do
+  artifact_output="$(bash "$classifier" "$artifact_input")"
+  assert_flag "$artifact_output" code true
+  assert_flag "$artifact_output" rust true
+  assert_flag "$artifact_output" container true
+  assert_flag "$artifact_output" artifacts true
+done
+
+s3_benchmark_output="$(bash "$classifier" crates/hubuum-artifacts/benches/s3_artifact_storage_criterion.rs)"
+assert_flag "$s3_benchmark_output" benchmarks true
+s3_fixture_output="$(bash "$classifier" tests/python/integration/s3_artifacts.py)"
+assert_flag "$s3_fixture_output" code true
+assert_flag "$s3_fixture_output" container true
+
+artifact_restore_output="$(bash "$classifier" src/tests/storage_contract/artifacts.rs tests/restore_contract/artifacts.rs)"
+assert_flag "$artifact_restore_output" code true
+assert_flag "$artifact_restore_output" rust true
+artifact_driver_output="$(bash "$classifier" tests/python/integration/artifact_pipeline.py)"
+assert_flag "$artifact_driver_output" code true
+assert_flag "$artifact_driver_output" container true
+artifact_driver_unit_output="$(bash "$classifier" tests/python/unit/tooling/test_artifact_pipeline.py)"
+assert_flag "$artifact_driver_unit_output" code true
+assert_flag "$artifact_driver_unit_output" rust false
+for deletion_input in crates/hubuum-storage-core/src/deletion_control.rs \
+  crates/hubuum-storage-core/src/deletion_control/cleanup.rs \
+  crates/hubuum-storage-memory/src/deletion_control.rs \
+  crates/hubuum-storage-memory/src/deletion_control/tests.rs \
+  crates/hubuum-storage-postgres/tests/deletion_control.rs \
+  src/application/runtime_shutdown_tests.rs \
+  src/middlewares/maintenance/tests.rs \
+  src/services/deletion_recovery/cleanup.rs \
+  src/services/deletion_recovery/cleanup/tests.rs \
+  src/services/deletion_recovery/repository.rs \
+  src/services/deletion_recovery/tests.rs src/config/control_recovery.rs; do
+  deletion_output="$(bash "$classifier" "$deletion_input")"
+  assert_flag "$deletion_output" code true
+  assert_flag "$deletion_output" rust true
 done
 
 for regex_input in crates/hubuum-storage-postgres/tests/regex_pattern.rs \
@@ -122,6 +269,13 @@ for fuzz_dependency in crates/hubuum-regex/src/lib.rs \
   assert_flag "$fuzz_output" regex_fuzz true
 done
 
+# Both runners supply the isolated databases used by Rust restore/archive contracts.
+for restore_fixture in run_tests.sh tests/python/integration/rust_tests.py; do
+  restore_fixture_output="$(bash "$classifier" "$restore_fixture")"
+  assert_flag "$restore_fixture_output" code true
+  assert_flag "$restore_fixture_output" rust true
+done
+
 assert_flag "$(bash "$classifier" docs/testing.md)" regex_fuzz false
 for unrelated_crate in crates/hubuum-domain/src/lib.rs \
   crates/hubuum-storage-postgres/src/operations/tasks.rs crates/hubuum-query/src/parse.rs; do
@@ -139,6 +293,11 @@ for corpus_path in .gitattributes test-corpora/comprehensive.json test-corpora/c
   assert_flag "$corpus_output" container true
   assert_flag "$corpus_output" scale_benchmark false
 done
+
+# This fixture is also read directly by the Rust backup verifier regression.
+assert_flag "$(bash "$classifier" test-corpora/comprehensive.json)" rust true
+assert_flag "$(bash "$classifier" .gitattributes)" rust true
+assert_flag "$(bash "$classifier" tests/python/unit/tooling/test_lifecycle_fixture_checkout.py)" code true
 
 docs_output="$(bash "$classifier" README.md AGENTS.md docs/development.md)"
 assert_flag "$docs_output" markdown true
@@ -528,21 +687,60 @@ PY
 
 scale_benchmark_output="$(bash "$classifier" \
   .github/workflows/scale-benchmarks.yml \
+  .github/workflows/scheduler-benchmarks.yml \
   scale-benchmarks/profiles/large.toml \
   scale-benchmarks/profiles/huge.toml \
   scale-benchmarks/sensitivity-v1.toml \
   scale-benchmarks/workloads/v1.toml \
+  scale-benchmarks/lifecycle/dataset-v1.toml \
+  scale-benchmarks/lifecycle/workload-v1.toml \
   crates/hubuum-scale-benchmark/src/runner.rs \
   crates/hubuum-scale-benchmark/src/lifecycle_process.rs \
   crates/hubuum-scale-core/src/lib.rs \
+  crates/hubuum-scale-core/src/lifecycle.rs \
   crates/hubuum-storage-postgres/src/scale_benchmark.rs \
-  crates/hubuum-storage-postgres/src/scale_benchmark/history_baselines.sql)"
+  crates/hubuum-storage-postgres/src/scale_benchmark/history_baselines.sql \
+  crates/hubuum-storage-postgres/src/scale_benchmark/lifecycle.rs)"
 assert_flag "$scale_benchmark_output" code true
 assert_flag "$scale_benchmark_output" benchmarks true
 assert_flag "$scale_benchmark_output" runtime_benchmark false
 assert_flag "$scale_benchmark_output" scale_benchmark true
 assert_flag "$scale_benchmark_output" container false
 assert_flag "$scale_benchmark_output" artifacts false
+
+for lifecycle_input in \
+  scale-benchmarks/lifecycle/dataset-v1.toml \
+  scale-benchmarks/lifecycle/workload-v1.toml \
+  scale-benchmarks/lifecycle/task-retention-v1.json \
+  crates/hubuum-scale-benchmark/src/task_retention.rs \
+  crates/hubuum-scale-benchmark/src/task_retention_observe.rs \
+  crates/hubuum-scale-benchmark/src/task_retention_observe/refill.rs \
+  crates/hubuum-scale-benchmark/src/task_retention_probes.rs \
+  crates/hubuum-scale-benchmark/src/task_retention_safety.rs \
+  crates/hubuum-scale-core/src/lifecycle.rs \
+  crates/hubuum-storage-postgres/src/scale_benchmark/lifecycle.rs \
+  crates/hubuum-storage-postgres/src/scale_benchmark/task_retention.rs; do
+  lifecycle_output="$(bash "$classifier" "$lifecycle_input")"
+  assert_flag "$lifecycle_output" rust true
+  assert_flag "$lifecycle_output" scale_benchmark true
+  assert_flag "$lifecycle_output" container false
+done
+
+for retention_driver in tests/python/integration/task_retention.py \
+  tests/python/support/task_effects.py tests/python/support/task_retention_recovery.py \
+  tests/python/support/task_retention_safety.py; do
+  retention_driver_output="$(bash "$classifier" "$retention_driver")"
+  assert_flag "$retention_driver_output" code true
+  assert_flag "$retention_driver_output" rust true
+  assert_flag "$retention_driver_output" container true
+  assert_flag "$retention_driver_output" scale_benchmark true
+done
+
+affinity_image_output="$(bash "$classifier" scale-benchmarks/lifecycle/affinity.Dockerfile)"
+assert_flag "$affinity_image_output" code true
+assert_flag "$affinity_image_output" rust true
+assert_flag "$affinity_image_output" container true
+assert_flag "$affinity_image_output" scale_benchmark true
 
 for scale_manifest in crates/hubuum-scale-benchmark/Cargo.toml crates/hubuum-scale-core/Cargo.toml; do
   scale_manifest_output="$(bash "$classifier" "$scale_manifest")"
@@ -662,7 +860,31 @@ if ((literal_include_count == 0)); then
   exit 1
 fi
 
-echo "CI change classifier tests passed."
+# Project storage migrations require native adapter and production image validation.
+for adapter_change_path in \
+  crates/hubuum-storage-postgres/tests/archive_runtime_compatibility.rs \
+  crates/hubuum-storage-postgres/migrations/2026-11-11-000001_archive_runtime_compatibility/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-11-000001_archive_runtime_compatibility/down.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-19-000001_idle_task_scheduling/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-19-000001_idle_task_scheduling/down.sql; do
+  adapter_change_output="$(bash "$classifier" "$adapter_change_path")"
+  assert_flag "$adapter_change_output" code true
+  assert_flag "$adapter_change_output" rust true
+  assert_flag "$adapter_change_output" container true
+  case "$adapter_change_path" in
+    */migrations/*) assert_flag "$adapter_change_output" operational_contract false ;;
+    *) assert_flag "$adapter_change_output" operational_contract true ;;
+  esac
+done
+
+
+for scheduler_report in scheduling_acceptance scheduling_integration; do
+  scheduler_report_output="$(bash "$classifier" "docs/performance/$scheduler_report.json")"
+  assert_flag "$scheduler_report_output" documentation true
+  for scheduler_report_flag in code rust container artifacts benchmarks; do
+    assert_flag "$scheduler_report_output" "$scheduler_report_flag" false
+  done
+done
 
 # Runtime hardening adds a compiled documentation input. Keep its validation.
 hardening_docs="$(bash "$classifier" docs/runtime_hardening.md)"
@@ -673,6 +895,10 @@ assert_flag "$inventory_output" code true
 worker_output="$(bash "$classifier" crates/hubuum-templates/src/bin/hubuum-template-worker.rs)"
 assert_flag "$worker_output" container true
 assert_flag "$worker_output" artifacts true
+renderer_build="$(bash "$classifier" scripts/build-template-worker.sh)"
+for flag in code rust benchmarks runtime_benchmark; do
+  assert_flag "$renderer_build" "$flag" true
+done
 performance_output="$(bash "$classifier" benches/template_schema_concurrency/main.rs)"
 assert_flag "$performance_output" code true
 assert_flag "$performance_output" benchmarks true
@@ -937,6 +1163,39 @@ for schema_path in src/api/openapi.rs src/api/response.rs src/api/v1/handlers/au
   assert_flag "$schema_output" openapi true
   assert_flag "$schema_output" container true
 done
+
+# Durable-wait state and diagnostics are public response schemas. The storage
+# implementations and migration retain full native/container verification.
+for wait_schema in src/models/task.rs src/api/handlers/meta.rs; do
+  wait_output="$(bash "$classifier" "$wait_schema")"
+  assert_flag "$wait_output" rust true
+  assert_flag "$wait_output" openapi true
+done
+for wait_input in crates/hubuum-storage-core/src/task_waiting.rs \
+  crates/hubuum-storage-conformance/src/task_waiting.rs \
+  crates/hubuum-storage-memory/src/task_waits.rs \
+  crates/hubuum-storage-postgres/src/operations/task_control.rs \
+  crates/hubuum-storage-postgres/migrations/2026-11-01-000001_task_waiting/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-01-000001_task_waiting/down.sql; do
+  wait_output="$(bash "$classifier" "$wait_input")"
+  assert_flag "$wait_output" rust true
+  assert_flag "$wait_output" container true
+done
+wait_contract_output="$(bash "$classifier" src/tests/storage_contract/task_waiting.rs)"
+assert_flag "$wait_contract_output" rust true
+assert_flag "$wait_contract_output" container false
+
+for request_input in crates/hubuum-storage-postgres/migrations/2026-11-03-000002_api_request_admission/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-03-000002_api_request_admission/down.sql \
+  crates/hubuum-storage-postgres/src/backend/api_request_admission/tests.rs; do
+  request_output="$(bash "$classifier" "$request_input")"
+  assert_flag "$request_output" rust true
+  assert_flag "$request_output" container true
+done
+request_contract_output="$(bash "$classifier" src/tests/storage_contract/api_request_admission.rs)"
+assert_flag "$request_contract_output" rust true
+assert_flag "$request_contract_output" container false
+
 for session_input in src/services/auth_sessions.rs src/services/credential_activity.rs \
   src/tests/storage_contract/auth_sessions.rs tests/api_identity_suite/sessions.rs \
   crates/hubuum-storage-core/src/auth_sessions.rs crates/hubuum-storage-core/src/credential_activity.rs \
@@ -1019,6 +1278,31 @@ for discovery_path in tests/python/integration/class_field_discovery.py tests/py
   assert_flag "$discovery_output" code true
 done
 
-restore_fixture_output="$(bash "$classifier" tests/python/integration/rust_tests.py)"
-assert_flag "$restore_fixture_output" code true
-assert_flag "$restore_fixture_output" rust true
+# Fair scheduling touches runtime claims, restore contracts, measurement inputs,
+# and the production adapter's embedded migration.
+for scheduler_path in crates/hubuum-storage-core/src/task_scheduling.rs \
+  crates/hubuum-storage-memory/src/task_scheduling.rs \
+  crates/hubuum-storage-postgres/src/scale_benchmark/scheduling.rs \
+  crates/hubuum-storage-postgres/migrations/2026-10-31-000001_task_scheduling/up.sql \
+  tests/restore_contract/task_scheduling.rs; do
+  scheduler_output="$(bash "$classifier" "$scheduler_path")"
+  assert_flag "$scheduler_output" code true
+  assert_flag "$scheduler_output" rust true
+done
+scheduler_manifest="$(bash "$classifier" crates/hubuum-storage-postgres/Cargo.toml)"
+assert_flag "$scheduler_manifest" container true
+assert_flag "$scheduler_manifest" scale_benchmark true
+
+for scheduler_driver in tests/python/integration/scheduling_benchmark.py \
+  tests/python/unit/tooling/test_scheduling_benchmark.py; do
+  scheduler_driver_output="$(bash "$classifier" "$scheduler_driver")"
+  assert_flag "$scheduler_driver_output" code true
+  assert_flag "$scheduler_driver_output" rust true
+  assert_flag "$scheduler_driver_output" scale_benchmark true
+done
+
+archive_test_output="$(bash "$classifier" src/tests/storage_contract/history_archive.rs)"
+assert_flag "$archive_test_output" code true
+assert_flag "$archive_test_output" rust true
+
+echo "CI change classifier tests passed."

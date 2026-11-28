@@ -46,7 +46,7 @@ fn terminal_task_statuses_are_stable() {
     );
     assert_eq!(
         TaskStatus::ALL.map(TaskStatus::is_terminal),
-        [false, false, false, true, true, true, true]
+        [false, false, false, false, true, true, true, true]
     );
 }
 
@@ -58,7 +58,7 @@ fn active_task_statuses_are_stable() {
     );
     assert_eq!(
         TaskStatus::NON_TERMINAL.map(TaskStatus::as_str),
-        ["queued", "validating", "running"]
+        ["queued", "validating", "running", "waiting"]
     );
 }
 
@@ -140,6 +140,7 @@ fn task_record_debug_redacts_request_and_scope_material() {
         discovery_metadata: None,
         discovery_state: Default::default(),
         discovery_authorized: true,
+        checkpoint: None,
         control: hubuum_storage_core::StorageTaskControl::new(
             hubuum_storage_core::StorageTaskKind::Import,
         ),
@@ -192,6 +193,7 @@ fn export_task_details_include_persisted_phase_timings() {
         discovery_metadata: None,
         discovery_state: Default::default(),
         discovery_authorized: true,
+        checkpoint: None,
         control: hubuum_storage_core::StorageTaskControl::new(
             hubuum_storage_core::StorageTaskKind::Import,
         ),

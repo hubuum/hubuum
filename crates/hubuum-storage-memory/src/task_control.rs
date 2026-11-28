@@ -6,7 +6,7 @@ impl MemoryStorage {
         &self,
         request: StorageTaskCancellationRequest,
     ) -> Result<StorageTaskCancellationOutcome, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         let task = state
             .tasks
             .get_mut(&request.task_id().id())
@@ -39,13 +39,20 @@ impl MemoryStorage {
                 request.cancellation_reason().cloned(),
             ));
         task.updated_at = now;
-        if task.status == StorageTaskStatus::Queued {
+        let task = task.clone();
+        state.logical_identities.capture(&task);
+        if matches!(
+            task.status,
+            StorageTaskStatus::Queued | StorageTaskStatus::Waiting
+        ) {
+            let change = if task.status == StorageTaskStatus::Waiting {
+                StorageTaskCancellationChange::CancelledWaiting
+            } else {
+                StorageTaskCancellationChange::CancelledQueued
+            };
             let task =
                 state.finish_stopped_task(request.task_id(), now, Some(request.event_context()))?;
-            return Ok(StorageTaskCancellationOutcome::new(
-                task,
-                StorageTaskCancellationChange::CancelledQueued,
-            ));
+            return Ok(StorageTaskCancellationOutcome::new(task, change));
         }
         let projection = task.projection()?;
         state.append_task_event_record_with_context(request.task_id(),
@@ -63,7 +70,8 @@ impl MemoryStorage {
         request: StorageTaskExecutionAdmission,
     ) -> Result<StorageTaskExecutionObservation, StorageError> {
         let (lease, limit) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
+        state.ensure_task_lease_current(&lease)?;
         let task = state
             .tasks
             .get_mut(&lease.task_id().id())
@@ -88,7 +96,7 @@ impl MemoryStorage {
         &self,
         lease: StorageTaskLease,
     ) -> Result<StorageTaskExecutionObservation, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read_control().await;
         let task = state
             .tasks
             .get(&lease.task_id().id())
@@ -104,7 +112,7 @@ impl MemoryStorage {
         &self,
         lease: StorageTaskLease,
     ) -> Result<StorageTask, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         let task = state
             .tasks
             .get(&lease.task_id().id())
@@ -124,7 +132,8 @@ impl MemoryStorage {
         request: StorageTaskRemoteDispatch,
     ) -> Result<(), StorageError> {
         let (lease, target) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
+        state.ensure_task_lease_current(&lease)?;
         let task = state
             .tasks
             .get(&lease.task_id().id())
@@ -163,6 +172,30 @@ impl MemoryStorage {
 }
 
 impl MemoryState {
+    pub(super) fn ensure_task_lease_current(
+        &self,
+        lease: &StorageTaskLease,
+    ) -> Result<(), StorageError> {
+        if lease.execution_fence() != Some(self.application_control.fence()) {
+            return Err(StorageError::unavailable(
+                "Task lease belongs to a superseded application generation",
+            ));
+        }
+        self.ensure_task_execution_allowed()
+    }
+
+    pub(super) fn ensure_task_execution_allowed(&self) -> Result<(), StorageError> {
+        if !self
+            .application_control
+            .is_released_for(&self.deletion_control)
+        {
+            return Err(StorageError::unavailable(
+                "Deletion recovery quarantine prevents task execution and publication",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn store_remote_call_result(
         &mut self,
         task_id: TaskId,
@@ -206,8 +239,18 @@ impl MemoryState {
         } else {
             "not_sent"
         };
+        let evidence = previous
+            .and_then(|row| row.get("logical_identity"))
+            .cloned()
+            .unwrap_or_else(|| {
+                json!(self.logical_identities.task_outcome(
+                    task_id,
+                    target.target_id(),
+                    Some((target.subject_type(), target.subject_id()))
+                ))
+            });
         let result = StorageBackupRow::try_from_value(json!({
-        "id": id, "task_id": task_id.id(), "target_id": target.target_id().map(RemoteTargetId::id),
+        "logical_identity": evidence, "id": id, "task_id": task_id.id(), "target_id": target.target_id().map(RemoteTargetId::id),
         "subject_type": target.subject_type().as_str(), "subject_id": target.subject_id().id(),
         "method": target.method().map_or("unknown", |method| method.as_str()), "rendered_url": target.rendered_url(),
         "response_status": response_status, "response_headers": response_headers, "response_body_preview": response_body_preview,
@@ -353,7 +396,7 @@ impl MemoryState {
             }
         }
         if let Some(result) = unattempted_result {
-            self.import_task_results.insert(result);
+            self.store_import_result(result);
         }
         if remote_possible {
             for row in &mut self.remote_call_results {
@@ -401,6 +444,8 @@ impl MemoryState {
         task.request_payload = None;
         task.request_redacted_at = Some(now);
         task.claim_token = None;
+        task.checkpoint = None;
+        task.wait_token = None;
         task.lease_expires_at = None;
         let projection = task.projection()?;
         self.append_task_event_record_with_context(id, StorageTaskEventInput::new(status.as_str(), summary).with_data(Some(serde_json::json!({
@@ -414,7 +459,10 @@ impl MemoryState {
 
 #[cfg(test)]
 mod tests {
+    use hubuum_task_core::TaskExecutionLimit;
+
     use super::*;
+    use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 
     #[test]
     fn updating_a_dispatched_result_preserves_its_id_when_the_sequence_is_full() {
@@ -463,7 +511,7 @@ mod tests {
     }
 
     async fn queued(storage: &MemoryStorage) -> StorageTask {
-        storage
+        let outcome = storage
             .create_task(
                 StorageTaskCreateRequest::builder(
                     StorageTaskKind::Import,
@@ -471,11 +519,207 @@ mod tests {
                     serde_json::json!({}),
                     2,
                 )
-                .try_build(10)
+                .try_build()
                 .unwrap(),
             )
             .await
+            .unwrap();
+        let StorageTaskSubmissionOutcome::CreatedReady(task) = outcome else {
+            panic!("fresh unkeyed task")
+        };
+        task
+    }
+
+    async fn quarantine(storage: &MemoryStorage) {
+        let before = storage.read_deletion_control().await.unwrap();
+        let change = before
+            .record_intent(
+                Uuid::new_v4(),
+                DeletionSubject::Version {
+                    identity: serde_json::from_value(serde_json::json!(Uuid::new_v4())).unwrap(),
+                },
+                vec![Uuid::new_v4()],
+            )
+            .unwrap();
+        storage.commit_deletion_control(change).await.unwrap();
+    }
+
+    #[rstest::rstest]
+    #[case::admission("admission")]
+    #[case::progress("progress")]
+    #[case::event("event")]
+    #[case::completion("completion")]
+    #[tokio::test]
+    async fn quarantine_fences_previously_claimed_work(#[case] operation: &str) {
+        let storage = MemoryStorage::new();
+        queued(&storage).await;
+        let claim = storage
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
+            .await
             .unwrap()
+            .unwrap();
+        let lease = claim.lease().clone();
+        quarantine(&storage).await;
+        let result = match operation {
+            "admission" => storage
+                .admit_task_execution(StorageTaskExecutionAdmission::new(
+                    lease,
+                    TaskExecutionLimit::from_milliseconds(60_000).unwrap(),
+                ))
+                .await
+                .map(|_| ()),
+            "progress" => storage
+                .update_task_state(StorageTaskActiveUpdate::new(
+                    lease,
+                    StorageTaskActiveStatus::Running,
+                    StorageTaskResultCounts::try_new(1, 1, 0).unwrap(),
+                ))
+                .await
+                .map(|_| ()),
+            "event" => {
+                storage
+                    .append_task_event(StorageTaskEventAppend::new(
+                        lease,
+                        StorageTaskEventInput::new("running", "must remain fenced"),
+                    ))
+                    .await
+            }
+            "completion" => storage
+                .complete_task(StorageTaskCompletion::new(
+                    StorageTaskTerminalUpdate::new(
+                        lease,
+                        StorageTaskTerminalStatus::Succeeded,
+                        StorageTaskResultCounts::try_new(2, 2, 0).unwrap(),
+                    ),
+                    StorageTaskEventInput::new("succeeded", "must remain fenced"),
+                    StorageTaskCompletionPayload::Import,
+                ))
+                .await
+                .map(|_| ()),
+            _ => unreachable!(),
+        };
+        assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Unavailable);
+    }
+
+    #[tokio::test]
+    async fn quarantined_backup_completion_does_not_publish_output() {
+        let storage = MemoryStorage::new();
+        storage
+            .create_task(
+                StorageTaskCreateRequest::builder(
+                    StorageTaskKind::Backup,
+                    PrincipalId::new(1).unwrap(),
+                    serde_json::json!({}),
+                    1,
+                )
+                .try_build()
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let claim = storage
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        quarantine(&storage).await;
+        let result = storage
+            .complete_task(StorageTaskCompletion::new(
+                StorageTaskTerminalUpdate::new(
+                    claim.lease().clone(),
+                    StorageTaskTerminalStatus::Succeeded,
+                    StorageTaskResultCounts::try_new(1, 1, 0).unwrap(),
+                ),
+                StorageTaskEventInput::new("succeeded", "must remain fenced"),
+                StorageTaskCompletionPayload::Backup(
+                    StorageBackupTaskArtifact::try_new(
+                        b"private backup".to_vec(),
+                        Utc::now() + Duration::hours(1),
+                    )
+                    .unwrap(),
+                ),
+            ))
+            .await;
+        assert!(result.is_err());
+        assert!(
+            storage
+                .state
+                .read()
+                .await
+                .unwrap()
+                .backup_outputs
+                .is_empty()
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::failure(false)]
+    #[case::cancellation(true)]
+    #[tokio::test]
+    async fn quarantine_allows_terminal_settlement(#[case] cancelled: bool) {
+        let storage = MemoryStorage::new();
+        let task = queued(&storage).await;
+        let claim = storage
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        quarantine(&storage).await;
+        let settled = if cancelled {
+            storage
+                .request_task_cancellation(StorageTaskCancellationRequest::new(
+                    &task,
+                    EventContext::system(),
+                ))
+                .await
+                .unwrap();
+            storage
+                .acknowledge_task_stop(claim.lease().clone())
+                .await
+                .unwrap()
+        } else {
+            storage
+                .fail_task(StorageTaskFailure::new(
+                    claim.lease().clone(),
+                    "Quarantine stopped execution",
+                    StorageTaskEventInput::new("failed", "Quarantine stopped execution"),
+                ))
+                .await
+                .unwrap()
+        };
+        assert!(settled.status().is_terminal());
+    }
+
+    #[tokio::test]
+    async fn deletion_intent_fences_an_inflight_import_snapshot() {
+        let storage = MemoryStorage::new();
+        queued(&storage).await;
+        let claim = storage
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        let mut staged = storage.state.read().await.unwrap().clone();
+        let generation = staged.generation.clone();
+        staged.collection_ids.allocate().unwrap();
+        quarantine(&storage).await;
+        let result = storage
+            .state
+            .commit_import(&generation, staged, claim.lease())
+            .await;
+        assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Unavailable);
     }
 
     #[test]
@@ -491,7 +735,10 @@ mod tests {
                 .await
                 .unwrap();
             let claim = storage
-                .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+                ))
                 .await
                 .unwrap();
             assert!(claim.is_none());
@@ -508,9 +755,9 @@ mod tests {
                 .request_task_cancellation(request.clone())
                 .await
                 .unwrap();
-            let events = storage.state.read().await.task_events.clone();
+            let events = storage.state.read().await.unwrap().task_events.clone();
             storage.request_task_cancellation(request).await.unwrap();
-            assert!(storage.state.read().await.task_events == events);
+            assert!(storage.state.read().await.unwrap().task_events == events);
         });
     }
 
@@ -520,12 +767,15 @@ mod tests {
             let storage = MemoryStorage::new();
             let task = queued(&storage).await;
             let claim = storage
-                .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+                ))
                 .await
                 .unwrap()
                 .unwrap();
             let (_, lease) = claim.into_parts();
-            let mut staged = storage.state.read().await.clone();
+            let mut staged = storage.state.read().await.unwrap().clone();
             let generation = staged.generation.clone();
             staged.collection_ids.allocate().unwrap();
             storage

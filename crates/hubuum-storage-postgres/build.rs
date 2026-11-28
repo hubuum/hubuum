@@ -18,6 +18,8 @@ fn main() {
         })
         .collect::<Vec<_>>();
     versions.sort();
+    let latest = versions.last().expect("at least one migration must exist");
+    println!("cargo:rustc-env=PACKAGED_POSTGRES_MIGRATION_VERSION={latest}");
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo supplies OUT_DIR"));
     fs::write(
         output.join("migration_versions.rs"),

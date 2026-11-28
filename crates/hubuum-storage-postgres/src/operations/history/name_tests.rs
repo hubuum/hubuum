@@ -14,6 +14,66 @@ struct Explain {
     plan: Value,
 }
 
+#[tokio::test]
+async fn resource_identity_predicate_keeps_index_in_generic_plans() {
+    use diesel::pg::Pg;
+    use diesel::query_builder::{AstPass, QueryFragment};
+    use diesel::result::QueryResult;
+    use diesel_async::SimpleAsyncConnection;
+
+    diesel::table! {
+        history_identity_lookup_fixture (id) {
+            id -> Integer,
+            logical_identity -> Nullable<Jsonb>,
+        }
+    }
+
+    // Prepare the actual Diesel predicate, with the requested identity left as
+    // a server parameter. EXPLAIN EXECUTE then exercises a generic cached plan,
+    // rather than specializing a fresh EXPLAIN SELECT to its current bindings.
+    #[derive(diesel::QueryId)]
+    struct PrepareIdentityLookup<Q>(Q);
+    impl<Q: QueryFragment<Pg>> QueryFragment<Pg> for PrepareIdentityLookup<Q> {
+        fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, Pg>) -> QueryResult<()> {
+            out.push_sql("PREPARE history_identity_lookup(TEXT) AS ");
+            self.0.walk_ast(out.reborrow())
+        }
+    }
+
+    let pool = integration_test_pool(1);
+    let plan = with_transaction(&pool, async |connection| {
+        connection.batch_execute(
+            "CREATE TEMP TABLE history_identity_lookup_fixture (id INTEGER PRIMARY KEY, logical_identity JSONB) ON COMMIT DROP;
+             INSERT INTO history_identity_lookup_fixture
+               SELECT n, jsonb_build_object('subject',jsonb_build_object('identity',jsonb_build_object('identity',n::TEXT)))
+               FROM generate_series(1,20000) n;
+             CREATE INDEX history_identity_lookup_fixture_identity
+               ON history_identity_lookup_fixture ((logical_identity #>> '{subject,identity,identity}'));
+             ANALYZE history_identity_lookup_fixture;
+             SET LOCAL plan_cache_mode = force_generic_plan;"
+        ).await?;
+        let query = history_identity_lookup_fixture::table
+            .filter(history_identity_lookup_fixture::logical_identity
+                .retrieve_by_path_as_text(resource_identity_path())
+                .eq(sql::<Nullable<Text>>("$1")))
+            .select(history_identity_lookup_fixture::id);
+        PrepareIdentityLookup(query).execute(connection).await?;
+        let plan = diesel::sql_query(
+            "EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE history_identity_lookup('15000')"
+        ).get_result::<Explain>(connection).await?.plan;
+        connection.batch_execute("DEALLOCATE history_identity_lookup").await?;
+        Ok::<_, PostgresStorageError>(plan)
+    }).await.unwrap();
+    let scan = &plan[0]["Plan"];
+    assert_eq!(scan["Node Type"], "Index Scan", "{plan:#}");
+    assert_eq!(scan["Actual Rows"].as_f64().unwrap(), 1.0, "{plan:#}");
+    assert_eq!(
+        scan["Rows Removed by Filter"].as_f64().unwrap_or(0.0),
+        0.0,
+        "{plan:#}"
+    );
+}
+
 #[rstest]
 #[case(false, vec![7000, 8000])]
 #[case(true, vec![5000, 4000])]
@@ -43,7 +103,7 @@ async fn name_history_seeks_installed_index_with_timestamp_ties(
         crate::apply_query_options_with_fields!(records, options, fields,
             crate::cursor::CursorTieBreaker::new(FilterField::HistoryId, false,
                 history_cursor_field(&FilterField::HistoryId, "hubuumobject_history")?));
-        let rows = records.load::<ObjectHistoryRow>(connection).await?;
+        let rows = records.select(ObjectHistoryRow::as_select()).load::<ObjectHistoryRow>(connection).await?;
         assert_eq!(rows.iter().map(|row| row.history_id).collect::<Vec<_>>(), expected);
         assert!(rows.windows(2).all(|pair| pair[0].valid_from == pair[1].valid_from));
 

@@ -1,4 +1,5 @@
 //! Bounded server-side enrichment, excluding HTTP and fixture preparation.
+use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -30,7 +31,10 @@ async fn drain_repairs(storage: &PostgresStorage, pool: &PostgresPool) {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Some(claim) = storage
-            .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
             .await
             .unwrap()
         {

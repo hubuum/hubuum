@@ -416,10 +416,11 @@ async fn every_available_storage_backend_commits_claimed_import_effects_and_rece
                     serde_json::json!({}),
                     1,
                 )
-                .try_build(10)
+                .try_build()
                 .unwrap(),
             )
             .await
+            .map(expect_legacy_task)
             .unwrap();
         let duration = StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap();
         let claimed = match &environment {
@@ -432,9 +433,14 @@ async fn every_available_storage_backend_commits_claimed_import_effects_and_rece
                 .await
                 .unwrap()
             }
-            BackendTestEnvironment::Memory { .. } => {
-                backend.claim_next_task(duration).await.unwrap().unwrap()
-            }
+            BackendTestEnvironment::Memory { .. } => backend
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    duration,
+                ))
+                .await
+                .unwrap()
+                .unwrap(),
         };
         let name = prefix("fenced_import_collection");
         let operation = crate::services::import_boundary::import_operation_to_storage(
@@ -519,10 +525,11 @@ async fn every_available_storage_backend_fences_planning_result_writes() {
                     serde_json::json!({}),
                     1,
                 )
-                .try_build(10)
+                .try_build()
                 .unwrap(),
             )
             .await
+            .map(expect_legacy_task)
             .unwrap();
         let lease = StorageTaskLease::new(
             task.id(),

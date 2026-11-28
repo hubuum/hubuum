@@ -4,12 +4,12 @@ use chrono::NaiveDateTime;
 use diesel::prelude::{ExpressionMethods, QueryDsl};
 use diesel::{Queryable, Selectable};
 use diesel_async::RunQueryDsl;
-use hubuum_domain::{CollectionId, PrincipalId, TaskId};
+use hubuum_domain::{CollectionId, PrincipalId, PrincipalIdentity, TaskId};
 use hubuum_events_core::{
     Action, ActorKind, CorrelationId, EntityType, EventEntityId, EventEnvelope, EventSequence,
     Provenance, ProvenanceActor, ProvenancePrincipal, TraceLink,
 };
-use hubuum_storage_core::StorageAuditEvent;
+use hubuum_storage_core::{StorageAuditEvent, StorageIdentityEvidence};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -23,6 +23,7 @@ fn invalid_event_envelope(error: impl std::fmt::Debug) -> PostgresStorageError {
 #[derive(Clone, Queryable, Selectable)]
 #[diesel(table_name = crate::schema::events)]
 pub(super) struct StoredEventProjection {
+    logical_identity: Option<Value>,
     pub(super) id: i64,
     event_id: Uuid,
     pub(super) occurred_at: NaiveDateTime,
@@ -51,23 +52,18 @@ pub(super) struct StoredEventProjection {
 }
 
 impl StoredEventProjection {
-    fn apply_legacy_task_provenance(&mut self, queued_initiators: &HashMap<i32, Option<i32>>) {
-        if self.entity_type != EntityType::Task.as_str() {
-            return;
-        }
-        let Some(task_id) = self.entity_id else {
-            return;
-        };
-        self.task_id.get_or_insert(task_id);
-        if self.initiator_user_id.is_none() {
-            self.initiator_user_id = queued_initiators.get(&task_id).copied().flatten();
-        }
-    }
-
     pub(super) fn into_envelope(
         self,
-        principal_names: &HashMap<i32, String>,
+        principal_names: &HashMap<PrincipalIdentity, String>,
     ) -> Result<EventEnvelope, PostgresStorageError> {
+        self.into_captured_envelope(principal_names)
+            .map(|(envelope, _)| envelope)
+    }
+
+    fn into_captured_envelope(
+        self,
+        principal_names: &HashMap<PrincipalIdentity, String>,
+    ) -> Result<(EventEnvelope, StorageIdentityEvidence), PostgresStorageError> {
         let entity_type = EntityType::parse(&self.entity_type).map_err(invalid_event_envelope)?;
         let action = Action::parse(&self.action).map_err(invalid_event_envelope)?;
         let actor_kind = ActorKind::parse(&self.actor_kind).map_err(invalid_event_envelope)?;
@@ -81,16 +77,19 @@ impl StoredEventProjection {
             .map(PrincipalId::new)
             .transpose()
             .map_err(invalid_event_envelope)?;
-        let principal = |principal_id: PrincipalId| ProvenancePrincipal {
+        let evidence = super::history::history_identity(self.logical_identity)?;
+        let principal = |principal_id: PrincipalId, path: &str| ProvenancePrincipal {
             principal_id,
-            name: principal_names.get(&principal_id.id()).cloned(),
+            name: evidence
+                .principal_reference(path)
+                .and_then(|identity| principal_names.get(&identity).cloned()),
         };
         let provenance = Provenance {
             actor: ProvenanceActor {
                 kind: Some(actor_kind.as_str().to_string()),
-                principal: actor_user_id.map(principal),
+                principal: actor_user_id.map(|id| principal(id, "/actor_principal_id")),
             },
-            initiator: initiator_user_id.map(principal),
+            initiator: initiator_user_id.map(|id| principal(id, "/initiator_principal_id")),
             task_id: self
                 .task_id
                 .map(TaskId::new)
@@ -140,26 +139,26 @@ impl StoredEventProjection {
             .schema_version(self.schema_version)
             .try_build()
             .map_err(invalid_event_envelope)
+            .map(|envelope| (envelope, evidence))
     }
 
     pub(super) fn into_audit_event(
         self,
-        principal_names: &HashMap<i32, String>,
+        principal_names: &HashMap<PrincipalIdentity, String>,
         redact_payloads: bool,
     ) -> Result<StorageAuditEvent, PostgresStorageError> {
         let before_revision = self.before_revision.map(PostgresRevision::into_domain);
         let after_revision = self.after_revision.map(PostgresRevision::into_domain);
-        let envelope = self.into_envelope(principal_names)?;
+        let (envelope, evidence) = self.into_captured_envelope(principal_names)?;
         let envelope = if redact_payloads {
             envelope.without_payloads()
         } else {
             envelope
         };
-        Ok(StorageAuditEvent::new(
-            envelope,
-            before_revision,
-            after_revision,
-        ))
+        Ok(
+            StorageAuditEvent::new(envelope, before_revision, after_revision)
+                .with_logical_identity(evidence),
+        )
     }
 }
 
@@ -187,74 +186,37 @@ pub(crate) fn trace_link_from_columns(
 pub(super) async fn enrich_stored_events(
     connection: &mut PostgresConnection,
     events: &mut [StoredEventProjection],
-) -> Result<HashMap<i32, String>, PostgresStorageError> {
-    let task_ids = events
-        .iter()
-        .filter(|event| {
-            event.entity_type == EntityType::Task.as_str()
-                && (event.initiator_user_id.is_none() || event.task_id.is_none())
-        })
-        .filter_map(|event| event.entity_id)
-        .collect::<Vec<_>>();
-    let queued_initiators = load_queued_task_initiators(connection, &task_ids).await?;
-    for event in events.iter_mut() {
-        event.apply_legacy_task_provenance(&queued_initiators);
+) -> Result<HashMap<PrincipalIdentity, String>, PostgresStorageError> {
+    let mut principal_ids = Vec::new();
+    for event in events {
+        let evidence = super::history::history_identity(event.logical_identity.clone())?;
+        principal_ids.extend(
+            ["/actor_principal_id", "/initiator_principal_id"]
+                .into_iter()
+                .filter_map(|path| evidence.principal_reference(path)),
+        );
     }
-
-    let principal_ids = events
-        .iter()
-        .flat_map(|event| [event.actor_user_id, event.initiator_user_id])
-        .flatten()
-        .collect::<Vec<_>>();
-    load_principal_names(connection, principal_ids).await
-}
-
-async fn load_queued_task_initiators(
-    connection: &mut PostgresConnection,
-    task_ids: &[i32],
-) -> Result<HashMap<i32, Option<i32>>, PostgresStorageError> {
-    use crate::schema::events::dsl as stored;
-
-    if task_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    Ok(stored::events
-        .filter(stored::entity_type.eq(EntityType::Task.as_str()))
-        .filter(stored::action.eq(Action::Queued.as_str()))
-        .filter(stored::entity_id.eq_any(task_ids.iter().copied().map(Some)))
-        .order(stored::id.asc())
-        .select((
-            stored::entity_id,
-            stored::initiator_user_id,
-            stored::actor_user_id,
-        ))
-        .load::<(Option<i32>, Option<i32>, Option<i32>)>(connection)
-        .await?
-        .into_iter()
-        .filter_map(|(task_id, initiator_user_id, actor_user_id)| {
-            task_id.map(|task_id| (task_id, initiator_user_id.or(actor_user_id)))
-        })
-        .collect())
-}
-
-async fn load_principal_names(
-    connection: &mut PostgresConnection,
-    mut principal_ids: Vec<i32>,
-) -> Result<HashMap<i32, String>, PostgresStorageError> {
-    use crate::schema::principals::dsl::{id, name, principals};
-
     principal_ids.sort_unstable();
     principal_ids.dedup();
     if principal_ids.is_empty() {
         return Ok(HashMap::new());
     }
-    Ok(principals
-        .filter(id.eq_any(principal_ids))
-        .select((id, name))
-        .load::<(i32, String)>(connection)
+    use crate::schema::principals::dsl::{name as principal_name, principals};
+    use diesel::dsl::sql;
+    use diesel::sql_types::Text;
+    let identity = sql::<Text>("logical_identity #>> '{subject,identity,identity}'");
+    principals
+        .filter(
+            identity
+                .clone()
+                .eq_any(principal_ids.into_iter().map(|id| id.to_string())),
+        )
+        .select((identity, principal_name))
+        .load::<(String, String)>(connection)
         .await?
         .into_iter()
-        .collect())
+        .map(|(identity, name)| Ok((identity.parse().map_err(invalid_event_envelope)?, name)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -265,6 +227,7 @@ mod tests {
 
     fn projection() -> StoredEventProjection {
         StoredEventProjection {
+            logical_identity: Some(serde_json::json!({"subject": null, "references": {}})),
             id: 1,
             event_id: Uuid::new_v4(),
             occurred_at: chrono::Utc::now().naive_utc(),

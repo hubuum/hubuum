@@ -15,7 +15,7 @@ use crate::events::EventFanoutSettings;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
 use crate::models::{EventWorkerHealth, EventWorkerWakeupStats};
 use crate::observability::metrics;
-use crate::restores::MaintenanceActivityGuard;
+use crate::restores::with_application_work;
 use crate::storage::StorageContext;
 use crate::storage::{
     EventFanoutStorage, StorageError, StorageHandle, StorageNotification,
@@ -110,13 +110,11 @@ async fn event_fanout_worker_loop(
             .as_ref()
             .map(|config| Duration::from_millis(config.event_fanout_poll_interval_ms))
             .unwrap_or(poll_interval);
-        let activity = MaintenanceActivityGuard::begin();
         let result = tokio::select! {
             biased;
             _ = shutdown.requested() => break,
-            result = process_event_fanout_iteration(&pool, settings) => result,
+            result = with_application_work(&pool, process_event_fanout_iteration(&pool, settings)) => result,
         };
-        drop(activity);
         if fanout_worker_should_continue(&result) {
             continue;
         }

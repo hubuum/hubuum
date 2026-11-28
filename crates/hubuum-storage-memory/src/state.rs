@@ -73,7 +73,38 @@ impl MemoryState {
             ResourceRevision::INITIAL,
         )
         .expect("admin group membership is valid");
-        Self {
+        let mut logical_identities = logical_identity::MemoryLogicalIdentities::default();
+        logical_identities.capture(&local_scope);
+        logical_identities.capture(&admin_principal);
+        logical_identities.capture(&admin_group);
+        logical_identities.capture(&root);
+        let root_history = MemoryHistoryValue::Collection(root.clone());
+        let root_identity =
+            logical_identities.history(&root_history, StorageHistoryOperation::Create, None);
+        let deletion_control = DeletionControlState::empty(Uuid::new_v4(), Uuid::new_v4())
+            .expect("generated control identities");
+        let mut state = Self {
+            history_lifecycle: HistoryLifecycleControl::empty(),
+            history_publications: HistoryPublicationRegistry::default(),
+            task_control: TaskControlState::initial(
+                deletion_control.lineage(),
+                deletion_control.epoch(),
+                TaskRetentionPolicy::disabled_default(),
+            )
+            .expect("generated task control identities"),
+            task_reapplication: None,
+            restore_repairs_pending: false,
+            task_purge_attempts: BTreeMap::new(),
+            next_task_purge_attempt: 1,
+            task_capacity: Default::default(),
+            api_requests: Default::default(),
+            artifacts: Default::default(),
+            history_archive: Default::default(),
+            application_control: ApplicationControlState::initial(&deletion_control),
+            pending_restore: false,
+            deletion_control,
+            runtime_registrations: BTreeMap::new(),
+            logical_identities,
             schema_repair_reports: Default::default(),
             generation: Arc::new(()),
             schema_history: Vec::new(),
@@ -105,7 +136,7 @@ impl MemoryState {
             history_ids: IdSequence::with_existing(1),
             restore_job_ids: IdSequence::default(),
             fanout_event_cursor: 0,
-            collections: BTreeMap::from([(ROOT_COLLECTION_ID, root.clone())]),
+            collections: BTreeMap::from([(ROOT_COLLECTION_ID, root)]),
             classes: BTreeMap::new(),
             objects: BTreeMap::new(),
             class_relations: BTreeMap::new(),
@@ -160,8 +191,13 @@ impl MemoryState {
             event_sink_schedule: BTreeMap::new(),
             event_retention_batches: BTreeMap::new(),
             history: vec![MemoryHistoryEntry {
+                scan_position: 1,
+                logical_identity: root_identity,
                 id: HistoryRecordId::new(1).expect("initial history id"),
-                value: MemoryHistoryValue::Collection(root),
+                resource_size: root_history
+                    .history_resource_size()
+                    .expect("valid root snapshot"),
+                value: root_history,
                 operation: StorageHistoryOperation::Create,
                 valid_from: now,
                 valid_to: None,
@@ -178,6 +214,10 @@ impl MemoryState {
             event_dispatched_at: BTreeMap::new(),
             restore_coordinator: Default::default(),
             events: Vec::new(),
-        }
+        };
+        let key = (admin_principal_id.id(), admin_group_id.id());
+        let membership = state.memberships[&key].clone();
+        state.store_membership(key, membership);
+        state
     }
 }

@@ -1,20 +1,224 @@
 use super::*;
+use crate::tests::asserts::expect_legacy_task;
+use chrono::Utc;
 use hubuum_storage_core::{
     StorageTask, StorageTaskCancellationChange, StorageTaskCancellationRequest,
-    StorageTaskExecutionAdmission, TaskOutputState,
+    StorageTaskExecutionAdmission, TaskAdmissionPolicy, TaskByteLimit, TaskCapacityLimit,
+    TaskCapacityStorage, TaskOutputState, TaskScopeCapacity,
 };
+use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId, TaskWorkerKinds};
 use hubuum_task_core::{TaskCancellationReason, TaskExecutionLimit, TaskStopReason};
 use rstest::rstest;
 use tokio::time::{sleep, timeout};
 
-struct Fixture {
-    environment: BackendTestEnvironment,
-    backend: StorageHandle,
+#[derive(Clone, Copy)]
+enum CleanupCase {
+    Original,
+    WrongClaim,
+    Callback,
+}
+
+#[rstest]
+#[case::original(CleanupCase::Original)]
+#[case::foreign_claim(CleanupCase::WrongClaim)]
+#[case::nested_callback(CleanupCase::Callback)]
+#[tokio::test]
+async fn stopped_task_cleanup_uses_only_the_exact_original_binding(
+    #[case] case: CleanupCase,
+    #[values(TaskStopReason::Cancelled, TaskStopReason::DeadlineExceeded)] reason: TaskStopReason,
+) {
+    use hubuum_storage_core::artifacts::{
+        ArtifactIdentity, ArtifactLimits, ArtifactReservation, Destination, DestinationId,
+        TaskArtifactCleanup,
+    };
+    use hubuum_task_core::TaskExecutionContext;
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let fixture = Fixture::new(environment, StorageTaskKind::Backup).await;
+        let lease = fixture.claim().await;
+        let store = fixture.backend.artifact_store();
+        let destination =
+            Destination::new(DestinationId::generate(), prefix("exact_cleanup")).unwrap();
+        store.register_destination(&destination).await.unwrap();
+        let identity = ArtifactIdentity::new(destination.id());
+        let limits = ArtifactLimits::builder()
+            .artifact_bytes(1024)
+            .blocks(1)
+            .build()
+            .unwrap();
+        store.stage(&identity, limits).await.unwrap();
+        store
+            .bind_task(
+                &identity,
+                &lease,
+                ArtifactReservation::new(*uuid::Uuid::new_v4().as_bytes(), 0, 1024 * 1024).unwrap(),
+                Utc::now() + chrono::Duration::hours(1),
+            )
+            .await
+            .unwrap();
+        let (execution, stop) = TaskExecutionContext::new(Duration::from_secs(60)).unwrap();
+        stop.request_stop(reason);
+        let scope = StorageExecutionScope::default().with_task_execution(Some(execution));
+        assert!(
+            fixture
+                .backend
+                .run_in_scope(scope.clone(), store.abort(&identity))
+                .await
+                .is_err()
+        );
+        let original = matches!(case, CleanupCase::Original);
+        let cleanup_lease = match case {
+            CleanupCase::WrongClaim => StorageTaskLease::new(
+                lease.task_id(),
+                StorageTaskClaimToken::new(uuid::Uuid::new_v4().to_string()),
+            ),
+            _ => lease,
+        };
+        let scope = if matches!(case, CleanupCase::Callback) {
+            scope.with_storage_callback()
+        } else {
+            scope
+        };
+        let result = fixture
+            .backend
+            .run_in_scope(
+                scope,
+                store.abort_task(&TaskArtifactCleanup::new(identity.clone(), cleanup_lease)),
+            )
+            .await;
+        // A rejected capability must leave the original attempt writable; a
+        // confirmed abort must fence even an otherwise admitted late writer.
+        let late = store.append(&identity, 0, b"late output").await;
+        store.abort(&identity).await.unwrap();
+        fixture.cleanup().await;
+        assert_eq!(result.is_ok(), original);
+        assert_eq!(late.is_err(), original);
+    }
+}
+
+#[tokio::test]
+async fn recovered_deletion_authority_prevents_memory_task_claims() {
+    use hubuum_storage_core::{DeletionControlStorage, DeletionSubject};
+    use uuid::Uuid;
+
+    let fixture = Fixture::new(
+        BackendTestEnvironment::Memory {
+            storage: MemoryStorage::new(),
+        },
+        StorageTaskKind::Import,
+    )
+    .await;
+    assert_eq!(fixture.task.status(), StorageTaskStatus::Queued);
+    let before = fixture.backend.read_deletion_control().await.unwrap();
+    let required = before
+        .record_intent(
+            Uuid::new_v4(),
+            DeletionSubject::Version {
+                identity: serde_json::from_value(serde_json::json!(Uuid::new_v4())).unwrap(),
+            },
+            vec![Uuid::new_v4()],
+        )
+        .unwrap();
+    fixture
+        .backend
+        .commit_deletion_control(before.recover_from(required.next()).unwrap())
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .backend
+            .claim_next_task(StorageTaskClaimRequest::new(
+                TaskWorkerId::generate(),
+                StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+            ))
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+pub(super) struct Fixture {
+    pub(super) environment: BackendTestEnvironment,
+    pub(super) backend: StorageHandle,
     user: BackendUserFixture,
-    task: StorageTask,
+    pub(super) task: StorageTask,
+}
+
+#[rstest]
+#[case::export(StorageTaskKind::Export)]
+#[case::backup(StorageTaskKind::Backup)]
+#[actix_web::test]
+async fn output_availability_is_resolved_at_atomic_completion(#[case] kind: StorageTaskKind) {
+    use hubuum_storage_core::{
+        StorageBackupTaskArtifact, StorageExportTaskArtifact, StorageExportTaskArtifactContent,
+        StorageOutputAvailability,
+    };
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let fixture = Fixture::new(environment, kind).await;
+        let lease = fixture.claim().await;
+        // The prepared artifact carries a duration without consuming any of it
+        // until the adapter publishes the result in its completion transaction.
+        let availability = StorageOutputAvailability::after_ready_seconds(48 * 60 * 60).unwrap();
+        let payload = match kind {
+            StorageTaskKind::Export => StorageTaskCompletionPayload::Export(
+                StorageExportTaskArtifact::builder(
+                    "application/json",
+                    StorageExportTaskArtifactContent::Json(serde_json::json!({"ready":true})),
+                    serde_json::json!({}),
+                    serde_json::json!([]),
+                    availability,
+                )
+                .try_build()
+                .unwrap(),
+            ),
+            StorageTaskKind::Backup => StorageTaskCompletionPayload::Backup(
+                StorageBackupTaskArtifact::try_new(b"{}".to_vec(), availability).unwrap(),
+            ),
+            _ => unreachable!(),
+        };
+        let completed = fixture
+            .backend
+            .complete_task(StorageTaskCompletion::new(
+                StorageTaskTerminalUpdate::new(
+                    lease,
+                    StorageTaskTerminalStatus::Succeeded,
+                    StorageTaskResultCounts::try_new(1, 1, 0).unwrap(),
+                ),
+                StorageTaskEventInput::new("succeeded", "Result ready"),
+                payload,
+            ))
+            .await
+            .unwrap();
+        let ready_at = completed.finished_at().unwrap();
+        let expires_at = match kind {
+            StorageTaskKind::Export => match fixture
+                .backend
+                .get_export_output(fixture.task.id())
+                .await
+                .unwrap()
+            {
+                StorageTaskOutputLookup::Available(output) => output.output_expires_at(),
+                _ => panic!("newly ready output unavailable"),
+            },
+            StorageTaskKind::Backup => match fixture
+                .backend
+                .get_backup_output(fixture.task.id())
+                .await
+                .unwrap()
+            {
+                StorageTaskOutputLookup::Available(output) => output.output_expires_at(),
+                _ => panic!("newly ready backup unavailable"),
+            },
+            _ => unreachable!(),
+        };
+        assert!(expires_at >= ready_at + chrono::Duration::hours(48));
+        assert!(expires_at < ready_at + chrono::Duration::hours(48) + chrono::Duration::seconds(2));
+        fixture.cleanup().await;
+    }
 }
 impl Fixture {
-    async fn new(environment: BackendTestEnvironment, kind: StorageTaskKind) -> Self {
+    pub(super) async fn new(environment: BackendTestEnvironment, kind: StorageTaskKind) -> Self {
         Self::with_total(environment, kind, 1).await
     }
     async fn with_total(
@@ -41,10 +245,11 @@ impl Fixture {
                     total,
                 )
                 .metadata(metadata)
-                .try_build(10)
+                .try_build()
                 .unwrap(),
             )
             .await
+            .map(expect_legacy_task)
             .unwrap();
         Self {
             environment,
@@ -53,12 +258,12 @@ impl Fixture {
             task,
         }
     }
-    fn request(&self) -> StorageTaskCancellationRequest {
+    pub(super) fn request(&self) -> StorageTaskCancellationRequest {
         StorageTaskCancellationRequest::new(&self.task, EventContext::system()).reason(Some(
             TaskCancellationReason::new("withdraw this task").unwrap(),
         ))
     }
-    async fn claim(&self) -> StorageTaskLease {
+    pub(super) async fn claim(&self) -> StorageTaskLease {
         self.claim_with_duration(60_000).await
     }
     async fn claim_with_duration(&self, millis: i64) -> StorageTaskLease {
@@ -75,7 +280,10 @@ impl Fixture {
             }
             BackendTestEnvironment::Memory { .. } => self
                 .backend
-                .claim_next_task(duration)
+                .claim_next_task(
+                    StorageTaskClaimRequest::new(TaskWorkerId::generate(), duration)
+                        .with_kinds(TaskWorkerKinds::new(&[self.task.kind()]).unwrap()),
+                )
                 .await
                 .unwrap()
                 .unwrap(),
@@ -97,7 +305,7 @@ impl Fixture {
             .map(|event| event.event_type().to_owned())
             .collect()
     }
-    async fn cleanup(self) {
+    pub(super) async fn cleanup(self) {
         if let BackendTestEnvironment::Postgres { pool } = self.environment {
             hubuum_storage_postgres::test_support::delete_task(&pool, self.task.id())
                 .await
@@ -669,6 +877,16 @@ async fn memory_rebuild_preserves_active_task_capacity(
     #[case] accepted: bool,
 ) {
     let backend = StorageHandle::from_registered_backend(MemoryStorage::new());
+    backend
+        .initialize_task_policy(TaskAdmissionPolicy::default().with_internal(
+            TaskScopeCapacity::new(
+                TaskCapacityLimit::new(100).unwrap(),
+                TaskCapacityLimit::new(64).unwrap(),
+                TaskByteLimit::new(1024 * 1024 * 1024).unwrap(),
+            ),
+        ))
+        .await
+        .unwrap();
     let user = create_backend_user(&backend, &prefix("rebuild_capacity_owner")).await;
     let resources =
         create_backend_object_fixture(&backend, &prefix("rebuild_capacity"), Vec::new()).await;
@@ -694,7 +912,10 @@ async fn memory_rebuild_preserves_active_task_capacity(
     match first_task_status {
         StorageTaskStatus::Validating => {
             let claim = backend
-                .claim_next_task(StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap())
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    StorageTaskLeaseDuration::from_milliseconds(60_000).unwrap(),
+                ))
                 .await
                 .unwrap()
                 .unwrap();
@@ -838,7 +1059,10 @@ async fn cancelled_reindex_stays_incomplete_and_a_later_rebuild_can_finish() {
                 .clone()
             }
             BackendTestEnvironment::Memory { .. } => backend
-                .claim_next_task(duration)
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    duration,
+                ))
                 .await
                 .unwrap()
                 .unwrap()
@@ -1005,10 +1229,7 @@ async fn discovery_survives_terminal_redaction_and_filters_before_counting(
     #[case] data: serde_json::Value,
     #[case] filter: &str,
 ) {
-    use hubuum_domain::{
-        ClassId, ClassRelationId, CollectionId, ExportTemplateId, ObjectId, ObjectRelationId,
-        RemoteTargetId, SchemaRevision,
-    };
+    use hubuum_domain::{ExportTemplateId, RemoteTargetId, SchemaRevision};
     use hubuum_storage_core::{
         StorageTaskMetadata, StorageTaskSearch, TaskDiscoveryPredicate as P, TaskDiscoverySearch,
     };
@@ -1018,6 +1239,31 @@ async fn discovery_survives_terminal_redaction_and_filters_before_counting(
     };
     let _permit = postgres_permit().await;
     for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let resources = create_backend_relation_fixture(&backend, &prefix("task_discovery")).await;
+        let mut data = data.clone();
+        if data.get("class_id").is_some() {
+            data["class_id"] = serde_json::json!(resources.classes[0].id().id());
+        }
+        if let Some(target) = data.get_mut("target") {
+            match target["type"].as_str().unwrap() {
+                "class" => target["class_id"] = serde_json::json!(resources.classes[0].id().id()),
+                "object" => {
+                    target["class_id"] = serde_json::json!(resources.classes[0].id().id());
+                    target["object_id"] = serde_json::json!(resources.objects[0].id().id());
+                }
+                "collection" => {
+                    target["collection_id"] = serde_json::json!(resources.collection.id().id())
+                }
+                "class_relation" => {
+                    target["relation_id"] = serde_json::json!(resources.class_relation_id.id())
+                }
+                "object_relation" => {
+                    target["relation_id"] = serde_json::json!(resources.object_relation_id.id())
+                }
+                _ => unreachable!(),
+            }
+        }
         let metadata =
             StorageTaskMetadata::from_persisted(kind, serde_json::json!({"version":1,"data":data}))
                 .unwrap();
@@ -1027,7 +1273,7 @@ async fn discovery_survives_terminal_redaction_and_filters_before_counting(
             .request_task_cancellation(fixture.request())
             .await
             .unwrap();
-        let class = P::Class(ClassId::new(42).unwrap());
+        let class = P::Class(resources.classes[0].id());
         let predicates = match filter {
             "import" => vec![
                 P::ImportDryRun(false),
@@ -1055,13 +1301,13 @@ async fn discovery_survives_terminal_redaction_and_filters_before_counting(
             ],
             "remote_object" => vec![
                 class,
-                P::Object(ObjectId::new(8).unwrap()),
+                P::Object(resources.objects[0].id()),
                 P::RemoteTarget(RemoteTargetId::new(7).unwrap()),
                 P::RemoteSideEffect(TaskRemoteSideEffectState::NotSent),
             ],
-            "collection" => vec![P::Collection(CollectionId::new(42).unwrap())],
-            "class_relation" => vec![P::ClassRelation(ClassRelationId::new(42).unwrap())],
-            "object_relation" => vec![P::ObjectRelation(ObjectRelationId::new(42).unwrap())],
+            "collection" => vec![P::Collection(resources.collection.id())],
+            "class_relation" => vec![P::ClassRelation(resources.class_relation_id)],
+            "object_relation" => vec![P::ObjectRelation(resources.object_relation_id)],
             _ => unreachable!(),
         };
         let search = StorageTaskSearch::default()
@@ -1088,6 +1334,7 @@ async fn discovery_survives_terminal_redaction_and_filters_before_counting(
         expected.record_terminal(0);
         assert_eq!(rows[0].metadata(), Some(&expected));
         fixture.cleanup().await;
+        delete_backend_relation_fixture(&backend, resources).await;
     }
 }
 
@@ -1241,8 +1488,11 @@ async fn postgres_task_discovery_projection_has_a_fixed_query_budget() {
             continue;
         };
         let pool = pool.clone();
+        let backend = environment.storage();
+        let resources =
+            create_backend_object_fixture(&backend, &prefix("task_projection"), vec![]).await;
         let metadata = StorageTaskMetadata::new(TaskMetadataDetails::SchemaValidation {
-            class_id: Some(hubuum_domain::ClassId::new(42).unwrap()),
+            class_id: Some(resources.class.id()),
             schema_revision: Some(hubuum_domain::SchemaRevision::try_from(1).unwrap()),
             work_kind: Some(hubuum_storage_core::StorageSchemaWorkKind::Impact),
         })
@@ -1267,10 +1517,11 @@ async fn postgres_task_discovery_projection_has_a_fixed_query_budget() {
                             0,
                         )
                         .metadata(Some(metadata.clone()))
-                        .try_build(20)
+                        .try_build()
                         .unwrap(),
                     )
                     .await
+                    .map(expect_legacy_task)
                     .unwrap()
                     .id(),
             );
@@ -1292,6 +1543,7 @@ async fn postgres_task_discovery_projection_has_a_fixed_query_budget() {
             .await
             .unwrap();
         fixture.cleanup().await;
+        delete_backend_object_fixture(&backend, resources).await;
     }
 }
 
@@ -1520,9 +1772,12 @@ async fn profiling_output_state_discovery_matches_retained_evidence(
     };
     let _permit = postgres_permit().await;
     for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let resources =
+            create_backend_object_fixture(&backend, &prefix("profiling_discovery"), vec![]).await;
         let metadata = (state != TaskOutputState::Unknown).then(|| {
             StorageTaskMetadata::new(TaskMetadataDetails::SchemaProfiling {
-                class_id: Some(ClassId::new(42).unwrap()),
+                class_id: Some(resources.class.id()),
                 output: TaskOutputMetadata::NotProduced,
             })
             .unwrap()
@@ -1600,5 +1855,6 @@ async fn profiling_output_state_discovery_matches_retained_evidence(
             expected_ids
         );
         fixture.cleanup().await;
+        delete_backend_object_fixture(&backend, resources).await;
     }
 }

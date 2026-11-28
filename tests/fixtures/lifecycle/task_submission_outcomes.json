@@ -1,0 +1,23 @@
+{
+  "changed_request": {
+    "status": 409,
+    "headers": { "cache-control": "no-store" },
+    "body": {
+      "error": "Conflict",
+      "reason": "idempotency_key_conflict",
+      "message": "The idempotency key identifies a different protected request; no new work was created"
+    }
+  },
+  "expired_details": {
+    "status": 410,
+    "headers": { "cache-control": "no-store" },
+    "body": {
+      "error": "Gone",
+      "message": "Task details have expired; the original submission is still recognized; no new work was created",
+      "reason": "task_details_expired",
+      "task_identity": "00000000-0000-4000-8000-000000000001",
+      "kind": "export",
+      "expires_at": null
+    }
+  }
+}

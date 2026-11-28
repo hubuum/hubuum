@@ -1,4 +1,6 @@
+mod artifact_pipeline;
 use crate::models::HubuumClassID;
+use crate::tests::asserts::expect_legacy_task;
 use chrono::NaiveDateTime;
 use diesel::{ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
@@ -58,7 +60,7 @@ use hubuum_events_core::{Action, EntityType, EventEntityId, MutationProvenance, 
 use hubuum_storage_postgres::PostgresStorage;
 use hubuum_storage_postgres::{capture_queries, with_connection};
 
-async fn create_worker_test_task(
+pub(super) async fn create_worker_test_task(
     context: &TestContext,
     kind: StorageTaskKind,
     payload: serde_json::Value,
@@ -92,10 +94,11 @@ async fn create_worker_test_task_with_trace(
             ))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
             .trace_link(trace_link)
-            .try_build(100)
+            .try_build()
             .expect("worker test task request should be valid"),
         )
         .await
+        .map(expect_legacy_task)
         .expect("worker test task should be created");
     hubuum_storage_postgres::test_support::prioritize_task(context.pool.get_ref(), task.id())
         .await
@@ -108,7 +111,7 @@ async fn create_worker_test_task_with_trace(
     .expect("worker test task should be loadable")
 }
 
-async fn claim_worker_test_task(
+pub(super) async fn claim_worker_test_task(
     context: &TestContext,
     task_id: i32,
 ) -> crate::services::tasks::ClaimedTask {

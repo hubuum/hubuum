@@ -61,7 +61,8 @@ async fn external_policy_export_crosses_bounded_pages_with_sparse_grants() {
         .unwrap();
     let query = parse_query_parameter(&format!("class_id={}&sort=id&limit=3", class.id)).unwrap();
     let started = std::time::Instant::now();
-    let (result, queries) = capture_queries(exporter.objects(query)).await;
+    let (result, queries) =
+        capture_queries(exporter.objects(query, &mut CandidateBudget::default())).await;
     let objects = result.unwrap();
     let elapsed = started.elapsed();
     assert_eq!(
@@ -69,7 +70,7 @@ async fn external_policy_export_crosses_bounded_pages_with_sparse_grants() {
         allowed_ids
     );
     let batches = policy.authorization_batch_sizes();
-    assert_eq!(batches, vec![128, 128, 44]);
+    assert_eq!(batches, vec![8; 33]);
     eprintln!(
         "PERFORMANCE_EVIDENCE {}",
         json!({"scenario":"external_policy_sparse_export", "candidates":300, "candidate_payload_bytes":8192, "policy_batches":batches,

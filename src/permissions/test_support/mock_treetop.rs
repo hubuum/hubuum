@@ -84,6 +84,11 @@ impl MockTreetopBackend {
         }
     }
 
+    /// Revoke configured allow rules during an in-flight authorization test.
+    pub fn revoke_all_rules(&self) {
+        self.rules.lock().unwrap().clear();
+    }
+
     pub fn add_rule(&self, rule: MockAllowRule) {
         self.rules.lock().unwrap().push(StoredMockRule {
             rule,

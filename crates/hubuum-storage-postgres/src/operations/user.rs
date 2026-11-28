@@ -314,6 +314,7 @@ pub async fn create_user(
                     crate::schema::users::proper_name.eq(proper_name),
                     crate::schema::users::email.eq(email),
                 ))
+                .returning(UserRow::as_select())
                 .get_result::<UserRow>(connection)
                 .await?;
             let revision = principal_revision(connection, principal_id).await?;
@@ -381,6 +382,7 @@ pub async fn update_user(
                 crate::schema::users::table.filter(crate::schema::users::id.eq(user_id)),
             )
             .set(changes)
+            .returning(UserRow::as_select())
             .get_result::<UserRow>(connection)
             .await?;
             if password_changed {

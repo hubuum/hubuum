@@ -518,6 +518,7 @@ pub enum EntityType {
     ComputedFieldDefinition,
     ExternalIdentitySync,
     Restore,
+    Lifecycle,
 }
 
 impl EntityType {
@@ -546,6 +547,7 @@ impl EntityType {
         Self::ComputedFieldDefinition,
         Self::ExternalIdentitySync,
         Self::Restore,
+        Self::Lifecycle,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -574,6 +576,7 @@ impl EntityType {
             EntityType::ComputedFieldDefinition => "computed_field_definition",
             EntityType::ExternalIdentitySync => "external_identity_sync",
             EntityType::Restore => "restore",
+            EntityType::Lifecycle => "lifecycle",
         }
     }
 
@@ -603,6 +606,7 @@ impl EntityType {
             "computed_field_definition" => Ok(EntityType::ComputedFieldDefinition),
             "external_identity_sync" => Ok(EntityType::ExternalIdentitySync),
             "restore" => Ok(EntityType::Restore),
+            "lifecycle" => Ok(EntityType::Lifecycle),
             other => Err(EventCatalogError::UnknownEntityType(other.to_string())),
         }
     }
@@ -630,6 +634,7 @@ pub enum Action {
     Started,
     Validating,
     Running,
+    Waiting,
     Succeeded,
     Failed,
     PartiallySucceeded,
@@ -654,6 +659,7 @@ impl Action {
         Self::Started,
         Self::Validating,
         Self::Running,
+        Self::Waiting,
         Self::Succeeded,
         Self::Failed,
         Self::PartiallySucceeded,
@@ -678,6 +684,7 @@ impl Action {
             Action::Started => "started",
             Action::Validating => "validating",
             Action::Running => "running",
+            Action::Waiting => "waiting",
             Action::Succeeded => "succeeded",
             Action::Failed => "failed",
             Action::PartiallySucceeded => "partially_succeeded",
@@ -703,6 +710,7 @@ impl Action {
             "started" => Ok(Action::Started),
             "validating" => Ok(Action::Validating),
             "running" => Ok(Action::Running),
+            "waiting" => Ok(Action::Waiting),
             "succeeded" => Ok(Action::Succeeded),
             "failed" => Ok(Action::Failed),
             "partially_succeeded" => Ok(Action::PartiallySucceeded),
@@ -733,6 +741,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
         E::EventSink => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ExternalIdentitySync => &[A::Succeeded, A::Failed],
         E::Restore => &[A::Succeeded],
+        E::Lifecycle => &[A::Created, A::Queued, A::Updated, A::Succeeded],
         E::Authentication => &[A::Updated, A::Revoked, A::Succeeded],
         E::RemoteTarget => &[A::Created, A::Updated, A::Deleted, A::Invoked],
         E::ClassRelation => &[A::Created, A::Updated, A::Deleted],
@@ -746,6 +755,7 @@ pub fn valid_actions(entity_type: EntityType) -> &'static [Action] {
             A::Started,
             A::Validating,
             A::Running,
+            A::Waiting,
             A::Succeeded,
             A::Failed,
             A::PartiallySucceeded,
@@ -1381,6 +1391,11 @@ pub struct EventSubscriptionFilter {
 
 impl EventSubscriptionFilter {
     pub fn matches(&self, event: &EventEnvelope) -> bool {
+        // The offline recovery milestone emits privileged audit evidence only.
+        // Lifecycle delivery needs its own reviewed safe projection and opt-in.
+        if event.entity_type() == EntityType::Lifecycle {
+            return false;
+        }
         matches_optional(
             &self.subject_principal_ids,
             event.subject().map(EventSubject::principal_id),

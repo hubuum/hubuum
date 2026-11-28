@@ -76,6 +76,7 @@ manifest.
 | Package | Classification |
 | --- | --- |
 | `hubuum` | Internal application |
+| `hubuum-artifacts` | Workspace-internal |
 | `hubuum-auth-core` | Workspace-internal |
 | `hubuum-auth-ldap` | Workspace-internal |
 | `hubuum-budget` | Experimental public |

@@ -2,6 +2,90 @@ use super::*;
 
 mod tasks;
 
+impl MemoryHistoryValue {
+    fn backup_resource(
+        &self,
+    ) -> Result<(StorageBackupHistorySection, StorageBackupRow), StorageError> {
+        Ok(match self {
+            MemoryHistoryValue::Collection(v) => (
+                StorageBackupHistorySection::CollectionHistory,
+                resources::collections(v)?,
+            ),
+            MemoryHistoryValue::Class(v) => (
+                StorageBackupHistorySection::ClassHistory,
+                resources::classes(v)?,
+            ),
+            MemoryHistoryValue::Object(v) => (
+                StorageBackupHistorySection::ObjectHistory,
+                resources::objects(v)?,
+            ),
+            MemoryHistoryValue::ExportTemplate(v) => (
+                StorageBackupHistorySection::ExportTemplateHistory,
+                resources::export_templates(v)?,
+            ),
+            MemoryHistoryValue::RemoteTarget(v) => (
+                StorageBackupHistorySection::RemoteTargetHistory,
+                resources::remote_targets(v)?,
+            ),
+        })
+    }
+
+    pub(crate) fn history_resource_size(&self) -> Result<MemoryHistoryResourceSize, StorageError> {
+        let (_, resource) = self.backup_resource()?;
+        let encoded = bounded_encoded_bytes(
+            &resource,
+            u64::from(HistoryExpiryInputBytes::MAX_BATCH_BYTES),
+        )?;
+        // A value outside logical-accounting limits may still be stored and backed up.
+        let logical = HistoryLogicalBytes::measure_fields_json_v1(resource.fields()).ok();
+        Ok(MemoryHistoryResourceSize { encoded, logical })
+    }
+}
+
+impl MemoryHistoryEntry {
+    pub(crate) fn history_metadata(&self) -> impl serde::Serialize + '_ {
+        #[derive(serde::Serialize)]
+        struct Metadata<'a> {
+            logical_identity: &'a StorageIdentityEvidence,
+            history_entry_id: HistoryRecordId,
+            operation: &'a str,
+            valid_from: DateTime<Utc>,
+            valid_to: Option<DateTime<Utc>>,
+            actor_principal_id: Option<PrincipalId>,
+            actor_kind: Option<&'a str>,
+            initiator_principal_id: Option<PrincipalId>,
+            task_id: Option<TaskId>,
+        }
+        Metadata {
+            logical_identity: &self.logical_identity,
+            history_entry_id: self.id,
+            operation: self.operation.as_str(),
+            valid_from: self.valid_from,
+            valid_to: self.valid_to,
+            actor_principal_id: self.actor_id,
+            actor_kind: self.actor_kind.as_deref(),
+            initiator_principal_id: self.initiator_principal_id,
+            task_id: self.task_id,
+        }
+    }
+
+    pub(crate) fn backup_history_row(
+        &self,
+    ) -> Result<(StorageBackupHistorySection, StorageBackupRow), StorageError> {
+        let (section, resource) = self.value.backup_resource()?;
+        let Value::Object(mut fields) = resource.into_value() else {
+            unreachable!("typed backup row")
+        };
+        let Value::Object(metadata) = serde_json::to_value(self.history_metadata())
+            .map_err(|error| StorageError::internal(error.to_string()))?
+        else {
+            unreachable!("typed backup row")
+        };
+        fields.extend(metadata);
+        Ok((section, row(Value::Object(fields))?))
+    }
+}
+
 fn advance_retained_sequence(
     ids: &mut IdSequence,
     rows: &[StorageBackupRow],
@@ -27,7 +111,13 @@ pub(in crate::backup) fn capture_history(
         state
             .schema_history
             .iter()
-            .map(|row| capture_row(progress, Ok(row.clone())))
+            .filter_map(|row| {
+                match state.raw_history_visible(StorageIdentityHistoryKind::ClassSchema, row) {
+                    Ok(true) => Some(capture_row(progress, Ok(row.clone()))),
+                    Ok(false) => None,
+                    Err(error) => Some(Err(error)),
+                }
+            })
             .collect::<Result<_, _>>()?,
     );
     sections.insert(
@@ -35,6 +125,12 @@ pub(in crate::backup) fn capture_history(
         state
             .computed_history
             .iter()
+            .filter(|record| {
+                state.history_identity_visible(
+                    StorageIdentityHistoryKind::ComputedDefinitions,
+                    record.logical_identity(),
+                )
+            })
             .map(|record| {
                 capture_row(
                     progress,
@@ -46,42 +142,37 @@ pub(in crate::backup) fn capture_history(
             .collect::<Result<_, _>>()?,
     );
     for entry in &state.history {
-        let (section, snapshot) = match &entry.value {
-            MemoryHistoryValue::Collection(v) => (
-                StorageBackupHistorySection::CollectionHistory,
-                resources::collections(v)?,
-            ),
-            MemoryHistoryValue::Class(v) => (
-                StorageBackupHistorySection::ClassHistory,
-                resources::classes(v)?,
-            ),
-            MemoryHistoryValue::Object(v) => (
-                StorageBackupHistorySection::ObjectHistory,
-                resources::objects(v)?,
-            ),
-            MemoryHistoryValue::ExportTemplate(v) => (
-                StorageBackupHistorySection::ExportTemplateHistory,
-                resources::export_templates(v)?,
-            ),
-            MemoryHistoryValue::RemoteTarget(v) => (
-                StorageBackupHistorySection::RemoteTargetHistory,
-                resources::remote_targets(v)?,
-            ),
-        };
-        let mut fields = snapshot.fields().clone();
-        fields.extend(json!({"history_entry_id": entry.id.id(), "operation": entry.operation.as_str(),
-            "valid_from": entry.valid_from, "valid_to": entry.valid_to, "actor_principal_id": entry.actor_id.map(PrincipalId::id),
-            "actor_kind": entry.actor_kind, "initiator_principal_id": entry.initiator_principal_id.map(PrincipalId::id), "task_id": entry.task_id.map(TaskId::id)}).as_object().expect("literal object").clone());
+        if !state.history_entry_visible(entry) {
+            continue;
+        }
+        let (section, row) = entry.backup_history_row()?;
         sections
             .get_mut(&section)
             .expect("complete sections")
-            .push(capture_row(progress, row(Value::Object(fields)))?);
+            .push(capture_row(progress, Ok(row))?);
     }
     for (&section, rows) in &state.relation_history {
+        let family = match section {
+            StorageBackupHistorySection::ClassRelationHistory => {
+                StorageIdentityHistoryKind::ClassRelation
+            }
+            StorageBackupHistorySection::ObjectRelationHistory => {
+                StorageIdentityHistoryKind::ObjectRelation
+            }
+            _ => {
+                return Err(StorageError::backend_failure(
+                    "Invalid relation history section",
+                ));
+            }
+        };
         sections.insert(
             section,
             rows.iter()
-                .map(|row| capture_row(progress, Ok(row.clone())))
+                .filter_map(|row| match state.raw_history_visible(family, row) {
+                    Ok(true) => Some(capture_row(progress, Ok(row.clone()))),
+                    Ok(false) => None,
+                    Err(error) => Some(Err(error)),
+                })
                 .collect::<Result<_, _>>()?,
         );
     }
@@ -90,11 +181,15 @@ pub(in crate::backup) fn capture_history(
         progress.scan_row()?;
         let (event, before, after) = recorded.as_parts();
         if event.entity_type() == EntityType::Task
-            && !event.entity_id().is_some_and(|id| {
-                state
-                    .tasks
-                    .get(&id.get())
-                    .is_some_and(|task| task.status.is_terminal())
+            && event.entity_id().is_some_and(|id| {
+                state.tasks.get(&id.get()).is_some_and(|task| {
+                    !task.status.is_terminal()
+                        && recorded
+                            .logical_identity()
+                            .and_then(|proof| proof.task_reference("/entity_id"))
+                            .zip(state.task_identity(task.id).ok())
+                            .is_some_and(|(original, current)| original == current)
+                })
             })
         {
             continue;
@@ -106,6 +201,15 @@ pub(in crate::backup) fn capture_history(
             "metadata": event.metadata(), "schema_version": event.schema_version(), "dispatched_at": state.event_dispatched_at.get(&event.id().get()).copied().unwrap_or(event.occurred_at()),
             "initiator_principal_id": event.provenance().initiator.as_ref().map(|p| p.principal_id.id()), "task_id": event.provenance().task_id.map(TaskId::id),
             "before_revision": before.map(ResourceRevision::get), "after_revision": after.map(ResourceRevision::get)}).as_object().expect("literal object").clone();
+        fields.insert(
+            "logical_identity".into(),
+            serde_json::to_value(
+                recorded
+                    .logical_identity()
+                    .ok_or_else(|| invalid("event identity"))?,
+            )
+            .map_err(|_| invalid("event identity"))?,
+        );
         add_trace(&mut fields, event.trace_link());
         events.push(retain_row(progress, row(Value::Object(fields)))?);
     }
@@ -128,6 +232,7 @@ pub(in crate::backup) fn capture_history(
             continue;
         }
         deliveries.push(retain_row(progress, row(json!({
+            "logical_identity": state.logical_identities.association(Association::Delivery(d.id()))?,
             "id": d.id().id(), "event_id": d.event_id().get(), "subscription_id": d.subscription_id().id(), "status": d.status().as_str(), "purpose": d.purpose(), "deferred_reason": d.deferred_reason(), "attempts": d.attempts(),
             "next_attempt_at": d.next_attempt_at(), "last_error": d.last_error(), "created_at": d.created_at(), "updated_at": d.updated_at()
         })))?);
@@ -223,7 +328,7 @@ pub(in crate::backup) fn restore_history(
         .collect::<Result<_, _>>()?;
     state
         .computed_history
-        .sort_by_key(|record| (record.valid_from(), record.history_entry_id()));
+        .sort_by_key(StorageComputedFieldHistory::history_entry_id);
     if let Some(retained_id) = state
         .computed_history
         .iter()
@@ -262,6 +367,10 @@ pub(in crate::backup) fn restore_history(
                 _ => unreachable!("temporal resource selection"),
             };
             state.history.push(MemoryHistoryEntry {
+                scan_position: 0,
+                resource_size: value.history_resource_size()?,
+                logical_identity: serde_json::from_value(r.value("logical_identity")?.clone())
+                    .map_err(|_| invalid("logical_identity"))?,
                 id: HistoryRecordId::new(r.number("history_entry_id")?)
                     .map_err(|_| invalid("history_entry_id"))?,
                 value,
@@ -295,36 +404,40 @@ pub(in crate::backup) fn restore_history(
     state
         .history
         .sort_by_key(|entry| (entry.valid_from, entry.id));
+    // Preserve chronological reads while assigning a unique position across native tables.
+    for (index, entry) in state.history.iter_mut().enumerate() {
+        entry.scan_position = index as u64 + 1;
+    }
     for section in [
         StorageBackupHistorySection::ClassRelationHistory,
         StorageBackupHistorySection::ObjectRelationHistory,
     ] {
-        state
-            .relation_history
-            .insert(section, sections[&section].clone());
+        let mut rows = sections[&section].clone();
+        rows.sort_by_key(|row| row.get("history_entry_id").and_then(Value::as_i64));
+        state.relation_history.insert(section, rows);
     }
-    let last_id = sections
-        .iter()
-        .filter(|(s, _)| {
-            matches!(
-                s,
-                StorageBackupHistorySection::ComputedFieldHistory
-                    | StorageBackupHistorySection::CollectionHistory
-                    | StorageBackupHistorySection::ClassHistory
-                    | StorageBackupHistorySection::ObjectHistory
-                    | StorageBackupHistorySection::ClassRelationHistory
-                    | StorageBackupHistorySection::ObjectRelationHistory
-                    | StorageBackupHistorySection::ExportTemplateHistory
-                    | StorageBackupHistorySection::RemoteTargetHistory
-            )
-        })
-        .flat_map(|(_, rows)| rows)
-        .map(|r| Row(r).number("history_entry_id"))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .max()
-        .unwrap_or(0);
-    state.history_ids.observe(last_id);
+    let mut highest =
+        i64::try_from(state.history.len()).map_err(|_| invalid("history sequence"))?;
+    for (section, rows) in &sections {
+        use StorageBackupHistorySection::*;
+        let column = match section {
+            ClassSchemaHistory => "id",
+            ComputedFieldHistory
+            | CollectionHistory
+            | ClassHistory
+            | ObjectHistory
+            | ClassRelationHistory
+            | ObjectRelationHistory
+            | ExportTemplateHistory
+            | RemoteTargetHistory => "history_entry_id",
+            _ => continue,
+        };
+        for row in rows {
+            let id = HistoryRecordId::new(Row(row).number(column)?).map_err(|_| invalid(column))?;
+            highest = highest.max(id.id());
+        }
+    }
+    state.history_ids.observe(highest);
     state.events.clear();
     state.task_events.clear();
     for row in &sections[&StorageBackupHistorySection::AuditEvents] {
@@ -420,12 +533,16 @@ pub(in crate::backup) fn restore_history(
         state
             .event_dispatched_at
             .insert(envelope.id().get(), r.time("dispatched_at")?);
-        state.index_task_event(&envelope)?;
-        state.events.push(StorageRecordedEvent::new(
-            envelope,
-            revision("before_revision")?,
-            revision("after_revision")?,
-        ));
+        let identity = r.identity()?;
+        state.index_task_event(&envelope, &identity)?;
+        state.events.push(
+            StorageRecordedEvent::new(
+                envelope,
+                revision("before_revision")?,
+                revision("after_revision")?,
+            )
+            .with_logical_identity(identity),
+        );
     }
     for events in state.task_events.values_mut() {
         events.sort_by_key(|event| event.id().get());
@@ -458,6 +575,9 @@ pub(in crate::backup) fn restore_history(
         .last_error(r.optional_text("last_error")?)
         .try_build()
         .map_err(invalid_contract_value)?;
+        state
+            .logical_identities
+            .restore_association(Association::Delivery(value.id()), r.identity()?);
         state.event_deliveries.store_unclaimed(value);
     }
     let last_id = state

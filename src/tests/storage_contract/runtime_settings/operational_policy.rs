@@ -10,7 +10,7 @@ use super::*;
 #[case::login("login_rate_limit", json!({"attempts_per_identity": 7, "window_seconds": 123}))]
 #[case::events("events", json!({"fanout_batch_size": 7, "delivery_batch_size": 12, "purge_enabled": true}))]
 #[case::exports("exports", json!({"template_fuel": 7654, "storage_query_budget_ms": 123}))]
-#[case::backups("backups", json!({"max_active_per_user": 2, "max_output_bytes": 12345}))]
+#[case::backups("backups", json!({"max_capture_rows": 2, "max_output_bytes": 12345}))]
 #[case::restores("restores", json!({"max_upload_bytes": 12345, "staging_retention_minutes": 12}))]
 #[actix_web::test]
 async fn operational_patch_is_persisted_audited_and_reported(
@@ -393,7 +393,7 @@ async fn backup_settings_keep_captured_ownership(#[case] initially_managed: bool
     backend.refresh_runtime_settings().await.unwrap();
     let captured = crate::config::runtime::for_storage(&backend).unwrap();
     let deployment =
-        crate::backups::BackupSettings::new(24, 3, StorageBackupBudget::new(1024, 100).unwrap())
+        crate::backups::BackupSettings::new(24, StorageBackupBudget::new(1024, 100).unwrap())
             .unwrap();
     crate::config::runtime::scope(captured, async {
         let assignment = if initially_managed {
@@ -407,13 +407,12 @@ async fn backup_settings_keep_captured_ownership(#[case] initially_managed: bool
             .with_runtime(&crate::config::runtime::current().unwrap())
             .unwrap();
         let expected = if initially_managed {
-            (2, 123, 45, 12)
+            (123, 45, 12)
         } else {
-            (3, 1024, 100, 24)
+            (1024, 100, 24)
         };
         assert_eq!(
             (
-                settings.max_active_tasks_per_user(),
                 settings.budget().max_bytes(),
                 settings.budget().max_rows(),
                 settings.output_retention_hours()
@@ -481,4 +480,37 @@ async fn stale_runtime_policy_blocks_new_delivery_batches() {
     )
     .await;
     assert!(matches!(result, Err(ApiError::ServiceUnavailable(_))));
+}
+
+#[rstest::rstest]
+#[case::imports("tasks", "imports_per_user")]
+#[case::exports("tasks", "exports_per_user")]
+#[case::remote_calls("tasks", "remote_calls_per_user")]
+#[case::backups("backups", "max_active_per_user")]
+#[actix_web::test]
+async fn runtime_settings_cannot_replace_shared_task_admission(
+    #[case] group: &str,
+    #[case] field: &str,
+) {
+    let backend = StorageHandle::memory();
+    let user = admin(&backend).await;
+    let response = send(
+        &backend,
+        Some(&user.raw_token),
+        test::TestRequest::patch()
+            .uri(&format!("/api/v1/admin/runtime-settings/{group}"))
+            .set_json(json!({"expected_revision": 1, "changes": {field: 2}})),
+    )
+    .await;
+    let status = response.status();
+    let body: Value = test::read_body_json(response).await;
+    assert_eq!(status, http::StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body.to_string().contains("/api/v1/admin/task-capacity"),
+        "{body}"
+    );
+    assert_eq!(
+        history_len(&backend, StorageRuntimeSettingsGroup::parse(group).unwrap()).await,
+        0
+    );
 }

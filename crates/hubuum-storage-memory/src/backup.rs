@@ -1,6 +1,8 @@
 //! Memory-owned projection of the logical backup contract.
 
 use super::*;
+use crate::logical_identity::{Association, IdentityRecord};
+use hubuum_storage_core::StorageIdentityTarget;
 use serde_json::{Map, Value, json};
 
 mod identity;
@@ -13,8 +15,54 @@ mod workflows;
 #[cfg(test)]
 mod tests;
 
+pub(super) fn bounded_encoded_bytes(
+    value: &impl serde::Serialize,
+    limit: u64,
+) -> Result<Option<u64>, StorageError> {
+    // Reuse the existing bounded JSON writer without allocating a payload copy.
+    // No valid JSON value can fit a zero-byte remainder.
+    if limit == 0 {
+        return Ok(None);
+    }
+    let budget = StorageBackupBudget::new(usize::try_from(limit).unwrap_or(usize::MAX), 1)
+        .map_err(invalid_contract_value)?;
+    match budget.serialize_into(value, std::io::sink()) {
+        Ok(bytes) => Ok(Some(bytes as u64)),
+        Err(error) if error.kind() == StorageErrorKind::InputTooLarge => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 fn row(value: Value) -> Result<StorageBackupRow, StorageError> {
     StorageBackupRow::try_from_value(value).map_err(invalid_contract_value)
+}
+
+fn identified_row(
+    state: &MemoryState,
+    value: &impl IdentityRecord,
+    snapshot: Result<StorageBackupRow, StorageError>,
+) -> Result<StorageBackupRow, StorageError> {
+    identity_row(snapshot, state.logical_identities.record(value.target())?)
+}
+
+fn identity_row(
+    snapshot: Result<StorageBackupRow, StorageError>,
+    evidence: StorageIdentityEvidence,
+) -> Result<StorageBackupRow, StorageError> {
+    let mut fields = snapshot?.fields().clone();
+    fields.insert(
+        "logical_identity".into(),
+        serde_json::to_value(evidence).map_err(|_| invalid("logical_identity"))?,
+    );
+    row(Value::Object(fields))
+}
+
+fn associated_row(
+    state: &MemoryState,
+    key: Association,
+    snapshot: Result<StorageBackupRow, StorageError>,
+) -> Result<StorageBackupRow, StorageError> {
+    identity_row(snapshot, state.logical_identities.association(key)?)
 }
 
 fn invalid(field: &str) -> StorageError {
@@ -24,6 +72,10 @@ fn invalid(field: &str) -> StorageError {
 struct Row<'a>(&'a StorageBackupRow);
 
 impl Row<'_> {
+    fn identity(&self) -> Result<StorageIdentityEvidence, StorageError> {
+        serde_json::from_value(self.value("logical_identity")?.clone())
+            .map_err(|_| invalid("logical_identity"))
+    }
     fn value(&self, field: &str) -> Result<&Value, StorageError> {
         self.0.get(field).ok_or_else(|| invalid(field))
     }
@@ -117,10 +169,27 @@ pub(super) fn capture(
         .map_err(invalid_contract_value)
 }
 
-pub(super) fn restore(snapshot: StorageBackupSnapshot) -> Result<MemoryState, StorageError> {
+#[cfg(test)]
+pub(super) fn restore(
+    snapshot: StorageBackupSnapshot,
+    control: crate::task_capacity::MemoryTaskCapacity,
+    artifacts: crate::artifacts::Artifacts,
+) -> Result<MemoryState, StorageError> {
+    let mut state = restore_without_repairs(snapshot, control, artifacts)?;
+    enqueue_restored_repairs(&mut state)?;
+    Ok(state)
+}
+
+pub(super) fn restore_without_repairs(
+    snapshot: StorageBackupSnapshot,
+    control: crate::task_capacity::MemoryTaskCapacity,
+    artifacts: crate::artifacts::Artifacts,
+) -> Result<MemoryState, StorageError> {
     let schema_limits = snapshot.schema_limits();
     let (sections, history) = snapshot.into_parts();
     let mut state = MemoryState::new();
+    state.task_capacity = control.restore_control()?;
+    state.artifacts = artifacts;
     resources::restore(&sections, &mut state)?;
     schemas::restore(&sections, &mut state, schema_limits)?;
     identity::restore(&sections, &mut state)?;
@@ -129,9 +198,18 @@ pub(super) fn restore(snapshot: StorageBackupSnapshot) -> Result<MemoryState, St
         history.ok_or_else(|| invalid("prepared history"))?,
         &mut state,
     )?;
-    enqueue_computed_rebuilds(&mut state)?;
-    schemas::enqueue_revalidation(&mut state)?;
+    state.task_capacity = state.task_accounting_snapshot()?;
     Ok(state)
+}
+
+pub(super) fn enqueue_restored_repairs(state: &mut MemoryState) -> Result<(), StorageError> {
+    enqueue_computed_rebuilds(state)?;
+    schemas::enqueue_revalidation(state)?;
+    state.task_capacity = state.task_accounting_snapshot()?;
+    // Required repairs belong to restore reconciliation, including when their
+    // registration waits for protected reapplication and exposure release.
+    state.task_capacity.finish_restore();
+    Ok(())
 }
 
 fn enqueue_computed_rebuilds(state: &mut MemoryState) -> Result<(), StorageError> {
@@ -145,6 +223,8 @@ fn enqueue_computed_rebuilds(state: &mut MemoryState) -> Result<(), StorageError
         let now = Utc::now();
         let id = TaskId::new(state.task_ids.allocate()?).map_err(|_| invalid("rebuild task id"))?;
         let record = MemoryTaskRecord {
+            checkpoint: None,
+            wait_token: None,
             control: StorageTaskControl::new(StorageTaskKind::Reindex),
             id,
             kind: StorageTaskKind::Reindex,
@@ -175,9 +255,15 @@ fn enqueue_computed_rebuilds(state: &mut MemoryState) -> Result<(), StorageError
             initiator_principal_id: None,
             trace_link: None,
             claim_token: None,
+            execution_fence: None,
+            receipt_admission: None,
+            retention_policy: None,
+            details_expires_at: None,
+            recovery_unavailable: false,
+            invocation: None,
         };
         record.projection()?;
-        state.tasks.insert(id.id(), record);
+        state.store_task(id.id(), record)?;
         state.computed_rebuild_tasks.insert(id.id(), class_id);
         state.computation_states.insert(
             class_id.id(),
@@ -224,9 +310,19 @@ pub(super) fn append_restore_event(
         .try_build()
         .map_err(|_| invalid("restore provenance"))?;
     state.event_sequences.observe(envelope.id().get());
+    let identity = state.logical_identities.event(&envelope, None, None);
+    let references = job
+        .logical_identity
+        .references()
+        .get("/requested_by")
+        .into_iter()
+        .map(|reference| ("/metadata/initiated_by/principal_id".into(), *reference))
+        .collect();
+    let identity = StorageIdentityEvidence::try_new(identity.subject(), references)
+        .map_err(invalid_contract_value)?;
     state
         .events
-        .push(StorageRecordedEvent::new(envelope, None, None));
+        .push(StorageRecordedEvent::new(envelope, None, None).with_logical_identity(identity));
     Ok(())
 }
 
@@ -236,10 +332,16 @@ pub(super) fn record_class_relation_history(
     operation: StorageHistoryOperation,
     context: &EventContext,
 ) -> Result<(), StorageError> {
+    let identity = state
+        .logical_identities
+        .history(value, operation, Some(context));
+    let mut snapshot = resources::classrelations(value)?.into_value();
+    snapshot["logical_identity"] =
+        serde_json::to_value(identity).map_err(|_| invalid("logical_identity"))?;
     record_relation_history(
         state,
         StorageBackupHistorySection::ClassRelationHistory,
-        resources::classrelations(value)?,
+        row(snapshot)?,
         operation,
         context,
     )
@@ -251,10 +353,16 @@ pub(super) fn record_object_relation_history(
     operation: StorageHistoryOperation,
     context: &EventContext,
 ) -> Result<(), StorageError> {
+    let identity = state
+        .logical_identities
+        .history(value, operation, Some(context));
+    let mut snapshot = resources::objectrelations(value)?.into_value();
+    snapshot["logical_identity"] =
+        serde_json::to_value(identity).map_err(|_| invalid("logical_identity"))?;
     record_relation_history(
         state,
         StorageBackupHistorySection::ObjectRelationHistory,
-        resources::objectrelations(value)?,
+        row(snapshot)?,
         operation,
         context,
     )

@@ -13,6 +13,7 @@ use argon2::Argon2;
 use argon2::password_hash::PasswordHasher;
 use argon2::password_hash::phc::PasswordHash;
 use chrono::NaiveDateTime;
+use diesel::SelectableHelper;
 use diesel::prelude::{ExpressionMethods, OptionalExtension, QueryDsl};
 use diesel_async::RunQueryDsl;
 use hubuum_domain::PlaintextPassword;
@@ -128,6 +129,7 @@ pub(super) async fn execute_group(
         .filter(crate::schema::groups::identity_scope_id.eq(identity_scope_id))
         .filter(crate::schema::groups::groupname.eq(&parts.name))
         .for_update()
+        .select(GroupRow::as_select())
         .first::<GroupRow>(connection)
         .await
         .optional()?;
@@ -448,6 +450,7 @@ async fn upsert_principal(
         .filter(crate::schema::principals::identity_scope_id.eq(identity_scope_id))
         .filter(crate::schema::principals::name.eq(&parts.name))
         .for_update()
+        .select(PrincipalRow::as_select())
         .first::<PrincipalRow>(connection)
         .await
         .optional()?;
@@ -543,6 +546,7 @@ async fn upsert_principal(
         } => {
             let existing = crate::schema::users::table
                 .filter(crate::schema::users::id.eq(principal_id))
+                .select(UserRow::as_select())
                 .first::<UserRow>(connection)
                 .await
                 .optional()?;
@@ -615,6 +619,7 @@ async fn upsert_principal(
             })?;
             let existing = crate::schema::service_accounts::table
                 .filter(crate::schema::service_accounts::id.eq(principal_id))
+                .select(ServiceAccountRow::as_select())
                 .first::<ServiceAccountRow>(connection)
                 .await
                 .optional()?;

@@ -295,6 +295,7 @@ pub(crate) async fn patch_object_data_on(
         crate::schema::hubuumobject::table.filter(crate::schema::hubuumobject::id.eq(before.id)),
     )
     .set(crate::schema::hubuumobject::data.eq(patched_data))
+    .returning(ObjectRow::as_select())
     .get_result::<ObjectRow>(connection)
     .await?;
     super::schema_evolution::record_object_schema_on(schema_limits, connection, &updated, context)
@@ -494,6 +495,7 @@ async fn load_class(
 ) -> Result<ClassRow, PostgresStorageError> {
     crate::schema::hubuumclass::table
         .filter(crate::schema::hubuumclass::id.eq(class_id))
+        .select(ClassRow::as_select())
         .first(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -505,6 +507,7 @@ async fn load_object(
 ) -> Result<ObjectRow, PostgresStorageError> {
     crate::schema::hubuumobject::table
         .filter(crate::schema::hubuumobject::id.eq(object_id))
+        .select(ObjectRow::as_select())
         .first(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -524,6 +527,7 @@ async fn insert_object(
             data.eq(command.data()),
             description.eq(command.description()),
         ))
+        .returning(ObjectRow::as_select())
         .get_result(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -546,6 +550,7 @@ async fn lock_resolved_object(
                 crate::schema::hubuumclass::collection_id.eq(resolved_class.collection_id().id()),
             )
             .for_update()
+            .select(ClassRow::as_select())
             .first::<ClassRow>(connection)
             .await
             .optional()?,
@@ -556,6 +561,7 @@ async fn lock_resolved_object(
                 crate::schema::hubuumclass::collection_id.eq(resolved_class.collection_id().id()),
             )
             .for_update()
+            .select(ClassRow::as_select())
             .first::<ClassRow>(connection)
             .await
             .optional()?,
@@ -574,6 +580,7 @@ async fn lock_resolved_object(
             .filter(crate::schema::hubuumobject::hubuum_class_id.eq(class_id.id()))
             .filter(crate::schema::hubuumobject::hubuum_class_id.eq(resolved.class_id().id()))
             .for_update()
+            .select(ObjectRow::as_select())
             .first::<ObjectRow>(connection)
             .await
             .optional()?,
@@ -583,6 +590,7 @@ async fn lock_resolved_object(
             .filter(crate::schema::hubuumobject::collection_id.eq(resolved.collection_id().id()))
             .filter(crate::schema::hubuumobject::name.eq(object_name))
             .for_update()
+            .select(ObjectRow::as_select())
             .first::<ObjectRow>(connection)
             .await
             .optional()?,
@@ -620,6 +628,7 @@ async fn persist_object_update(
         crate::schema::hubuumobject::table.filter(crate::schema::hubuumobject::id.eq(before.id)),
     )
     .set(update)
+    .returning(ObjectRow::as_select())
     .get_result::<ObjectRow>(connection)
     .await?;
     super::schema_evolution::record_object_schema_on(schema_limits, connection, &updated, context)

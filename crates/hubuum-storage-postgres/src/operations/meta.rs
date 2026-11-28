@@ -32,6 +32,8 @@ struct TaskQueueStateRow {
     #[diesel(sql_type = BigInt)]
     running_tasks: i64,
     #[diesel(sql_type = BigInt)]
+    waiting_tasks: i64,
+    #[diesel(sql_type = BigInt)]
     succeeded_tasks: i64,
     #[diesel(sql_type = BigInt)]
     failed_tasks: i64,
@@ -117,6 +119,7 @@ pub async fn load_task_queue_snapshot(
           COUNT(*) FILTER (WHERE status = 'queued')::bigint AS queued_tasks,
           COUNT(*) FILTER (WHERE status = 'validating')::bigint AS validating_tasks,
           COUNT(*) FILTER (WHERE status = 'running')::bigint AS running_tasks,
+          COUNT(*) FILTER (WHERE status = 'waiting')::bigint AS waiting_tasks,
           COUNT(*) FILTER (WHERE status = 'succeeded')::bigint AS succeeded_tasks,
           COUNT(*) FILTER (WHERE status = 'failed')::bigint AS failed_tasks,
           COUNT(*) FILTER (WHERE status = 'partially_succeeded')::bigint AS partially_succeeded_tasks,
@@ -144,6 +147,7 @@ pub async fn load_task_queue_snapshot(
             row.queued_tasks,
             row.validating_tasks,
             row.running_tasks,
+            row.waiting_tasks,
         ),
     )?;
     let terminal = crate::validate_persisted(

@@ -8,7 +8,7 @@ impl CollectionStorage for MemoryStorage {
     async fn get_collection(&self, id: CollectionId) -> Result<StorageCollection, StorageError> {
         self.state
             .read()
-            .await
+            .await?
             .collections
             .get(&id.id())
             .cloned()
@@ -20,7 +20,7 @@ impl CollectionStorage for MemoryStorage {
         command: StorageCollectionCreate,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let parent_id = command
             .parent_collection_id()
             .unwrap_or(CollectionId::new(ROOT_COLLECTION_ID).expect("root id is valid"));
@@ -64,6 +64,7 @@ impl CollectionStorage for MemoryStorage {
                 .metadata(serde_json::json!({"owner_group_id": command.owner_group_id().id()}))
                 .try_build()
                 .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_collection(id, collection.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::Collection,
@@ -76,7 +77,6 @@ impl CollectionStorage for MemoryStorage {
             None,
             Some(collection.revision()),
         )?;
-        state.collections.insert(id, collection.clone());
         state.append_history(
             MemoryHistoryValue::Collection(collection.clone()),
             StorageHistoryOperation::Create,
@@ -91,7 +91,7 @@ impl CollectionStorage for MemoryStorage {
         changes: StorageCollectionUpdate,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state.collections.get(&id.id()).cloned().ok_or_else(|| {
             StorageError::not_found(format!("Collection {} was not found", id.id()))
         })?;
@@ -146,7 +146,7 @@ impl CollectionStorage for MemoryStorage {
             Some(current.revision()),
             Some(updated.revision()),
         )?;
-        state.collections.insert(id.id(), updated.clone());
+        state.store_collection(id.id(), updated.clone());
         state.append_history(
             MemoryHistoryValue::Collection(updated.clone()),
             StorageHistoryOperation::Update,
@@ -165,7 +165,7 @@ impl CollectionStorage for MemoryStorage {
                 "The root collection cannot be deleted",
             ));
         }
-        let mut committed = self.state.write().await;
+        let mut committed = self.state.write().await?;
         let mut state = committed.clone();
         let current = state.collections.get(&id.id()).cloned().ok_or_else(|| {
             StorageError::not_found(format!("Collection {} was not found", id.id()))
@@ -250,7 +250,7 @@ impl CollectionStorage for MemoryStorage {
         &self,
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         if !state.collections.contains_key(&id.id()) {
             return Err(StorageError::not_found(format!(
                 "Collection {} was not found",
@@ -271,7 +271,7 @@ impl CollectionStorage for MemoryStorage {
         &self,
         id: CollectionId,
     ) -> Result<Vec<StorageCollection>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut current = state
             .collections
             .get(&id.id())
@@ -300,7 +300,7 @@ impl CollectionStorage for MemoryStorage {
         new_parent_id: CollectionId,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageCollection>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state.collections.get(&id.id()).cloned().ok_or_else(|| {
             StorageError::not_found(format!("Collection {} was not found", id.id()))
         })?;
@@ -378,7 +378,7 @@ impl CollectionStorage for MemoryStorage {
             Some(current.revision()),
             Some(moved.revision()),
         )?;
-        state.collections.insert(id.id(), moved.clone());
+        state.store_collection(id.id(), moved.clone());
         state.append_history(
             MemoryHistoryValue::Collection(moved.clone()),
             StorageHistoryOperation::Update,
@@ -394,7 +394,7 @@ impl ClassStorage for MemoryStorage {
         &self,
         selector: StorageClassSelector,
     ) -> Result<StorageResolvedClass, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let class = match &selector {
             StorageClassSelector::Id(id) => state.classes.get(&id.id()),
             StorageClassSelector::Name(name) => {
@@ -417,7 +417,7 @@ impl ClassStorage for MemoryStorage {
             self.schema_limits,
         )
         .map_err(StorageValidationError::into_request_error)?;
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if !state
             .collections
             .contains_key(&command.collection_id().id())
@@ -460,6 +460,7 @@ impl ClassStorage for MemoryStorage {
             .after(class.audit_snapshot())
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_class(id, class.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::Class,
@@ -472,7 +473,6 @@ impl ClassStorage for MemoryStorage {
             None,
             Some(class.revision()),
         )?;
-        state.classes.insert(id, class.clone());
         state.schema_record_class(&class, StorageHistoryOperation::Create, context, policy)?;
         state.record_computed_history(class.id())?;
         state.append_history(
@@ -489,7 +489,7 @@ impl ClassStorage for MemoryStorage {
         changes: StorageClassUpdate,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageClass>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let id = target.class().id();
         let current = state
             .classes
@@ -574,7 +574,7 @@ impl ClassStorage for MemoryStorage {
             Some(current.revision()),
             Some(updated.revision()),
         )?;
-        state.classes.insert(id.id(), updated.clone());
+        state.store_class(id.id(), updated.clone());
         state.schema_record_class(&updated, StorageHistoryOperation::Update, context, policy)?;
         state.append_history(
             MemoryHistoryValue::Class(updated.clone()),
@@ -589,7 +589,7 @@ impl ClassStorage for MemoryStorage {
         target: &StorageResolvedClass,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut committed = self.state.write().await;
+        let mut committed = self.state.write().await?;
         let mut state = committed.clone();
         let outcome = delete_class_in_state(&mut state, target, context)?;
         *committed = state;
@@ -600,7 +600,7 @@ impl ClassStorage for MemoryStorage {
         &self,
         class_ids: Vec<ClassId>,
     ) -> Result<Vec<(ClassId, String)>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let class_ids = class_ids.into_iter().collect::<BTreeSet<_>>();
         let rows = class_ids
             .iter()
@@ -623,7 +623,7 @@ impl ClassStorage for MemoryStorage {
 #[async_trait]
 impl ObjectStorage for MemoryStorage {
     async fn get_object(&self, object_id: ObjectId) -> Result<StorageResolvedObject, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let object = state
             .objects
             .get(&object_id.id())
@@ -649,7 +649,7 @@ impl ObjectStorage for MemoryStorage {
         &self,
         selector: StorageObjectSelector,
     ) -> Result<StorageResolvedObject, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let (class, object) = match &selector {
             StorageObjectSelector::Ids {
                 class_id,
@@ -710,7 +710,7 @@ impl ObjectStorage for MemoryStorage {
                 .validate_value(schema, command.data())
                 .map_err(|error| StorageError::invalid_input(error.to_string()))?;
         }
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if state.classes.get(&command.class_id().id()) != Some(class.class()) {
             return Err(StorageError::not_found(
                 "Class no longer matches the resolved route target",
@@ -749,6 +749,7 @@ impl ObjectStorage for MemoryStorage {
             .metadata(serde_json::json!({"class_id": object.class_id().id()}))
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_object(id, object.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::Object,
@@ -761,7 +762,6 @@ impl ObjectStorage for MemoryStorage {
             None,
             Some(object.revision()),
         )?;
-        state.objects.insert(id, object.clone());
         state.append_history(
             MemoryHistoryValue::Object(object.clone()),
             StorageHistoryOperation::Create,
@@ -776,7 +776,7 @@ impl ObjectStorage for MemoryStorage {
         changes: StorageObjectUpdate,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageObject>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let id = target.object().id();
         let current = state
             .objects
@@ -861,7 +861,7 @@ impl ObjectStorage for MemoryStorage {
             Some(current.revision()),
             Some(updated.revision()),
         )?;
-        state.objects.insert(id.id(), updated.clone());
+        state.store_object(id.id(), updated.clone());
         state.append_history(
             MemoryHistoryValue::Object(updated.clone()),
             StorageHistoryOperation::Update,
@@ -890,7 +890,7 @@ impl ObjectStorage for MemoryStorage {
         target: &StorageResolvedObject,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut committed = self.state.write().await;
+        let mut committed = self.state.write().await?;
         let mut state = committed.clone();
         let id = target.object().id();
         let current = state
@@ -936,7 +936,7 @@ impl ObjectStorage for MemoryStorage {
     }
 
     async fn validate_object(&self, object: StorageObject) -> Result<(), StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let class = state
             .classes
             .get(&object.class_id().id())
@@ -960,7 +960,7 @@ impl ObjectStorage for MemoryStorage {
         &self,
         command: StorageObjectCreate,
     ) -> Result<(), StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let class = state
             .classes
             .get(&command.class_id().id())
@@ -985,7 +985,7 @@ impl ObjectStorage for MemoryStorage {
         object_id: ObjectId,
         changes: StorageObjectUpdate,
     ) -> Result<(), StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let current = state
             .objects
             .get(&object_id.id())
@@ -1022,7 +1022,7 @@ impl ClassRelationStorage for MemoryStorage {
         let command = command
             .normalized()
             .map_err(|error| StorageError::invalid_input(error.to_string()))?;
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let from = state
             .classes
             .get(&command.from_class_id().id())
@@ -1041,7 +1041,7 @@ impl ClassRelationStorage for MemoryStorage {
         &self,
         id: ClassRelationId,
     ) -> Result<StorageResolvedClassRelation, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let relation = state
             .class_relations
             .get(&id.id())
@@ -1066,7 +1066,7 @@ impl ClassRelationStorage for MemoryStorage {
         prepared: &StoragePreparedClassRelation,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let command = prepared.command();
         if state.classes.get(&prepared.from_class().id().id()) != Some(prepared.from_class())
             || state.classes.get(&prepared.to_class().id().id()) != Some(prepared.to_class())
@@ -1130,6 +1130,7 @@ impl ClassRelationStorage for MemoryStorage {
         }))
         .try_build()
         .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_class_relation(id, relation.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::ClassRelation,
@@ -1148,7 +1149,7 @@ impl ClassRelationStorage for MemoryStorage {
             StorageHistoryOperation::Create,
             context,
         )?;
-        state.class_relations.insert(id, relation);
+
         Ok(StorageMutationOutcome::committed(resolved, receipt))
     }
 
@@ -1158,7 +1159,7 @@ impl ClassRelationStorage for MemoryStorage {
         labels: StorageClassRelationLabelsUpdate,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageResolvedClassRelation>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let id = ClassRelationId::from(target.relation().metadata().id());
         let current = state
             .class_relations
@@ -1225,13 +1226,14 @@ impl ClassRelationStorage for MemoryStorage {
             Some(current.metadata().revision()),
             Some(relation.metadata().revision())
         )?;
+        state.store_class_relation(id.id(), relation.clone());
         crate::backup::record_class_relation_history(
             &mut state,
             &relation,
             StorageHistoryOperation::Update,
             context,
         )?;
-        state.class_relations.insert(id.id(), relation);
+
         Ok(StorageMutationOutcome::committed(resolved, receipt))
     }
 
@@ -1240,7 +1242,7 @@ impl ClassRelationStorage for MemoryStorage {
         target: &StorageResolvedClassRelation,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut committed = self.state.write().await;
+        let mut committed = self.state.write().await?;
         let mut state = committed.clone();
         let relation_id = ClassRelationId::from(target.relation().metadata().id());
         let current = state
@@ -1305,7 +1307,7 @@ impl ObjectRelationStorage for MemoryStorage {
         &self,
         selector: StorageObjectRelationCreateSelector,
     ) -> Result<StoragePreparedObjectRelation, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let command = match selector {
             StorageObjectRelationCreateSelector::Explicit(command) => command,
             StorageObjectRelationCreateSelector::Between { from, to } => {
@@ -1366,7 +1368,7 @@ impl ObjectRelationStorage for MemoryStorage {
         &self,
         selector: StorageObjectRelationSelector,
     ) -> Result<StorageResolvedObjectRelation, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let relation = match selector {
             StorageObjectRelationSelector::Id(id) => state.object_relations.get(&id.id()),
             StorageObjectRelationSelector::Between { from, to } => {
@@ -1419,7 +1421,7 @@ impl ObjectRelationStorage for MemoryStorage {
         prepared: &StoragePreparedObjectRelation,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<StorageResolvedObjectRelation>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let command = *prepared.command();
         if state.objects.get(&prepared.from_object().id().id()) != Some(prepared.from_object())
             || state.objects.get(&prepared.to_object().id().id()) != Some(prepared.to_object())
@@ -1491,6 +1493,7 @@ impl ObjectRelationStorage for MemoryStorage {
         }))
         .try_build()
         .map_err(|error| StorageError::backend_failure(error.to_string()))?;
+        state.store_object_relation(id, relation.clone());
         let receipt = append_memory_event!(
             state,
             EntityType::ObjectRelation,
@@ -1509,7 +1512,7 @@ impl ObjectRelationStorage for MemoryStorage {
             StorageHistoryOperation::Create,
             context,
         )?;
-        state.object_relations.insert(id, relation);
+
         Ok(StorageMutationOutcome::committed(resolved, receipt))
     }
 
@@ -1518,7 +1521,7 @@ impl ObjectRelationStorage for MemoryStorage {
         target: &StorageResolvedObjectRelation,
         context: &EventContext,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let relation_id = ObjectRelationId::from(target.relation().metadata().id());
         let current = state
             .object_relations

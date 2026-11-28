@@ -26,36 +26,35 @@ use hubuum::schema::{
     system_maintenance, tasks,
 };
 use hubuum::storage::with_mutation_provenance;
-use hubuum::test_support::capture_backup_document;
+use hubuum::test_support::RESTORE_TEST_LOCK;
+use hubuum::test_support::{capture_backup_document, with_preserved_restore_image};
 use hubuum::test_support::{create_audit_event, postgres_test_pool_with_timeout};
 use hubuum::tests::TestScope;
 use hubuum::traits::CanSave;
 use hubuum_storage_core::{RestoreStorage, StorageBackupBudget, StorageRestoreArtifact};
 use hubuum_storage_postgres::diesel_async_prelude::*;
-use hubuum_storage_postgres::{PostgresStorage, with_connection, with_transaction};
+use hubuum_storage_postgres::{PostgresPool, PostgresStorage, with_connection, with_transaction};
 use rstest::rstest;
-use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tracing::instrument::WithSubscriber;
 use uuid::Uuid;
 
-// These tests replace the whole runner-owned database, so they must not overlap.
-static RESTORE_TEST_LOCK: Mutex<()> = Mutex::const_new(());
-
 fn database_url() -> String {
-    std::env::var("HUBUUM_RESTORE_TEST_MIGRATION_DATABASE_URL")
-        .expect("The test runner must provide isolated destructive restore authority")
+    hubuum::test_support::restore_test_migration_database_url()
 }
 
 fn runtime_database_url() -> String {
-    std::env::var("HUBUUM_RESTORE_TEST_DATABASE_URL")
-        .expect("The test runner must provide isolated runtime restore-coordination authority")
+    hubuum::test_support::restore_test_runtime_database_url()
 }
 
 #[tokio::test]
 async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
     let _guard = RESTORE_TEST_LOCK.lock().await;
     let pool = postgres_test_pool_with_timeout(&database_url(), 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
+    with_preserved_restore_image(&pool, exercise_interrupted_restore(pool.clone())).await;
+}
+
+async fn exercise_interrupted_restore(pool: PostgresPool) {
     let runtime_pool = postgres_test_pool_with_timeout(
         &runtime_database_url(),
         2,
@@ -418,8 +417,16 @@ async fn interrupted_restore_is_reconciled_after_the_drain_transition() {
 #[tokio::test]
 async fn repeated_restores_wait_for_current_generation_drain(#[case] previously_drained: bool) {
     let _guard = RESTORE_TEST_LOCK.lock().await;
-    let scope = TestScope::new();
     let pool = postgres_test_pool_with_timeout(&database_url(), 2, DEFAULT_DB_STATEMENT_TIMEOUT_MS);
+    with_preserved_restore_image(
+        &pool,
+        exercise_generation_drain(pool.clone(), previously_drained),
+    )
+    .await;
+}
+
+async fn exercise_generation_drain(pool: PostgresPool, previously_drained: bool) {
+    let scope = TestScope::new();
     let runtime_pool = postgres_test_pool_with_timeout(
         &runtime_database_url(),
         2,

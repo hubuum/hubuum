@@ -90,7 +90,7 @@ async fn history_navigation_plan_uses_bounded_index_seek(
 }
 
 fn assert_bounded_plan(plan: &Value, continued: bool) {
-    fn visit(node: &Value, visited: &mut u64, index_conditions: &mut usize) {
+    fn visit(node: &Value, visited: &mut f64, index_conditions: &mut usize) {
         let kind = node["Node Type"].as_str().expect("plan node type");
         assert!(
             !matches!(
@@ -99,8 +99,8 @@ fn assert_bounded_plan(plan: &Value, continued: bool) {
             ),
             "cursor page must preserve index ordering: {node:#}"
         );
-        *visited += node["Actual Rows"].as_u64().unwrap_or_default()
-            + node["Rows Removed by Filter"].as_u64().unwrap_or_default();
+        *visited += node["Actual Rows"].as_f64().expect("actual row count")
+            + node["Rows Removed by Filter"].as_f64().unwrap_or_default();
         *index_conditions += usize::from(node.get("Index Cond").is_some());
         if let Some(children) = node["Plans"].as_array() {
             for child in children {
@@ -109,10 +109,13 @@ fn assert_bounded_plan(plan: &Value, continued: bool) {
         }
     }
     let root = &plan[0]["Plan"];
-    let mut visited = 0;
+    let mut visited = 0.0;
     let mut index_conditions = 0;
     visit(root, &mut visited, &mut index_conditions);
-    assert!(visited <= 8, "a tiny page visited {visited} rows: {plan:#}");
+    assert!(
+        visited <= 8.0,
+        "a tiny page visited {visited} rows: {plan:#}"
+    );
     let blocks = root["Local Hit Blocks"].as_u64().unwrap_or_default()
         + root["Local Read Blocks"].as_u64().unwrap_or_default();
     assert!(
@@ -125,6 +128,19 @@ fn assert_bounded_plan(plan: &Value, continued: bool) {
             "continued page must seek within an index: {plan:#}"
         );
     }
+}
+
+#[rstest]
+#[case::actual_rows(100.0, 0.0)]
+#[case::filtered_rows(0.0, 100.0)]
+#[should_panic(expected = "a tiny page visited")]
+fn decimal_plan_counts_cannot_bypass_row_budget(#[case] actual: f64, #[case] filtered: f64) {
+    let plan = serde_json::json!([{"Plan": {
+        "Node Type": "Index Scan",
+        "Actual Rows": actual,
+        "Rows Removed by Filter": filtered,
+    }}]);
+    assert_bounded_plan(&plan, false);
 }
 
 #[rstest]

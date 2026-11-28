@@ -1,0 +1,587 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:hubuum:lifecycle-audit:proposal:1:delivery_status",
+  "title": "Proposed delivery status; not an enabled server API",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "lifecycle_delivery_status"
+    },
+    "contract_version": {
+      "const": 1
+    },
+    "subscription_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "subscription_uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "scope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "collection"
+            },
+            "collection_uuid": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "kind",
+            "collection_uuid"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "system"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "policy_state": {
+      "enum": [
+        "unconfigured",
+        "configured",
+        "draining"
+      ]
+    },
+    "policy_revision": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[1-9][0-9]{0,18}$"
+    },
+    "configuration_revision": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,18}$"
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+    },
+    "capacity": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "retained_rows": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "row_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "reserved_payload_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "payload_byte_limit": {
+          "type": "integer",
+          "minimum": 8192,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "retained_rows",
+        "row_limit",
+        "reserved_payload_bytes",
+        "payload_byte_limit"
+      ],
+      "additionalProperties": false
+    },
+    "gap_history": {
+      "enum": [
+        "retained",
+        "expired",
+        "unknown"
+      ]
+    },
+    "history_available_since": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+    },
+    "gap": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "gap_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        "state": {
+          "enum": [
+            "open",
+            "acknowledged"
+          ]
+        },
+        "observed_from": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+        },
+        "observed_through": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+        },
+        "visible_until": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+        },
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "enum": [
+              "backlog_capacity",
+              "delivery_expired",
+              "subscription_changed",
+              "source_retention",
+              "source_unavailable",
+              "recovery_gap"
+            ]
+          }
+        },
+        "omitted_events": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "count_accuracy": {
+          "enum": [
+            "exact",
+            "unknown"
+          ]
+        },
+        "source_history": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "retained",
+                "unavailable",
+                "unknown"
+              ]
+            },
+            "reason": {
+              "enum": [
+                "source_expired",
+                "configuration_changed",
+                "recovery_gap",
+                "not_assessed",
+                null
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "const": "retained"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "reason": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "const": "unavailable"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "reason": {
+                    "enum": [
+                      "source_expired",
+                      "configuration_changed",
+                      "recovery_gap"
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "type": "object",
+                "required": [
+                  "state"
+                ],
+                "properties": {
+                  "state": {
+                    "const": "unknown"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "reason": {
+                    "enum": [
+                      "configuration_changed",
+                      "recovery_gap",
+                      "not_assessed"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "acknowledged_revision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[1-9][0-9]{0,18}$"
+        }
+      },
+      "required": [
+        "gap_id",
+        "revision",
+        "state",
+        "observed_from",
+        "observed_through",
+        "visible_until",
+        "reasons",
+        "omitted_events",
+        "count_accuracy",
+        "source_history",
+        "acknowledged_revision"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "count_accuracy"
+            ],
+            "properties": {
+              "count_accuracy": {
+                "const": "unknown"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "omitted_events": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "count_accuracy"
+            ],
+            "properties": {
+              "count_accuracy": {
+                "const": "exact"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "omitted_events": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "const": "acknowledged"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "acknowledged_revision": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]{0,18}$"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "source_generation": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    }
+  },
+  "required": [
+    "kind",
+    "contract_version",
+    "subscription_id",
+    "subscription_uuid",
+    "scope",
+    "policy_state",
+    "policy_revision",
+    "configuration_revision",
+    "observed_at",
+    "capacity",
+    "gap_history",
+    "history_available_since",
+    "gap",
+    "source_generation"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "policy_state"
+        ],
+        "properties": {
+          "policy_state": {
+            "const": "unconfigured"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "policy_revision": {
+            "type": "null"
+          },
+          "capacity": {
+            "type": "null"
+          },
+          "gap": {
+            "type": "null"
+          },
+          "source_generation": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "policy_state"
+        ],
+        "properties": {
+          "policy_state": {
+            "const": "configured"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "policy_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,18}$"
+          },
+          "capacity": {
+            "type": "object",
+            "properties": {
+              "retained_rows": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "row_limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "reserved_payload_bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "payload_byte_limit": {
+                "type": "integer",
+                "minimum": 8192,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "retained_rows",
+              "row_limit",
+              "reserved_payload_bytes",
+              "payload_byte_limit"
+            ],
+            "additionalProperties": false
+          },
+          "source_generation": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "policy_state"
+        ],
+        "properties": {
+          "policy_state": {
+            "const": "draining"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "policy_revision": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,18}$"
+          },
+          "capacity": {
+            "type": "object",
+            "properties": {
+              "retained_rows": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "row_limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "reserved_payload_bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "payload_byte_limit": {
+                "type": "integer",
+                "minimum": 8192,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "retained_rows",
+              "row_limit",
+              "reserved_payload_bytes",
+              "payload_byte_limit"
+            ],
+            "additionalProperties": false
+          },
+          "source_generation": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "gap_history"
+        ],
+        "properties": {
+          "gap_history": {
+            "const": "unknown"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "history_available_since": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "gap_history"
+        ],
+        "properties": {
+          "gap_history": {
+            "const": "retained"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "history_available_since": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+          }
+        }
+      }
+    }
+  ]
+}

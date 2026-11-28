@@ -1,3 +1,5 @@
+use crate::StorageTaskClaimRequest;
+pub use crate::api_request_admission::*;
 pub use crate::backup_snapshot::*;
 pub use crate::computed_fields::*;
 pub use crate::export_query::*;
@@ -7,10 +9,13 @@ pub use crate::query_usage::*;
 pub use crate::remote_target::*;
 pub use crate::restore::*;
 pub use crate::schema_evolution::*;
+pub use crate::task_capacity::*;
 pub use crate::task_control::*;
 pub use crate::task_execution::*;
 pub use crate::task_queue::*;
+pub use crate::task_retention::*;
 pub use crate::task_search::StorageTaskListQuery;
+pub use crate::task_waiting::*;
 pub use crate::{
     StorageAuthorizationPermission, StorageClass, StorageCollection, StorageObject, WorkflowStorage,
 };
@@ -22,10 +27,20 @@ use hubuum_events_core::EventContext;
 
 #[async_trait]
 pub trait TaskQueueStorage: Send + Sync {
+    async fn lookup_task_submission(
+        &self,
+        lookup: crate::TaskSubmissionLookup,
+    ) -> Result<crate::TaskSubmissionResolution, StorageError>;
+
     async fn create_task(
         &self,
         request: StorageTaskCreateRequest,
-    ) -> Result<StorageTask, StorageError>;
+    ) -> Result<crate::StorageTaskSubmissionOutcome, StorageError>;
+
+    async fn activate_task_submission(
+        &self,
+        request: crate::ProtectedTaskAdmission,
+    ) -> Result<crate::TaskActivationOutcome, StorageError>;
 
     async fn get_task_access(&self, task_id: TaskId) -> Result<StorageTaskAccess, StorageError>;
 
@@ -78,8 +93,22 @@ pub trait TaskQueueStorage: Send + Sync {
 /// Mandatory worker state-machine behavior for every selectable backend.
 #[async_trait]
 pub trait TaskExecutionStorage: Send + Sync {
-    /// Persist an authorized request; queued cancellation is terminal in the
-    /// same transaction, while active execution retains its fenced lease.
+    /// Persist a bounded continuation under a live lease and release execution
+    /// capacity while retaining the task's admission and original deadline.
+    async fn wait_task(
+        &self,
+        request: StorageTaskWaitRequest,
+    ) -> Result<StorageTaskWait, StorageError>;
+
+    /// Queue the exact waiting continuation once. A normal scheduler claim is
+    /// still required; a matching stop request or deadline settles it instead.
+    async fn resume_task(
+        &self,
+        request: StorageTaskResumeRequest,
+    ) -> Result<StorageTaskResumeOutcome, StorageError>;
+
+    /// Persist an authorized request; queued and waiting cancellation is terminal
+    /// in the same transaction, while active execution retains its fenced lease.
     async fn request_task_cancellation(
         &self,
         request: StorageTaskCancellationRequest,
@@ -112,7 +141,7 @@ pub trait TaskExecutionStorage: Send + Sync {
 
     async fn claim_next_task(
         &self,
-        lease_duration: StorageTaskLeaseDuration,
+        request: StorageTaskClaimRequest,
     ) -> Result<Option<StorageTaskClaim>, StorageError>;
 
     async fn renew_task_lease(

@@ -9,7 +9,7 @@ impl AuthorizationDataStorage for MemoryStorage {
     ) -> Result<Vec<StorageAuthorizationResource>, StorageError> {
         use StorageAuthorizationResource as R;
         use hubuum_storage_core::StorageAuthorizationResourceKey as K;
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let class = |id: ClassId| {
             state
                 .classes
@@ -85,7 +85,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         principal_id: PrincipalId,
     ) -> Result<StorageAuthorizationPrincipal, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         if !state.principals.contains_key(&principal_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Principal {} was not found",
@@ -102,7 +102,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationGroupMembershipQuery,
     ) -> Result<bool, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         Ok(state.groups.values().any(|group| {
             group.name() == query.group_name()
                 && state
@@ -119,7 +119,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationResourceIds,
     ) -> Result<Vec<StorageAuthorizationClassResource>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         Ok(query
             .ids()
             .iter()
@@ -132,7 +132,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationResourceIds,
     ) -> Result<Vec<StorageAuthorizationObjectResource>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         Ok(query
             .ids()
             .iter()
@@ -152,7 +152,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         queries: Vec<StorageAuthorizationCollectionAccessQuery>,
     ) -> Result<Vec<bool>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         Ok(queries
             .iter()
             .map(|query| {
@@ -170,7 +170,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationCollectionAccessQuery,
     ) -> Result<bool, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         Ok(principal_has_collection_permissions(
             &state,
             query.principal_id(),
@@ -183,7 +183,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationCollectionsAccessQuery,
     ) -> Result<bool, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         Ok(query.collection_ids().iter().all(|collection_id| {
             principal_has_collection_permissions(
                 &state,
@@ -198,7 +198,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationCollectionsQuery,
     ) -> Result<Vec<StorageAuthorizationCollection>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         state
             .collections
             .values()
@@ -218,7 +218,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationCollectionCandidateQuery,
     ) -> Result<StorageCandidatePage<StorageAuthorizationCollection>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let limit = query.page_limit();
         let mut rows = state
             .collections
@@ -237,7 +237,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         query: StorageAuthorizationGroupCandidateQuery,
     ) -> Result<StorageCandidatePage<StorageAuthorizationGroup>, StorageError> {
         let filters = ResourceFilters::for_groups(query.options())?;
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let limit = query.page_limit();
         let mut rows = state
             .groups
@@ -264,7 +264,7 @@ impl AuthorizationDataStorage for MemoryStorage {
     async fn get_authorization_policy_snapshot(
         &self,
     ) -> Result<Vec<StorageAuthorizationPolicySnapshotRow>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         state
             .authorization_grants
             .values()
@@ -276,7 +276,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationCollectionGrantListQuery,
     ) -> Result<StoragePage<StorageAuthorizationGroupGrant>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let rows = state
             .authorization_grants
             .values()
@@ -296,7 +296,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .authorization_grants
             .get(&(key.collection_id().id(), key.group_id().id()))
             .cloned())
@@ -306,7 +306,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationPermissionSetQuery,
     ) -> Result<StorageAuthorizationPermissionSet, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let collection = state
             .collections
             .get(&query.collection_id().id())
@@ -342,7 +342,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         mutation: StorageAuthorizationGrantMutation,
     ) -> Result<StorageMutationOutcome<StorageAuthorizationGrant>, StorageError> {
         let key = mutation.key();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if !state.collections.contains_key(&key.collection_id().id()) {
             return Err(StorageError::not_found(format!(
                 "Collection {} was not found",
@@ -404,7 +404,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         state
             .authorization_revisions
             .insert(key.collection_id().id(), revision);
-        state.authorization_grants.insert(map_key, grant.clone());
+        state.store_authorization_grant(map_key, grant.clone());
         let receipt = state.append_simple_event(
             EntityType::Permission,
             id.id(),
@@ -425,7 +425,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         mutation: StorageAuthorizationGrantMutation,
     ) -> Result<StorageMutationOutcome<StorageAuthorizationGrant>, StorageError> {
         let key = mutation.key();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let map_key = (key.collection_id().id(), key.group_id().id());
         let Some(current) = state.authorization_grants.get(&map_key).cloned() else {
             return Err(StorageError::not_found(format!(
@@ -462,7 +462,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         state
             .authorization_revisions
             .insert(key.collection_id().id(), revision);
-        state.authorization_grants.insert(map_key, grant.clone());
+        state.store_authorization_grant(map_key, grant.clone());
         let receipt = state.append_simple_event(
             EntityType::Permission,
             grant.id().id(),
@@ -483,7 +483,7 @@ impl AuthorizationDataStorage for MemoryStorage {
         request: StorageAuthorizationGrantDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let key = request.key();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let Some(grant) = state
             .authorization_grants
             .remove(&(key.collection_id().id(), key.group_id().id()))
@@ -511,7 +511,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<StorageAuthorizationGroupGrant>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let group_ids = principal_group_ids(&state, query.principal_id());
         state
             .authorization_grants
@@ -528,7 +528,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         &self,
         principal_id: PrincipalId,
     ) -> Result<Vec<StorageAuthorizationPolicySnapshotRow>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let group_ids = principal_group_ids(&state, principal_id);
         state
             .authorization_grants
@@ -542,7 +542,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationPrincipalCollectionPageQuery,
     ) -> Result<StoragePage<StorageAuthorizationGroupGrant>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let group_ids = principal_group_ids(&state, query.principal().principal_id());
         let rows = state
             .authorization_grants
@@ -560,7 +560,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationPrincipalCollectionQuery,
     ) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let group_ids = principal_group_ids(&state, query.principal_id());
         state
             .authorization_grants
@@ -588,7 +588,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
             return Ok(Vec::new());
         }
         let resources = scope_resources.map(StorageAuthenticationResourceScope::into_parts);
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         state
             .collections
             .values()
@@ -629,7 +629,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .authorization_grants
             .get(&(query.collection_id().id(), query.group_id().id()))
             .is_some_and(|grant| grant.permissions().contains(&query.permission())))
@@ -640,7 +640,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         collection_id: CollectionId,
         group_id: GroupId,
     ) -> Result<Vec<StorageAuthorizationEffectiveGroupGrant>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         state
             .authorization_grants
             .get(&(collection_id.id(), group_id.id()))
@@ -653,7 +653,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         &self,
         query: StorageAuthorizationCollectionGroupsQuery,
     ) -> Result<Vec<StorageAuthorizationGroup>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         state
             .authorization_grants
             .values()
@@ -676,7 +676,7 @@ impl CollectionAuthorizationQueryStorage for MemoryStorage {
         query: StorageAuthorizationCollectionGroupsPageQuery,
     ) -> Result<StoragePage<StorageAuthorizationGroup>, StorageError> {
         let filters = ResourceFilters::for_groups(query.query_options())?;
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let groups = query.groups();
         let mut rows = state
             .authorization_grants

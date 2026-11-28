@@ -1,0 +1,176 @@
+use hubuum_storage_core::artifacts::TaskArtifactCleanup;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use hubuum_storage_core::artifacts::{
+    ArtifactCleanupBatch, ArtifactIdentity, ArtifactLimits, ArtifactManifest, ArtifactReference,
+    ArtifactReservation, ArtifactResult, ArtifactStore, Destination, TaskArtifactStore,
+    VerifiedArtifact,
+};
+use hubuum_storage_core::{
+    DeletionControlStorage, HistoryLifecycleStorage, StorageTaskLease, TaskWorkerId,
+};
+
+use crate::storage::StorageHandle;
+
+use super::*;
+
+struct PausedCleanup {
+    store: Arc<dyn TaskArtifactStore>,
+    entered: Notify,
+    release: Notify,
+}
+
+#[async_trait]
+impl ArtifactStore for PausedCleanup {
+    async fn register_destination(&self, value: &Destination) -> ArtifactResult<()> {
+        self.store.register_destination(value).await
+    }
+    async fn stage(&self, id: &ArtifactIdentity, limits: ArtifactLimits) -> ArtifactResult<()> {
+        self.store.stage(id, limits).await
+    }
+    async fn append(
+        &self,
+        id: &ArtifactIdentity,
+        ordinal: u32,
+        bytes: &[u8],
+    ) -> ArtifactResult<()> {
+        self.store.append(id, ordinal, bytes).await
+    }
+    async fn seal(&self, value: &ArtifactManifest) -> ArtifactResult<()> {
+        self.store.seal(value).await
+    }
+    async fn manifest(&self, id: &ArtifactIdentity) -> ArtifactResult<Vec<u8>> {
+        self.store.manifest(id).await
+    }
+    async fn published_manifest(&self, value: &ArtifactReference) -> ArtifactResult<Vec<u8>> {
+        self.store.published_manifest(value).await
+    }
+    async fn block(&self, id: &ArtifactIdentity, ordinal: u32) -> ArtifactResult<Option<Vec<u8>>> {
+        self.store.block(id, ordinal).await
+    }
+    async fn publish(&self, value: &VerifiedArtifact) -> ArtifactResult<ArtifactReference> {
+        self.store.publish(value).await
+    }
+    async fn abort(&self, id: &ArtifactIdentity) -> ArtifactResult<()> {
+        self.store.abort(id).await
+    }
+    async fn cleanup(&self) -> ArtifactResult<u32> {
+        self.cleanup_batch()
+            .await
+            .map(ArtifactCleanupBatch::removed_blocks)
+    }
+}
+
+#[async_trait]
+impl TaskArtifactStore for PausedCleanup {
+    async fn abort_task(&self, cleanup: &TaskArtifactCleanup) -> ArtifactResult<()> {
+        self.store.abort_task(cleanup).await
+    }
+
+    async fn cleanup_batch(&self) -> ArtifactResult<ArtifactCleanupBatch> {
+        self.entered.notify_one();
+        self.release.notified().await;
+        self.store.cleanup_batch().await
+    }
+
+    async fn bind_task(
+        &self,
+        id: &ArtifactIdentity,
+        lease: &StorageTaskLease,
+        reservation: ArtifactReservation,
+        expires: chrono::DateTime<Utc>,
+    ) -> ArtifactResult<()> {
+        self.store.bind_task(id, lease, reservation, expires).await
+    }
+}
+
+#[rstest::rstest]
+#[case::legacy(false)]
+#[case::online(true)]
+#[actix_web::test]
+async fn paused_maintenance_does_not_block_the_task_claim_loop(#[case] online: bool) {
+    let unbound = StorageHandle::memory();
+    let registration = if online {
+        Some(unbound.register_history_runtime(None).await.unwrap())
+    } else {
+        None
+    };
+    let baseline = match &registration {
+        Some(registration) => unbound.clone().with_runtime_owner(registration.owner()),
+        None => unbound.clone(),
+    };
+    let paused = Arc::new(PausedCleanup {
+        store: baseline.artifact_store(),
+        entered: Notify::new(),
+        release: Notify::new(),
+    });
+    let storage = baseline.with_artifact_test_store(paused.clone());
+    let context = AppContext::new(
+        storage.clone(),
+        Arc::new(LocalPermissionBackend::new(storage, "admin".to_owned())),
+    );
+    let background = context.clone();
+    let maintenance = actix_rt::spawn(async move {
+        let tasks = Mutex::new(CleanupSchedule::default());
+        let artifacts = Mutex::new(CleanupSchedule::default());
+        iteration(&background, &tasks, &artifacts).await
+    });
+    tokio::time::timeout(Duration::from_secs(2), paused.entered.notified())
+        .await
+        .expect("maintenance must reach the paused artifact cleanup");
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        process_one_task_with_settings(
+            &context,
+            TaskWorkerId::generate(),
+            None,
+            &configured_backup_settings(),
+        ),
+    )
+    .await;
+    paused.release.notify_waiters();
+    maintenance.await.unwrap().unwrap();
+    if let Some(registration) = registration {
+        unbound.unregister_runtime(registration).await.unwrap();
+    }
+
+    assert!(
+        !result
+            .expect("a task claimant must not wait for maintenance")
+            .unwrap()
+    );
+}
+
+#[test]
+fn maintenance_future_fits_the_worker_stack_budget() {
+    let storage = StorageHandle::memory();
+    let context = AppContext::new(
+        storage.clone(),
+        Arc::new(LocalPermissionBackend::new(storage, "admin".to_owned())),
+    );
+    let tasks = Mutex::new(CleanupSchedule::default());
+    let artifacts = Mutex::new(CleanupSchedule::default());
+    let work = iteration(&context, &tasks, &artifacts);
+    assert!(std::mem::size_of_val(&work) < 16 * 1024);
+}
+
+#[actix_web::test]
+async fn artifact_cleanup_runs_when_history_protection_is_unavailable() {
+    let storage = StorageHandle::memory();
+    let missing = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+    let options = serde_json::from_value(serde_json::json!({
+        "directory": missing.join("repository"), "key": missing.join("key")
+    }))
+    .unwrap();
+    let context = AppContext::new(
+        storage.clone(),
+        Arc::new(LocalPermissionBackend::new(storage, "admin".to_owned())),
+    )
+    .with_history_retention(options);
+    let tasks = Mutex::new(CleanupSchedule::default());
+    let artifacts = Mutex::new(CleanupSchedule::default());
+    iteration(&context, &tasks, &artifacts).await.unwrap();
+    assert!(artifacts.lock().unwrap().last_completed_at.is_some());
+}

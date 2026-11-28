@@ -1,3 +1,4 @@
+use diesel::SelectableHelper;
 use std::collections::HashMap;
 
 use diesel::sql_query;
@@ -159,7 +160,7 @@ impl RankedCollectionRow {
     }
 }
 
-#[derive(Queryable, QueryableByName)]
+#[derive(Queryable, QueryableByName, diesel::Selectable)]
 #[diesel(table_name = crate::schema::collections)]
 struct CollectionRow {
     id: i32,
@@ -437,6 +438,7 @@ pub async fn search_classes(
 
                 collections
                     .filter(id.eq_any(collection_ids))
+                    .select(CollectionRow::as_select())
                     .load::<CollectionRow>(connection)
                     .await?
                     .into_iter()

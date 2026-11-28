@@ -1,6 +1,27 @@
-use hubuum_domain::PrincipalId;
+use hubuum_domain::PrincipalIdentity;
+use hubuum_storage_core::{LogicalIdentityStorage, StorageIdentityEvidence, StorageIdentityTarget};
 
 use super::*;
+
+#[async_trait]
+impl LogicalIdentityStorage for StorageHandle {
+    async fn resolve_logical_identity(
+        &self,
+        target: StorageIdentityTarget,
+    ) -> Result<StorageIdentityEvidence, StorageError> {
+        self.observe_storage_call(
+            self.backend_name(),
+            StorageCapability::LogicalIdentity,
+            "resolve_logical_identity",
+            async {
+                dispatch_backend!(self, |backend| {
+                    backend.resolve_logical_identity(target).await
+                })
+            },
+        )
+        .await
+    }
+}
 
 #[async_trait]
 impl HistoryStorage for StorageHandle {
@@ -70,7 +91,7 @@ impl HistoryStorage for StorageHandle {
 
     async fn resolve_history_principal_names(
         &self,
-        principal_ids: Vec<PrincipalId>,
+        principal_ids: Vec<PrincipalIdentity>,
     ) -> Result<Vec<StorageHistoryPrincipalName>, StorageError> {
         self.observe_storage_call(
             self.backend_name(),

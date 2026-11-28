@@ -1,7 +1,7 @@
 //! Worker-side execution. Called only by the dedicated bounded-allocator binary.
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{Read, Write};
 
 use hubuum_budget::{ByteBudget, ByteLimit};
 use minijinja::syntax::SyntaxConfig;
@@ -41,7 +41,13 @@ pub fn serve_template_worker(heap_peak: fn() -> usize) -> Result<(), Box<dyn std
     let request: WorkerRequest = serde_json::from_slice(&bytes)?;
     if request.templates.is_empty()
         || request.templates.len() > MAX_BATCH_TEMPLATES
-        || request.max_output_bytes > MAX_OUTPUT_BYTES
+        || request.max_output_bytes as u64
+            > if matches!(request.operation, Operation::Spool { .. }) {
+                crate::spool::MAX_SPOOL_BYTES
+            } else {
+                MAX_OUTPUT_BYTES as u64
+            }
+        || (matches!(request.operation, Operation::Spool { .. }) && request.templates.len() != 1)
     {
         return Err("invalid template batch limits".into());
     }
@@ -59,7 +65,31 @@ pub fn serve_template_worker(heap_peak: fn() -> usize) -> Result<(), Box<dyn std
 fn render_batch(request: WorkerRequest<'_>) -> Result<Vec<RenderedTemplate>, WorkerFailure> {
     // Convert the shared context once. MiniJinja values share immutable context
     // storage; each render still receives a separate environment and state.
-    let context = json_value_to_template_value(&request.context);
+    let replay = match &request.operation {
+        Operation::Spool { rows, .. } => Some(rows.open().map_err(|error| WorkerFailure {
+            template_index: 0,
+            message: error.to_string(),
+        })?),
+        _ => None,
+    };
+    let context = if let Some(rows) = &replay {
+        let fields = request.context.as_object().ok_or_else(|| WorkerFailure {
+            template_index: 0,
+            message: "spooled context must be an object".into(),
+        })?;
+        Value::from_pairs(
+            fields
+                .iter()
+                .filter(|(key, _)| key.as_str() != "items")
+                .map(|(key, value)| (key.clone(), json_value_to_template_value(value)))
+                .chain(std::iter::once((
+                    "items".into(),
+                    Value::from_dyn_object(rows.clone()),
+                ))),
+        )
+    } else {
+        json_value_to_template_value(&request.context)
+    };
     let mut output_budget = ByteLimit::new(request.max_output_bytes).start();
     let mut remaining_warnings = 1024;
     let mut outputs = Vec::with_capacity(request.templates.len());
@@ -72,6 +102,12 @@ fn render_batch(request: WorkerRequest<'_>) -> Result<Vec<RenderedTemplate>, Wor
         output.truncate_missing_values(remaining_warnings);
         remaining_warnings -= output.missing_value_count();
         outputs.push(output);
+    }
+    if replay.as_ref().is_some_and(|rows| rows.failed()) {
+        return Err(WorkerFailure {
+            template_index: 0,
+            message: "template replay input was lost or corrupted".into(),
+        });
     }
     Ok(outputs)
 }
@@ -136,7 +172,19 @@ fn render(
             .min(output_budget.remaining())
             .min(1024),
     );
-    let mut writer = output_budget.writer(buffer, ByteLimit::new(request.max_output_bytes));
+    let sink = match operation {
+        Operation::Spool { output, .. } => RenderSink::File(std::io::BufWriter::new(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(output)
+                .map_err(|error| {
+                    minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, error.to_string())
+                })?,
+        )),
+        _ => RenderSink::Memory(buffer),
+    };
+    let mut writer = output_budget.writer(sink, ByteLimit::new(request.max_output_bytes));
     let rendered = environment
         .get_template(&request.name)?
         .render_captured_to(context.clone(), &mut writer);
@@ -151,14 +199,39 @@ fn render(
         ));
     }
     rendered?;
-    let output = String::from_utf8(writer.into_inner()).map_err(|_| {
-        minijinja::Error::new(
-            minijinja::ErrorKind::InvalidOperation,
-            "invalid template output",
-        )
+    writer.flush().map_err(|error| {
+        minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, error.to_string())
     })?;
-    Ok(RenderedTemplate::new(
-        output,
-        MISSING.with(|values| values.take()),
-    ))
+    let bytes = writer.budget().used() as u64;
+    let output = match writer.into_inner() {
+        RenderSink::Memory(bytes) => String::from_utf8(bytes).map_err(|_| {
+            minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                "invalid template output",
+            )
+        })?,
+        RenderSink::File(_) => String::new(),
+    };
+    let mut result = RenderedTemplate::new(output, MISSING.with(|values| values.take()));
+    result.set_output_bytes(bytes);
+    Ok(result)
+}
+
+enum RenderSink {
+    Memory(Vec<u8>),
+    File(std::io::BufWriter<std::fs::File>),
+}
+impl Write for RenderSink {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Memory(sink) => sink.write(bytes),
+            Self::File(sink) => sink.write(bytes),
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Memory(sink) => sink.flush(),
+            Self::File(sink) => sink.flush(),
+        }
+    }
 }

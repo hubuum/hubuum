@@ -1,3 +1,4 @@
+use hubuum_storage_core::TaskCapacityRejection;
 use std::any::TypeId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -19,6 +20,7 @@ use crate::config::environment::{
     Exposure, PROCESS_ENVIRONMENT, configuration_bounds, configuration_constraints,
 };
 use crate::events::{Action, ActorKind, EntityType, valid_actions};
+use crate::models::backup::SUPPORTED_BACKUP_VERSIONS;
 use crate::models::{
     BackupDocument, BackupManifest, BackupState, CURRENT_BACKUP_VERSION, CURRENT_IMPORT_VERSION,
     ExportContentType, ExportMissingDataPolicy, ExportScopeKind, ExportTemplateKind, ImportGraph,
@@ -34,18 +36,23 @@ const HTTP_METHOD_LABEL_VALUES: &[&str] = &[
     "CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "OTHER", "PATCH", "POST", "PUT", "TRACE",
 ];
 const STORAGE_OPERATION_SOURCES: &[&str] = &[
+    include_str!("storage/context/api_request_admission.rs"),
     include_str!("storage/observed.rs"),
+    include_str!("storage/context/artifacts.rs"),
     include_str!("storage/context/schema_evolution.rs"),
     include_str!("storage/context/query_usage.rs"),
     include_str!("storage/context/api.rs"),
     include_str!("storage/context/computed_fields.rs"),
     include_str!("storage/context/events.rs"),
+    include_str!("storage/context/history_lifecycle.rs"),
     include_str!("storage/context/execution.rs"),
+    include_str!("storage/context/history_archive.rs"),
     include_str!("storage/context/identity.rs"),
     include_str!("storage/context/identity_queries.rs"),
     include_str!("storage/context/operational.rs"),
     include_str!("storage/context/queries.rs"),
     include_str!("storage/context/relations.rs"),
+    include_str!("storage/context/task_retention.rs"),
     include_str!("storage/context/runtime_settings.rs"),
     include_str!("storage/context/tasks.rs"),
     include_str!("storage/context/transaction.rs"),
@@ -169,7 +176,7 @@ struct VersionedDocumentContract {
     required_fields: Vec<String>,
     optional_fields: Vec<String>,
     sections: Vec<String>,
-    rejection_policy: &'static str,
+    rejection_policy: String,
 }
 
 #[derive(Serialize)]
@@ -322,6 +329,32 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             .collect::<Vec<_>>()
     };
     let values = match (metric, label) {
+        ("hubuum_control_checkpoint_io_bytes_total", "operation") => strings(&["read", "write"]),
+        (
+            "hubuum_control_checkpoint_operations_total"
+            | "hubuum_control_checkpoint_operation_duration_seconds",
+            "operation",
+        ) => strings(&[
+            "read",
+            "write",
+            "encode_sign",
+            "verify",
+            "fsync_file",
+            "fsync_directory",
+            "publish",
+            "gc",
+            "coalescing_wait",
+        ]),
+        (
+            "hubuum_control_checkpoint_operations_total"
+            | "hubuum_control_checkpoint_operation_duration_seconds",
+            "outcome",
+        ) => strings(&["success", "failure"]),
+        (
+            "hubuum_control_checkpoint_lock_attempts_total"
+            | "hubuum_control_checkpoint_lock_duration_seconds",
+            "outcome",
+        ) => strings(&["acquired", "contended", "failure"]),
         ("hubuum_tracing_info", "sampling_mode") => TracingSamplingMode::value_variants()
             .iter()
             .map(|mode| mode.as_str().to_string())
@@ -346,33 +379,44 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
             | "hubuum_trace_flushes_total",
             "outcome",
         ) => strings(&["success", "failure"]),
-        ("hubuum_api_errors_total", "class") => strings(&[
-            "cancel_requested",
-            "deadline_exceeded",
-            "unauthorized",
-            "reauthentication_required",
-            "internal_server_error",
-            "forbidden",
-            "not_acceptable",
-            "unsupported_media_type",
-            "payload_too_large",
-            "database_error",
-            "conflict",
-            "precondition_failed",
-            "revision_conflict",
-            "too_many_requests",
-            "service_unavailable",
-            "not_implemented",
-            "permission_backend_unavailable",
-            "not_found",
-            "gone",
-            "db_connection_error",
-            "hash_error",
-            "bad_request",
-            "operator_mismatch",
-            "invalid_integer_range",
-            "validation_error",
-        ]),
+        ("hubuum_api_errors_total", "class") => {
+            let mut values = strings(&[
+                "cancel_requested",
+                "deadline_exceeded",
+                "unauthorized",
+                "reauthentication_required",
+                "internal_server_error",
+                "forbidden",
+                "not_acceptable",
+                "unsupported_media_type",
+                "payload_too_large",
+                "database_error",
+                "conflict",
+                "idempotency_key_conflict",
+                "task_details_expired",
+                "legacy_request_unverifiable",
+                "precondition_failed",
+                "revision_conflict",
+                "too_many_requests",
+                "service_unavailable",
+                "not_implemented",
+                "permission_backend_unavailable",
+                "not_found",
+                "gone",
+                "db_connection_error",
+                "hash_error",
+                "bad_request",
+                "operator_mismatch",
+                "invalid_integer_range",
+                "validation_error",
+            ]);
+            values.extend(TaskCapacityRejection::ALL.map(|reason| reason.as_str().to_owned()));
+            values.extend(
+                hubuum_storage_core::ApiRequestRejection::ALL
+                    .map(|reason| reason.as_str().to_owned()),
+            );
+            values
+        }
         ("hubuum_client_allowlist_rejections_total", "reason") => {
             strings(&["disallowed_ip", "missing_ip"])
         }
@@ -537,7 +581,7 @@ fn metric_label_contract(metric: &str, label: &'static str) -> MetricLabelContra
         }
         (name, "result") if name.starts_with("hubuum_storage_operation") => storage_results(),
         ("hubuum_task_cancellation_requests_total", "result") => {
-            strings(&["queued", "active", "unchanged"])
+            strings(&["queued", "waiting", "active", "unchanged"])
         }
         (name, "reason") if name.starts_with("hubuum_task_") => {
             strings(&["cancel_requested", "deadline_exceeded"])
@@ -872,6 +916,17 @@ struct CliArgumentMetadata {
 
 fn process_environment_metadata(name: &str) -> Option<CliArgumentMetadata> {
     let (value_kind, default, allowed_values): (&str, &[&str], &[&str]) = match name {
+        "HUBUUM_CONTROL_CHECKPOINT_MEASURE" => ("boolean", &["false"], &["true", "false"]),
+        "HUBUUM_MEASUREMENT_CPU_AFFINITY" => ("cpu_set", &[], &[]),
+        "HUBUUM_TEST_HISTORY_QUALIFICATION_REPORT" => ("path", &[], &[]),
+        "HUBUUM_TEST_HISTORY_QUALIFICATION_SHAPE" => (
+            "enum",
+            &[],
+            &["rows", "bytes", "large_row", "oversized", "authority"],
+        ),
+        "HUBUUM_TEST_HISTORY_QUALIFICATION_SLOTS" => ("integer", &[], &["1", "2"]),
+        "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICAS" => ("integer", &["1"], &["1", "2"]),
+        "HUBUUM_TEST_HISTORY_QUALIFICATION_REPLICA" => ("integer", &[], &["0", "1"]),
         "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY" => {
             ("boolean", &["false"], &["true", "false", "1", "0"])
         }
@@ -1210,6 +1265,48 @@ fn argument_value_kind(argument: &clap::Arg) -> &'static str {
 
 fn cli_requirements(command: &str, argument: &str) -> &'static [&'static str] {
     match (command, argument) {
+        ("hubuum-admin", "task_retention") => {
+            &["control_recovery_directory", "control_recovery_key"]
+        }
+        (
+            "hubuum-admin",
+            "task_retention_confirmation"
+            | "task_retention_deduplication_seconds"
+            | "task_retention_details_seconds"
+            | "task_hold_id"
+            | "task_hold_task",
+        ) => &["task_retention"],
+        ("hubuum-admin", "task_hold_expires_at" | "task_hold_reason") => &["task_hold_task"],
+        (
+            "hubuum-admin",
+            "control_checkpoint"
+            | "verify_control_recovery"
+            | "control_status"
+            | "recover_control"
+            | "reapply_control",
+        ) => &["control_checkpoint_key"],
+        ("hubuum-admin", "archive_cleanup_publication") => {
+            &["recover_control", "archive_cleanup_root"]
+        }
+        ("hubuum-admin", "archive_cleanup_root") => {
+            &["recover_control", "archive_cleanup_publication"]
+        }
+        ("hubuum-admin", "initialize_control_checkpoint") => &["control_checkpoint"],
+        ("hubuum-admin", "delete_object_history_version") => &[
+            "history_resource",
+            "deletion_intent",
+            "control_repository",
+            "control_checkpoint_key",
+        ],
+        ("hubuum-admin", "history_resource" | "deletion_intent" | "control_repository") => {
+            &["delete_object_history_version"]
+        }
+        ("hubuum-server" | "hubuum-admin", "control_recovery_directory") => {
+            &["control_recovery_key"]
+        }
+        ("hubuum-server" | "hubuum-admin", "control_recovery_key") => {
+            &["control_recovery_directory"]
+        }
         ("hubuum-admin", "backup_without_history") => &["backup"],
         ("hubuum-admin", "query_usage_class") => &["reconcile_query_usage"],
         ("hubuum-admin", "restore_test_database_url") => &["verify_backup"],
@@ -1244,6 +1341,7 @@ fn admin_process_environment(name: &str) -> bool {
     matches!(
         name,
         "HUBUUM_TOKEN_HASH_KEY"
+            | "HUBUUM_CONTROL_CHECKPOINT_MEASURE"
             | "HUBUUM_TOKEN_HASH_ACTIVE_KEY_ID"
             | "HUBUUM_TOKEN_HASH_PREVIOUS_KEY_IDS"
             | "HUBUUM_REQUIRE_STABLE_TOKEN_HASH_KEY"
@@ -1251,10 +1349,16 @@ fn admin_process_environment(name: &str) -> bool {
 }
 
 fn runtime_roles(name: &str, admin_applicable: bool) -> Vec<&'static str> {
+    if name == "HUBUUM_MEASUREMENT_CPU_AFFINITY" {
+        return vec!["benchmark"];
+    }
     if name.contains("_TEST_") || name.ends_with("_TESTS") {
         return vec!["test"];
     }
-    if name == "HUBUUM_MIGRATION_DATABASE_URL" {
+    if matches!(
+        name,
+        "HUBUUM_MIGRATION_DATABASE_URL" | "HUBUUM_CONTROL_CHECKPOINT_MEASURE"
+    ) {
         return vec!["admin"];
     }
     let mut roles = match name {
@@ -1527,14 +1631,18 @@ fn document_contracts() -> DocumentContracts {
                 )
                 .map(str::to_string)
                 .collect(),
-            rejection_policy: "accept backup versions 6 through 10; normalize legacy event defaults, missing query usage declarations and missing shared computed definition history; observe new definition history at the restore boundary",
+            rejection_policy: format!(
+                "accept backup versions {} through {}; normalize legacy event defaults, missing query usage declarations and missing shared computed definition history; observe new definition history at the restore boundary",
+                SUPPORTED_BACKUP_VERSIONS.start(),
+                SUPPORTED_BACKUP_VERSIONS.end()
+            ),
         },
         import: VersionedDocumentContract {
             version: Some(CURRENT_IMPORT_VERSION),
             required_fields: import_fields.required,
             optional_fields: import_fields.optional,
             sections: serialized_section_names(&ImportGraph::default()),
-            rejection_policy: "reject any import version other than the current version",
+            rejection_policy: "reject any import version other than the current version".into(),
         },
         export: ExportContract {
             scope_kinds: ExportScopeKind::ALL

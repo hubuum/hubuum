@@ -1,5 +1,9 @@
 use super::*;
 
+fn restore(snapshot: StorageBackupSnapshot) -> Result<MemoryState, StorageError> {
+    super::restore(snapshot, Default::default(), Default::default())
+}
+
 pub(super) fn run(future: impl Future<Output = ()>) {
     tokio::runtime::Builder::new_current_thread()
         .build()
@@ -189,7 +193,7 @@ fn set_field(row: &mut StorageBackupRow, field: &str, value: Value) {
 }
 
 pub(super) async fn queued_task(storage: &MemoryStorage) -> TaskId {
-    storage
+    let outcome = storage
         .create_task(
             StorageTaskCreateRequest::builder(
                 StorageTaskKind::Export,
@@ -197,17 +201,20 @@ pub(super) async fn queued_task(storage: &MemoryStorage) -> TaskId {
                 json!({}),
                 0,
             )
-            .try_build(10)
+            .try_build()
             .unwrap(),
         )
         .await
-        .unwrap()
-        .id()
+        .unwrap();
+    let StorageTaskSubmissionOutcome::CreatedReady(task) = outcome else {
+        panic!("fresh unkeyed task")
+    };
+    task.id()
 }
 
 async fn completed_task(storage: &MemoryStorage) -> TaskId {
     let id = queued_task(storage).await;
-    let mut state = storage.state.write().await;
+    let mut state = storage.state.write().await.unwrap();
     let task = state.tasks.get_mut(&id.id()).unwrap();
     task.status = StorageTaskStatus::Succeeded;
     task.finished_at = Some(Utc::now());
@@ -356,6 +363,17 @@ fn postgres_task_audit_rows_restore_the_task_event_read_model() {
         let storage = MemoryStorage::new();
         let id = completed_task(&storage).await;
         let now = Utc::now();
+        let evidence = task_events(&storage, id)
+            .await
+            .pop()
+            .unwrap()
+            .logical_identity()
+            .unwrap()
+            .clone();
+        let event_id = match evidence.subject().unwrap() {
+            hubuum_storage_core::StorageIdentitySubject::Event { identity } => identity,
+            _ => unreachable!("task audit event"),
+        };
         let snapshot = edit_history(
             storage
                 .capture_backup_replay(
@@ -369,7 +387,8 @@ fn postgres_task_audit_rows_restore_the_task_event_read_model() {
             StorageBackupHistorySection::AuditEvents,
             |rows| {
                 *rows = vec![row(json!({
-                    "id": 200, "event_id": Uuid::new_v4(), "occurred_at": now,
+                    "id": 200, "event_id": event_id, "occurred_at": now,
+                    "logical_identity": evidence,
                     "entity_type": "task", "entity_id": id.id(), "entity_name": null,
                     "collection_id": null, "action": "succeeded", "actor_principal_id": 1,
                     "actor_kind": "user", "initiator_principal_id": 1, "task_id": id.id(),
@@ -392,6 +411,7 @@ fn postgres_task_audit_rows_restore_the_task_event_read_model() {
         .data(Some(json!({"rows": 7})))
         .actor_principal_id(Some(PrincipalId::new(1).unwrap()))
         .provenance(Some(PrincipalId::new(1).unwrap()), Some(id))
+        .logical_identity(evidence)
         .build();
         assert!(task_events(&storage, id).await == vec![expected]);
     });
@@ -426,6 +446,7 @@ fn task_event_sequences_continue_after_imported_history(#[case] first: i64) {
             .state
             .write()
             .await
+            .unwrap()
             .append_task_event_record(
                 id,
                 StorageTaskEventInput::new("cleanup", "Retained output cleaned up"),
@@ -748,6 +769,7 @@ fn restored_collection_ids_never_wrap_or_reuse_retained_ids(#[case] deleted: boo
             .state
             .write()
             .await
+            .unwrap()
             .collection_ids
             .observe(i32::MAX - 2);
         let previous = storage
@@ -806,7 +828,13 @@ fn restored_collection_ids_never_wrap_or_reuse_retained_ids(#[case] deleted: boo
 fn exhausted_history_leaves_resource_and_audit_unchanged() {
     run(async {
         let storage = MemoryStorage::new();
-        storage.state.write().await.history_ids.observe(i64::MAX);
+        storage
+            .state
+            .write()
+            .await
+            .unwrap()
+            .history_ids
+            .observe(i64::MAX);
         let create =
             StorageCollectionCreate::new("unrecordable", "", GroupId::new(1).unwrap(), None);
         assert!(
@@ -815,7 +843,7 @@ fn exhausted_history_leaves_resource_and_audit_unchanged() {
                 .await
                 .is_err()
         );
-        let state = storage.state.read().await;
+        let state = storage.state.read().await.unwrap();
         assert_eq!((state.collections.len(), state.events.len()), (1, 0));
     });
 }

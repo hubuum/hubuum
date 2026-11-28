@@ -25,10 +25,11 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
                 ))
                 .request_hash(Some(prefix("task_queue_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .try_build(10)
+                .try_build()
                 .expect("task queue request should be valid"),
             )
             .await
+            .map(expect_legacy_task)
             .expect("certified backend should create a task");
         let task_id = task.id();
         assert_eq!(task.kind(), StorageTaskKind::Import);
@@ -126,14 +127,14 @@ async fn every_available_storage_backend_supplies_the_complete_task_queue() {
 }
 
 #[actix_web::test]
-async fn every_available_storage_backend_supplies_the_complete_task_state_machine() {
+async fn every_available_storage_backend_supplies_enabled_task_state_machines() {
     let _permit = postgres_permit().await;
 
     for environment in available_backend_environments() {
         let backend = environment.storage();
         let user = create_backend_user(&backend, &prefix("task_execution_user")).await;
         let mut fixture_ids = Vec::new();
-        for task_kind in StorageTaskKind::ALL {
+        for task_kind in hubuum_storage_core::TaskWorkerKinds::STANDARD.iter() {
             let task = backend
                 .create_task(
                     StorageTaskCreateRequest::builder(
@@ -154,21 +155,14 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                         task_kind.as_str()
                     ))))
                     .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                    .try_build(10)
+                    .try_build()
                     .expect("task execution request should be valid"),
                 )
                 .await
+                .map(expect_legacy_task)
                 .expect("certified backend should create an executable task");
             fixture_ids.push(task.id());
         }
-        if let BackendTestEnvironment::Postgres { pool } = &environment {
-            for task_id in &fixture_ids {
-                hubuum_storage_postgres::test_support::prioritize_task(pool, *task_id)
-                    .await
-                    .expect("compatibility tasks should be made claim-first");
-            }
-        }
-
         let lease_duration = StorageTaskLeaseDuration::from_milliseconds(60_000)
             .expect("compatibility lease duration should be valid");
         assert!(
@@ -181,12 +175,26 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
 
         let mut completed_ids = HashSet::new();
         let mut completed_kinds = HashSet::new();
-        for completed_index in 0..StorageTaskKind::ALL.len() {
-            let claimed = backend
-                .claim_next_task(lease_duration)
-                .await
-                .expect("certified backend should claim the next task")
-                .expect("a compatibility task should be claimable");
+        let worker = TaskWorkerId::generate();
+        for (completed_index, task_id) in fixture_ids.iter().copied().enumerate() {
+            // Queue selection is covered by isolated scheduler contracts. This shared
+            // database fixture verifies the state machine after an exact claim.
+            let claimed = match &environment {
+                BackendTestEnvironment::Postgres { pool } => {
+                    hubuum_storage_postgres::test_support::claim_task_by_id_with_lease(
+                        pool,
+                        task_id,
+                        lease_duration,
+                    )
+                    .await
+                    .expect("the state-machine fixture should be claimable")
+                }
+                BackendTestEnvironment::Memory { .. } => backend
+                    .claim_next_task(StorageTaskClaimRequest::new(worker, lease_duration))
+                    .await
+                    .expect("memory should claim the next fixture")
+                    .expect("a state-machine fixture should be queued"),
+            };
             assert!(fixture_ids.contains(&claimed.task().id()));
             assert!(completed_ids.insert(claimed.task().id()));
             assert!(completed_kinds.insert(claimed.task().kind()));
@@ -244,10 +252,16 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 StorageTaskKind::Import
                 | StorageTaskKind::Reindex
                 | StorageTaskKind::RemoteCall
-                | StorageTaskKind::SchemaValidation => {}
+                | StorageTaskKind::SchemaValidation
+                | StorageTaskKind::HistoryExpiry => {}
             }
         }
-        assert_eq!(completed_kinds.len(), StorageTaskKind::ALL.len());
+        assert_eq!(
+            completed_kinds.len(),
+            hubuum_storage_core::TaskWorkerKinds::STANDARD
+                .iter()
+                .count()
+        );
 
         let mismatched_kind_task = backend
             .create_task(
@@ -263,10 +277,11 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 ))
                 .request_hash(Some(prefix("task_execution_kind_mismatch_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .try_build(10)
+                .try_build()
                 .expect("task kind mismatch request should be valid"),
             )
             .await
+            .map(expect_legacy_task)
             .expect("certified backend should create a kind mismatch fixture");
         fixture_ids.push(mismatched_kind_task.id());
         // This subcase verifies completion validation, not queue scheduling. Claim the
@@ -282,7 +297,10 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 .expect("certified backend should claim the kind mismatch fixture")
             }
             BackendTestEnvironment::Memory { .. } => backend
-                .claim_next_task(lease_duration)
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
+                    lease_duration,
+                ))
                 .await
                 .expect("memory backend should claim the kind mismatch fixture")
                 .expect("the kind mismatch fixture should be queued"),
@@ -332,26 +350,31 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                         task_kind.as_str()
                     ))))
                     .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                    .try_build(10)
+                    .try_build()
                     .expect("task execution failure request should be valid"),
                 )
                 .await
+                .map(expect_legacy_task)
                 .expect("certified backend should create a failure fixture");
             failure_fixture_ids.push(task.id());
             fixture_ids.push(task.id());
         }
-        if let BackendTestEnvironment::Postgres { pool } = &environment {
-            for task_id in &failure_fixture_ids {
-                hubuum_storage_postgres::test_support::prioritize_task(pool, *task_id)
-                    .await
-                    .expect("failure fixtures should be made claim-first");
+        let failed = match &environment {
+            BackendTestEnvironment::Postgres { pool } => {
+                hubuum_storage_postgres::test_support::claim_task_by_id_with_lease(
+                    pool,
+                    failure_fixture_ids[0],
+                    lease_duration,
+                )
+                .await
+                .expect("the failure fixture should be claimable")
             }
-        }
-        let failed = backend
-            .claim_next_task(lease_duration)
-            .await
-            .expect("certified backend should claim a failure fixture")
-            .expect("a compatibility failure fixture should be claimable");
+            BackendTestEnvironment::Memory { .. } => backend
+                .claim_next_task(StorageTaskClaimRequest::new(worker, lease_duration))
+                .await
+                .expect("memory should claim a failure fixture")
+                .expect("a failure fixture should be queued"),
+        };
         assert!(failure_fixture_ids.contains(&failed.task().id()));
         backend
             .fail_task(StorageTaskFailure::new(
@@ -377,5 +400,98 @@ async fn every_available_storage_backend_supplies_the_complete_task_state_machin
                 .expect("task execution compatibility fixtures should be removed");
         }
         delete_backend_user(&backend, user).await;
+    }
+}
+
+#[actix_web::test]
+async fn every_backend_refuses_expiry_task_recovery_without_original_online_admission() {
+    use hubuum_storage_core::HistoryLifecycleStorage;
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let before = backend.capture_history_lifecycle().await.unwrap();
+        let result = backend
+            .recover_history_expiry_task(uuid::Uuid::new_v4())
+            .await;
+        assert_eq!(
+            result.unwrap_err().kind(),
+            hubuum_storage_core::StorageErrorKind::Unavailable
+        );
+        assert_eq!(
+            backend.capture_history_lifecycle().await.unwrap().control(),
+            before.control()
+        );
+    }
+}
+
+#[actix_web::test]
+async fn every_backend_refuses_expiry_task_execution_without_original_online_admission() {
+    use hubuum_storage_core::HistoryLifecycleStorage;
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let before = backend.capture_history_lifecycle().await.unwrap();
+        let lease = hubuum_storage_core::StorageTaskLease::new(
+            hubuum_domain::TaskId::new(1).unwrap(),
+            hubuum_storage_core::StorageTaskClaimToken::new(uuid::Uuid::new_v4().to_string()),
+        );
+        let result = backend
+            .process_history_expiry_task(hubuum_storage_core::HistoryExpiryTaskRequest::new(
+                lease,
+                Some(hubuum_storage_core::HistoryExpiryTaskAuthorization::scheduled()),
+            ))
+            .await;
+        assert_eq!(
+            result.unwrap_err().kind(),
+            hubuum_storage_core::StorageErrorKind::Unavailable
+        );
+        assert_eq!(
+            backend.capture_history_lifecycle().await.unwrap().control(),
+            before.control()
+        );
+    }
+}
+
+#[actix_web::test]
+async fn every_backend_refuses_expiry_task_submission_without_original_online_admission() {
+    use hubuum_storage_core::{
+        ApplicationFence, HistoryExpiryTaskSubmission, HistoryLifecycleScan,
+        HistoryLifecycleStorage, HistoryPolicyKey, HistoryPolicyScope, StorageIdentityHistoryKind,
+    };
+    let _permit = postgres_permit().await;
+    for environment in available_backend_environments() {
+        let backend = environment.storage();
+        let before = backend.capture_history_lifecycle().await.unwrap();
+        let scan = HistoryLifecycleScan::new(
+            HistoryPolicyKey::new(
+                StorageIdentityHistoryKind::Object,
+                HistoryPolicyScope::Deployment,
+            )
+            .unwrap(),
+            1000,
+        )
+        .unwrap();
+        let request = HistoryExpiryTaskSubmission::manual(
+            scan,
+            ApplicationFence::new(
+                before.fence().incarnation(),
+                before.fence().deletion_revision().value() as i64,
+            )
+            .unwrap(),
+            hubuum_domain::PrincipalId::new(1).unwrap(),
+            hubuum_domain::PrincipalIdentity::generate(),
+        );
+        assert_eq!(
+            backend
+                .submit_history_expiry_task(request)
+                .await
+                .unwrap_err()
+                .kind(),
+            hubuum_storage_core::StorageErrorKind::Unavailable
+        );
+        assert_eq!(
+            backend.capture_history_lifecycle().await.unwrap().control(),
+            before.control()
+        );
     }
 }

@@ -11,6 +11,7 @@ pub mod common {
     pub use crate::StorageRecordMetadata;
     pub use crate::mutation::*;
     pub use crate::page::*;
+    pub use crate::record_identity::*;
     pub use crate::{StorageError, StorageErrorKind};
 }
 
@@ -38,7 +39,9 @@ pub mod queries {
     pub use crate::catalog::*;
     pub use crate::computed_objects::*;
     pub use crate::history::*;
+    pub use crate::history_archive::*;
     pub use crate::inventory::*;
+    pub use crate::logical_identity::*;
     pub use crate::object_aggregate::*;
     pub use crate::relation_query::*;
     pub use crate::unified_search::*;
@@ -67,7 +70,9 @@ pub mod events {
 
 /// Execution context, observation, operational state, and process integration.
 pub mod operational {
+    pub use crate::deletion_control::*;
     pub use crate::execution::*;
+    pub use crate::history_lifecycle::*;
     pub use crate::metrics::*;
     pub use crate::operational::{
         OperationalStateStorage, StorageEventDeliveryHealthSnapshot,

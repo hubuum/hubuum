@@ -16,7 +16,7 @@ impl AuditEventStorage for MemoryStorage {
         &self,
         query: StorageAuditEventListQuery,
     ) -> Result<StoragePage<StorageAuditEvent>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let filters = query.filters();
         let mut events = state
             .events
@@ -70,6 +70,10 @@ impl AuditEventStorage for MemoryStorage {
                         .is_none_or(|value| event.occurred_at() < value)
             })
             .map(|recorded| {
+                let evidence = recorded
+                    .logical_identity()
+                    .expect("stored event identity")
+                    .clone();
                 let (event, before_revision, after_revision) = recorded.clone().into_parts();
                 let directly_visible = event
                     .collection_id()
@@ -82,6 +86,7 @@ impl AuditEventStorage for MemoryStorage {
                     event.without_payloads()
                 };
                 StorageAuditEvent::new(event, before_revision, after_revision)
+                    .with_logical_identity(evidence)
             })
             .collect::<Vec<_>>();
         events.sort_by_key(|recorded| {
@@ -133,7 +138,7 @@ impl EventConfigurationStorage for MemoryStorage {
         collection_id: CollectionId,
         sink_id: EventSinkId,
     ) -> Result<StorageAuthorizedEventSink, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let sink = state
             .event_sinks
             .get(&sink_id.id())
@@ -151,7 +156,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         sink_id: EventSinkId,
     ) -> Result<Vec<CollectionId>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         if !state.event_sinks.contains_key(&sink_id.id()) {
             return Err(StorageError::not_found("Event sink was not found"));
         }
@@ -169,7 +174,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSinkGrantChange,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let sink = state
             .event_sinks
             .get(&request.sink_id().id())
@@ -214,7 +219,7 @@ impl EventConfigurationStorage for MemoryStorage {
             None,
         )?;
         if grant {
-            state.event_sink_grants.insert(key);
+            state.store_sink_grant(request.sink_id(), request.collection_id());
         } else {
             state.event_sink_grants.remove(&key);
         }
@@ -225,7 +230,7 @@ impl EventConfigurationStorage for MemoryStorage {
         i64::try_from(
             self.state
                 .read()
-                .await
+                .await?
                 .event_sinks
                 .values()
                 .filter(|sink| sink.enabled())
@@ -238,7 +243,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         query: StorageEventSinkListQuery,
     ) -> Result<StoragePage<StorageEventSink>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         page(
             state
                 .event_sinks
@@ -257,7 +262,7 @@ impl EventConfigurationStorage for MemoryStorage {
     async fn get_event_sink(&self, sink_id: EventSinkId) -> Result<StorageEventSink, StorageError> {
         self.state
             .read()
-            .await
+            .await?
             .event_sinks
             .get(&sink_id.id())
             .cloned()
@@ -270,7 +275,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSinkCreate,
     ) -> Result<StorageMutationOutcome<StorageEventSink>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if request
             .collection_id()
             .is_some_and(|id| !state.collections.contains_key(&id.id()))
@@ -317,7 +322,7 @@ impl EventConfigurationStorage for MemoryStorage {
             format!("Event sink '{}' created", sink.name()),
         )?;
         state.event_sink_ids.observe(id.id());
-        state.event_sinks.insert(id.id(), sink.clone());
+        state.store_event_sink(id.id(), sink.clone());
         Ok(StorageMutationOutcome::committed(sink, receipt))
     }
 
@@ -325,7 +330,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSinkUpdate,
     ) -> Result<StorageMutationOutcome<StorageEventSink>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state
             .event_sinks
             .get(&request.id().id())
@@ -436,9 +441,9 @@ impl EventConfigurationStorage for MemoryStorage {
             state.event_sink_schedule.insert(sink.id().id(), schedule);
         }
         for delivery in deliveries {
-            state.event_deliveries.store_unclaimed(delivery);
+            state.store_event_delivery(delivery);
         }
-        state.event_sinks.insert(sink.id().id(), sink.clone());
+        state.store_event_sink(sink.id().id(), sink.clone());
         Ok(StorageMutationOutcome::committed(sink, receipt))
     }
 
@@ -446,7 +451,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSinkDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if state
             .event_subscriptions
             .values()
@@ -486,7 +491,7 @@ impl EventConfigurationStorage for MemoryStorage {
         let rows = self
             .state
             .read()
-            .await
+            .await?
             .event_subscriptions
             .values()
             .filter(|subscription| subscription.scope() == query.scope())
@@ -502,7 +507,7 @@ impl EventConfigurationStorage for MemoryStorage {
     ) -> Result<StorageEventSubscription, StorageError> {
         self.state
             .read()
-            .await
+            .await?
             .event_subscriptions
             .get(&subscription_id.id())
             .filter(|subscription| subscription.scope() == scope)
@@ -520,7 +525,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSubscriptionCreate,
     ) -> Result<StorageMutationOutcome<StorageEventSubscription>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if let Some(id) = request.scope().collection_id()
             && !state.collections.contains_key(&id.id())
         {
@@ -572,9 +577,7 @@ impl EventConfigurationStorage for MemoryStorage {
             format!("Event subscription '{}' created", subscription.name()),
         )?;
         state.event_subscription_ids.observe(id.id());
-        state
-            .event_subscriptions
-            .insert(id.id(), subscription.clone());
+        state.store_event_subscription(id.id(), subscription.clone());
         Ok(StorageMutationOutcome::committed(subscription, receipt))
     }
 
@@ -582,7 +585,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSubscriptionUpdate,
     ) -> Result<StorageMutationOutcome<StorageEventSubscription>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state
             .event_subscriptions
             .get(&request.id().id())
@@ -642,9 +645,7 @@ impl EventConfigurationStorage for MemoryStorage {
             request.event_context(),
             format!("Event subscription '{}' updated", subscription.name()),
         )?;
-        state
-            .event_subscriptions
-            .insert(subscription.id().id(), subscription.clone());
+        state.store_event_subscription(subscription.id().id(), subscription.clone());
         Ok(StorageMutationOutcome::committed(subscription, receipt))
     }
 
@@ -652,7 +653,7 @@ impl EventConfigurationStorage for MemoryStorage {
         &self,
         request: StorageEventSubscriptionDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let subscription = state
             .event_subscriptions
             .get(&request.id().id())
@@ -689,14 +690,14 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
         &self,
         selection: StorageEventNotificationSelection,
     ) -> Result<StorageEventNotificationInput, StorageError> {
-        memory_notification(&*self.state.read().await, selection)
+        memory_notification(&*self.state.read().await?, selection)
     }
     async fn enqueue_event_notification_test(
         &self,
         selection: StorageEventNotificationSelection,
         context: EventContext,
     ) -> Result<StorageMutationOutcome<StorageEventDelivery>, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let input = memory_notification(&state, selection)?;
         let id = EventDeliveryId::new(state.delivery_ids.next()?)
             .map_err(|e| StorageError::internal(e.to_string()))?;
@@ -738,7 +739,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
             None,
         )?;
         state.delivery_ids.observe(id.id());
-        state.event_deliveries.store_unclaimed(delivery.clone());
+        state.store_event_delivery(delivery.clone());
         Ok(StorageMutationOutcome::committed(delivery, receipt))
     }
 
@@ -746,7 +747,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
         &self,
         query: StorageEventDeliveryListQuery,
     ) -> Result<StoragePage<StorageEventDelivery>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let rows = state
             .event_deliveries
             .values()
@@ -766,7 +767,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
     ) -> Result<StorageEventDelivery, StorageError> {
         self.state
             .read()
-            .await
+            .await?
             .event_deliveries
             .get(delivery_id)
             .cloned()
@@ -782,7 +783,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
         &self,
         delivery_id: EventDeliveryId,
     ) -> Result<StorageEventDelivery, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state
             .event_deliveries
             .get(delivery_id)
@@ -801,7 +802,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
             None,
             None,
         )?;
-        state.event_deliveries.store_unclaimed(delivery.clone());
+        state.store_event_delivery(delivery.clone());
         Ok(delivery)
     }
 
@@ -809,7 +810,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
         &self,
         delivery_id: EventDeliveryId,
     ) -> Result<StorageEventDelivery, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state
             .event_deliveries
             .get(delivery_id)
@@ -833,7 +834,7 @@ impl EventDeliveryAdministrationStorage for MemoryStorage {
             Some("Marked dead by an administrator".to_string()),
             None,
         )?;
-        state.event_deliveries.store_unclaimed(delivery.clone());
+        state.store_event_delivery(delivery.clone());
         Ok(delivery)
     }
 }
@@ -844,7 +845,13 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         &self,
         settings: hubuum_domain::EventDeliverySettings,
     ) -> Result<StorageEventDeliveryBatch, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
+        if !state
+            .application_control
+            .is_released_for(&state.deletion_control)
+        {
+            return Ok(StorageEventDeliveryBatch::new(Vec::new(), None));
+        }
         let now = Utc::now();
         let locked_until = settings
             .lock_deadline(now.naive_utc())
@@ -976,7 +983,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         claim: &StorageEventDeliveryClaim,
     ) -> Result<Option<StorageEventDeliveryLease>, StorageError> {
         let check_started = Instant::now();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let Ok(delivery) = state.event_deliveries.claimed(claim).cloned() else {
             return Ok(None);
         };
@@ -1025,7 +1032,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 (!allowed).then(|| "Sink use revoked or destination disabled".to_string()),
                 None,
             )?;
-            state.event_deliveries.store_unclaimed(rejected);
+            state.store_event_delivery(rejected);
             return Ok(None);
         }
         let interval = state
@@ -1061,7 +1068,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                     .to_string(),
                 ),
             )?;
-            state.event_deliveries.store_unclaimed(deferred);
+            state.store_event_delivery(deferred);
             return Ok(None);
         }
         state.event_sink_schedule.insert(
@@ -1085,7 +1092,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         claim: &StorageEventDeliveryClaim,
         disposition: StorageEventDeliveryDisposition,
     ) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let now = Utc::now();
         let current = state.event_deliveries.claimed(claim)?.clone();
         if current
@@ -1132,7 +1139,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
                 with_deferred_reason(&updated, Some("provider_rate".to_string()))?
             }
         };
-        state.event_deliveries.store_unclaimed(updated);
+        state.store_event_delivery(updated);
         Ok(())
     }
 
@@ -1140,7 +1147,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         &self,
         claim: &StorageEventDeliveryClaim,
     ) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state.event_deliveries.claimed_attempt(claim)?;
         let delivery = rebuild_event_delivery(
             current,
@@ -1150,7 +1157,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
             None,
             None,
         )?;
-        state.event_deliveries.store_unclaimed(delivery);
+        state.store_event_delivery(delivery);
         Ok(())
     }
 
@@ -1160,7 +1167,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
         settings: hubuum_domain::EventDeliverySettings,
         error: &str,
     ) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state.event_deliveries.claimed_attempt(claim)?;
         let attempts = current.attempts() + 1;
         let exhausted = attempts >= settings.max_attempts();
@@ -1181,7 +1188,7 @@ impl EventDeliveryWorkerStorage for MemoryStorage {
             Some(error.to_string()),
             None,
         )?;
-        state.event_deliveries.store_unclaimed(delivery);
+        state.store_event_delivery(delivery);
         Ok(())
     }
 }
@@ -1192,7 +1199,13 @@ impl EventFanoutStorage for MemoryStorage {
         &self,
         settings: EventFanoutSettings,
     ) -> Result<StorageEventFanoutOutcome, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
+        if !state
+            .application_control
+            .is_released_for(&state.deletion_control)
+        {
+            return Ok(StorageEventFanoutOutcome::new(0, Vec::new()));
+        }
         let events = state
             .events
             .iter()
@@ -1251,7 +1264,7 @@ impl EventFanoutStorage for MemoryStorage {
         }
         state.delivery_ids = delivery_ids;
         for delivery in pending {
-            state.event_deliveries.store_unclaimed(delivery);
+            state.store_event_delivery(delivery);
         }
         state.fanout_event_cursor = events
             .last()
@@ -1270,7 +1283,7 @@ impl EventHealthStorage for MemoryStorage {
     async fn get_event_delivery_health(
         &self,
     ) -> Result<StorageEventDeliveryHealthSnapshot, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let pending_events = state
             .events
             .iter()
@@ -1357,7 +1370,13 @@ impl EventRetentionStorage for MemoryStorage {
             .event_cutoff(Utc::now().naive_utc())
             .map(|value| DateTime::from_naive_utc_and_offset(value, Utc))
             .ok_or_else(|| StorageError::internal("event retention cutoff overflowed"))?;
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
+        if !state
+            .application_control
+            .is_released_for(&state.deletion_control)
+        {
+            return Ok(None);
+        }
         let retained = state
             .events
             .iter()
@@ -1390,7 +1409,13 @@ impl EventRetentionStorage for MemoryStorage {
         &self,
         batch_id: StorageEventRetentionBatchId,
     ) -> Result<StorageEventRetentionSummary, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
+        if !state
+            .application_control
+            .is_released_for(&state.deletion_control)
+        {
+            return Ok(StorageEventRetentionSummary::default());
+        }
         let Some(event_ids) = state.event_retention_batches.remove(&batch_id.as_uuid()) else {
             return Ok(StorageEventRetentionSummary::default());
         };
@@ -1504,12 +1529,12 @@ mod tests {
         run(async {
             let storage = MemoryStorage::new();
             {
-                let mut state = storage.state.write().await;
+                let mut state = storage.state.write().await.unwrap();
                 state.event_sink_ids.observe(i32::MAX - 1);
                 state.event_sequences.observe(i64::MAX);
             }
             assert!(storage.create_event_sink(sink_request()).await.is_err());
-            let state = storage.state.read().await;
+            let state = storage.state.read().await.unwrap();
             assert!(state.event_sinks.is_empty());
             assert_eq!(state.event_sink_ids.next().unwrap(), i32::MAX);
         });
@@ -1549,6 +1574,7 @@ mod tests {
                     .state
                     .write()
                     .await
+                    .unwrap()
                     .event_sequences
                     .observe(i64::MAX);
             }

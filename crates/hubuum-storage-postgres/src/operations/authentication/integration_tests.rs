@@ -1,15 +1,20 @@
+use std::future::ready;
 use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use diesel::prelude::*;
 use diesel::sql_types::BigInt;
 use diesel_async::RunQueryDsl;
-use hubuum_domain::UserId;
+use hubuum_domain::{PrincipalId, TokenId, UserId};
 use hubuum_events_core::EventContext;
 use hubuum_storage_core::{
-    StorageAuthenticatedToken, StorageAuthenticationAttempt, StorageAuthenticationCredential,
+    ApiRequestAdmissionStorage, ApiRequestClass, CredentialActivityPolicy, DeletionControlStorage,
+    ExecutionStorage, HistoryLifecycleStorage, HistoryPublicationKind, ObservedSource,
+    RuntimeRegistration, StorageAuthenticatedToken, StorageAuthenticationAttempt,
+    StorageAuthenticationCredential, StorageError, StorageErrorKind, StorageExecutionScope,
     StorageUserCreate, StorageUserDelete,
 };
+use hubuum_task_core::TaskExecutionContext;
 use rstest::rstest;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -19,7 +24,10 @@ use super::authenticate_bearer_token;
 use crate::operations::user::{create_user, delete_user};
 use crate::schema::tokens;
 use crate::test_support::integration_test_pool;
-use crate::{PostgresFaultController, PostgresFaultPoint, PostgresRuntime, PostgresStorageError};
+use crate::{
+    PostgresFaultController, PostgresFaultPoint, PostgresRuntime, PostgresStorage,
+    PostgresStorageError,
+};
 
 const WAIT: StdDuration = StdDuration::from_secs(10);
 const BURST_SIZE: usize = 8;
@@ -114,6 +122,288 @@ impl TestContext {
         .unwrap()
         .into_value();
     }
+}
+
+struct OnlineAuthentication {
+    backend: PostgresStorage,
+    registration: RuntimeRegistration,
+    scope: StorageExecutionScope,
+    runtime: PostgresRuntime,
+}
+
+impl OnlineAuthentication {
+    async fn new(context: &TestContext) -> Self {
+        let backend = PostgresStorage::unobserved(integration_test_pool(2));
+        let registration = backend.register_history_runtime(None).await.unwrap();
+        let application = backend
+            .capture_application_execution(Some(registration.owner()))
+            .await
+            .unwrap();
+        let runtime = context
+            .runtime
+            .clone()
+            .with_runtime_owner(registration.owner().clone());
+        Self {
+            backend,
+            registration,
+            scope: StorageExecutionScope::default().with_application_access(application),
+            runtime,
+        }
+    }
+
+    async fn cleanup(self) {
+        self.backend
+            .unregister_runtime(self.registration)
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn online_bootstrap_authentication_updates_stale_activity() {
+    let context = TestContext::new(Some(Duration::minutes(2))).await;
+    let online = OnlineAuthentication::new(&context).await;
+    let result = online
+        .backend
+        .run_in_scope(
+            online.scope.clone(),
+            authenticate_bearer_token(&online.runtime, context.attempt_at(context.observed_at)),
+        )
+        .await;
+    let observed = context.last_used_at().await;
+    let expected = context.observed_at;
+    online.cleanup().await;
+    context.cleanup().await;
+    result.expect("authentication must work before publication and API admission");
+    assert_eq!(observed, Some(expected));
+}
+
+#[tokio::test]
+async fn online_bootstrap_records_credential_sources() {
+    use crate::schema::{credential_activity, credential_sources};
+
+    let context = TestContext::new(None).await;
+    let online = OnlineAuthentication::new(&context).await;
+    let result = online
+        .backend
+        .run_in_scope(
+            online.scope.clone(),
+            crate::operations::credential_activity::observe(
+                &online.runtime,
+                TokenId::new(context.token_id).unwrap(),
+                ObservedSource::ConnectionPeer("127.0.0.1".parse().unwrap()),
+                CredentialActivityPolicy::try_new(true, 7, 8).unwrap(),
+            ),
+        )
+        .await;
+    let count = context
+        .runtime
+        .with_connection(async |connection| {
+            credential_sources::table
+                .inner_join(credential_activity::table)
+                .filter(credential_activity::token_id.eq(context.token_id))
+                .count()
+                .get_result::<i64>(connection)
+                .await
+        })
+        .await
+        .unwrap();
+    context
+        .runtime
+        .with_connection(async |connection| {
+            diesel::delete(
+                credential_activity::table
+                    .filter(credential_activity::token_id.eq(context.token_id)),
+            )
+            .execute(connection)
+            .await
+        })
+        .await
+        .unwrap();
+    online.cleanup().await;
+    context.cleanup().await;
+    result.expect("source observation must work before publication and API admission");
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn online_bootstrap_does_not_exempt_ordinary_history_reads() {
+    let context = TestContext::new(None).await;
+    let online = OnlineAuthentication::new(&context).await;
+    let result = online
+        .backend
+        .run_in_scope(
+            online.scope.clone(),
+            online.runtime.with_read_connection(async |connection| {
+                crate::schema::collections_history::table
+                    .count()
+                    .get_result::<i64>(connection)
+                    .await
+            }),
+        )
+        .await;
+    online.cleanup().await;
+    context.cleanup().await;
+    let error: StorageError = result.unwrap_err().into();
+    assert_eq!(error.kind(), StorageErrorKind::Unavailable);
+}
+
+#[tokio::test]
+async fn online_authentication_rejects_a_retired_publication() {
+    let context = TestContext::new(None).await;
+    let online = OnlineAuthentication::new(&context).await;
+    let owner = online
+        .backend
+        .run_in_scope(
+            online.scope.clone(),
+            online
+                .backend
+                .admit_history_publication(HistoryPublicationKind::HttpResponse),
+        )
+        .await
+        .unwrap();
+    let scope = online.scope.clone().with_history_read(owner.context());
+    let settled = owner
+        .after_drained(ready(Ok(())), ready(Ok(())))
+        .await
+        .unwrap();
+    online
+        .backend
+        .settle_history_publication(settled)
+        .await
+        .unwrap();
+    let result = online
+        .backend
+        .run_in_scope(
+            scope,
+            authenticate_bearer_token(&online.runtime, context.attempt_at(context.observed_at)),
+        )
+        .await;
+    online.cleanup().await;
+    context.cleanup().await;
+    let error: StorageError = result.unwrap_err().into();
+    assert_eq!(error.kind(), StorageErrorKind::Unavailable);
+}
+
+#[tokio::test]
+async fn online_bootstrap_authentication_rejects_a_retired_runtime() {
+    let context = TestContext::new(None).await;
+    let online = OnlineAuthentication::new(&context).await;
+    online
+        .backend
+        .unregister_runtime(online.registration)
+        .await
+        .unwrap();
+    let result = online
+        .backend
+        .run_in_scope(
+            online.scope,
+            authenticate_bearer_token(&online.runtime, context.attempt_at(context.observed_at)),
+        )
+        .await;
+    context.cleanup().await;
+    let error: StorageError = result.unwrap_err().into();
+    assert_eq!(error.kind(), StorageErrorKind::Unavailable);
+}
+
+#[rstest]
+#[case::api(true)]
+#[case::task(false)]
+#[tokio::test]
+async fn online_authentication_cannot_bootstrap_admitted_work(#[case] api: bool) {
+    let context = TestContext::new(None).await;
+    let online = OnlineAuthentication::new(&context).await;
+    let supervised = online
+        .scope
+        .clone()
+        .with_task_execution(Some(TaskExecutionContext::new(WAIT).unwrap().0));
+    let permit = if api {
+        Some(
+            online
+                .backend
+                .run_in_scope(
+                    supervised.clone(),
+                    online.backend.admit_api_request(
+                        PrincipalId::new(context.user_id.id()).unwrap(),
+                        ApiRequestClass::History,
+                        0,
+                    ),
+                )
+                .await
+                .unwrap(),
+        )
+    } else {
+        None
+    };
+    let scope = match &permit {
+        Some(permit) => supervised.with_api_request(permit.clone()),
+        None => supervised,
+    };
+    let result = online
+        .backend
+        .run_in_scope(
+            scope,
+            authenticate_bearer_token(&online.runtime, context.attempt_at(context.observed_at)),
+        )
+        .await;
+    if let Some(permit) = permit {
+        online.backend.settle_api_request(permit).await.unwrap();
+    }
+    online.cleanup().await;
+    context.cleanup().await;
+    let error: StorageError = result.unwrap_err().into();
+    assert_eq!(error.kind(), StorageErrorKind::Unavailable);
+    assert!(
+        error.to_string().contains("original publication owner"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn online_api_admission_rejects_an_inherited_retired_publication() {
+    let context = TestContext::new(None).await;
+    let online = OnlineAuthentication::new(&context).await;
+    let owner = online
+        .backend
+        .run_in_scope(
+            online.scope.clone(),
+            online
+                .backend
+                .admit_history_publication(HistoryPublicationKind::HttpResponse),
+        )
+        .await
+        .unwrap();
+    let scope = online.scope.clone().with_history_read(owner.context());
+    let settled = owner
+        .after_drained(ready(Ok(())), ready(Ok(())))
+        .await
+        .unwrap();
+    online
+        .backend
+        .settle_history_publication(settled)
+        .await
+        .unwrap();
+    let result = online
+        .backend
+        .run_in_scope(
+            scope,
+            online.backend.admit_api_request(
+                PrincipalId::new(context.user_id.id()).unwrap(),
+                ApiRequestClass::History,
+                0,
+            ),
+        )
+        .await;
+    if let Ok(permit) = &result {
+        online
+            .backend
+            .settle_api_request(permit.clone())
+            .await
+            .unwrap();
+    }
+    online.cleanup().await;
+    context.cleanup().await;
+    assert_eq!(result.unwrap_err().kind(), StorageErrorKind::Unavailable);
 }
 
 #[derive(QueryableByName)]

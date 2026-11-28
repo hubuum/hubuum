@@ -6,6 +6,9 @@ designed for operational validation, not microbenchmarking. Timing and resource
 measurements are evidence; correctness failures fail the run. PostgreSQL is the
 first implemented scale adapter.
 
+The [lifecycle inventory and budgets](performance/lifecycle_budgets.md) extend
+these fixtures for task capacity, history retention and artifact work in #503.
+
 The loader replaces data in a freshly migrated, disposable database. Never point
 it at a development, staging, or production database.
 

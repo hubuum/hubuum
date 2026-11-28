@@ -77,14 +77,14 @@ impl StorageHandle {
     ) -> Result<AppliedRuntimeSettings, StorageError> {
         self.inner
             .runtime_settings
-            .refresh(async {
+            .refresh(crate::restores::with_application_work(self, async {
                 let snapshot = self.load_runtime_settings().await?;
                 let deployment = crate::config::get_config()
                     .map_err(|error| StorageError::invalid_input(error.to_string()))?;
                 crate::config::runtime::resolve(deployment.clone(), Some(&snapshot))
                     .map_err(|error| StorageError::invalid_input(error.to_string()))?;
                 Ok(snapshot)
-            })
+            }))
             .await
     }
 
@@ -165,8 +165,24 @@ impl StorageHandle {
                 }
                 // Failures are logged and reported as staleness; the next
                 // notification or poll retries.
-                if let Ok(applied) = self.refresh_runtime_settings().await {
-                    on_applied(applied).await;
+                let admission: Result<(), StorageError> =
+                    crate::restores::with_application_work(self, async {
+                        // The loader records its own failures. Waiting for
+                        // another refresh must not invalidate that caller's work.
+                        if let Ok(applied) = self.refresh_runtime_settings().await {
+                            on_applied(applied).await;
+                        }
+                        Ok(())
+                    })
+                    .await;
+                if let Err(error) = admission {
+                    // Admission can fail before the loader is polled. Retain
+                    // the last snapshot, but never report that attempt current.
+                    let _ = self
+                        .inner
+                        .runtime_settings
+                        .refresh(async { Err(error) })
+                        .await;
                 }
             }
         };
@@ -188,6 +204,30 @@ mod tests {
     };
     use hubuum_storage_memory::MemoryStorage;
     use tokio::sync::watch;
+
+    #[rstest::rstest]
+    #[case::live(false)]
+    #[case::retired(true)]
+    #[tokio::test]
+    async fn settings_refresh_preserves_registered_runtime_fencing(#[case] retired: bool) {
+        use hubuum_storage_core::DeletionControlStorage;
+
+        let storage = StorageHandle::memory();
+        let registration = storage.register_runtime().await.unwrap();
+        let bound = storage.clone().with_runtime_owner(registration.owner());
+        if retired {
+            storage.unregister_runtime(registration).await.unwrap();
+        }
+        let result = bound.refresh_runtime_settings().await;
+        assert_eq!(result.is_err(), retired, "{result:?}");
+        assert_eq!(
+            bound
+                .applied_runtime_settings()
+                .ensure_security_current()
+                .is_err(),
+            retired
+        );
+    }
 
     struct Notifications {
         changes: watch::Sender<()>,
@@ -251,7 +291,7 @@ mod tests {
     #[rstest::rstest]
     #[case::notification(true)]
     #[case::missed_notification(false)]
-    #[tokio::test]
+    #[actix_rt::test]
     async fn replicas_apply_committed_changes_without_a_request(#[case] notify: bool) {
         let backend = MemoryStorage::new();
         let writer = StorageHandle::from_registered_backend(backend.clone());
@@ -272,7 +312,7 @@ mod tests {
         } else {
             Duration::from_millis(20)
         };
-        let task = tokio::spawn(async move {
+        let task = actix_rt::spawn(async move {
             worker
                 .run_runtime_settings_reconciler(worker_shutdown, interval)
                 .await;

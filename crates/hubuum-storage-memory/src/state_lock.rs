@@ -4,34 +4,293 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
+use hubuum_storage_core::{
+    HistoryArchiveExecutionPermit, HistoryProducerContext, HistoryReadEpoch, RuntimeOwner,
+    StorageExecutionPermit,
+};
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::{
-    MemoryState, StorageError, StorageTaskKind, StorageTaskLease, Utc, invalid_task_lease,
+    MEMORY_EXECUTION_SCOPE, MemoryState, StorageError, StorageTaskKind, StorageTaskLease, Utc,
+    invalid_task_lease,
 };
 
-pub(super) struct MemoryStateLock(RwLock<MemoryState>);
+pub(super) struct MemoryStateLock {
+    state: Arc<RwLock<MemoryState>>,
+    runtime_owner: Option<RuntimeOwner>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum HistoryEntry<'a> {
+    Archive(&'a HistoryProducerContext),
+    Productive,
+    Authentication,
+    ApiAdmission,
+    Admission,
+    Control,
+}
 
 impl MemoryStateLock {
     pub(super) fn new(state: MemoryState) -> Self {
-        Self(RwLock::new(state))
+        Self {
+            state: Arc::new(RwLock::new(state)),
+            runtime_owner: None,
+        }
     }
 
-    pub(super) async fn read(&self) -> RwLockReadGuard<'_, MemoryState> {
-        self.0.read().await
+    pub(super) fn with_runtime_owner(&self, owner: RuntimeOwner) -> Self {
+        Self {
+            state: Arc::clone(&self.state),
+            runtime_owner: Some(owner),
+        }
     }
 
-    pub(super) async fn write(&self) -> MemoryStateWriteGuard<'_> {
+    pub(super) fn runtime_owner(&self) -> Option<&RuntimeOwner> {
+        self.runtime_owner.as_ref()
+    }
+
+    pub(super) fn fork(&self, state: MemoryState) -> Self {
+        Self {
+            state: Arc::new(RwLock::new(state)),
+            runtime_owner: self.runtime_owner.clone(),
+        }
+    }
+
+    pub(super) async fn read(&self) -> Result<RwLockReadGuard<'_, MemoryState>, StorageError> {
+        super::execution::task_execution_checkpoint()?;
+        let state = self.state.read().await;
+        self.require_application_access(&state, HistoryEntry::Productive, None)?;
+        Ok(state)
+    }
+
+    pub(super) async fn read_history_archive(
+        &self,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<RwLockReadGuard<'_, MemoryState>, StorageError> {
+        let scope = MEMORY_EXECUTION_SCOPE
+            .try_with(Clone::clone)
+            .unwrap_or_default();
+        permit.validate_scope(&scope)?;
+        let state = self.state.read().await;
+        self.require_application_access(
+            &state,
+            HistoryEntry::Archive(permit.producer()),
+            Some(permit.application()),
+        )?;
+        Ok(state)
+    }
+    pub(super) async fn write_history_archive(
+        &self,
+        permit: &HistoryArchiveExecutionPermit,
+    ) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+        let scope = MEMORY_EXECUTION_SCOPE
+            .try_with(Clone::clone)
+            .unwrap_or_default();
+        permit.validate_scope(&scope)?;
+        let guard = self.state.write().await;
+        self.require_application_access(
+            &guard,
+            HistoryEntry::Archive(permit.producer()),
+            Some(permit.application()),
+        )?;
+        Ok(MemoryStateWriteGuard {
+            guard,
+            mutated: false,
+        })
+    }
+
+    pub(super) async fn write(&self) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+        super::execution::task_execution_checkpoint()?;
+        let guard = self.state.write().await;
+        self.require_application_access(&guard, HistoryEntry::Productive, None)?;
+        Ok(MemoryStateWriteGuard {
+            guard,
+            mutated: false,
+        })
+    }
+
+    /// Identity-only bootstrap before the request has publication ownership.
+    /// Inherited API, task and publication authority remains binding.
+    pub(super) async fn write_authentication(
+        &self,
+    ) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+        super::execution::task_execution_checkpoint()?;
+        let guard = self.state.write().await;
+        self.require_application_access(&guard, HistoryEntry::Authentication, None)?;
+        Ok(MemoryStateWriteGuard {
+            guard,
+            mutated: false,
+        })
+    }
+
+    pub(super) async fn write_api_request_admission(
+        &self,
+    ) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+        super::execution::task_execution_checkpoint()?;
+        let guard = self.state.write().await;
+        self.require_application_access(&guard, HistoryEntry::ApiAdmission, None)?;
+        Ok(MemoryStateWriteGuard {
+            guard,
+            mutated: false,
+        })
+    }
+
+    /// Reserved for protected authority and operational state that must remain
+    /// available while application exposure is quarantined.
+    pub(super) async fn read_control(&self) -> RwLockReadGuard<'_, MemoryState> {
+        self.state.read().await
+    }
+
+    /// Reserved for control transitions and nonproductive failure/cancellation
+    /// settlement. Ordinary capability methods use the checked write guard.
+    pub(super) async fn write_control(&self) -> MemoryStateWriteGuard<'_> {
         MemoryStateWriteGuard {
-            guard: self.0.write().await,
+            guard: self.state.write().await,
             mutated: false,
         }
+    }
+
+    pub(super) async fn write_history_admission(
+        &self,
+    ) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+        super::execution::task_execution_checkpoint()?;
+        let guard = self.state.write().await;
+        self.require_application_access(&guard, HistoryEntry::Admission, None)?;
+        Ok(MemoryStateWriteGuard {
+            guard,
+            mutated: false,
+        })
+    }
+
+    pub(super) async fn write_history_control(
+        &self,
+        fallback: &StorageExecutionPermit,
+    ) -> Result<MemoryStateWriteGuard<'_>, StorageError> {
+        super::execution::task_execution_checkpoint()?;
+        let guard = self.state.write().await;
+        self.require_application_access(&guard, HistoryEntry::Control, Some(fallback))?;
+        Ok(MemoryStateWriteGuard {
+            guard,
+            mutated: false,
+        })
+    }
+
+    fn require_application_access(
+        &self,
+        state: &MemoryState,
+        entry: HistoryEntry<'_>,
+        fallback: Option<&StorageExecutionPermit>,
+    ) -> Result<(), StorageError> {
+        // Productive entries retain the original cooperative stop/deadline.
+        // Exempt control settlement uses read_control/write_control instead.
+        super::execution::task_execution_checkpoint()?;
+        let permit = MEMORY_EXECUTION_SCOPE
+            .try_with(|scope| scope.application_access_override().cloned())
+            .ok()
+            .flatten()
+            .or_else(|| fallback.cloned());
+        if let Some(owner) = &self.runtime_owner {
+            let matching_owner = permit
+                .as_ref()
+                .and_then(StorageExecutionPermit::owner)
+                .is_some_and(|captured| {
+                    captured.id() == owner.id()
+                        && captured.ownership_token() == owner.ownership_token()
+                });
+            if !matching_owner {
+                return Err(StorageError::unavailable(
+                    "Registered runtime requires its captured application execution permit",
+                ));
+            }
+        }
+        if let Some(permit) = &permit {
+            state.ensure_application_permit(permit)?;
+        }
+        let history = MEMORY_EXECUTION_SCOPE
+            .try_with(|scope| scope.history_read_override().cloned())
+            .ok()
+            .flatten();
+        if entry == HistoryEntry::Admission && history.is_some() {
+            return Err(StorageError::conflict(
+                "Nested work cannot refresh a publication owner",
+            ));
+        }
+        let original_scope = MEMORY_EXECUTION_SCOPE
+            .try_with(Clone::clone)
+            .unwrap_or_default();
+        let bootstrap = match entry {
+            HistoryEntry::Authentication => {
+                original_scope.api_request_override().is_none()
+                    && original_scope
+                        .task_execution_override()
+                        .is_none_or(Option::is_none)
+            }
+            // Initial API admission has a supervised deadline but no API owner.
+            HistoryEntry::ApiAdmission => original_scope.api_request_override().is_none(),
+            _ => false,
+        };
+        if matches!(
+            entry,
+            HistoryEntry::Productive | HistoryEntry::Authentication | HistoryEntry::ApiAdmission
+        ) && !bootstrap
+            && history.is_none()
+            && self
+                .runtime_owner
+                .as_ref()
+                .or_else(|| permit.as_ref().and_then(StorageExecutionPermit::owner))
+                .and_then(|owner| state.runtime_registrations.get(&owner.id()))
+                .is_some_and(|runtime| runtime.history_protocol.supports_online())
+        {
+            return Err(StorageError::unavailable(
+                "History-aware productive work requires its original publication owner",
+            ));
+        }
+        if let Some(history) = &history {
+            history.validate_scope(&original_scope)?;
+        }
+        if let Ok(Some(request)) =
+            MEMORY_EXECUTION_SCOPE.try_with(|scope| scope.api_request_override().cloned())
+        {
+            state
+                .api_requests
+                .check(&request, state.application_control.fence().incarnation())?;
+        }
+        if matches!(
+            entry,
+            HistoryEntry::Productive
+                | HistoryEntry::Authentication
+                | HistoryEntry::ApiAdmission
+                | HistoryEntry::Archive(_)
+        ) && let Some(history) = history
+        {
+            if permit.as_ref() != Some(history.epoch().application()) {
+                return Err(StorageError::unavailable(
+                    "History publication belongs to a different application scope",
+                ));
+            }
+            let current = HistoryReadEpoch::for_publication(
+                history.kind(),
+                history.epoch().application().clone(),
+                &state.history_lifecycle_snapshot()?,
+                state.history_publications.generation(),
+            )
+            .and_then(|epoch| epoch.bind_scope(&original_scope))
+            .map_err(super::invalid_contract_value)?;
+            if let HistoryEntry::Archive(producer) = entry {
+                state
+                    .history_publications
+                    .check_producer(producer, &current)?;
+            } else {
+                state.history_publications.check(&history, &current)?;
+            }
+        }
+        Ok(())
     }
 
     /// Only lease expiry and its activity timestamp may change through this
     /// guard. Snapshot commit explicitly merges these fields from live tasks.
     pub(super) async fn write_lease(&self) -> RwLockWriteGuard<'_, MemoryState> {
-        self.0.write().await
+        self.state.write().await
     }
 
     pub(super) async fn commit_import(
@@ -40,7 +299,10 @@ impl MemoryStateLock {
         mut staged: MemoryState,
         lease: &StorageTaskLease,
     ) -> Result<(), StorageError> {
-        let mut live = self.0.write().await;
+        super::execution::task_execution_checkpoint()?;
+        let mut live = self.state.write().await;
+        self.require_application_access(&live, HistoryEntry::Productive, None)?;
+        live.ensure_task_lease_current(lease)?;
         let task = live
             .tasks
             .get(&lease.task_id().id())
@@ -67,6 +329,7 @@ impl MemoryStateLock {
             }
         }
         staged.generation = Arc::new(());
+        staged.task_capacity.scheduler = live.task_capacity.scheduler.clone();
         *live = staged;
         Ok(())
     }

@@ -4,10 +4,12 @@ use std::time::Duration;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum StorageCapability {
+    Artifact,
     AuditEvent,
     Authentication,
     AuthorizationData,
     BackupSnapshot,
+    DeletionControl,
     Catalog,
     Class,
     ClassRelation,
@@ -30,6 +32,7 @@ pub enum StorageCapability {
     Import,
     Inventory,
     LocalIdentityCredential,
+    LogicalIdentity,
     Metrics,
     ObjectAggregate,
     ObjectRelation,
@@ -43,6 +46,8 @@ pub enum StorageCapability {
     ServiceAccount,
     SchemaEvolution,
     QueryUsage,
+    ApiRequestAdmission,
+    TaskCapacity,
     TaskExecution,
     TaskQueue,
     TokenRetention,
@@ -54,10 +59,12 @@ pub enum StorageCapability {
 
 impl StorageCapability {
     pub const ALL: &'static [Self] = &[
+        Self::Artifact,
         Self::AuditEvent,
         Self::Authentication,
         Self::AuthorizationData,
         Self::BackupSnapshot,
+        Self::DeletionControl,
         Self::Catalog,
         Self::Class,
         Self::ClassRelation,
@@ -80,6 +87,7 @@ impl StorageCapability {
         Self::Import,
         Self::Inventory,
         Self::LocalIdentityCredential,
+        Self::LogicalIdentity,
         Self::Metrics,
         Self::ObjectAggregate,
         Self::ObjectRelation,
@@ -93,6 +101,8 @@ impl StorageCapability {
         Self::ServiceAccount,
         Self::SchemaEvolution,
         Self::QueryUsage,
+        Self::ApiRequestAdmission,
+        Self::TaskCapacity,
         Self::TaskExecution,
         Self::TaskQueue,
         Self::TokenRetention,
@@ -105,10 +115,12 @@ impl StorageCapability {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Artifact => "artifact",
             Self::AuditEvent => "audit_event",
             Self::Authentication => "authentication",
             Self::AuthorizationData => "authorization_data",
             Self::BackupSnapshot => "backup_snapshot",
+            Self::DeletionControl => "deletion_control",
             Self::Catalog => "catalog",
             Self::Class => "class",
             Self::ClassRelation => "class_relation",
@@ -131,6 +143,7 @@ impl StorageCapability {
             Self::Import => "import",
             Self::Inventory => "inventory",
             Self::LocalIdentityCredential => "local_identity_credential",
+            Self::LogicalIdentity => "logical_identity",
             Self::Metrics => "metrics",
             Self::ObjectAggregate => "object_aggregate",
             Self::ObjectRelation => "object_relation",
@@ -145,6 +158,8 @@ impl StorageCapability {
             Self::QueryUsage => "query_usage",
             Self::ServiceAccount => "service_account",
             Self::TaskExecution => "task_execution",
+            Self::ApiRequestAdmission => "api_request_admission",
+            Self::TaskCapacity => "task_capacity",
             Self::TaskQueue => "task_queue",
             Self::TokenRetention => "token_retention",
             Self::Token => "token",

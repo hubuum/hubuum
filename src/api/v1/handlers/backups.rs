@@ -1,49 +1,54 @@
 use crate::api::response::{ApiErrorResponse, ApiResponse};
+use crate::models::TaskDetailsExpiredResponse;
+use crate::services::artifacts::{OutputDownload, download};
+use crate::services::tasks::TaskSubmissionOperation;
 use actix_web::{HttpRequest, HttpResponse, Responder, get, http::StatusCode, post, web};
-use base64::Engine;
+use base64::{Engine, engine::general_purpose::STANDARD};
 
 use crate::api::locations as api_locations;
-use crate::backups::BackupSettings;
 use crate::errors::ApiError;
-use crate::extractors::UnscopedRuntimeAdmin;
+use crate::extractors::{Authenticated, UnscopedRuntimeAdmin};
 use crate::models::{
     BackupDocument, BackupOutputLookup, BackupRequest, TaskID, TaskKind, TaskResponse,
 };
 use crate::permissions::AppContext;
 use crate::services::tasks::{
-    TaskSubmission, backup_output, backup_output_summary, load_authorized_backup, submit_task,
-    task_scope_snapshot,
+    TaskSubmission, TaskSubmissionAttempt, backup_output, backup_output_summary,
+    load_authorized_backup, task_scope_snapshot,
 };
-use crate::tasks::{idempotency_key_from_headers, kick_task_worker, request_hash};
+use crate::tasks::{idempotency_key_from_headers, request_hash};
 
-fn digest_header_from_sha256(sha256: &str) -> Result<String, ApiError> {
-    let encoded = sha256.as_bytes();
-    if encoded.len() != 64 {
-        return Err(invalid_stored_sha256());
+fn render_backup_download(
+    body: OutputDownload,
+    task_id: TaskID,
+    byte_size: i64,
+    sha256: &str,
+) -> Result<HttpResponse, ApiError> {
+    let hex: String = body
+        .sha256()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if u64::try_from(byte_size).ok() != Some(body.byte_size()) || !hex.eq_ignore_ascii_case(sha256)
+    {
+        return Err(ApiError::InternalServerError(
+            "Stored backup metadata differs from the output".into(),
+        ));
     }
-
-    let mut decoded = [0_u8; 32];
-    for (byte, pair) in decoded.iter_mut().zip(encoded.as_chunks::<2>().0) {
-        let high = decode_hex_nibble(pair[0]).ok_or_else(invalid_stored_sha256)?;
-        let low = decode_hex_nibble(pair[1]).ok_or_else(invalid_stored_sha256)?;
-        *byte = (high << 4) | low;
-    }
-
-    let digest = base64::engine::general_purpose::STANDARD.encode(decoded);
-    Ok(format!("sha-256={digest}"))
-}
-
-fn decode_hex_nibble(value: u8) -> Option<u8> {
-    match value {
-        b'0'..=b'9' => Some(value - b'0'),
-        b'a'..=b'f' => Some(value - b'a' + 10),
-        b'A'..=b'F' => Some(value - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn invalid_stored_sha256() -> ApiError {
-    ApiError::InternalServerError("Stored backup SHA-256 is invalid".to_string())
+    let digest = STANDARD.encode(body.sha256());
+    let mut response = HttpResponse::Ok();
+    response
+        .content_type("application/json")
+        .insert_header((
+            "Content-Disposition",
+            format!(
+                "attachment; filename=\"hubuum-backup-{}.json\"",
+                task_id.id()
+            ),
+        ))
+        .insert_header(("Digest", format!("sha-256={digest}")))
+        .insert_header(("X-Hubuum-Backup-SHA256", hex));
+    Ok(body.respond(&mut response))
 }
 
 #[utoipa::path(
@@ -57,41 +62,48 @@ fn invalid_stored_sha256() -> ApiError {
         (status = 400, description = "Bad request", body = ApiErrorResponse),
         (status = 401, description = "Unauthorized", body = ApiErrorResponse),
         (status = 403, description = "Unscoped administrator access required", body = ApiErrorResponse),
-        (status = 409, description = "Conflict", body = ApiErrorResponse),
-        (status = 429, description = "Too many active backup tasks", body = ApiErrorResponse)
+        (status = 410, description = "Submission recognized; no new work created and task details expired. Do not resubmit with a new key.", body = TaskDetailsExpiredResponse, headers(("Cache-Control" = String, description = "no-store; no automatic retry is implied"))),
+        (status = 409, description = "Conflict; reason idempotency_key_conflict identifies a changed protected request", body = ApiErrorResponse, headers(("Cache-Control" = String, description = "no-store for protected request conflicts; no Retry-After"))),
+        (status = 429, description = "Shared task admission or byte capacity exhausted", body = ApiErrorResponse),
+        (status = 503, description = "Task identity or control reconciliation unavailable", body = ApiErrorResponse)
     )
 )]
 #[post("")]
 pub async fn create_backup(
     context: AppContext,
-    settings: web::Data<BackupSettings>,
-    admin: UnscopedRuntimeAdmin,
+    requestor: Authenticated,
     req: HttpRequest,
     request: web::Json<BackupRequest>,
 ) -> Result<impl Responder, ApiError> {
-    let config = crate::config::runtime::current()?;
-    let settings = settings.with_runtime(&config)?;
     let request = request.into_inner();
     let payload = serde_json::to_value(&request)?;
     let hash = request_hash(&payload)?;
-    let scope_snapshot = task_scope_snapshot(Some(admin.token_id()), None);
-    let task = submit_task(
+    let attempt = TaskSubmissionAttempt::prepare(
         &context,
-        TaskSubmission::new(
-            TaskKind::Backup,
-            admin.principal().id(),
-            payload,
-            1,
-            settings.max_active_tasks_per_user(),
-        )
-        .idempotency_key(idempotency_key_from_headers(req.headers())?)
-        .request_hash(Some(hash))
-        .scope_snapshot(scope_snapshot),
+        &requestor.principal,
+        idempotency_key_from_headers(req.headers())?,
+        TaskSubmissionOperation::Backup,
+        &request,
+        Some(&hash),
     )
     .await?;
+    let task = if let Some(task) = attempt.lookup(&context, &requestor.principal).await? {
+        task
+    } else {
+        let admin = requestor.into_runtime_admin(&context).await?;
+        let scope_snapshot = task_scope_snapshot(Some(admin.token_id()), None);
+        attempt
+            .submit(
+                &context,
+                admin.principal(),
+                TaskSubmission::new(TaskKind::Backup, admin.principal().id(), payload, 1)
+                    .request_hash(Some(hash))
+                    .scope_snapshot(scope_snapshot),
+            )
+            .await?
+    };
     let output = backup_output_summary(&context, TaskID::new(task.id)?).await?;
     let response = task.to_response_with_backup_output(output.as_ref())?;
-    kick_task_worker(context.clone());
     Ok(ApiResponse::accepted_at(
         response,
         api_locations::task(task.id)?,
@@ -137,6 +149,8 @@ pub async fn get_backup(
             headers(
                 ("Cache-Control" = String, description = "Always no-store for credential-bearing artifacts"),
                 ("Content-Disposition" = String, description = "Attachment filename for the backup document"),
+                ("Content-Length" = u64, description = "Exact byte count of the complete backup document"),
+                ("Content-Digest" = String, description = "RFC 9530 SHA-256 digest of the complete response content"),
                 ("Digest" = String, description = "Base64-encoded SHA-256 content digest"),
                 ("X-Hubuum-Backup-SHA256" = String, description = "Lowercase hexadecimal SHA-256 digest")
             )
@@ -157,20 +171,18 @@ pub async fn get_backup_output(
     load_authorized_backup(&context, admin.principal(), task_id).await?;
     match backup_output(&context, task_id).await? {
         BackupOutputLookup::Available(output) => {
-            let digest = digest_header_from_sha256(&output.sha256)?;
-            Ok(HttpResponse::Ok()
-                .content_type("application/json")
-                .insert_header(("Cache-Control", "no-store"))
-                .insert_header((
-                    "Content-Disposition",
-                    format!(
-                        "attachment; filename=\"hubuum-backup-{}.json\"",
-                        task_id.id()
-                    ),
-                ))
-                .insert_header(("Digest", digest))
-                .insert_header(("X-Hubuum-Backup-SHA256", output.sha256))
-                .body(output.document))
+            let body = match output.artifact_reference {
+                Some(reference) => download(&context, reference).await?,
+                None => OutputDownload::inline(
+                    output
+                        .document
+                        .ok_or_else(|| {
+                            ApiError::InternalServerError("Missing backup document".into())
+                        })?
+                        .into(),
+                ),
+            };
+            render_backup_download(body, task_id, output.byte_size, &output.sha256)
         }
         BackupOutputLookup::Expired { expires_at } => Err(ApiError::Gone(format!(
             "Backup output expired at {expires_at} UTC"
@@ -185,26 +197,39 @@ pub async fn get_backup_output(
 mod tests {
     use super::*;
 
-    #[test]
-    fn digest_header_decodes_stored_sha256_hex() {
-        let digest = digest_header_from_sha256(
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        )
-        .unwrap();
+    use rstest::rstest;
 
+    const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    #[test]
+    fn empty_backup_digest_headers_identify_the_same_bytes() {
+        let body = OutputDownload::inline(web::Bytes::new());
+        let response =
+            render_backup_download(body, TaskID::new(1).unwrap(), 0, EMPTY_SHA256).unwrap();
+        let digest = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
         assert_eq!(
-            digest,
-            "sha-256=47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+            response.headers().get("Digest").unwrap(),
+            &format!("sha-256={digest}")
         );
+        assert_eq!(
+            response.headers().get("Content-Digest").unwrap(),
+            &format!("sha-256=:{digest}:")
+        );
+        assert_eq!(response.headers().get("Content-Length").unwrap(), "0");
     }
 
-    #[test]
-    fn digest_header_rejects_invalid_stored_sha256() {
-        let error = digest_header_from_sha256(
-            "z3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        )
-        .unwrap_err();
-
-        assert!(matches!(error, ApiError::InternalServerError(_)));
+    #[rstest]
+    #[case::wrong_size(1, EMPTY_SHA256)]
+    #[case::wrong_digest(0, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    #[case::malformed_digest(0, "invalid")]
+    fn inconsistent_backup_metadata_fails_before_headers(
+        #[case] length: i64,
+        #[case] digest: &str,
+    ) {
+        let body = OutputDownload::inline(web::Bytes::new());
+        assert!(matches!(
+            render_backup_download(body, TaskID::new(1).unwrap(), length, digest),
+            Err(ApiError::InternalServerError(_))
+        ));
     }
 }

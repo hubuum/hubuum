@@ -19,9 +19,10 @@ use hubuum_storage_core::capabilities::{
     workflows::*,
 };
 use hubuum_storage_core::{
-    StorageAuthenticationCredential, StorageTaskMetadata, StorageTokenDigest, StorageTokenFormat,
-    StorageTokenHashAlgorithm, StorageTokenHashKeyId, StorageTokenMigrationOutcome,
-    StorageValidationError, TaskMetadataDetails,
+    ApplicationControlState, ApplicationFence, RuntimeIsolationDomain, RuntimeOwner,
+    StorageAuthenticationCredential, StorageIdentityEvidence, StorageTaskMetadata,
+    StorageTokenDigest, StorageTokenFormat, StorageTokenHashAlgorithm, StorageTokenHashKeyId,
+    StorageTokenMigrationOutcome, StorageValidationError, TaskMetadataDetails,
 };
 use uuid::Uuid;
 
@@ -62,7 +63,14 @@ struct MemoryTokenRecord {
 
 #[derive(Clone)]
 struct MemoryTaskRecord {
+    receipt_admission: Option<task_retention::MemoryTaskAdmission>,
+    retention_policy: Option<TaskRetentionPolicyRevision>,
+    details_expires_at: Option<DateTime<Utc>>,
+    recovery_unavailable: bool,
+    invocation: Option<task_retention::MemoryTaskInvocation>,
     control: StorageTaskControl,
+    checkpoint: Option<StorageTaskCheckpoint>,
+    wait_token: Option<StorageTaskWaitToken>,
     id: TaskId,
     kind: StorageTaskKind,
     status: StorageTaskStatus,
@@ -86,6 +94,7 @@ struct MemoryTaskRecord {
     initiator_principal_id: Option<PrincipalId>,
     trace_link: Option<TraceLink>,
     claim_token: Option<String>,
+    execution_fence: Option<ApplicationFence>,
 }
 
 #[derive(Clone, Copy)]
@@ -124,7 +133,7 @@ impl MemoryHistoryValue {
             Self::Collection(value) => value.id(),
             Self::Class(value) => value.collection_id(),
             Self::Object(value) => value.collection_id(),
-            Self::ExportTemplate(value) => value.clone().into_parts().1,
+            Self::ExportTemplate(value) => value.collection_id(),
             Self::RemoteTarget(value) => value.collection_id(),
         }
     }
@@ -140,8 +149,20 @@ impl MemoryHistoryValue {
     }
 }
 
+// The resource snapshot is immutable. Clocks and identity evidence can change
+// on close or restore and are measured from the current metadata on every scan.
+#[derive(Clone, Copy)]
+struct MemoryHistoryResourceSize {
+    encoded: Option<u64>,
+    logical: Option<HistoryLogicalBytes>,
+}
+
 #[derive(Clone)]
 struct MemoryHistoryEntry {
+    resource_size: MemoryHistoryResourceSize,
+    // Ordinary history mixes native tables whose restored record IDs may overlap.
+    scan_position: u64,
+    logical_identity: StorageIdentityEvidence,
     id: HistoryRecordId,
     value: MemoryHistoryValue,
     operation: StorageHistoryOperation,
@@ -155,6 +176,7 @@ struct MemoryHistoryEntry {
 
 #[derive(Clone)]
 struct MemoryRestoreRecord {
+    logical_identity: StorageIdentityEvidence,
     job: StorageRestoreArtifactJob,
     validation_summary: serde_json::Value,
 }
@@ -215,7 +237,16 @@ macro_rules! append_memory_scoped_simple_event {
 }
 
 impl MemoryHistoryEntry {
-    fn metadata(&self) -> Result<StorageHistoryMetadata, StorageError> {
+    fn family(&self) -> StorageIdentityHistoryKind {
+        match self.value {
+            MemoryHistoryValue::Collection(_) => StorageIdentityHistoryKind::Collection,
+            MemoryHistoryValue::Class(_) => StorageIdentityHistoryKind::Class,
+            MemoryHistoryValue::Object(_) => StorageIdentityHistoryKind::Object,
+            MemoryHistoryValue::ExportTemplate(_) => StorageIdentityHistoryKind::ExportTemplate,
+            MemoryHistoryValue::RemoteTarget(_) => StorageIdentityHistoryKind::RemoteTarget,
+        }
+    }
+    fn interval_metadata(&self) -> Result<StorageHistoryMetadata, StorageError> {
         StorageHistoryMetadata::try_new(
             self.operation,
             self.valid_from,
@@ -223,13 +254,16 @@ impl MemoryHistoryEntry {
             self.id,
             self.value.revision(),
         )
-        .map(|metadata| {
-            metadata
-                .actor(self.actor_id, self.actor_kind.clone())
-                .initiator_principal_id(self.initiator_principal_id)
-                .task_id(self.task_id)
-        })
+        .map(|metadata| metadata.with_logical_identity(self.logical_identity.clone()))
         .map_err(invalid_contract_value)
+    }
+
+    fn metadata(&self) -> Result<StorageHistoryMetadata, StorageError> {
+        Ok(self
+            .interval_metadata()?
+            .actor(self.actor_id, self.actor_kind.clone())
+            .initiator_principal_id(self.initiator_principal_id)
+            .task_id(self.task_id))
     }
 }
 
@@ -244,6 +278,11 @@ impl MemoryTaskRecord {
         metadata
     }
     fn projection(&self) -> Result<StorageTask, StorageError> {
+        if (self.status == StorageTaskStatus::Waiting) != self.wait_token.is_some() {
+            return Err(StorageError::internal(
+                "A task wait token must be present exactly while waiting",
+            ));
+        }
         StorageTask::builder(
             self.id,
             self.kind,
@@ -253,6 +292,7 @@ impl MemoryTaskRecord {
         )
         .submitted_by(self.submitted_by)
         .control(self.control.clone())
+        .checkpoint(self.checkpoint.clone())
         .idempotency_key(self.idempotency_key.clone())
         .request_hash(self.request_hash.clone())
         .request_payload(self.request_payload.clone())
@@ -275,6 +315,7 @@ impl MemoryTaskRecord {
     fn lease_matches(&self, lease: &StorageTaskLease) -> bool {
         self.id == lease.task_id()
             && self.claim_token.as_deref() == Some(lease.token().adapter_value())
+            && self.execution_fence == lease.execution_fence()
             && self
                 .lease_expires_at
                 .is_some_and(|expires_at| expires_at > Utc::now())
@@ -333,7 +374,31 @@ impl MemoryTokenRecord {
 }
 
 #[derive(Clone)]
+struct MemoryRuntimeRegistration {
+    history_protocol: HistoryRuntimeProtocol,
+    ownership_token: Uuid,
+    isolation: Option<RuntimeIsolationDomain>,
+    drained: Option<ApplicationFence>,
+}
+
+#[derive(Clone)]
 struct MemoryState {
+    history_archive: history_archive::MemoryHistoryArchive,
+    api_requests: api_request_admission::MemoryApiRequests,
+    artifacts: artifacts::Artifacts,
+    task_control: TaskControlState,
+    task_reapplication: Option<TaskControlReapplication>,
+    restore_repairs_pending: bool,
+    task_purge_attempts: BTreeMap<TaskPurgeBatchId, u64>,
+    next_task_purge_attempt: u64,
+    deletion_control: DeletionControlState,
+    history_lifecycle: HistoryLifecycleControl,
+    history_publications: HistoryPublicationRegistry,
+    application_control: ApplicationControlState,
+    pending_restore: bool,
+    runtime_registrations: BTreeMap<Uuid, MemoryRuntimeRegistration>,
+    task_capacity: task_capacity::MemoryTaskCapacity,
+    logical_identities: logical_identity::MemoryLogicalIdentities,
     generation: Arc<()>,
     schema_history: Vec<StorageBackupRow>,
     schema_revisions: BTreeMap<(i32, i64), StorageSchemaRevision>,
@@ -479,9 +544,13 @@ impl MemoryState {
             .schema_version(document.schema_version())
             .try_build()
             .map_err(|error| StorageError::backend_failure(error.to_string()))?;
-        self.index_task_event(&envelope)?;
+        let identity = self
+            .logical_identities
+            .event(&envelope, before_revision, after_revision);
+        self.index_task_event(&envelope, &identity)?;
         self.event_sequences.observe(sequence.get());
-        let recorded = StorageRecordedEvent::new(envelope, before_revision, after_revision);
+        let recorded = StorageRecordedEvent::new(envelope, before_revision, after_revision)
+            .with_logical_identity(identity);
         let receipt = recorded.clone().into_audit_receipt();
         self.events.push(recorded);
         Ok(receipt)
@@ -538,6 +607,7 @@ impl MemoryState {
         operation: StorageHistoryOperation,
         context: &EventContext,
     ) -> Result<(), StorageError> {
+        let resource_size = value.history_resource_size()?;
         let id = HistoryRecordId::new(self.history_ids.allocate()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
         match &value {
@@ -576,7 +646,13 @@ impl MemoryState {
                 previous.valid_to = Some(now);
             }
         }
+        let logical_identity = self
+            .logical_identities
+            .history(&value, operation, Some(context));
         self.history.push(MemoryHistoryEntry {
+            resource_size,
+            scan_position: id.id() as u64,
+            logical_identity,
             id,
             value,
             operation,
@@ -657,6 +733,7 @@ impl MemoryState {
         input: StorageTaskEventInput,
         actor: Option<&EventContext>,
     ) -> Result<(), StorageError> {
+        self.settle_task_receipt(task_id)?;
         let (event_type, message, data) = input.into_parts();
         let action = Action::parse(&event_type).map_err(|_| {
             StorageError::internal(format!("Unknown task event type '{event_type}'"))
@@ -695,7 +772,11 @@ impl MemoryState {
         Ok(())
     }
 
-    fn index_task_event(&mut self, envelope: &EventEnvelope) -> Result<(), StorageError> {
+    fn index_task_event(
+        &mut self,
+        envelope: &EventEnvelope,
+        identity: &StorageIdentityEvidence,
+    ) -> Result<(), StorageError> {
         if envelope.entity_type() != EntityType::Task {
             return Ok(());
         }
@@ -719,6 +800,7 @@ impl MemoryState {
                 .filter(|v| !v.is_null())
                 .cloned(),
         )
+        .logical_identity(identity.clone())
         .actor_principal_id(envelope.actor_user_id())
         .provenance(
             envelope
@@ -744,7 +826,10 @@ impl MemoryState {
         let mut kinds = Vec::new();
         for task in self.tasks.values_mut() {
             if task.submitted_by == Some(principal_id)
-                && matches!(task.status, StorageTaskStatus::Queued)
+                && matches!(
+                    task.status,
+                    StorageTaskStatus::Queued | StorageTaskStatus::Waiting
+                )
             {
                 task.status = StorageTaskStatus::Cancelled;
                 task.summary = Some("Service account disabled".to_string());
@@ -754,6 +839,8 @@ impl MemoryState {
                 task.request_redacted_at = Some(now);
                 task.lease_expires_at = None;
                 task.claim_token = None;
+                task.checkpoint = None;
+                task.wait_token = None;
                 kinds.push(task.kind);
             }
         }
@@ -788,6 +875,14 @@ impl MemoryStorage {
 }
 
 impl MemoryStorage {
+    /// Bind ordinary operations to the registered owner while retaining a
+    /// separate unbound handle for trusted administration and fixtures.
+    #[must_use]
+    pub fn with_runtime_owner(mut self, owner: RuntimeOwner) -> Self {
+        self.state = Arc::new(self.state.with_runtime_owner(owner));
+        self
+    }
+
     #[must_use]
     pub const fn schema_limits(&self) -> JsonSchemaLimits {
         self.schema_limits
@@ -804,21 +899,26 @@ pub mod regex_compiler;
 mod support;
 use support::*;
 
+mod api_request_admission;
+mod artifacts;
 mod auth_sessions;
 mod backup;
 mod computed_history;
 mod credential_activity;
 mod credential_approval;
+mod deletion_control;
 mod event_deliveries;
 use event_deliveries::EventDeliveries;
 mod events;
 mod execution;
 mod history;
+mod history_lifecycle;
 mod id_sequence;
 use id_sequence::IdSequence;
 mod identity;
 mod import_results;
 mod imports;
+mod logical_identity;
 mod object_filters;
 mod operational;
 mod queries;
@@ -829,7 +929,13 @@ mod runtime_settings;
 mod schema_evolution;
 mod state;
 mod state_lock;
+mod task_capacity;
 mod task_control;
+mod task_retention;
+mod task_scheduling;
+mod task_waits;
 mod token_issuance;
 use state_lock::MemoryStateLock;
 mod workflows;
+
+mod history_archive;

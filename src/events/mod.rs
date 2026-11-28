@@ -31,8 +31,8 @@ pub(crate) use fanout::event_fanout_worker_health;
 pub use fanout::{
     ensure_event_fanout_worker_running, event_fanout_wakeup_stats, kick_event_fanout_worker,
 };
+pub(crate) use model::StoredProvenance;
 pub use model::{Event, EventResponse};
-pub(crate) use model::{PrincipalNames, StoredProvenance};
 pub use retention::ensure_event_retention_worker_running;
 pub(crate) use settings::{EventDeliverySettings, EventFanoutSettings, EventRetentionSettings};
 pub(crate) use sink::webhook_sink;

@@ -26,7 +26,7 @@ pub(super) fn capture(
         let last=state.schema_revisions.range((*id,0)..=(*id,i64::MAX)).next_back().map(|((_,revision),_)|*revision).unwrap_or(revision.get());
         row(json!({"class_id":id,"active_revision":revision,"last_revision":last,"object_epoch":state.schema_epochs.get(id).copied().unwrap_or(0),"object_count":object_counts.get(id).copied().unwrap_or(0)}))
     }).map(|row| capture_row(progress, row)).collect::<Result<_,_>>()?);
-    sections.insert(StorageBackupStateSection::ObjectSchemaEvidence,state.schema_evidence.iter().map(|(id,evidence)|row(json!({"object_id":id,"class_id":evidence.schema().class_id(),"schema_revision":evidence.schema().revision(),"object_revision":evidence.object_revision(),"valid":evidence.valid(),"validated_at":evidence.validated_at()}))).map(|row| capture_row(progress, row)).collect::<Result<_,_>>()?);
+    sections.insert(StorageBackupStateSection::ObjectSchemaEvidence,state.schema_evidence.iter().map(|(id,evidence)|row(json!({"logical_identity":evidence.logical_identity(),"object_id":id,"class_id":evidence.schema().class_id(),"schema_revision":evidence.schema().revision(),"object_revision":evidence.object_revision(),"valid":evidence.valid(),"validated_at":evidence.validated_at()}))).map(|row| capture_row(progress, row)).collect::<Result<_,_>>()?);
     Ok(())
 }
 
@@ -52,6 +52,9 @@ pub(super) fn restore(
             ))
         })
         .collect::<Result<_, StorageError>>()?;
+    for revision in state.schema_revisions.values().cloned() {
+        state.logical_identities.schema_revision(revision);
+    }
     for row in &sections[&StorageBackupStateSection::ClassSchemaState] {
         let r = Row(row);
         let id = r.integer("class_id")?;
@@ -91,7 +94,8 @@ pub(super) fn restore(
             .with_timezone(&Utc);
         state.schema_evidence.insert(
             r.integer("object_id")?,
-            StorageSchemaEvidence::new(reference, revision, r.boolean("valid")?, at),
+            StorageSchemaEvidence::new(reference, revision, r.boolean("valid")?, at)
+                .with_logical_identity(r.identity()?),
         );
     }
     Ok(())

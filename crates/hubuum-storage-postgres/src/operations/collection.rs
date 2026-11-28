@@ -198,6 +198,7 @@ pub(crate) async fn update_collection_on(
         crate::schema::collections::table.filter(crate::schema::collections::id.eq(collection_id)),
     )
     .set(update)
+    .returning(CollectionRow::as_select())
     .get_result::<CollectionRow>(connection)
     .await?;
     let document = AuditDocument::try_new(
@@ -283,6 +284,7 @@ pub(crate) async fn collection_children_on(
     let rows = crate::schema::collections::table
         .filter(crate::schema::collections::parent_collection_id.eq(collection_id))
         .order(crate::schema::collections::name.asc())
+        .select(CollectionRow::as_select())
         .load::<CollectionRow>(connection)
         .await?;
     rows.into_iter().map(CollectionRow::into_storage).collect()
@@ -349,6 +351,7 @@ pub(crate) async fn move_collection_on(
     let before = collections::table
         .filter(collections::id.eq(collection_id))
         .for_update()
+        .select(CollectionRow::as_select())
         .first::<CollectionRow>(connection)
         .await?;
     if before.parent_collection_id.is_none() {
@@ -407,6 +410,7 @@ async fn load_collection(
 ) -> Result<CollectionRow, PostgresStorageError> {
     crate::schema::collections::table
         .filter(crate::schema::collections::id.eq(collection_id))
+        .select(CollectionRow::as_select())
         .first(connection)
         .await
         .map_err(PostgresStorageError::from)
@@ -420,6 +424,7 @@ async fn lock_revisioned_collection(
     let collection = crate::schema::collections::table
         .filter(crate::schema::collections::id.eq(collection_id))
         .for_update()
+        .select(CollectionRow::as_select())
         .first::<CollectionRow>(connection)
         .await
         .optional()?;
@@ -461,6 +466,7 @@ async fn insert_collection(
             description.eq(description_value),
             parent_collection_id.eq(parent_id),
         ))
+        .returning(CollectionRow::as_select())
         .get_result(connection)
         .await
         .map_err(PostgresStorageError::from)

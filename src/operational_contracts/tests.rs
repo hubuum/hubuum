@@ -8,6 +8,7 @@ use super::*;
 
 const METRIC_SOURCES: &[&str] = &[
     include_str!("../observability/metrics.rs"),
+    include_str!("../observability/metrics/checkpoint.rs"),
     include_str!("../observability/metrics/computed_field.rs"),
     include_str!("../observability/metrics/db.rs"),
     include_str!("../observability/metrics/event.rs"),
@@ -622,6 +623,8 @@ fn closed_metric_label_domains_are_enumerated() {
 #[case(ApiError::ReauthenticationRequired)]
 #[case(ApiError::TaskStopped(TaskStopReason::Cancelled))]
 #[case(ApiError::TaskStopped(TaskStopReason::DeadlineExceeded))]
+#[case(ApiError::TaskCapacity(TaskCapacityRejection::Deployment))]
+#[case(ApiError::TaskCapacity(TaskCapacityRejection::IdentityUnavailable))]
 fn credential_and_task_error_classes_are_recordable(#[case] error: ApiError) {
     assert!(metric_label_value_is_allowed(
         "hubuum_api_errors_total",
@@ -806,4 +809,25 @@ fn string_literals_after_call<'a>(
             .split('"')
             .next()
     })
+}
+
+#[test]
+fn observed_context_modules_register_their_operation_vocabulary() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/storage/context");
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|extension| extension != "rs") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).unwrap();
+        let observed = first_quoted_strings_after(&source, ".observe_storage_call(")
+            .chain(first_quoted_strings_after(&source, "self.call("))
+            .next()
+            .is_some();
+        assert!(
+            !observed || STORAGE_OPERATION_SOURCES.contains(&source.as_str()),
+            "{} emits operations absent from the metrics vocabulary source inventory",
+            path.display(),
+        );
+    }
 }

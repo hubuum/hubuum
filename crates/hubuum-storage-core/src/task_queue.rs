@@ -1,16 +1,77 @@
+use crate::artifacts::ArtifactReference;
 use std::fmt;
 
 use chrono::{DateTime, Utc};
-use hubuum_domain::{GroupId, ImportTaskResultId, PrincipalId, TaskId, TokenId};
-use hubuum_events_core::{EventSequence, TraceLink};
+use hubuum_domain::{
+    GroupId, ImportTaskResultId, PrincipalId, RemoteTargetId, ResourceId, TaskId, TokenId,
+};
+use hubuum_events_core::{EventContext, EventSequence, TraceLink};
 use hubuum_query::QueryOptions;
 use hubuum_task_core::IdempotencyKey;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{StorageError, StorageTaskControl, StorageValidationError};
+use crate::{StorageTaskCheckpoint, StorageTaskExecutionPhase};
 
 use crate::{StorageTaskKind, StorageTaskStatus};
+
+/// Invocation provenance stored with fresh admission and emitted only by its
+/// activation winner. Retry classification must precede construction.
+#[derive(Clone, PartialEq)]
+pub struct StorageTaskRemoteInvocation {
+    target_id: RemoteTargetId,
+    subject_type: crate::StorageRemoteTargetSubjectType,
+    subject_id: ResourceId,
+    event_context: EventContext,
+}
+
+impl StorageTaskRemoteInvocation {
+    pub const fn new(
+        target_id: RemoteTargetId,
+        subject_type: crate::StorageRemoteTargetSubjectType,
+        subject_id: ResourceId,
+        event_context: EventContext,
+    ) -> Self {
+        Self {
+            target_id,
+            subject_type,
+            subject_id,
+            event_context,
+        }
+    }
+    pub const fn target_id(&self) -> RemoteTargetId {
+        self.target_id
+    }
+    pub const fn subject_type(&self) -> crate::StorageRemoteTargetSubjectType {
+        self.subject_type
+    }
+    pub const fn subject_id(&self) -> ResourceId {
+        self.subject_id
+    }
+    pub const fn event_context(&self) -> &EventContext {
+        &self.event_context
+    }
+    pub fn with_task(self, task_id: TaskId) -> crate::StorageRemoteTargetInvocation {
+        crate::StorageRemoteTargetInvocation::new(
+            self.target_id,
+            task_id,
+            self.subject_type,
+            self.subject_id,
+            self.event_context,
+        )
+    }
+}
+
+impl fmt::Debug for StorageTaskRemoteInvocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StorageTaskRemoteInvocation")
+            .field("target_id", &self.target_id)
+            .field("subject_type", &self.subject_type)
+            .field("subject_id", &self.subject_id)
+            .finish_non_exhaustive()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StorageTaskProgress {
@@ -142,7 +203,8 @@ pub struct StorageTaskCreateRequest {
     request_hash: Option<String>,
     scope_snapshot: StorageTaskScopeSnapshot,
     trace_link: Option<TraceLink>,
-    maximum_active_tasks: usize,
+    receipt_binding: Option<crate::TaskReceiptBinding>,
+    remote_invocation: Option<StorageTaskRemoteInvocation>,
 }
 
 impl StorageTaskCreateRequest {
@@ -178,6 +240,8 @@ impl StorageTaskCreateRequest {
             request_hash: None,
             scope_snapshot: StorageTaskScopeSnapshot::unscoped(),
             trace_link: None,
+            receipt_binding: None,
+            remote_invocation: None,
         }
     }
 
@@ -221,9 +285,12 @@ impl StorageTaskCreateRequest {
         self.trace_link.as_ref()
     }
 
-    #[must_use]
-    pub const fn maximum_active_tasks(&self) -> usize {
-        self.maximum_active_tasks
+    pub const fn receipt_binding(&self) -> Option<&crate::TaskReceiptBinding> {
+        self.receipt_binding.as_ref()
+    }
+
+    pub const fn remote_invocation(&self) -> Option<&StorageTaskRemoteInvocation> {
+        self.remote_invocation.as_ref()
     }
 }
 
@@ -237,7 +304,6 @@ impl fmt::Debug for StorageTaskCreateRequest {
             .field("has_request_hash", &self.request_hash.is_some())
             .field("scope", &self.scope_snapshot)
             .field("has_trace_link", &self.trace_link.is_some())
-            .field("maximum_active_tasks", &self.maximum_active_tasks)
             .field("identity_and_payload", &"[redacted]")
             .finish()
     }
@@ -253,9 +319,22 @@ pub struct StorageTaskCreateRequestBuilder {
     request_hash: Option<String>,
     scope_snapshot: StorageTaskScopeSnapshot,
     trace_link: Option<TraceLink>,
+    receipt_binding: Option<crate::TaskReceiptBinding>,
+    remote_invocation: Option<StorageTaskRemoteInvocation>,
 }
 
 impl StorageTaskCreateRequestBuilder {
+    #[must_use]
+    pub fn receipt_binding(mut self, binding: Option<crate::TaskReceiptBinding>) -> Self {
+        self.receipt_binding = binding;
+        self
+    }
+
+    #[must_use]
+    pub fn remote_invocation(mut self, invocation: Option<StorageTaskRemoteInvocation>) -> Self {
+        self.remote_invocation = invocation;
+        self
+    }
     #[must_use]
     pub fn metadata(mut self, metadata: Option<crate::StorageTaskMetadata>) -> Self {
         self.metadata = metadata;
@@ -286,10 +365,19 @@ impl StorageTaskCreateRequestBuilder {
         self
     }
 
-    pub fn try_build(
-        self,
-        maximum_active_tasks: usize,
-    ) -> Result<StorageTaskCreateRequest, StorageError> {
+    pub fn try_build(self) -> Result<StorageTaskCreateRequest, StorageError> {
+        if self.receipt_binding.as_ref().is_some_and(|binding| {
+            binding.lookup().kind() != self.kind || self.idempotency_key.is_none()
+        }) {
+            return Err(StorageError::invalid_input(
+                "Task receipt binding requires its matching keyed task kind",
+            ));
+        }
+        if self.remote_invocation.is_some() && self.kind != StorageTaskKind::RemoteCall {
+            return Err(StorageError::invalid_input(
+                "Invocation event intent requires a remote task",
+            ));
+        }
         if self
             .metadata
             .as_ref()
@@ -300,11 +388,6 @@ impl StorageTaskCreateRequestBuilder {
         if self.total_items < 0 {
             return Err(StorageError::invalid_input(
                 "Task total_items must not be negative",
-            ));
-        }
-        if maximum_active_tasks == 0 {
-            return Err(StorageError::invalid_input(
-                "Task maximum_active_tasks must be greater than zero",
             ));
         }
 
@@ -319,7 +402,8 @@ impl StorageTaskCreateRequestBuilder {
             request_hash: self.request_hash,
             scope_snapshot: self.scope_snapshot,
             trace_link: self.trace_link,
-            maximum_active_tasks,
+            receipt_binding: self.receipt_binding,
+            remote_invocation: self.remote_invocation,
         })
     }
 }
@@ -333,6 +417,7 @@ pub struct StorageTask {
     idempotency_key: Option<String>,
     request_hash: Option<String>,
     request_payload: Option<Value>,
+    checkpoint: Option<StorageTaskCheckpoint>,
     metadata: Option<crate::StorageTaskMetadata>,
     discovery_state: crate::StorageTaskDiscoveryState,
     summary: Option<String>,
@@ -383,6 +468,7 @@ impl StorageTask {
                 idempotency_key: None,
                 request_hash: None,
                 request_payload: None,
+                checkpoint: None,
                 metadata: None,
                 discovery_state: crate::StorageTaskDiscoveryState::default(),
                 summary: None,
@@ -475,6 +561,11 @@ impl StorageTask {
     }
 
     #[must_use]
+    pub const fn checkpoint(&self) -> Option<&StorageTaskCheckpoint> {
+        self.checkpoint.as_ref()
+    }
+
+    #[must_use]
     pub const fn scope_snapshot(&self) -> &StorageTaskScopeSnapshot {
         &self.scope_snapshot
     }
@@ -530,6 +621,7 @@ impl fmt::Debug for StorageTask {
             .field("has_submitter", &self.submitted_by.is_some())
             .field("has_summary", &self.summary.is_some())
             .field("has_request_payload", &self.request_payload.is_some())
+            .field("has_checkpoint", &self.checkpoint.is_some())
             .field("has_lease", &self.has_lease())
             .field("has_trace_link", &self.trace_link.is_some())
             .field("identity_and_payload", &"[redacted]")
@@ -575,6 +667,12 @@ impl StorageTaskBuilder {
     #[must_use]
     pub fn request_payload(mut self, request_payload: Option<Value>) -> Self {
         self.task.request_payload = request_payload;
+        self
+    }
+
+    #[must_use]
+    pub fn checkpoint(mut self, checkpoint: Option<StorageTaskCheckpoint>) -> Self {
+        self.task.checkpoint = checkpoint;
         self
     }
 
@@ -682,6 +780,24 @@ impl StorageTaskBuilder {
                 "Task attempt count must not be negative",
             ));
         }
+        if self.task.checkpoint.is_some()
+            && (!matches!(
+                self.task.kind,
+                StorageTaskKind::Export | StorageTaskKind::Backup | StorageTaskKind::HistoryExpiry
+            ) || self.task.status.is_terminal()
+                || self.task.started_at.is_none()
+                || self.task.attempt_count == 0
+                || self.task.control.deadline().is_none()
+                || !matches!(
+                    self.task.control.phase(),
+                    StorageTaskExecutionPhase::Uncommitted
+                        | StorageTaskExecutionPhase::HistoryAuthority
+                ))
+        {
+            return Err(StorageValidationError::invalid(
+                "A checkpoint requires a started export, backup or history expiry task with its original deadline and supported execution phase",
+            ));
+        }
         if self.task.updated_at < self.task.created_at {
             return Err(StorageValidationError::invalid(
                 "Task update timestamp must not precede its creation timestamp",
@@ -738,8 +854,17 @@ impl StorageTaskBuilder {
                 (self.task.started_at.is_none()
                     || (matches!(
                         self.task.kind,
-                        StorageTaskKind::SchemaValidation | StorageTaskKind::Reindex
-                    ) && self.task.attempt_count > 0))
+                        StorageTaskKind::SchemaValidation
+                            | StorageTaskKind::Reindex
+                            | StorageTaskKind::HistoryExpiry
+                    ) && self.task.attempt_count > 0)
+                    || self.task.checkpoint.is_some())
+                    && self.task.finished_at.is_none()
+                    && self.task.lease_expires_at.is_none()
+            }
+            StorageTaskStatus::Waiting => {
+                self.task.checkpoint.is_some()
+                    && self.task.started_at.is_some()
                     && self.task.finished_at.is_none()
                     && self.task.lease_expires_at.is_none()
             }
@@ -820,6 +945,7 @@ impl StorageTaskChildListQuery {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageTaskEvent {
+    logical_identity: Option<crate::StorageIdentityEvidence>,
     id: EventSequence,
     task_id: TaskId,
     event_type: String,
@@ -834,6 +960,10 @@ pub struct StorageTaskEvent {
 
 impl StorageTaskEvent {
     #[must_use]
+    pub const fn logical_identity(&self) -> Option<&crate::StorageIdentityEvidence> {
+        self.logical_identity.as_ref()
+    }
+    #[must_use]
     pub fn builder(
         id: EventSequence,
         task_id: TaskId,
@@ -844,6 +974,7 @@ impl StorageTaskEvent {
     ) -> StorageTaskEventBuilder {
         StorageTaskEventBuilder {
             event: Self {
+                logical_identity: None,
                 id,
                 task_id,
                 event_type: event_type.into(),
@@ -914,6 +1045,12 @@ pub struct StorageTaskEventBuilder {
 }
 
 impl StorageTaskEventBuilder {
+    #[must_use]
+    pub fn logical_identity(mut self, evidence: crate::StorageIdentityEvidence) -> Self {
+        self.event.logical_identity = Some(evidence);
+        self
+    }
+
     #[must_use]
     pub fn data(mut self, data: Option<Value>) -> Self {
         self.event.data = data;
@@ -1255,6 +1392,7 @@ impl StorageBackupOutputSummary {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageExportOutput {
+    artifact_reference: Option<ArtifactReference>,
     task_id: TaskId,
     template_name: Option<String>,
     content_type: String,
@@ -1270,6 +1408,9 @@ pub struct StorageExportOutput {
 }
 
 impl StorageExportOutput {
+    pub fn artifact_reference(&self) -> Option<&ArtifactReference> {
+        self.artifact_reference.as_ref()
+    }
     #[must_use]
     pub fn builder(
         task_id: TaskId,
@@ -1281,6 +1422,7 @@ impl StorageExportOutput {
     ) -> StorageExportOutputBuilder {
         StorageExportOutputBuilder {
             output: Self {
+                artifact_reference: None,
                 task_id,
                 template_name: None,
                 content_type: content_type.into(),
@@ -1330,6 +1472,10 @@ pub struct StorageExportOutputBuilder {
 }
 
 impl StorageExportOutputBuilder {
+    pub fn artifact_reference(mut self, reference: Option<ArtifactReference>) -> Self {
+        self.output.artifact_reference = reference;
+        self
+    }
     #[must_use]
     pub fn template_name(mut self, template_name: Option<String>) -> Self {
         self.output.template_name = template_name;
@@ -1362,8 +1508,14 @@ impl StorageExportOutputBuilder {
                 "Export output warning count must not be negative",
             ));
         }
-        match (&self.output.json_output, &self.output.text_output) {
-            (Some(_), None) | (None, Some(_)) => Ok(self.output),
+        match (
+            &self.output.json_output,
+            &self.output.text_output,
+            &self.output.artifact_reference,
+        ) {
+            (Some(_), None, None) | (None, Some(_), None) | (None, None, Some(_)) => {
+                Ok(self.output)
+            }
             _ => Err(StorageValidationError::invalid(
                 "Export output must contain exactly one of JSON or text output",
             )),
@@ -1373,6 +1525,7 @@ impl StorageExportOutputBuilder {
 
 #[derive(Clone, PartialEq)]
 pub struct StorageBackupOutput {
+    artifact_reference: Option<ArtifactReference>,
     task_id: TaskId,
     document: Vec<u8>,
     byte_size: i64,
@@ -1382,6 +1535,28 @@ pub struct StorageBackupOutput {
 }
 
 impl StorageBackupOutput {
+    pub fn artifact_reference(&self) -> Option<&ArtifactReference> {
+        self.artifact_reference.as_ref()
+    }
+    pub fn from_reference(
+        task_id: TaskId,
+        reference: ArtifactReference,
+        byte_size: i64,
+        sha256: String,
+        output_expires_at: DateTime<Utc>,
+        created_at: DateTime<Utc>,
+    ) -> Result<Self, StorageValidationError> {
+        validate_backup_output_identity(byte_size, &sha256)?;
+        Ok(Self {
+            task_id,
+            artifact_reference: Some(reference),
+            document: Vec::new(),
+            byte_size,
+            sha256,
+            output_expires_at,
+            created_at,
+        })
+    }
     pub fn try_new(
         task_id: TaskId,
         document: Vec<u8>,
@@ -1412,6 +1587,7 @@ impl StorageBackupOutput {
             ));
         }
         Ok(Self {
+            artifact_reference: None,
             task_id,
             document,
             byte_size,
@@ -1424,8 +1600,10 @@ impl StorageBackupOutput {
     backup_output_accessors!();
 
     #[must_use]
-    pub fn document(&self) -> &[u8] {
-        &self.document
+    pub fn document(&self) -> Option<&[u8]> {
+        self.artifact_reference
+            .is_none()
+            .then_some(self.document.as_slice())
     }
 
     #[must_use]

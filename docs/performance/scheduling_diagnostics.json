@@ -1,0 +1,4639 @@
+{
+  "measurement_version": 1,
+  "date": "2026-10-28",
+  "implementation_commit": "df7a687bedcc73dcfaddffba4bee9eba7f8e08b8",
+  "acceptance_status": "local_diagnostic_only",
+  "targets": "docs/performance/lifecycle_budgets.md revision 1, P3/P4",
+  "method": {
+    "workers": "Independent processes invoking production storage claims; prescribed duration sleeps and real terminalization/refill",
+    "empty_poll_retry_ms": 5,
+    "lease_duration_ms": 120000,
+    "connection_pool_per_process": 8,
+    "ordinary_kind_weights": {
+      "import": 3,
+      "export": 1
+    },
+    "promotion_interval": 8,
+    "overdue_seconds": 300,
+    "shared_registered_slots": 4,
+    "shared_reserved_slots": 1,
+    "timed_principal_cap": 1,
+    "timed_window_seconds": 60,
+    "timed_warmup_seconds": 30
+  },
+  "environment": {
+    "platform": "Linux-5.14.0-687.44.1.el9_8.x86_64-x86_64-with-glibc2.34",
+    "logical_cpus": 32,
+    "memory_bytes": 66613567488,
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8\n",
+    "cpu_limits_enforceable": false,
+    "controllers": [
+      "memory",
+      "pids"
+    ],
+    "postgres_memory_limits_bytes": {
+      "local": 2147483648,
+      "shared": 4294967296
+    },
+    "worker_memory_limit_bytes": 536870912,
+    "storage_medium": "not independently verified",
+    "database_rtt": "not independently measured",
+    "benchmark_mode": "release; CPU-unconstrained local diagnostic",
+    "concurrent_host_activity": "Host shared with independent development work; no host-idle guarantee. Our correctness suite and production build completed before the corrected measurement matrix."
+  },
+  "verified_build": {
+    "production_image": "09bc0ea11a3f8ea2f71309966392b373559d0abf27679152b52a000da3bd2051",
+    "build_flags": "-F tls-rustls -F tls-openssl --locked --release",
+    "binaries": {
+      "hubuum-admin": {
+        "sha256": "a1e5fbd373933ed291d59292c68f00bfbe146e118f091b6588d0fc38f5a0ee25",
+        "bytes": 27453680
+      },
+      "hubuum-scale-benchmark": {
+        "sha256": "0b0e9716876bf3a930c7f89105307625546d34b63bdaac9a90cf5579c326a504",
+        "bytes": 12225712
+      }
+    },
+    "benchmark_source_commit": "0b6b1bf412c65e32a5dab19a8ae52ebb5b2fe004",
+    "production_source_commit": "adf2ea2d29876d3076074b79e9dd71e33b06c748",
+    "restacked_source_commit": "df7a687bedcc73dcfaddffba4bee9eba7f8e08b8"
+  },
+  "fixture_inputs": {
+    "scale-benchmarks/lifecycle/dataset-v1.toml": "cc90f4f649fae8245065c6b4e481aae69f7cde3c2e3e20be773eceda5f52713b",
+    "scale-benchmarks/lifecycle/workload-v1.toml": "c66abde4161721144ae9a32057c60235854901b1a1eeb9865a6ce2e47cd30348"
+  },
+  "superseded_query_plan": {
+    "fixture": "10,000 queued tasks; complete #504 lifecycle dataset",
+    "previous_commit": "0b6b1bf412c65e32a5dab19a8ae52ebb5b2fe004",
+    "old_selection_ms": 35.62,
+    "old_task_rows_visited": 10000,
+    "new_selection_ms": 1.298,
+    "new_task_rows_visited": 64,
+    "evidence": [
+      "superseded-join-plan-local/p1-plan.log",
+      "hubuum-507-candidate-plan-probe.log"
+    ],
+    "scope": "Single rolled-back SQL selection probe, not end-to-end or constrained-profile acceptance."
+  },
+  "superseded_runs": [
+    {
+      "name": "p0-r1",
+      "claims": 1000,
+      "claim_p95_us": 7036,
+      "claim_p99_us": 33281,
+      "lock_p95_us": 81,
+      "p3_latency_pass": true,
+      "p4_start_share_pass": null,
+      "ordinary_starts": {
+        "import": 750,
+        "export": 250
+      },
+      "promotions": 0
+    },
+    {
+      "name": "p0-r2",
+      "claims": 1000,
+      "claim_p95_us": 16370,
+      "claim_p99_us": 127060,
+      "lock_p95_us": 81,
+      "p3_latency_pass": false,
+      "p4_start_share_pass": null,
+      "ordinary_starts": {
+        "import": 750,
+        "export": 250
+      },
+      "promotions": 0
+    },
+    {
+      "name": "p0-r3",
+      "claims": 1000,
+      "claim_p95_us": 7424,
+      "claim_p99_us": 11165,
+      "lock_p95_us": 92,
+      "p3_latency_pass": true,
+      "p4_start_share_pass": null,
+      "ordinary_starts": {
+        "import": 750,
+        "export": 250
+      },
+      "promotions": 0
+    },
+    {
+      "name": "p0-r4",
+      "claims": 1000,
+      "claim_p95_us": 6953,
+      "claim_p99_us": 88912,
+      "lock_p95_us": 77,
+      "p3_latency_pass": true,
+      "p4_start_share_pass": null,
+      "ordinary_starts": {
+        "import": 750,
+        "export": 250
+      },
+      "promotions": 0
+    },
+    {
+      "name": "p0-r5",
+      "claims": 1000,
+      "claim_p95_us": 6604,
+      "claim_p99_us": 34440,
+      "lock_p95_us": 73,
+      "p3_latency_pass": true,
+      "p4_start_share_pass": null,
+      "ordinary_starts": {
+        "import": 750,
+        "export": 250
+      },
+      "promotions": 0
+    },
+    {
+      "name": "p1-r1",
+      "claims": 12000,
+      "claim_p95_us": 91218,
+      "claim_p99_us": 224665,
+      "lock_p95_us": 93,
+      "p3_latency_pass": false,
+      "p4_start_share_pass": true,
+      "ordinary_starts": {
+        "import": 8249,
+        "export": 2749
+      },
+      "promotions": 1002
+    }
+  ],
+  "superseded_run_scope": "Retained completed runs before the queue-head fix; stopped after detecting the full-backlog query plan. Excluded from the corrected matrix, not discarded.",
+  "limitations": [
+    "Rootless runtime cannot enforce CPU quotas; memory limits are enforced and inspected.",
+    "Other local compilation/container builds share this host.",
+    "Storage medium and database RTT have not been independently established.",
+    "Plans cover fixture queue heads, not a general 1,024-candidate bound including retries.",
+    "Shrinking-pool behavior has correctness coverage; timed utilization is not measured.",
+    "Timed cap-blocked occupancy uses the per-principal maximum of process-local database-clock windows."
+  ],
+  "profiles": [
+    {
+      "profile": "local",
+      "constraints_applied": false,
+      "cpu_limits_applied": false,
+      "memory_limits_applied": true,
+      "binary_sha256": "0b0e9716876bf3a930c7f89105307625546d34b63bdaac9a90cf5579c326a504",
+      "admin_binary_sha256": "a1e5fbd373933ed291d59292c68f00bfbe146e118f091b6588d0fc38f5a0ee25",
+      "postgres_image": "postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722",
+      "warmup": "100 excluded claims per process for immediate runs; a separate 30-second warm-up window before timed runs",
+      "completed_runs": 25,
+      "expected_runs": 25,
+      "cases": [
+        {
+          "name": "p0",
+          "backlog": 1000,
+          "overdue": false,
+          "seconds": null,
+          "repeats": 5,
+          "claims": [
+            1000,
+            1000,
+            1000,
+            1000,
+            1000
+          ],
+          "claim_p95_us": {
+            "all_runs": [
+              5831,
+              5945,
+              6133,
+              5932,
+              6069
+            ],
+            "median": 5945,
+            "minimum": 5831,
+            "maximum": 6133
+          },
+          "claim_p99_us": {
+            "all_runs": [
+              6582,
+              8468,
+              8171,
+              6785,
+              7248
+            ],
+            "median": 7248,
+            "minimum": 6582,
+            "maximum": 8468
+          },
+          "lock_p95_us": {
+            "all_runs": [
+              66,
+              66,
+              67,
+              66,
+              66
+            ],
+            "median": 66,
+            "minimum": 66,
+            "maximum": 67
+          },
+          "max_round_trips": [
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "promotions": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "promotion_spacing_valid": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "empty_poll_count": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "failed_polls": [
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "ordinary_starts": [
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            }
+          ],
+          "principal_starts": [
+            {
+              "2": 32,
+              "4": 32,
+              "6": 32,
+              "19": 31,
+              "8": 32,
+              "10": 32,
+              "23": 32,
+              "21": 31,
+              "25": 32,
+              "27": 32,
+              "29": 32,
+              "31": 32,
+              "12": 32,
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "20": 31,
+              "22": 31,
+              "24": 31,
+              "26": 31,
+              "28": 31,
+              "30": 30,
+              "32": 30,
+              "1": 31,
+              "3": 31,
+              "5": 31,
+              "7": 31,
+              "9": 31,
+              "11": 30,
+              "13": 30,
+              "15": 30,
+              "17": 30
+            },
+            {
+              "2": 32,
+              "4": 32,
+              "6": 32,
+              "19": 31,
+              "8": 32,
+              "10": 32,
+              "23": 32,
+              "21": 31,
+              "25": 32,
+              "27": 32,
+              "29": 32,
+              "31": 32,
+              "12": 32,
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "20": 31,
+              "22": 31,
+              "24": 31,
+              "26": 31,
+              "28": 31,
+              "30": 30,
+              "32": 30,
+              "1": 31,
+              "3": 31,
+              "5": 31,
+              "7": 31,
+              "9": 31,
+              "11": 30,
+              "13": 30,
+              "15": 30,
+              "17": 30
+            },
+            {
+              "2": 32,
+              "4": 32,
+              "6": 32,
+              "19": 31,
+              "8": 32,
+              "10": 32,
+              "23": 32,
+              "21": 31,
+              "25": 32,
+              "27": 32,
+              "29": 32,
+              "31": 32,
+              "12": 32,
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "20": 31,
+              "22": 31,
+              "24": 31,
+              "26": 31,
+              "28": 31,
+              "30": 30,
+              "32": 30,
+              "1": 31,
+              "3": 31,
+              "5": 31,
+              "7": 31,
+              "9": 31,
+              "11": 30,
+              "13": 30,
+              "15": 30,
+              "17": 30
+            },
+            {
+              "2": 32,
+              "4": 32,
+              "6": 32,
+              "19": 31,
+              "8": 32,
+              "10": 32,
+              "23": 32,
+              "21": 31,
+              "25": 32,
+              "27": 32,
+              "29": 32,
+              "31": 32,
+              "12": 32,
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "20": 31,
+              "22": 31,
+              "24": 31,
+              "26": 31,
+              "28": 31,
+              "30": 30,
+              "32": 30,
+              "1": 31,
+              "3": 31,
+              "5": 31,
+              "7": 31,
+              "9": 31,
+              "11": 30,
+              "13": 30,
+              "15": 30,
+              "17": 30
+            },
+            {
+              "2": 32,
+              "4": 32,
+              "6": 32,
+              "19": 31,
+              "8": 32,
+              "10": 32,
+              "23": 32,
+              "21": 31,
+              "25": 32,
+              "27": 32,
+              "29": 32,
+              "31": 32,
+              "12": 32,
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "20": 31,
+              "22": 31,
+              "24": 31,
+              "26": 31,
+              "28": 31,
+              "30": 30,
+              "32": 30,
+              "1": 31,
+              "3": 31,
+              "5": 31,
+              "7": 31,
+              "9": 31,
+              "11": 30,
+              "13": 30,
+              "15": 30,
+              "17": 30
+            }
+          ],
+          "principal_cap_blocked_us": [
+            {},
+            {},
+            {},
+            {},
+            {}
+          ],
+          "p3_latency_pass": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "p4_start_share_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "p4_utilization_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "occupied_slot_fraction": null,
+          "candidate_bound_verified": false,
+          "latency_failures": [],
+          "exceeded_latency_targets": {},
+          "candidate_plan": {
+            "selection_ms": 0.914,
+            "task_scans": [
+              {
+                "Node Type": "Index Scan",
+                "Index Name": "tasks_scheduler_queue",
+                "Actual Rows": 1.0,
+                "Actual Loops": 64,
+                "Rows Removed by Filter": 0
+              }
+            ],
+            "observed_task_rows": 64.0,
+            "scope": "one rolled-back fixture probe; not a general retry bound"
+          }
+        },
+        {
+          "name": "p1",
+          "backlog": 10000,
+          "overdue": false,
+          "seconds": null,
+          "repeats": 5,
+          "claims": [
+            12000,
+            12000,
+            12000,
+            12000,
+            12000
+          ],
+          "claim_p95_us": {
+            "all_runs": [
+              6345,
+              6199,
+              6201,
+              6347,
+              6258
+            ],
+            "median": 6258,
+            "minimum": 6199,
+            "maximum": 6347
+          },
+          "claim_p99_us": {
+            "all_runs": [
+              7346,
+              6842,
+              7072,
+              8196,
+              8173
+            ],
+            "median": 7346,
+            "minimum": 6842,
+            "maximum": 8196
+          },
+          "lock_p95_us": {
+            "all_runs": [
+              66,
+              66,
+              66,
+              67,
+              66
+            ],
+            "median": 66,
+            "minimum": 66,
+            "maximum": 67
+          },
+          "max_round_trips": [
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "promotions": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "promotion_spacing_valid": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "empty_poll_count": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "failed_polls": [
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "ordinary_starts": [
+            {
+              "import": 9000,
+              "export": 3000
+            },
+            {
+              "import": 9000,
+              "export": 3000
+            },
+            {
+              "import": 9000,
+              "export": 3000
+            },
+            {
+              "import": 9000,
+              "export": 3000
+            },
+            {
+              "import": 9000,
+              "export": 3000
+            }
+          ],
+          "principal_starts": [
+            {
+              "2": 376,
+              "4": 376,
+              "6": 376,
+              "19": 375,
+              "8": 376,
+              "10": 376,
+              "23": 376,
+              "21": 375,
+              "25": 376,
+              "27": 376,
+              "29": 375,
+              "31": 375,
+              "12": 375,
+              "14": 375,
+              "16": 375,
+              "18": 375,
+              "20": 375,
+              "22": 375,
+              "24": 375,
+              "26": 374,
+              "28": 374,
+              "30": 374,
+              "32": 374,
+              "1": 375,
+              "3": 375,
+              "5": 375,
+              "7": 375,
+              "9": 375,
+              "11": 374,
+              "13": 374,
+              "15": 374,
+              "17": 374
+            },
+            {
+              "2": 376,
+              "4": 376,
+              "6": 376,
+              "19": 375,
+              "8": 376,
+              "10": 376,
+              "23": 376,
+              "21": 375,
+              "25": 376,
+              "27": 376,
+              "29": 375,
+              "31": 375,
+              "12": 375,
+              "14": 375,
+              "16": 375,
+              "18": 375,
+              "20": 375,
+              "22": 375,
+              "24": 375,
+              "26": 374,
+              "28": 374,
+              "30": 374,
+              "32": 374,
+              "1": 375,
+              "3": 375,
+              "5": 375,
+              "7": 375,
+              "9": 375,
+              "11": 374,
+              "13": 374,
+              "15": 374,
+              "17": 374
+            },
+            {
+              "2": 376,
+              "4": 376,
+              "6": 376,
+              "19": 375,
+              "8": 376,
+              "10": 376,
+              "23": 376,
+              "21": 375,
+              "25": 376,
+              "27": 376,
+              "29": 375,
+              "31": 375,
+              "12": 375,
+              "14": 375,
+              "16": 375,
+              "18": 375,
+              "20": 375,
+              "22": 375,
+              "24": 375,
+              "26": 374,
+              "28": 374,
+              "30": 374,
+              "32": 374,
+              "1": 375,
+              "3": 375,
+              "5": 375,
+              "7": 375,
+              "9": 375,
+              "11": 374,
+              "13": 374,
+              "15": 374,
+              "17": 374
+            },
+            {
+              "2": 376,
+              "4": 376,
+              "6": 376,
+              "19": 375,
+              "8": 376,
+              "10": 376,
+              "23": 376,
+              "21": 375,
+              "25": 376,
+              "27": 376,
+              "29": 375,
+              "31": 375,
+              "12": 375,
+              "14": 375,
+              "16": 375,
+              "18": 375,
+              "20": 375,
+              "22": 375,
+              "24": 375,
+              "26": 374,
+              "28": 374,
+              "30": 374,
+              "32": 374,
+              "1": 375,
+              "3": 375,
+              "5": 375,
+              "7": 375,
+              "9": 375,
+              "11": 374,
+              "13": 374,
+              "15": 374,
+              "17": 374
+            },
+            {
+              "2": 376,
+              "4": 376,
+              "6": 376,
+              "19": 375,
+              "8": 376,
+              "10": 376,
+              "23": 376,
+              "21": 375,
+              "25": 376,
+              "27": 376,
+              "29": 375,
+              "31": 375,
+              "12": 375,
+              "14": 375,
+              "16": 375,
+              "18": 375,
+              "20": 375,
+              "22": 375,
+              "24": 375,
+              "26": 374,
+              "28": 374,
+              "30": 374,
+              "32": 374,
+              "1": 375,
+              "3": 375,
+              "5": 375,
+              "7": 375,
+              "9": 375,
+              "11": 374,
+              "13": 374,
+              "15": 374,
+              "17": 374
+            }
+          ],
+          "principal_cap_blocked_us": [
+            {},
+            {},
+            {},
+            {},
+            {}
+          ],
+          "p3_latency_pass": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "p4_start_share_pass": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "p4_utilization_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "occupied_slot_fraction": null,
+          "candidate_bound_verified": false,
+          "latency_failures": [],
+          "exceeded_latency_targets": {},
+          "candidate_plan": {
+            "selection_ms": 1.16,
+            "task_scans": [
+              {
+                "Node Type": "Index Scan",
+                "Index Name": "tasks_scheduler_queue",
+                "Actual Rows": 1.0,
+                "Actual Loops": 64,
+                "Rows Removed by Filter": 0
+              }
+            ],
+            "observed_task_rows": 64.0,
+            "scope": "one rolled-back fixture probe; not a general retry bound"
+          }
+        },
+        {
+          "name": "p2",
+          "backlog": 100000,
+          "overdue": false,
+          "seconds": null,
+          "repeats": 5,
+          "claims": [
+            1000,
+            1000,
+            1000,
+            1000,
+            1000
+          ],
+          "claim_p95_us": {
+            "all_runs": [
+              6330,
+              6615,
+              6299,
+              6241,
+              6205
+            ],
+            "median": 6299,
+            "minimum": 6205,
+            "maximum": 6615
+          },
+          "claim_p99_us": {
+            "all_runs": [
+              16012,
+              27443,
+              25482,
+              9042,
+              32778
+            ],
+            "median": 25482,
+            "minimum": 9042,
+            "maximum": 32778
+          },
+          "lock_p95_us": {
+            "all_runs": [
+              67,
+              66,
+              66,
+              66,
+              67
+            ],
+            "median": 66,
+            "minimum": 66,
+            "maximum": 67
+          },
+          "max_round_trips": [
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "promotions": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "promotion_spacing_valid": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "empty_poll_count": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "failed_polls": [
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "ordinary_starts": [
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            }
+          ],
+          "principal_starts": [
+            {
+              "2": 32,
+              "4": 32,
+              "6": 32,
+              "19": 31,
+              "8": 32,
+              "10": 32,
+              "23": 32,
+              "21": 31,
+              "25": 32,
+              "27": 32,
+              "29": 32,
+              "31": 32,
+              "12": 32,
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "20": 31,
+              "22": 31,
+              "24": 31,
+              "26": 31,
+              "28": 31,
+              "30": 30,
+              "32": 30,
+              "1": 31,
+              "3": 31,
+              "5": 31,
+              "7": 31,
+              "9": 31,
+              "11": 30,
+              "13": 30,
+              "15": 30,
+              "17": 30
+            },
+            {
+              "2": 32,
+              "4": 32,
+              "6": 32,
+              "19": 31,
+              "8": 32,
+              "10": 32,
+              "23": 32,
+              "21": 31,
+              "25": 32,
+              "27": 32,
+              "29": 32,
+              "31": 32,
+              "12": 32,
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "20": 31,
+              "22": 31,
+              "24": 31,
+              "26": 31,
+              "28": 31,
+              "30": 30,
+              "32": 30,
+              "1": 31,
+              "3": 31,
+              "5": 31,
+              "7": 31,
+              "9": 31,
+              "11": 30,
+              "13": 30,
+              "15": 30,
+              "17": 30
+            },
+            {
+              "2": 32,
+              "4": 32,
+              "6": 32,
+              "19": 31,
+              "8": 32,
+              "10": 32,
+              "23": 32,
+              "21": 31,
+              "25": 32,
+              "27": 32,
+              "29": 32,
+              "31": 32,
+              "12": 32,
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "20": 31,
+              "22": 31,
+              "24": 31,
+              "26": 31,
+              "28": 31,
+              "30": 30,
+              "32": 30,
+              "1": 31,
+              "3": 31,
+              "5": 31,
+              "7": 31,
+              "9": 31,
+              "11": 30,
+              "13": 30,
+              "15": 30,
+              "17": 30
+            },
+            {
+              "2": 32,
+              "4": 32,
+              "6": 32,
+              "19": 31,
+              "8": 32,
+              "10": 32,
+              "23": 32,
+              "21": 31,
+              "25": 32,
+              "27": 32,
+              "29": 32,
+              "31": 32,
+              "12": 32,
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "20": 31,
+              "22": 31,
+              "24": 31,
+              "26": 31,
+              "28": 31,
+              "30": 30,
+              "32": 30,
+              "1": 31,
+              "3": 31,
+              "5": 31,
+              "7": 31,
+              "9": 31,
+              "11": 30,
+              "13": 30,
+              "15": 30,
+              "17": 30
+            },
+            {
+              "2": 32,
+              "4": 32,
+              "6": 32,
+              "19": 31,
+              "8": 32,
+              "10": 32,
+              "23": 32,
+              "21": 31,
+              "25": 32,
+              "27": 32,
+              "29": 32,
+              "31": 32,
+              "12": 32,
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "20": 31,
+              "22": 31,
+              "24": 31,
+              "26": 31,
+              "28": 31,
+              "30": 30,
+              "32": 30,
+              "1": 31,
+              "3": 31,
+              "5": 31,
+              "7": 31,
+              "9": 31,
+              "11": 30,
+              "13": 30,
+              "15": 30,
+              "17": 30
+            }
+          ],
+          "principal_cap_blocked_us": [
+            {},
+            {},
+            {},
+            {},
+            {}
+          ],
+          "p3_latency_pass": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "p4_start_share_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "p4_utilization_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "occupied_slot_fraction": null,
+          "candidate_bound_verified": false,
+          "latency_failures": [],
+          "exceeded_latency_targets": {},
+          "candidate_plan": {
+            "selection_ms": 1.591,
+            "task_scans": [
+              {
+                "Node Type": "Index Scan",
+                "Index Name": "tasks_scheduler_queue",
+                "Actual Rows": 1.0,
+                "Actual Loops": 64,
+                "Rows Removed by Filter": 0
+              }
+            ],
+            "observed_task_rows": 64.0,
+            "scope": "one rolled-back fixture probe; not a general retry bound"
+          }
+        },
+        {
+          "name": "p3",
+          "backlog": 10000,
+          "overdue": true,
+          "seconds": null,
+          "repeats": 5,
+          "claims": [
+            12000,
+            12000,
+            12000,
+            12000,
+            12000
+          ],
+          "claim_p95_us": {
+            "all_runs": [
+              6200,
+              6276,
+              6268,
+              6281,
+              6311
+            ],
+            "median": 6276,
+            "minimum": 6200,
+            "maximum": 6311
+          },
+          "claim_p99_us": {
+            "all_runs": [
+              7554,
+              8017,
+              7154,
+              7233,
+              7409
+            ],
+            "median": 7409,
+            "minimum": 7154,
+            "maximum": 8017
+          },
+          "lock_p95_us": {
+            "all_runs": [
+              66,
+              67,
+              66,
+              67,
+              67
+            ],
+            "median": 67,
+            "minimum": 66,
+            "maximum": 67
+          },
+          "max_round_trips": [
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "promotions": [
+            1500,
+            1500,
+            1500,
+            1500,
+            1500
+          ],
+          "promotion_spacing_valid": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "empty_poll_count": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "failed_polls": [
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "ordinary_starts": [
+            {
+              "import": 7875,
+              "export": 2625
+            },
+            {
+              "import": 7875,
+              "export": 2625
+            },
+            {
+              "import": 7875,
+              "export": 2625
+            },
+            {
+              "import": 7875,
+              "export": 2625
+            },
+            {
+              "import": 7875,
+              "export": 2625
+            }
+          ],
+          "principal_starts": [
+            {
+              "9": 337,
+              "11": 336,
+              "13": 337,
+              "1": 1582,
+              "15": 336,
+              "17": 336,
+              "19": 336,
+              "21": 336,
+              "2": 336,
+              "4": 336,
+              "6": 336,
+              "8": 336,
+              "10": 336,
+              "23": 336,
+              "25": 336,
+              "27": 336,
+              "29": 336,
+              "31": 336,
+              "12": 336,
+              "14": 336,
+              "16": 336,
+              "18": 336,
+              "20": 336,
+              "22": 336,
+              "24": 336,
+              "26": 336,
+              "28": 336,
+              "30": 336,
+              "32": 336,
+              "3": 336,
+              "5": 336,
+              "7": 336
+            },
+            {
+              "9": 337,
+              "11": 336,
+              "13": 337,
+              "1": 1582,
+              "15": 336,
+              "17": 336,
+              "19": 336,
+              "21": 336,
+              "2": 336,
+              "4": 336,
+              "6": 336,
+              "8": 336,
+              "10": 336,
+              "23": 336,
+              "25": 336,
+              "27": 336,
+              "29": 336,
+              "31": 336,
+              "12": 336,
+              "14": 336,
+              "16": 336,
+              "18": 336,
+              "20": 336,
+              "22": 336,
+              "24": 336,
+              "26": 336,
+              "28": 336,
+              "30": 336,
+              "32": 336,
+              "3": 336,
+              "5": 336,
+              "7": 336
+            },
+            {
+              "9": 337,
+              "11": 336,
+              "13": 337,
+              "1": 1582,
+              "15": 336,
+              "17": 336,
+              "19": 336,
+              "21": 336,
+              "2": 336,
+              "4": 336,
+              "6": 336,
+              "8": 336,
+              "10": 336,
+              "23": 336,
+              "25": 336,
+              "27": 336,
+              "29": 336,
+              "31": 336,
+              "12": 336,
+              "14": 336,
+              "16": 336,
+              "18": 336,
+              "20": 336,
+              "22": 336,
+              "24": 336,
+              "26": 336,
+              "28": 336,
+              "30": 336,
+              "32": 336,
+              "3": 336,
+              "5": 336,
+              "7": 336
+            },
+            {
+              "9": 337,
+              "11": 336,
+              "13": 337,
+              "1": 1582,
+              "15": 336,
+              "17": 336,
+              "19": 336,
+              "21": 336,
+              "2": 336,
+              "4": 336,
+              "6": 336,
+              "8": 336,
+              "10": 336,
+              "23": 336,
+              "25": 336,
+              "27": 336,
+              "29": 336,
+              "31": 336,
+              "12": 336,
+              "14": 336,
+              "16": 336,
+              "18": 336,
+              "20": 336,
+              "22": 336,
+              "24": 336,
+              "26": 336,
+              "28": 336,
+              "30": 336,
+              "32": 336,
+              "3": 336,
+              "5": 336,
+              "7": 336
+            },
+            {
+              "9": 337,
+              "11": 336,
+              "13": 337,
+              "1": 1582,
+              "15": 336,
+              "17": 336,
+              "19": 336,
+              "21": 336,
+              "2": 336,
+              "4": 336,
+              "6": 336,
+              "8": 336,
+              "10": 336,
+              "23": 336,
+              "25": 336,
+              "27": 336,
+              "29": 336,
+              "31": 336,
+              "12": 336,
+              "14": 336,
+              "16": 336,
+              "18": 336,
+              "20": 336,
+              "22": 336,
+              "24": 336,
+              "26": 336,
+              "28": 336,
+              "30": 336,
+              "32": 336,
+              "3": 336,
+              "5": 336,
+              "7": 336
+            }
+          ],
+          "principal_cap_blocked_us": [
+            {},
+            {},
+            {},
+            {},
+            {}
+          ],
+          "p3_latency_pass": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "p4_start_share_pass": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "p4_utilization_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "occupied_slot_fraction": null,
+          "candidate_bound_verified": false,
+          "latency_failures": [],
+          "exceeded_latency_targets": {},
+          "candidate_plan": {
+            "selection_ms": 1.147,
+            "task_scans": [
+              {
+                "Node Type": "Index Scan",
+                "Index Name": "tasks_scheduler_queue",
+                "Actual Rows": 1.0,
+                "Actual Loops": 64,
+                "Rows Removed by Filter": 0
+              }
+            ],
+            "observed_task_rows": 64.0,
+            "scope": "one rolled-back fixture probe; not a general retry bound"
+          }
+        },
+        {
+          "name": "p4",
+          "backlog": 10000,
+          "overdue": true,
+          "seconds": 60,
+          "repeats": 5,
+          "claims": [
+            23,
+            23,
+            23,
+            23,
+            23
+          ],
+          "claim_p95_us": {
+            "all_runs": [
+              8616,
+              8951,
+              26733,
+              8539,
+              8720
+            ],
+            "median": 8720,
+            "minimum": 8539,
+            "maximum": 26733
+          },
+          "claim_p99_us": {
+            "all_runs": [
+              26490,
+              27045,
+              36965,
+              26266,
+              26483
+            ],
+            "median": 26490,
+            "minimum": 26266,
+            "maximum": 36965
+          },
+          "lock_p95_us": {
+            "all_runs": [
+              146,
+              118,
+              117,
+              117,
+              118
+            ],
+            "median": 118,
+            "minimum": 117,
+            "maximum": 146
+          },
+          "max_round_trips": [
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "promotions": [
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "promotion_spacing_valid": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "empty_poll_count": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "failed_polls": [
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "ordinary_starts": [
+            {
+              "export": 6,
+              "import": 15
+            },
+            {
+              "export": 6,
+              "import": 15
+            },
+            {
+              "export": 6,
+              "import": 15
+            },
+            {
+              "export": 6,
+              "import": 15
+            },
+            {
+              "export": 6,
+              "import": 15
+            }
+          ],
+          "principal_starts": [
+            {
+              "2": 2,
+              "13": 1,
+              "15": 1,
+              "17": 1,
+              "4": 2,
+              "19": 1,
+              "21": 1,
+              "1": 2,
+              "6": 2,
+              "8": 2,
+              "10": 2,
+              "23": 1,
+              "25": 1,
+              "27": 1,
+              "29": 1,
+              "31": 1,
+              "12": 1
+            },
+            {
+              "2": 2,
+              "13": 1,
+              "15": 1,
+              "17": 1,
+              "4": 2,
+              "19": 1,
+              "21": 1,
+              "1": 2,
+              "6": 2,
+              "8": 2,
+              "10": 2,
+              "23": 1,
+              "25": 1,
+              "27": 1,
+              "29": 1,
+              "31": 1,
+              "12": 1
+            },
+            {
+              "2": 2,
+              "13": 1,
+              "15": 1,
+              "17": 1,
+              "4": 2,
+              "19": 1,
+              "21": 1,
+              "1": 2,
+              "6": 2,
+              "8": 2,
+              "10": 2,
+              "23": 1,
+              "25": 1,
+              "27": 1,
+              "29": 1,
+              "31": 1,
+              "12": 1
+            },
+            {
+              "2": 2,
+              "13": 1,
+              "15": 1,
+              "17": 1,
+              "4": 2,
+              "19": 1,
+              "21": 1,
+              "1": 2,
+              "6": 2,
+              "8": 2,
+              "10": 2,
+              "23": 1,
+              "25": 1,
+              "27": 1,
+              "29": 1,
+              "31": 1,
+              "12": 1
+            },
+            {
+              "2": 2,
+              "13": 1,
+              "15": 1,
+              "17": 1,
+              "4": 2,
+              "19": 1,
+              "21": 1,
+              "1": 2,
+              "6": 2,
+              "8": 2,
+              "10": 2,
+              "23": 1,
+              "25": 1,
+              "27": 1,
+              "29": 1,
+              "31": 1,
+              "12": 1
+            }
+          ],
+          "principal_cap_blocked_us": [
+            {
+              "1": 213493,
+              "2": 30134229,
+              "4": 215188,
+              "6": 213216,
+              "8": 215008,
+              "10": 213118,
+              "12": 27547176,
+              "13": 110517,
+              "15": 109216,
+              "17": 108855,
+              "19": 109385,
+              "21": 106941,
+              "23": 106864,
+              "25": 106686,
+              "27": 108201,
+              "29": 106416,
+              "31": 106840
+            },
+            {
+              "1": 213576,
+              "2": 30133545,
+              "4": 215132,
+              "6": 212308,
+              "8": 212141,
+              "10": 213195,
+              "12": 27557315,
+              "13": 111078,
+              "15": 109217,
+              "17": 108971,
+              "19": 109414,
+              "21": 106824,
+              "23": 106744,
+              "25": 106598,
+              "27": 106742,
+              "29": 106788,
+              "31": 106644
+            },
+            {
+              "1": 245015,
+              "2": 30133559,
+              "4": 215268,
+              "6": 212563,
+              "8": 212998,
+              "10": 213131,
+              "12": 27521050,
+              "13": 111046,
+              "15": 109391,
+              "17": 108863,
+              "19": 109271,
+              "21": 106766,
+              "23": 107661,
+              "25": 106674,
+              "27": 106798,
+              "29": 107116,
+              "31": 106582
+            },
+            {
+              "1": 213398,
+              "2": 30132699,
+              "4": 215284,
+              "6": 213157,
+              "8": 213711,
+              "10": 213296,
+              "12": 27555777,
+              "13": 109490,
+              "15": 109349,
+              "17": 109245,
+              "19": 109277,
+              "21": 106730,
+              "23": 106851,
+              "25": 106630,
+              "27": 106658,
+              "29": 106794,
+              "31": 106604
+            },
+            {
+              "1": 212585,
+              "2": 30132924,
+              "4": 215410,
+              "6": 213153,
+              "8": 213132,
+              "10": 212128,
+              "12": 27551764,
+              "13": 110621,
+              "15": 109313,
+              "17": 108891,
+              "19": 109274,
+              "21": 106740,
+              "23": 106753,
+              "25": 106625,
+              "27": 106680,
+              "29": 106778,
+              "31": 106709
+            }
+          ],
+          "p3_latency_pass": [
+            true,
+            true,
+            false,
+            true,
+            true
+          ],
+          "p4_start_share_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "p4_utilization_pass": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "occupied_slot_fraction": [
+            0.9944378,
+            0.9945812333333334,
+            0.99400175,
+            0.9945885333333333,
+            0.9945042
+          ],
+          "candidate_bound_verified": false,
+          "latency_failures": [
+            "p4-r3"
+          ],
+          "exceeded_latency_targets": {
+            "p4-r3": {
+              "claim_p95_us": {
+                "actual": 26733,
+                "target": 25000
+              }
+            }
+          },
+          "candidate_plan": {
+            "selection_ms": 1.156,
+            "task_scans": [
+              {
+                "Node Type": "Index Scan",
+                "Index Name": "tasks_scheduler_queue",
+                "Actual Rows": 1.0,
+                "Actual Loops": 64,
+                "Rows Removed by Filter": 0
+              }
+            ],
+            "observed_task_rows": 64.0,
+            "scope": "one rolled-back fixture probe; not a general retry bound"
+          }
+        }
+      ],
+      "raw_artifacts": {
+        "manifest.json": {
+          "bytes": 36177,
+          "sha256": "e6c7730098eb3e99b0e831d27e9f8adfa1800186806ba55a13ff07ee2b149175"
+        },
+        "p0-plan.log": {
+          "bytes": 70591,
+          "sha256": "f31ed571a14804ce57015420ec052212b4fe3b126f3ebfc93517405a6f654f75"
+        },
+        "p0-preparation.json": {
+          "bytes": 23995,
+          "sha256": "a1a9ba7bebf63613f0cf3458506a60c1b36e54198e0df8e117d70ec326e62440"
+        },
+        "p0-r1-worker-0-container.json": {
+          "bytes": 3222,
+          "sha256": "636f1e3db0cfa84107bf63ed4dfd77174af43839718a75970432a085d1d5d070"
+        },
+        "p0-r1-worker-0.json": {
+          "bytes": 330241,
+          "sha256": "5f938099abd1d079502293e22826cf06385fd84c2315253dd189d524951731be"
+        },
+        "p0-r2-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "07f31d616cc478d6d10f73dc838ceab68b87ef0e14f505be720fb1b32e01bb96"
+        },
+        "p0-r2-worker-0.json": {
+          "bytes": 330350,
+          "sha256": "d3c166be17714989b6f348b20bf6aa16223009e03da19cc4b13f672a4db591d2"
+        },
+        "p0-r3-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "f92aaa536276dcbd6a8d6064a4a9b461b68d0664ee0c3d5ab378f3f0c83b4cb3"
+        },
+        "p0-r3-worker-0.json": {
+          "bytes": 330566,
+          "sha256": "a1fe555571d9ec48a5399e58fc31086bcb55856f31652d6ca56292476faa6c8e"
+        },
+        "p0-r4-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "54a2536718be16d3c4cd6106ec2b69c8463fbf9e01963c31c8c87c10e4c47881"
+        },
+        "p0-r4-worker-0.json": {
+          "bytes": 330339,
+          "sha256": "43036ea40bdcde27e3f0403ee9231143a89d0344899b6206aa40561480c664d6"
+        },
+        "p0-r5-worker-0-container.json": {
+          "bytes": 3221,
+          "sha256": "d0de662b14fabf8ba332a73d9b97f6fec700a3fb82bab906140fe3c634e7d4fc"
+        },
+        "p0-r5-worker-0.json": {
+          "bytes": 330503,
+          "sha256": "1eb344e7059c6a3e932dc1b1262ecb9ccf0f3b0d1d0e13fec30a089cc6530d94"
+        },
+        "p1-plan.log": {
+          "bytes": 70593,
+          "sha256": "4db7d9f5e7a0cf42096d520b22c98978d33ef4a6e0167b5c44dde1adb9c7737c"
+        },
+        "p1-preparation.json": {
+          "bytes": 23997,
+          "sha256": "29f37258558d629e7725bfed0908b9c37388ee036f28a41c5fc82d19351d58c7"
+        },
+        "p1-r1-worker-0-container.json": {
+          "bytes": 3222,
+          "sha256": "23521298021cdb1bcc900a02e39039ccbb550d2b1879f460737acc99334dfc7a"
+        },
+        "p1-r1-worker-0.json": {
+          "bytes": 3414211,
+          "sha256": "90dfca05591f8bb4d4ee7660514f3077259cfcc7980688a257da70171849cace"
+        },
+        "p1-r2-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "0764286a288fb7677daea4fa312a1a830ff2d11246f4d9ce85e28749c9f4d1f8"
+        },
+        "p1-r2-worker-0.json": {
+          "bytes": 3414167,
+          "sha256": "1139cdb1548bf15b3a9f8c427557a9a06087f7290fd50c4365f304b52f3336ac"
+        },
+        "p1-r3-worker-0-container.json": {
+          "bytes": 3222,
+          "sha256": "3d7494e12e69a688a9c3e8d70fc8810b04a0d54bba3e8ee80ece99b146784087"
+        },
+        "p1-r3-worker-0.json": {
+          "bytes": 3414032,
+          "sha256": "49cb284d4d4bc5018c03f8576e9cc63c7c81a94f624842a150fa84e1476c73b8"
+        },
+        "p1-r4-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "b9e55bf7a2458f5acb104712c8cf6cb320e36b6370521eb17eb0d34a5a65cf37"
+        },
+        "p1-r4-worker-0.json": {
+          "bytes": 3414501,
+          "sha256": "5c8b71efcb38e1eec36e621956665f1e808346b4c90323bde91a64448b809f14"
+        },
+        "p1-r5-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "e0986c47f31b04939c5c3f6b618257cc0bdafd8fd5ab34a6f0a34522e1f36e93"
+        },
+        "p1-r5-worker-0.json": {
+          "bytes": 3414200,
+          "sha256": "70191cb26a8a7801e9006e28896c593df87e8fcf95f26545c51458da2fcf4884"
+        },
+        "p2-plan.log": {
+          "bytes": 70597,
+          "sha256": "fcd7069a9242460bf602cdc01d210b4a204762e7fe6955bdc4ab07375012a598"
+        },
+        "p2-preparation.json": {
+          "bytes": 23998,
+          "sha256": "d73a9620bf6df50311760b26929d22a2fdea9cd2a71c794178b4753919b0d44f"
+        },
+        "p2-r1-worker-0-container.json": {
+          "bytes": 3222,
+          "sha256": "74d57fa45caf3945c5976be729720726f7de11ca10e8097e0902b4a148e66ae9"
+        },
+        "p2-r1-worker-0.json": {
+          "bytes": 331457,
+          "sha256": "8ec03bd6e151b63bf78c7cd1b7018ea40c44d5ad60a3831a80280f5eb14788aa"
+        },
+        "p2-r2-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "9e0f3d18cd9e3ff9fc367b64af13a5a81e844f048a10345e398c1053316bbefc"
+        },
+        "p2-r2-worker-0.json": {
+          "bytes": 331442,
+          "sha256": "14646fae88ab5be29ea5d75fd334e648a32ab2db2efbdd0315f5057bd9d6971c"
+        },
+        "p2-r3-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "0d5b41775d2b023f4be671296328d12759c7497fe3ff9c327bd18d048f4389de"
+        },
+        "p2-r3-worker-0.json": {
+          "bytes": 331449,
+          "sha256": "9d9a4eb5f957d7df13c0f189b2719f087edbb6b8c85f2b33c84b98211fc464f1"
+        },
+        "p2-r4-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "9873e7222d9d5cff3c36145619e8fa368889166e22226004195ceffd6f2548e1"
+        },
+        "p2-r4-worker-0.json": {
+          "bytes": 331439,
+          "sha256": "3f04f9e9bb0a9ece00ea625c30916fa14343d7d343df2f934a59b7dc2d0fd142"
+        },
+        "p2-r5-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "622dc6f7b11161064153b3f2c841d6b2853b6305a8182347d04c62dd2dc35f1e"
+        },
+        "p2-r5-worker-0.json": {
+          "bytes": 331490,
+          "sha256": "3699343c16fbd5a34840d5ae25029a7f4f8c4c88f2c9018285ce773cb76b5161"
+        },
+        "p3-plan.log": {
+          "bytes": 70593,
+          "sha256": "aa167bb81ca7dcc7d0c5fa94b4eeb1600ed6a36a04bc83a3335df932b170add2"
+        },
+        "p3-preparation.json": {
+          "bytes": 23995,
+          "sha256": "8d00d65e0345ccffc0e224c20f2f1be63ff858cb4a01fa528753a231be268cd9"
+        },
+        "p3-r1-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "3f0e09c41c1d2e2d231991439d0072644f2c7df3f27cecd550a9b332b441ff59"
+        },
+        "p3-r1-worker-0.json": {
+          "bytes": 3412107,
+          "sha256": "e5439db9e38832d221947153d2cd31358faeae687e1487e895865f0fc18002d2"
+        },
+        "p3-r2-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "0dbb5dfdf407cdff557192ad04719ea67745f8e796cc6dffa5fbd7ea1c2a1c34"
+        },
+        "p3-r2-worker-0.json": {
+          "bytes": 3411911,
+          "sha256": "bbf6ee18ee17b43acfe7b7befca5612dfe294f3f2b810708e37b05dc9c5c7d11"
+        },
+        "p3-r3-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "aadd83ab47e0b74f7520850128dc770a6b5dde51763ac5a9cb706e2c95fb964e"
+        },
+        "p3-r3-worker-0.json": {
+          "bytes": 3411745,
+          "sha256": "0815c38efa544f479fa1433ba25b58160128c343b779308eaa1fbb489cf2776f"
+        },
+        "p3-r4-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "c0b77fb88c2c597d81cbe34760d1697a38f48982b9ac520e0445b8299486495d"
+        },
+        "p3-r4-worker-0.json": {
+          "bytes": 3411865,
+          "sha256": "f419a1c94753ab71d7f989399202035ac3989ab5614473a3a3478596765cefce"
+        },
+        "p3-r5-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "f84e53e6a93ede843da8ea13f10dac8a36c8d3772378213286118c3e101720ab"
+        },
+        "p3-r5-worker-0.json": {
+          "bytes": 3411726,
+          "sha256": "e083a1187301b4187424ce3bd72c9221f2ebb515385145f988fdc35112e8fd3a"
+        },
+        "p4-plan.log": {
+          "bytes": 70592,
+          "sha256": "edd7123790b17332539b3777dbfd9833025438988c5a202b3fe1bb796141117c"
+        },
+        "p4-preparation.json": {
+          "bytes": 24078,
+          "sha256": "a6e068bf30d8fdb64fd95a07936d40a6fba5cea5631ce6249b0b5b43b3c2530f"
+        },
+        "p4-r1-warmup-container.json": {
+          "bytes": 3223,
+          "sha256": "d43f2893c33067ef431b5c082f5a1d03408dd87bc03edd115b5878188a07d17e"
+        },
+        "p4-r1-warmup.json": {
+          "bytes": 26629,
+          "sha256": "0c530491869f38a1a6fa557d5bda0936f5f3db6b05263173e8d6eed0a2f35f64"
+        },
+        "p4-r1-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "0fbb7f2e2f8dc403ca5f234fe8dc17c4b148ec7d3bfdbc2f9ff68da9d1230fd6"
+        },
+        "p4-r1-worker-0.json": {
+          "bytes": 31305,
+          "sha256": "b7eb73e33bdafa6976156a0192a522e7d1857e1e2571f0f984556774f096bb69"
+        },
+        "p4-r2-warmup-container.json": {
+          "bytes": 3223,
+          "sha256": "8fa174673503a49dde24d46cec05c17c554c9fadef4e8456eeca828e0912a0c0"
+        },
+        "p4-r2-warmup.json": {
+          "bytes": 26629,
+          "sha256": "dd0a95270835039448045011977e5641cb57a4678436d123becca0ed7f590275"
+        },
+        "p4-r2-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "097d196e6e1de620dae5eb76880b7aa790ca484b9e8dad2ab56d1b15697e0b41"
+        },
+        "p4-r2-worker-0.json": {
+          "bytes": 31313,
+          "sha256": "3609e517dee647cd3f8d3f5644a110203ff61243bb75415f96df0a0c2a4cd3f7"
+        },
+        "p4-r3-warmup-container.json": {
+          "bytes": 3223,
+          "sha256": "3064dfa2ce6c57aa082357dc43e66fb686b70c3b5f564b1a685c6257d83068e8"
+        },
+        "p4-r3-warmup.json": {
+          "bytes": 26629,
+          "sha256": "cd36cd32ab14571fc1488e605d9b54b52bdec176ce0a70e83b4413fb77a97ea0"
+        },
+        "p4-r3-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "f7f183899829268efa453fbd11117e74e5ea244ec8471d60dd58beffba96283b"
+        },
+        "p4-r3-worker-0.json": {
+          "bytes": 31307,
+          "sha256": "909a65ce5e1b31634ac3cb5ccc0a2b8ff8a2465a0a990acec4d902f0141aceac"
+        },
+        "p4-r4-warmup-container.json": {
+          "bytes": 3223,
+          "sha256": "76e95db91ea95a1542d1a24f1d3ff1b536e92187b63a1c92e2c630166d3e509a"
+        },
+        "p4-r4-warmup.json": {
+          "bytes": 26629,
+          "sha256": "b5b7f951f3202f2dd2d2281520cca5667323e66274e07af09e30644f5b078893"
+        },
+        "p4-r4-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "b59152020c919b44b7a34ee144eafa74c5208fc14bf22a0f91e87e11b78345a6"
+        },
+        "p4-r4-worker-0.json": {
+          "bytes": 31313,
+          "sha256": "776906266960aeec34762d00a32c7d6db906beb0c4348c9b5f494734055c1fa2"
+        },
+        "p4-r5-warmup-container.json": {
+          "bytes": 3223,
+          "sha256": "331574770cab77a8b5ade2a0628f09e3c480a99e630e684546a39ec3fa8242a6"
+        },
+        "p4-r5-warmup.json": {
+          "bytes": 26629,
+          "sha256": "60d2f1c09991c5e7358e83ce7665812d0f50df95dfa901d681ef679dfc4c4c83"
+        },
+        "p4-r5-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "663f32e5a495b68e00ce86cefd64b6d6d4ab280ae461ee189dbc14cb22b51452"
+        },
+        "p4-r5-worker-0.json": {
+          "bytes": 31305,
+          "sha256": "0662996ed9de492490e33f3d175514a6b374d7abc065317bcc7ea4f5620aa772"
+        },
+        "postgres-container.json": {
+          "bytes": 2974,
+          "sha256": "c5cd965e132f7e148d187ec0aeb3b2adeab290dc13ef9ae7f8249adfa18cd130"
+        },
+        "workload-1000.toml": {
+          "bytes": 245,
+          "sha256": "3dcfc1447928213c7a4f863e32e61ac5dc068b3aa5e17a23d4c9c34932468cd2"
+        },
+        "workload-10000.toml": {
+          "bytes": 246,
+          "sha256": "c66abde4161721144ae9a32057c60235854901b1a1eeb9865a6ce2e47cd30348"
+        },
+        "workload-100000.toml": {
+          "bytes": 247,
+          "sha256": "76c0d5c40000a83b27f82cd662feaa0c12aacebbe8ebe23c95868986a650c612"
+        }
+      }
+    },
+    {
+      "profile": "shared",
+      "constraints_applied": false,
+      "cpu_limits_applied": false,
+      "memory_limits_applied": true,
+      "binary_sha256": "0b0e9716876bf3a930c7f89105307625546d34b63bdaac9a90cf5579c326a504",
+      "admin_binary_sha256": "a1e5fbd373933ed291d59292c68f00bfbe146e118f091b6588d0fc38f5a0ee25",
+      "postgres_image": "postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722",
+      "warmup": "100 excluded claims per process for immediate runs; a separate 30-second warm-up window before timed runs",
+      "completed_runs": 25,
+      "expected_runs": 25,
+      "cases": [
+        {
+          "name": "p0",
+          "backlog": 1000,
+          "overdue": false,
+          "seconds": null,
+          "repeats": 5,
+          "claims": [
+            1000,
+            1000,
+            1000,
+            1000,
+            1000
+          ],
+          "claim_p95_us": {
+            "all_runs": [
+              16022,
+              21992,
+              29523,
+              16724,
+              17492
+            ],
+            "median": 17492,
+            "minimum": 16022,
+            "maximum": 29523
+          },
+          "claim_p99_us": {
+            "all_runs": [
+              20991,
+              241048,
+              376112,
+              20936,
+              21890
+            ],
+            "median": 21890,
+            "minimum": 20936,
+            "maximum": 376112
+          },
+          "lock_p95_us": {
+            "all_runs": [
+              9323,
+              13945,
+              17189,
+              9823,
+              10777
+            ],
+            "median": 10777,
+            "minimum": 9323,
+            "maximum": 17189
+          },
+          "max_round_trips": [
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "promotions": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "promotion_spacing_valid": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "empty_poll_count": [
+            1,
+            3,
+            1,
+            1,
+            1
+          ],
+          "failed_polls": [
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "ordinary_starts": [
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            }
+          ],
+          "principal_starts": [
+            {
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "28": 32,
+              "20": 32,
+              "22": 31,
+              "24": 31,
+              "30": 32,
+              "26": 31,
+              "32": 32,
+              "1": 32,
+              "3": 32,
+              "11": 31,
+              "5": 31,
+              "7": 31,
+              "9": 30,
+              "13": 31,
+              "15": 31,
+              "17": 31,
+              "19": 31,
+              "21": 31,
+              "2": 31,
+              "4": 31,
+              "6": 31,
+              "8": 31,
+              "10": 31,
+              "23": 31,
+              "25": 31,
+              "27": 31,
+              "29": 31,
+              "31": 31,
+              "12": 31
+            },
+            {
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "28": 32,
+              "20": 32,
+              "22": 31,
+              "24": 31,
+              "30": 32,
+              "26": 31,
+              "32": 32,
+              "1": 32,
+              "3": 32,
+              "11": 31,
+              "5": 31,
+              "7": 31,
+              "9": 30,
+              "13": 31,
+              "15": 31,
+              "17": 31,
+              "19": 31,
+              "21": 31,
+              "2": 31,
+              "4": 31,
+              "6": 31,
+              "8": 31,
+              "10": 31,
+              "23": 31,
+              "25": 31,
+              "27": 31,
+              "29": 31,
+              "31": 31,
+              "12": 31
+            },
+            {
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "28": 32,
+              "20": 32,
+              "22": 31,
+              "24": 31,
+              "30": 32,
+              "26": 31,
+              "32": 32,
+              "1": 32,
+              "3": 32,
+              "11": 31,
+              "5": 31,
+              "7": 31,
+              "9": 30,
+              "13": 31,
+              "15": 31,
+              "17": 31,
+              "19": 31,
+              "21": 31,
+              "2": 31,
+              "4": 31,
+              "6": 31,
+              "8": 31,
+              "10": 31,
+              "23": 31,
+              "25": 31,
+              "27": 31,
+              "29": 31,
+              "31": 31,
+              "12": 31
+            },
+            {
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "28": 32,
+              "20": 32,
+              "22": 31,
+              "24": 31,
+              "30": 32,
+              "26": 31,
+              "32": 32,
+              "1": 32,
+              "3": 32,
+              "11": 31,
+              "5": 31,
+              "7": 31,
+              "9": 30,
+              "13": 31,
+              "15": 31,
+              "17": 31,
+              "19": 31,
+              "21": 31,
+              "2": 31,
+              "4": 31,
+              "6": 31,
+              "8": 31,
+              "10": 31,
+              "23": 31,
+              "25": 31,
+              "27": 31,
+              "29": 31,
+              "31": 31,
+              "12": 31
+            },
+            {
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "28": 32,
+              "20": 32,
+              "22": 31,
+              "24": 31,
+              "30": 32,
+              "26": 31,
+              "32": 32,
+              "1": 32,
+              "3": 32,
+              "11": 31,
+              "5": 31,
+              "7": 31,
+              "9": 30,
+              "13": 31,
+              "15": 31,
+              "17": 31,
+              "19": 31,
+              "21": 31,
+              "2": 31,
+              "4": 31,
+              "6": 31,
+              "8": 31,
+              "10": 31,
+              "23": 31,
+              "25": 31,
+              "27": 31,
+              "29": 31,
+              "31": 31,
+              "12": 31
+            }
+          ],
+          "principal_cap_blocked_us": [
+            {},
+            {},
+            {},
+            {},
+            {}
+          ],
+          "p3_latency_pass": [
+            true,
+            false,
+            false,
+            true,
+            false
+          ],
+          "p4_start_share_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "p4_utilization_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "occupied_slot_fraction": null,
+          "candidate_bound_verified": false,
+          "latency_failures": [
+            "p0-r2",
+            "p0-r3",
+            "p0-r5"
+          ],
+          "exceeded_latency_targets": {
+            "p0-r2": {
+              "claim_p99_us": {
+                "actual": 241048,
+                "target": 100000
+              },
+              "lock_p95_us": {
+                "actual": 13945,
+                "target": 10000
+              }
+            },
+            "p0-r3": {
+              "claim_p95_us": {
+                "actual": 29523,
+                "target": 25000
+              },
+              "claim_p99_us": {
+                "actual": 376112,
+                "target": 100000
+              },
+              "lock_p95_us": {
+                "actual": 17189,
+                "target": 10000
+              }
+            },
+            "p0-r5": {
+              "lock_p95_us": {
+                "actual": 10777,
+                "target": 10000
+              }
+            }
+          },
+          "candidate_plan": {
+            "selection_ms": 0.9,
+            "task_scans": [
+              {
+                "Node Type": "Index Scan",
+                "Index Name": "tasks_scheduler_queue",
+                "Actual Rows": 1.0,
+                "Actual Loops": 64,
+                "Rows Removed by Filter": 0
+              }
+            ],
+            "observed_task_rows": 64.0,
+            "scope": "one rolled-back fixture probe; not a general retry bound"
+          }
+        },
+        {
+          "name": "p1",
+          "backlog": 10000,
+          "overdue": false,
+          "seconds": null,
+          "repeats": 5,
+          "claims": [
+            12000,
+            12000,
+            12000,
+            12000,
+            12000
+          ],
+          "claim_p95_us": {
+            "all_runs": [
+              17893,
+              18076,
+              17746,
+              17299,
+              17830
+            ],
+            "median": 17830,
+            "minimum": 17299,
+            "maximum": 18076
+          },
+          "claim_p99_us": {
+            "all_runs": [
+              22252,
+              20446,
+              20022,
+              19791,
+              20053
+            ],
+            "median": 20053,
+            "minimum": 19791,
+            "maximum": 22252
+          },
+          "lock_p95_us": {
+            "all_runs": [
+              10960,
+              11125,
+              10934,
+              10530,
+              10993
+            ],
+            "median": 10960,
+            "minimum": 10530,
+            "maximum": 11125
+          },
+          "max_round_trips": [
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "promotions": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "promotion_spacing_valid": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "empty_poll_count": [
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "failed_polls": [
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "ordinary_starts": [
+            {
+              "import": 9000,
+              "export": 3000
+            },
+            {
+              "import": 9000,
+              "export": 3000
+            },
+            {
+              "import": 9000,
+              "export": 3000
+            },
+            {
+              "import": 9000,
+              "export": 3000
+            },
+            {
+              "import": 9000,
+              "export": 3000
+            }
+          ],
+          "principal_starts": [
+            {
+              "14": 376,
+              "16": 376,
+              "18": 376,
+              "28": 376,
+              "20": 375,
+              "22": 375,
+              "24": 375,
+              "30": 375,
+              "26": 375,
+              "32": 375,
+              "1": 375,
+              "3": 374,
+              "11": 375,
+              "5": 374,
+              "7": 374,
+              "9": 374,
+              "13": 375,
+              "15": 375,
+              "17": 375,
+              "19": 375,
+              "21": 375,
+              "2": 375,
+              "4": 375,
+              "6": 375,
+              "8": 375,
+              "10": 375,
+              "23": 375,
+              "25": 375,
+              "27": 375,
+              "29": 375,
+              "31": 375,
+              "12": 375
+            },
+            {
+              "14": 376,
+              "16": 376,
+              "18": 376,
+              "28": 376,
+              "20": 375,
+              "22": 375,
+              "24": 375,
+              "30": 375,
+              "26": 375,
+              "32": 375,
+              "1": 375,
+              "3": 374,
+              "11": 375,
+              "5": 374,
+              "7": 374,
+              "9": 374,
+              "13": 375,
+              "15": 375,
+              "17": 375,
+              "19": 375,
+              "21": 375,
+              "2": 375,
+              "4": 375,
+              "6": 375,
+              "8": 375,
+              "10": 375,
+              "23": 375,
+              "25": 375,
+              "27": 375,
+              "29": 375,
+              "31": 375,
+              "12": 375
+            },
+            {
+              "14": 376,
+              "16": 376,
+              "18": 376,
+              "28": 376,
+              "20": 375,
+              "22": 375,
+              "24": 375,
+              "30": 375,
+              "26": 375,
+              "32": 375,
+              "1": 375,
+              "3": 374,
+              "11": 375,
+              "5": 374,
+              "7": 374,
+              "9": 374,
+              "13": 375,
+              "15": 375,
+              "17": 375,
+              "19": 375,
+              "21": 375,
+              "2": 375,
+              "4": 375,
+              "6": 375,
+              "8": 375,
+              "10": 375,
+              "23": 375,
+              "25": 375,
+              "27": 375,
+              "29": 375,
+              "31": 375,
+              "12": 375
+            },
+            {
+              "14": 376,
+              "16": 376,
+              "18": 376,
+              "28": 376,
+              "20": 375,
+              "22": 375,
+              "24": 375,
+              "30": 375,
+              "26": 375,
+              "32": 375,
+              "1": 375,
+              "3": 374,
+              "11": 375,
+              "5": 374,
+              "7": 374,
+              "9": 374,
+              "13": 375,
+              "15": 375,
+              "17": 375,
+              "19": 375,
+              "21": 375,
+              "2": 375,
+              "4": 375,
+              "6": 375,
+              "8": 375,
+              "10": 375,
+              "23": 375,
+              "25": 375,
+              "27": 375,
+              "29": 375,
+              "31": 375,
+              "12": 375
+            },
+            {
+              "14": 376,
+              "16": 376,
+              "18": 376,
+              "28": 376,
+              "20": 375,
+              "22": 375,
+              "24": 375,
+              "30": 375,
+              "26": 375,
+              "32": 375,
+              "1": 375,
+              "3": 374,
+              "11": 375,
+              "5": 374,
+              "7": 374,
+              "9": 374,
+              "13": 375,
+              "15": 375,
+              "17": 375,
+              "19": 375,
+              "21": 375,
+              "2": 375,
+              "4": 375,
+              "6": 375,
+              "8": 375,
+              "10": 375,
+              "23": 375,
+              "25": 375,
+              "27": 375,
+              "29": 375,
+              "31": 375,
+              "12": 375
+            }
+          ],
+          "principal_cap_blocked_us": [
+            {},
+            {},
+            {},
+            {},
+            {}
+          ],
+          "p3_latency_pass": [
+            false,
+            false,
+            false,
+            false,
+            false
+          ],
+          "p4_start_share_pass": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "p4_utilization_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "occupied_slot_fraction": null,
+          "candidate_bound_verified": false,
+          "latency_failures": [
+            "p1-r1",
+            "p1-r2",
+            "p1-r3",
+            "p1-r4",
+            "p1-r5"
+          ],
+          "exceeded_latency_targets": {
+            "p1-r1": {
+              "lock_p95_us": {
+                "actual": 10960,
+                "target": 10000
+              }
+            },
+            "p1-r2": {
+              "lock_p95_us": {
+                "actual": 11125,
+                "target": 10000
+              }
+            },
+            "p1-r3": {
+              "lock_p95_us": {
+                "actual": 10934,
+                "target": 10000
+              }
+            },
+            "p1-r4": {
+              "lock_p95_us": {
+                "actual": 10530,
+                "target": 10000
+              }
+            },
+            "p1-r5": {
+              "lock_p95_us": {
+                "actual": 10993,
+                "target": 10000
+              }
+            }
+          },
+          "candidate_plan": {
+            "selection_ms": 1.159,
+            "task_scans": [
+              {
+                "Node Type": "Index Scan",
+                "Index Name": "tasks_scheduler_queue",
+                "Actual Rows": 1.0,
+                "Actual Loops": 64,
+                "Rows Removed by Filter": 0
+              }
+            ],
+            "observed_task_rows": 64.0,
+            "scope": "one rolled-back fixture probe; not a general retry bound"
+          }
+        },
+        {
+          "name": "p2",
+          "backlog": 100000,
+          "overdue": false,
+          "seconds": null,
+          "repeats": 5,
+          "claims": [
+            1000,
+            1000,
+            1000,
+            1000,
+            1000
+          ],
+          "claim_p95_us": {
+            "all_runs": [
+              18400,
+              18233,
+              18098,
+              19089,
+              18755
+            ],
+            "median": 18400,
+            "minimum": 18098,
+            "maximum": 19089
+          },
+          "claim_p99_us": {
+            "all_runs": [
+              60165,
+              93308,
+              185919,
+              120957,
+              140741
+            ],
+            "median": 120957,
+            "minimum": 60165,
+            "maximum": 185919
+          },
+          "lock_p95_us": {
+            "all_runs": [
+              11371,
+              11187,
+              11335,
+              11917,
+              11629
+            ],
+            "median": 11371,
+            "minimum": 11187,
+            "maximum": 11917
+          },
+          "max_round_trips": [
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "promotions": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "promotion_spacing_valid": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "empty_poll_count": [
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "failed_polls": [
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "ordinary_starts": [
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            },
+            {
+              "import": 750,
+              "export": 250
+            }
+          ],
+          "principal_starts": [
+            {
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "28": 32,
+              "20": 32,
+              "22": 31,
+              "24": 31,
+              "30": 32,
+              "26": 31,
+              "32": 32,
+              "1": 32,
+              "3": 32,
+              "11": 31,
+              "5": 31,
+              "7": 31,
+              "9": 30,
+              "13": 31,
+              "15": 31,
+              "17": 31,
+              "19": 31,
+              "21": 31,
+              "2": 31,
+              "4": 31,
+              "6": 31,
+              "8": 31,
+              "10": 31,
+              "23": 31,
+              "25": 31,
+              "27": 31,
+              "29": 31,
+              "31": 31,
+              "12": 31
+            },
+            {
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "28": 32,
+              "20": 32,
+              "22": 31,
+              "24": 31,
+              "30": 32,
+              "26": 31,
+              "32": 32,
+              "1": 32,
+              "3": 32,
+              "11": 31,
+              "5": 31,
+              "7": 31,
+              "9": 30,
+              "13": 31,
+              "15": 31,
+              "17": 31,
+              "19": 31,
+              "21": 31,
+              "2": 31,
+              "4": 31,
+              "6": 31,
+              "8": 31,
+              "10": 31,
+              "23": 31,
+              "25": 31,
+              "27": 31,
+              "29": 31,
+              "31": 31,
+              "12": 31
+            },
+            {
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "28": 32,
+              "20": 32,
+              "22": 31,
+              "24": 31,
+              "30": 32,
+              "26": 31,
+              "32": 32,
+              "1": 32,
+              "3": 32,
+              "11": 31,
+              "5": 31,
+              "7": 31,
+              "9": 30,
+              "13": 31,
+              "15": 31,
+              "17": 31,
+              "19": 31,
+              "21": 31,
+              "2": 31,
+              "4": 31,
+              "6": 31,
+              "8": 31,
+              "10": 31,
+              "23": 31,
+              "25": 31,
+              "27": 31,
+              "29": 31,
+              "31": 31,
+              "12": 31
+            },
+            {
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "28": 32,
+              "20": 32,
+              "22": 31,
+              "24": 31,
+              "30": 32,
+              "26": 31,
+              "32": 32,
+              "1": 32,
+              "3": 32,
+              "11": 31,
+              "5": 31,
+              "7": 31,
+              "9": 30,
+              "13": 31,
+              "15": 31,
+              "17": 31,
+              "19": 31,
+              "21": 31,
+              "2": 31,
+              "4": 31,
+              "6": 31,
+              "8": 31,
+              "10": 31,
+              "23": 31,
+              "25": 31,
+              "27": 31,
+              "29": 31,
+              "31": 31,
+              "12": 31
+            },
+            {
+              "14": 32,
+              "16": 32,
+              "18": 32,
+              "28": 32,
+              "20": 32,
+              "22": 31,
+              "24": 31,
+              "30": 32,
+              "26": 31,
+              "32": 32,
+              "1": 32,
+              "3": 32,
+              "11": 31,
+              "5": 31,
+              "7": 31,
+              "9": 30,
+              "13": 31,
+              "15": 31,
+              "17": 31,
+              "19": 31,
+              "21": 31,
+              "2": 31,
+              "4": 31,
+              "6": 31,
+              "8": 31,
+              "10": 31,
+              "23": 31,
+              "25": 31,
+              "27": 31,
+              "29": 31,
+              "31": 31,
+              "12": 31
+            }
+          ],
+          "principal_cap_blocked_us": [
+            {},
+            {},
+            {},
+            {},
+            {}
+          ],
+          "p3_latency_pass": [
+            false,
+            false,
+            false,
+            false,
+            false
+          ],
+          "p4_start_share_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "p4_utilization_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "occupied_slot_fraction": null,
+          "candidate_bound_verified": false,
+          "latency_failures": [
+            "p2-r1",
+            "p2-r2",
+            "p2-r3",
+            "p2-r4",
+            "p2-r5"
+          ],
+          "exceeded_latency_targets": {
+            "p2-r1": {
+              "lock_p95_us": {
+                "actual": 11371,
+                "target": 10000
+              }
+            },
+            "p2-r2": {
+              "lock_p95_us": {
+                "actual": 11187,
+                "target": 10000
+              }
+            },
+            "p2-r3": {
+              "claim_p99_us": {
+                "actual": 185919,
+                "target": 100000
+              },
+              "lock_p95_us": {
+                "actual": 11335,
+                "target": 10000
+              }
+            },
+            "p2-r4": {
+              "claim_p99_us": {
+                "actual": 120957,
+                "target": 100000
+              },
+              "lock_p95_us": {
+                "actual": 11917,
+                "target": 10000
+              }
+            },
+            "p2-r5": {
+              "claim_p99_us": {
+                "actual": 140741,
+                "target": 100000
+              },
+              "lock_p95_us": {
+                "actual": 11629,
+                "target": 10000
+              }
+            }
+          },
+          "candidate_plan": {
+            "selection_ms": 1.666,
+            "task_scans": [
+              {
+                "Node Type": "Index Scan",
+                "Index Name": "tasks_scheduler_queue",
+                "Actual Rows": 1.0,
+                "Actual Loops": 64,
+                "Rows Removed by Filter": 0
+              }
+            ],
+            "observed_task_rows": 64.0,
+            "scope": "one rolled-back fixture probe; not a general retry bound"
+          }
+        },
+        {
+          "name": "p3",
+          "backlog": 10000,
+          "overdue": true,
+          "seconds": null,
+          "repeats": 5,
+          "claims": [
+            12000,
+            12000,
+            12000,
+            12000,
+            12000
+          ],
+          "claim_p95_us": {
+            "all_runs": [
+              17336,
+              17699,
+              17628,
+              17938,
+              17754
+            ],
+            "median": 17699,
+            "minimum": 17336,
+            "maximum": 17938
+          },
+          "claim_p99_us": {
+            "all_runs": [
+              22474,
+              20044,
+              21075,
+              19931,
+              19656
+            ],
+            "median": 20044,
+            "minimum": 19656,
+            "maximum": 22474
+          },
+          "lock_p95_us": {
+            "all_runs": [
+              10533,
+              10887,
+              10817,
+              11113,
+              10963
+            ],
+            "median": 10887,
+            "minimum": 10533,
+            "maximum": 11113
+          },
+          "max_round_trips": [
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "promotions": [
+            1500,
+            1500,
+            1500,
+            1500,
+            1500
+          ],
+          "promotion_spacing_valid": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "empty_poll_count": [
+            1,
+            1,
+            1,
+            1,
+            2
+          ],
+          "failed_polls": [
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "ordinary_starts": [
+            {
+              "export": 2625,
+              "import": 7875
+            },
+            {
+              "export": 2625,
+              "import": 7875
+            },
+            {
+              "export": 2625,
+              "import": 7875
+            },
+            {
+              "export": 2625,
+              "import": 7875
+            },
+            {
+              "export": 2625,
+              "import": 7875
+            }
+          ],
+          "principal_starts": [
+            {
+              "3": 337,
+              "17": 337,
+              "19": 336,
+              "21": 336,
+              "5": 336,
+              "2": 336,
+              "4": 336,
+              "1": 1582,
+              "6": 336,
+              "7": 336,
+              "8": 336,
+              "10": 336,
+              "23": 336,
+              "9": 336,
+              "25": 336,
+              "27": 336,
+              "29": 336,
+              "22": 336,
+              "31": 336,
+              "12": 336,
+              "14": 336,
+              "24": 336,
+              "16": 336,
+              "18": 336,
+              "20": 336,
+              "26": 336,
+              "28": 336,
+              "30": 336,
+              "32": 336,
+              "11": 336,
+              "13": 336,
+              "15": 336
+            },
+            {
+              "3": 337,
+              "17": 337,
+              "19": 336,
+              "21": 336,
+              "5": 336,
+              "2": 336,
+              "4": 336,
+              "1": 1582,
+              "6": 336,
+              "7": 336,
+              "8": 336,
+              "10": 336,
+              "23": 336,
+              "9": 336,
+              "25": 336,
+              "27": 336,
+              "29": 336,
+              "22": 336,
+              "31": 336,
+              "12": 336,
+              "14": 336,
+              "24": 336,
+              "16": 336,
+              "18": 336,
+              "20": 336,
+              "26": 336,
+              "28": 336,
+              "30": 336,
+              "32": 336,
+              "11": 336,
+              "13": 336,
+              "15": 336
+            },
+            {
+              "3": 337,
+              "17": 337,
+              "19": 336,
+              "21": 336,
+              "5": 336,
+              "2": 336,
+              "4": 336,
+              "1": 1582,
+              "6": 336,
+              "7": 336,
+              "8": 336,
+              "10": 336,
+              "23": 336,
+              "9": 336,
+              "25": 336,
+              "27": 336,
+              "29": 336,
+              "22": 336,
+              "31": 336,
+              "12": 336,
+              "14": 336,
+              "24": 336,
+              "16": 336,
+              "18": 336,
+              "20": 336,
+              "26": 336,
+              "28": 336,
+              "30": 336,
+              "32": 336,
+              "11": 336,
+              "13": 336,
+              "15": 336
+            },
+            {
+              "3": 337,
+              "17": 337,
+              "19": 336,
+              "21": 336,
+              "5": 336,
+              "2": 336,
+              "4": 336,
+              "1": 1582,
+              "6": 336,
+              "7": 336,
+              "8": 336,
+              "10": 336,
+              "23": 336,
+              "9": 336,
+              "25": 336,
+              "27": 336,
+              "29": 336,
+              "22": 336,
+              "31": 336,
+              "12": 336,
+              "14": 336,
+              "24": 336,
+              "16": 336,
+              "18": 336,
+              "20": 336,
+              "26": 336,
+              "28": 336,
+              "30": 336,
+              "32": 336,
+              "11": 336,
+              "13": 336,
+              "15": 336
+            },
+            {
+              "3": 337,
+              "17": 337,
+              "19": 336,
+              "21": 336,
+              "5": 336,
+              "2": 336,
+              "4": 336,
+              "1": 1582,
+              "6": 336,
+              "7": 336,
+              "8": 336,
+              "10": 336,
+              "23": 336,
+              "9": 336,
+              "25": 336,
+              "27": 336,
+              "29": 336,
+              "22": 336,
+              "31": 336,
+              "12": 336,
+              "14": 336,
+              "24": 336,
+              "16": 336,
+              "18": 336,
+              "20": 336,
+              "26": 336,
+              "28": 336,
+              "30": 336,
+              "32": 336,
+              "11": 336,
+              "13": 336,
+              "15": 336
+            }
+          ],
+          "principal_cap_blocked_us": [
+            {},
+            {},
+            {},
+            {},
+            {}
+          ],
+          "p3_latency_pass": [
+            false,
+            false,
+            false,
+            false,
+            false
+          ],
+          "p4_start_share_pass": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "p4_utilization_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "occupied_slot_fraction": null,
+          "candidate_bound_verified": false,
+          "latency_failures": [
+            "p3-r1",
+            "p3-r2",
+            "p3-r3",
+            "p3-r4",
+            "p3-r5"
+          ],
+          "exceeded_latency_targets": {
+            "p3-r1": {
+              "lock_p95_us": {
+                "actual": 10533,
+                "target": 10000
+              }
+            },
+            "p3-r2": {
+              "lock_p95_us": {
+                "actual": 10887,
+                "target": 10000
+              }
+            },
+            "p3-r3": {
+              "lock_p95_us": {
+                "actual": 10817,
+                "target": 10000
+              }
+            },
+            "p3-r4": {
+              "lock_p95_us": {
+                "actual": 11113,
+                "target": 10000
+              }
+            },
+            "p3-r5": {
+              "lock_p95_us": {
+                "actual": 10963,
+                "target": 10000
+              }
+            }
+          },
+          "candidate_plan": {
+            "selection_ms": 1.151,
+            "task_scans": [
+              {
+                "Node Type": "Index Scan",
+                "Index Name": "tasks_scheduler_queue",
+                "Actual Rows": 1.0,
+                "Actual Loops": 64,
+                "Rows Removed by Filter": 0
+              }
+            ],
+            "observed_task_rows": 64.0,
+            "scope": "one rolled-back fixture probe; not a general retry bound"
+          }
+        },
+        {
+          "name": "p4",
+          "backlog": 10000,
+          "overdue": true,
+          "seconds": 60,
+          "repeats": 5,
+          "claims": [
+            48,
+            49,
+            63,
+            64,
+            48
+          ],
+          "claim_p95_us": {
+            "all_runs": [
+              27226,
+              27207,
+              17142,
+              17069,
+              27334
+            ],
+            "median": 27207,
+            "minimum": 17069,
+            "maximum": 27334
+          },
+          "claim_p99_us": {
+            "all_runs": [
+              53010,
+              56996,
+              57067,
+              52896,
+              56189
+            ],
+            "median": 56189,
+            "minimum": 52896,
+            "maximum": 57067
+          },
+          "lock_p95_us": {
+            "all_runs": [
+              7218,
+              5069,
+              990,
+              906,
+              2559
+            ],
+            "median": 2559,
+            "minimum": 906,
+            "maximum": 7218
+          },
+          "max_round_trips": [
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "promotions": [
+            6,
+            7,
+            8,
+            8,
+            6
+          ],
+          "promotion_spacing_valid": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "empty_poll_count": [
+            7173,
+            7095,
+            7167,
+            7177,
+            7080
+          ],
+          "failed_polls": [
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
+          "ordinary_starts": [
+            {
+              "import": 32,
+              "export": 10
+            },
+            {
+              "import": 32,
+              "export": 10
+            },
+            {
+              "import": 42,
+              "export": 13
+            },
+            {
+              "import": 42,
+              "export": 14
+            },
+            {
+              "import": 32,
+              "export": 10
+            }
+          ],
+          "principal_starts": [
+            {
+              "1": 4,
+              "2": 4,
+              "14": 2,
+              "16": 2,
+              "18": 2,
+              "20": 2,
+              "22": 2,
+              "24": 2,
+              "26": 1,
+              "28": 1,
+              "30": 1,
+              "32": 1,
+              "5": 2,
+              "7": 2,
+              "9": 2,
+              "11": 1,
+              "3": 2,
+              "13": 1,
+              "15": 1,
+              "17": 1,
+              "19": 1,
+              "21": 1,
+              "4": 1,
+              "6": 1,
+              "8": 1,
+              "10": 1,
+              "23": 1,
+              "25": 1,
+              "27": 1,
+              "29": 1,
+              "31": 1,
+              "12": 1
+            },
+            {
+              "1": 4,
+              "2": 5,
+              "14": 2,
+              "16": 2,
+              "18": 2,
+              "20": 2,
+              "22": 2,
+              "24": 2,
+              "26": 1,
+              "28": 1,
+              "30": 1,
+              "32": 1,
+              "5": 2,
+              "7": 2,
+              "9": 2,
+              "11": 1,
+              "3": 2,
+              "13": 1,
+              "15": 1,
+              "17": 1,
+              "19": 1,
+              "21": 1,
+              "4": 1,
+              "6": 1,
+              "8": 1,
+              "10": 1,
+              "23": 1,
+              "25": 1,
+              "27": 1,
+              "29": 1,
+              "31": 1,
+              "12": 1
+            },
+            {
+              "1": 5,
+              "2": 5,
+              "14": 3,
+              "16": 3,
+              "18": 3,
+              "20": 3,
+              "22": 2,
+              "24": 3,
+              "26": 3,
+              "28": 3,
+              "30": 3,
+              "32": 2,
+              "5": 3,
+              "7": 2,
+              "9": 2,
+              "11": 1,
+              "3": 2,
+              "13": 1,
+              "15": 1,
+              "17": 1,
+              "19": 1,
+              "21": 1,
+              "4": 1,
+              "6": 1,
+              "8": 1,
+              "10": 1,
+              "23": 1,
+              "25": 1,
+              "27": 1,
+              "29": 1,
+              "31": 1,
+              "12": 1
+            },
+            {
+              "1": 6,
+              "2": 4,
+              "14": 3,
+              "16": 3,
+              "18": 3,
+              "20": 3,
+              "22": 2,
+              "24": 3,
+              "26": 3,
+              "28": 3,
+              "30": 3,
+              "32": 3,
+              "5": 3,
+              "7": 2,
+              "9": 2,
+              "11": 1,
+              "3": 2,
+              "13": 1,
+              "15": 1,
+              "17": 1,
+              "19": 1,
+              "21": 1,
+              "4": 1,
+              "6": 1,
+              "8": 1,
+              "10": 1,
+              "23": 1,
+              "25": 1,
+              "27": 1,
+              "29": 1,
+              "31": 1,
+              "12": 1
+            },
+            {
+              "1": 3,
+              "2": 5,
+              "14": 2,
+              "16": 2,
+              "18": 2,
+              "20": 2,
+              "22": 2,
+              "24": 2,
+              "26": 1,
+              "28": 1,
+              "30": 1,
+              "32": 1,
+              "5": 2,
+              "7": 2,
+              "9": 2,
+              "11": 1,
+              "3": 2,
+              "13": 1,
+              "15": 1,
+              "17": 1,
+              "19": 1,
+              "21": 1,
+              "4": 1,
+              "6": 1,
+              "8": 1,
+              "10": 1,
+              "23": 1,
+              "25": 1,
+              "27": 1,
+              "29": 1,
+              "31": 1,
+              "12": 1
+            }
+          ],
+          "principal_cap_blocked_us": [
+            {
+              "1": 30362511,
+              "2": 28159324,
+              "3": 216425,
+              "4": 106073,
+              "5": 215510,
+              "6": 108627,
+              "7": 214981,
+              "8": 107537,
+              "9": 214491,
+              "10": 28777809,
+              "11": 110428,
+              "12": 106803,
+              "13": 30007066,
+              "14": 247812,
+              "15": 30008569,
+              "16": 218481,
+              "17": 108599,
+              "18": 228649,
+              "19": 108012,
+              "20": 233323,
+              "21": 107255,
+              "22": 28541826,
+              "23": 107756,
+              "24": 215831,
+              "25": 107110,
+              "26": 108347,
+              "27": 107140,
+              "28": 108410,
+              "29": 110892,
+              "30": 108378,
+              "31": 108059,
+              "32": 108223
+            },
+            {
+              "1": 57862668,
+              "2": 28569456,
+              "3": 215373,
+              "4": 107706,
+              "5": 215683,
+              "6": 107998,
+              "7": 215020,
+              "8": 107957,
+              "9": 214550,
+              "10": 30008078,
+              "11": 110656,
+              "12": 107488,
+              "13": 108764,
+              "14": 248365,
+              "15": 30007881,
+              "16": 228631,
+              "17": 113703,
+              "18": 221881,
+              "19": 107038,
+              "20": 217155,
+              "21": 107810,
+              "22": 29247311,
+              "23": 106805,
+              "24": 215349,
+              "25": 106871,
+              "26": 107979,
+              "27": 109489,
+              "28": 108380,
+              "29": 106161,
+              "30": 108927,
+              "31": 106915,
+              "32": 107642
+            },
+            {
+              "1": 30463140,
+              "2": 28593457,
+              "3": 214341,
+              "4": 107134,
+              "5": 26260750,
+              "6": 107540,
+              "7": 215382,
+              "8": 107557,
+              "9": 215823,
+              "10": 30007290,
+              "11": 107961,
+              "12": 107416,
+              "13": 107414,
+              "14": 356914,
+              "15": 30008307,
+              "16": 334440,
+              "17": 106920,
+              "18": 331126,
+              "19": 107270,
+              "20": 324014,
+              "21": 106428,
+              "22": 29232354,
+              "23": 108272,
+              "24": 327738,
+              "25": 107401,
+              "26": 322904,
+              "27": 108423,
+              "28": 324707,
+              "29": 107915,
+              "30": 324386,
+              "31": 107498,
+              "32": 216509
+            },
+            {
+              "1": 30570461,
+              "2": 58442312,
+              "3": 214664,
+              "4": 107026,
+              "5": 322804,
+              "6": 107105,
+              "7": 214515,
+              "8": 108387,
+              "9": 214496,
+              "10": 107902,
+              "11": 107222,
+              "12": 108366,
+              "13": 108318,
+              "14": 353549,
+              "15": 30008099,
+              "16": 329951,
+              "17": 108481,
+              "18": 326892,
+              "19": 107891,
+              "20": 331988,
+              "21": 108191,
+              "22": 28656592,
+              "23": 106847,
+              "24": 325374,
+              "25": 107877,
+              "26": 323477,
+              "27": 107685,
+              "28": 323385,
+              "29": 107107,
+              "30": 322643,
+              "31": 108319,
+              "32": 26561501
+            },
+            {
+              "1": 30244902,
+              "2": 57737609,
+              "3": 215243,
+              "4": 107789,
+              "5": 216554,
+              "6": 107827,
+              "7": 213769,
+              "8": 107368,
+              "9": 215723,
+              "10": 29466210,
+              "11": 108742,
+              "12": 107501,
+              "13": 107634,
+              "14": 249271,
+              "15": 30007722,
+              "16": 220868,
+              "17": 109663,
+              "18": 217782,
+              "19": 108187,
+              "20": 219062,
+              "21": 107771,
+              "22": 28260359,
+              "23": 107437,
+              "24": 215876,
+              "25": 108288,
+              "26": 110157,
+              "27": 107601,
+              "28": 108296,
+              "29": 107508,
+              "30": 109197,
+              "31": 107824,
+              "32": 108051
+            }
+          ],
+          "p3_latency_pass": [
+            false,
+            false,
+            true,
+            true,
+            false
+          ],
+          "p4_start_share_pass": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "p4_utilization_pass": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "occupied_slot_fraction": [
+            0.9951676444444444,
+            0.9953602722222223,
+            0.9944563111111111,
+            0.9941087833333333,
+            0.9953774277777778
+          ],
+          "candidate_bound_verified": false,
+          "latency_failures": [
+            "p4-r1",
+            "p4-r2",
+            "p4-r5"
+          ],
+          "exceeded_latency_targets": {
+            "p4-r1": {
+              "claim_p95_us": {
+                "actual": 27226,
+                "target": 25000
+              }
+            },
+            "p4-r2": {
+              "claim_p95_us": {
+                "actual": 27207,
+                "target": 25000
+              }
+            },
+            "p4-r5": {
+              "claim_p95_us": {
+                "actual": 27334,
+                "target": 25000
+              }
+            }
+          },
+          "candidate_plan": {
+            "selection_ms": 1.16,
+            "task_scans": [
+              {
+                "Node Type": "Index Scan",
+                "Index Name": "tasks_scheduler_queue",
+                "Actual Rows": 1.0,
+                "Actual Loops": 64,
+                "Rows Removed by Filter": 0
+              }
+            ],
+            "observed_task_rows": 64.0,
+            "scope": "one rolled-back fixture probe; not a general retry bound"
+          }
+        }
+      ],
+      "raw_artifacts": {
+        "manifest.json": {
+          "bytes": 39269,
+          "sha256": "42f4e1d1b70d25261072743f7a7b33777b4b39704d3d8c6ca155edf1e1bb2d93"
+        },
+        "p0-plan.log": {
+          "bytes": 70591,
+          "sha256": "df2231d73cd8be304e00d922f5420f2e0d2fbdb6e21acd1f26b40c78d06eeee4"
+        },
+        "p0-preparation.json": {
+          "bytes": 23995,
+          "sha256": "723159b7bb3600895d995b6779d8ecc11b3a5e18f81375ec4233c476c174f246"
+        },
+        "p0-r1-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "f44f3eab515330fb25aae6ac34755eff8dcaa8444de7e98f7ca28d1c6b015471"
+        },
+        "p0-r1-worker-0.json": {
+          "bytes": 192890,
+          "sha256": "ea93f55690969dfb0dd167229aa39e1effc47c077cb79b8d6f1f8c45ca791362"
+        },
+        "p0-r1-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "f80ab1ccf2466a17ab87fcc5484f4b5420b5a762164a10328210befaaa0cef64"
+        },
+        "p0-r1-worker-1.json": {
+          "bytes": 192911,
+          "sha256": "6fc1c361f331aa4e88029f79964f19a28625bf76227d45ce8fde509279eb2f47"
+        },
+        "p0-r2-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "5b275ff28ee4311b620b2b7df41cf939217915eb0b30a5e1fb0241a3bb20338a"
+        },
+        "p0-r2-worker-0.json": {
+          "bytes": 193127,
+          "sha256": "5e5d0698c981a91de3ddd2d761a379d43df2133a0e1dd73e254756351aeedf5d"
+        },
+        "p0-r2-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "f08ebceb4602f4559c029d1d1ce98e12477db44510bdeb778bce58f64911c564"
+        },
+        "p0-r2-worker-1.json": {
+          "bytes": 193170,
+          "sha256": "9df725c073013e42aaff870a1819fe6cdd6385e6cd1d673193fbb4fad5e99c61"
+        },
+        "p0-r3-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "4c8f27fde709cf3f168dece39a123559c84f6fbeec54a2dbe599dbfebbaa0b48"
+        },
+        "p0-r3-worker-0.json": {
+          "bytes": 193134,
+          "sha256": "e3a406baccdf93b21bb5a6b32e94db47e0accc343bd8e810a049d74d6c8f6251"
+        },
+        "p0-r3-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "a3c2ccaa8758aeb6600ea4f3e2efe427c6cac8560329f822952f58dd49a98897"
+        },
+        "p0-r3-worker-1.json": {
+          "bytes": 193099,
+          "sha256": "5b69b0840ac76e5916746dfd543373e604061d5c35118ac7cda986501e7bf230"
+        },
+        "p0-r4-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "24a8c4d08213734621c1aa5862a66a5a0c28d7e52ca5e4b22191b188b4fd2e57"
+        },
+        "p0-r4-worker-0.json": {
+          "bytes": 192886,
+          "sha256": "af0f8990977bb52982c20b1aa7fb2c838133e5d5908664dbb6faae2ff7911978"
+        },
+        "p0-r4-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "8ac851a0e2626a6d1b8ba596f361092d4087a74a1184745a2cc3ed77877666ae"
+        },
+        "p0-r4-worker-1.json": {
+          "bytes": 192862,
+          "sha256": "ccd33ec58ad87a08337f9f8aaa412f51ae07aff462565f92ebba6ff7890bf3b3"
+        },
+        "p0-r5-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "246a8000baee9366d7070b1dacf1efaaa746fc3981c88c8d9f42afbcfe5e36fc"
+        },
+        "p0-r5-worker-0.json": {
+          "bytes": 192930,
+          "sha256": "2a83a39115cba1ce57b040d5fd6a998c13fbf809c1d648129dd6e700ca37530e"
+        },
+        "p0-r5-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "5c5f4ffcfbf98e4de6246d6b7239e577cd11a4d425b1bf8fe80edaa1ff3630ed"
+        },
+        "p0-r5-worker-1.json": {
+          "bytes": 192912,
+          "sha256": "6e663d94168d0718246eb858eff6bd634f2ddd4aee95ab72859dc42f1b3bc93c"
+        },
+        "p1-plan.log": {
+          "bytes": 70593,
+          "sha256": "7bd21897c38c2f9f62f177d15e7a4c3c4696d83cb377ad9162bf6084cc6ebae2"
+        },
+        "p1-preparation.json": {
+          "bytes": 23997,
+          "sha256": "01466f99ef81ac7b04af3726308e07350f9d679f0ce26bae6694281028e6c680"
+        },
+        "p1-r1-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "4c70eaad5edd85f10963948531e08e63354cb0a6a8628b27df5a727c385084f0"
+        },
+        "p1-r1-worker-0.json": {
+          "bytes": 1748461,
+          "sha256": "2ce9449c5880e60c075b292844230b7f94be40449bd14a1fa57452f0d65564e1"
+        },
+        "p1-r1-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "a45a6d9579484afb39b0b8009b9eb8600d03576eb5d4d98d4631cf07cac99542"
+        },
+        "p1-r1-worker-1.json": {
+          "bytes": 1748587,
+          "sha256": "6713cb871d16575ac8e869bc278c80d4955e8801e5ea61f7092c348953320f7f"
+        },
+        "p1-r2-worker-0-container.json": {
+          "bytes": 3222,
+          "sha256": "5d469d46ad5e0bf0ab4cc85402aeaf52ff08a769fbb8e773a527ddc7e42ef2f3"
+        },
+        "p1-r2-worker-0.json": {
+          "bytes": 1748708,
+          "sha256": "79a7a96dee52a89e6ccb7b564f64fb5ce4c67d5ff91ccad1b45bcd944b957610"
+        },
+        "p1-r2-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "aa9d99f93522cf15bf5d77ed502c7717b2256dec88129c203b770439c4582748"
+        },
+        "p1-r2-worker-1.json": {
+          "bytes": 1748690,
+          "sha256": "0cacba939d41dc35bcd84093a227c6c00777ff6413da87cfe1d4002b7242fa09"
+        },
+        "p1-r3-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "e72df1740c156257f18838bb4fa3e5129ca75e46c6057037c9edeb8bd55dc751"
+        },
+        "p1-r3-worker-0.json": {
+          "bytes": 1748319,
+          "sha256": "923015dd99cad06aeae71b1397f31c3deaa8c61b8e376e585a0fd86cca47e9bb"
+        },
+        "p1-r3-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "779cb0a93b59dc85a31e15b4e81b81326accb921dac60b622cee40ae89540d16"
+        },
+        "p1-r3-worker-1.json": {
+          "bytes": 1748270,
+          "sha256": "4684f96a67e341fb520d080360efe3a00199d5dcd4f61e744b256f2ffe59c77a"
+        },
+        "p1-r4-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "c2d12f94a6d22031d6f4ad17f5b04a409d7bd26e0118f67c729471af04efaefc"
+        },
+        "p1-r4-worker-0.json": {
+          "bytes": 1748465,
+          "sha256": "62bb9f04c3b14aef626bf15813ed917c2ca454d05fc4806eb2e4d21d46e369f9"
+        },
+        "p1-r4-worker-1-container.json": {
+          "bytes": 3223,
+          "sha256": "3ef4976873a176832f3a8a2dc3d195871af879b4044631c95dcf7bc81bdb87c7"
+        },
+        "p1-r4-worker-1.json": {
+          "bytes": 1748495,
+          "sha256": "c85871ea36afc6a292b92809fe857a1011a179b49779180e01cf948cc995a1e3"
+        },
+        "p1-r5-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "ae1e4deb14d87b084d2e11d8fc10630fa9e0e60c0caedb2cde6ab5cd6d62e8b1"
+        },
+        "p1-r5-worker-0.json": {
+          "bytes": 1748717,
+          "sha256": "86dd68f66b2cf38df8b9e7da4d91af543b3949207ff5f58a662a8275c0fc20d7"
+        },
+        "p1-r5-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "540a0ea9459ae582496ce7808f72a03ad2de98fa32f029ec54b8cb00e2ce2571"
+        },
+        "p1-r5-worker-1.json": {
+          "bytes": 1748628,
+          "sha256": "61b44f552cc9fe80efebf083a0539437683e18c8f214da9057bc70fce573c391"
+        },
+        "p2-plan.log": {
+          "bytes": 70597,
+          "sha256": "ce12b516f616723cc525f624ec2e210079574ca7ed5ec6a7b732b9ae314b71df"
+        },
+        "p2-preparation.json": {
+          "bytes": 23998,
+          "sha256": "34189966a6cc2a787d8cf0d36ec557178ddc27a7ffe1d1639fde6cdf973cf421"
+        },
+        "p2-r1-worker-0-container.json": {
+          "bytes": 3222,
+          "sha256": "35f5fd71d5d62529985a87da22e22c41670ddfb77fe6e438cbb547efa891de93"
+        },
+        "p2-r1-worker-0.json": {
+          "bytes": 193419,
+          "sha256": "fd56bae4fd29be5efd9f3a80824e395c9e733b7be08ec551158bf5109c52f59b"
+        },
+        "p2-r1-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "62d79f191a51d7ea4fea8909915cc9b549d2ebc9b79ff8e3e153c9bb3d293e6c"
+        },
+        "p2-r1-worker-1.json": {
+          "bytes": 193457,
+          "sha256": "8f724485f3fd1a57cacb7762b4fb2415afab5ffa6fe7380e47c5c72e4b4716af"
+        },
+        "p2-r2-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "017a3ad86506d6b78d4204013ae1295a3767b0326e5d3d6a87d3668f7bc169fb"
+        },
+        "p2-r2-worker-0.json": {
+          "bytes": 193480,
+          "sha256": "a8dcc262bde9534ab3ae47f49fe7064ae8deeb6cbaeb0d64e62298fa7fb2e3f9"
+        },
+        "p2-r2-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "4318528569b1a070d894ad320359440c7b0d911125450ef7224b50a64128d288"
+        },
+        "p2-r2-worker-1.json": {
+          "bytes": 193513,
+          "sha256": "337b28d04ee9196cd600246f408f6f95535e94ccb7e4b2ac41250b5661bd9e44"
+        },
+        "p2-r3-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "ee7bd739c77eb99d27b37cf47a1581064c55da6dcd69faf105e0abdc715ff23a"
+        },
+        "p2-r3-worker-0.json": {
+          "bytes": 193579,
+          "sha256": "6a5e33c7cce835f28df173511200ed0ddabb43f9eb5f88e88ea4f657b77aaf1f"
+        },
+        "p2-r3-worker-1-container.json": {
+          "bytes": 3223,
+          "sha256": "4e817a06448f8a42a99eaba8f4698b01daed8b38e87c56ec93934227dac3aefd"
+        },
+        "p2-r3-worker-1.json": {
+          "bytes": 193588,
+          "sha256": "6a9f9a2a4b1d5077a0a9a2eedebc5009ddb5eddae9d81799b0c8fe1a4c30757b"
+        },
+        "p2-r4-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "eaeb57ba1c92816d02712d72f10b376707223b2c0b67b9c84b28b274c85a9b0e"
+        },
+        "p2-r4-worker-0.json": {
+          "bytes": 193501,
+          "sha256": "76ab3d1357892830523a29592dda4ffad51f362290567f788621856b0051aec5"
+        },
+        "p2-r4-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "deeefd2f47a2373e9d912f42b1d6941a40da77e5edd081d2cf81e22f7423ad93"
+        },
+        "p2-r4-worker-1.json": {
+          "bytes": 193511,
+          "sha256": "662ff4ec992ecbc843a8fa16a17eb479f6f2135d1205dac525d8864fcf5e9110"
+        },
+        "p2-r5-worker-0-container.json": {
+          "bytes": 3223,
+          "sha256": "2bba709568af3def5f68dbb4d1244ddd677f9d8df8933be09e209c2ee13bc2b2"
+        },
+        "p2-r5-worker-0.json": {
+          "bytes": 193507,
+          "sha256": "4db180f7352879153a9f2a04240f07a8276ab75a40deda49dc951d7a6ef115df"
+        },
+        "p2-r5-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "6b91b6150fade17800b8a1be7f18d4e0e4a4341ac62935c4783ea40192a7f629"
+        },
+        "p2-r5-worker-1.json": {
+          "bytes": 193541,
+          "sha256": "c0df29b590b82b93bb587eba9ae05b1f28d0e3b61b969a0c1da7c472c74d0119"
+        },
+        "p3-plan.log": {
+          "bytes": 70593,
+          "sha256": "f35e80338266da325b57d952ad63f98cf12dde8ab07d60b721d6ce0905b07c56"
+        },
+        "p3-preparation.json": {
+          "bytes": 23995,
+          "sha256": "1497de4e1a449b822f2d2031e04ea8499b7d79b539e1d3f134a30437d3748886"
+        },
+        "p3-r1-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "060c7a31fd2422fa046e2c187899e31aefe31ebffe53ca6f387a296d965c5221"
+        },
+        "p3-r1-worker-0.json": {
+          "bytes": 1747428,
+          "sha256": "307f380aa906c539f2a8d93886e71dd5ba3132c6d7c00143bc8811f379f67e73"
+        },
+        "p3-r1-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "aa27b70af7d9f33f18ad34403db6b9b040785bcadbdb9b31a31ac7e56618562b"
+        },
+        "p3-r1-worker-1.json": {
+          "bytes": 1747294,
+          "sha256": "f3ceb18f97c4792644f4cd5fa94232936d214da832f07090a69476cb809851d9"
+        },
+        "p3-r2-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "a7ba23f5996b0a0e2333c8b08a7be922e58ce8f7b0dbaae9f948f22327b87063"
+        },
+        "p3-r2-worker-0.json": {
+          "bytes": 1747057,
+          "sha256": "bbb98d9758547eed4c711ba1de3feb32dc88b3f3b33370312af39f8eb72edba5"
+        },
+        "p3-r2-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "bf459a56300bbadd5bb17207e8192eacbcbe46730d6def2485315d7bf2f2f79d"
+        },
+        "p3-r2-worker-1.json": {
+          "bytes": 1746982,
+          "sha256": "fc3040fec0220d3bbad0d397f278a5f9cedd30db0259ea97c8366a6aed9eaece"
+        },
+        "p3-r3-worker-0-container.json": {
+          "bytes": 3222,
+          "sha256": "9f234fcb77aa828b88b3ceb45362010932fb1b81c9b388186b199139b1a75165"
+        },
+        "p3-r3-worker-0.json": {
+          "bytes": 1747116,
+          "sha256": "bf8be39f154905786278974d65997bacbe2ff54fd1d5f9fda570eb4b3884ba73"
+        },
+        "p3-r3-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "d4c68b91f4c35b1d5587e3396f6bd3ccaaf74d4327a00d8b5a839ca5b54eab5f"
+        },
+        "p3-r3-worker-1.json": {
+          "bytes": 1747339,
+          "sha256": "c100e5b9712e40a53c8fbccddc463e56af51787d5fd7937bf247441ec9a6c986"
+        },
+        "p3-r4-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "2813fbe681a73069f20ba6bfc2f729a59fe12cdcab72464ef6fcd6c2142fd5d4"
+        },
+        "p3-r4-worker-0.json": {
+          "bytes": 1747165,
+          "sha256": "779c2ea795cea70e79d92456def1952269242a1878186a9432de53241f6c2189"
+        },
+        "p3-r4-worker-1-container.json": {
+          "bytes": 3223,
+          "sha256": "72c9ffbd36c4f1b6ae847faf354734c47bdd4f26c269feeb090bd38e57af9fa8"
+        },
+        "p3-r4-worker-1.json": {
+          "bytes": 1747083,
+          "sha256": "89d17b375760276c2d52e6bbd6abe6262f5af9d493ce867fdd69bfb8d5cfa9d3"
+        },
+        "p3-r5-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "d77177c05f1bb4db71f7186fe09e7130fe6ae83cec67611e9741915d8e6c2daa"
+        },
+        "p3-r5-worker-0.json": {
+          "bytes": 1747306,
+          "sha256": "8df6ca4e74f329e05fb646efff588ae6dd70d0cedbb3063192d057f34121ee11"
+        },
+        "p3-r5-worker-1-container.json": {
+          "bytes": 3223,
+          "sha256": "80eedb6026ffde5d3b7de23212b87e35d694807dd6e323baa7dd4db2aed098dc"
+        },
+        "p3-r5-worker-1.json": {
+          "bytes": 1746930,
+          "sha256": "bd1e0736bda1636bd1c9121352944a85390e179e6867e596cec6273333e3e12f"
+        },
+        "p4-plan.log": {
+          "bytes": 70592,
+          "sha256": "cd932722517d1dd487b5330365b80660f99be15f3d4d552fa4885f1ae55edf46"
+        },
+        "p4-preparation.json": {
+          "bytes": 24078,
+          "sha256": "1e315131eefc3ec2c4c94188ef9158f00faecdbb468781b85c92d01eb19ba316"
+        },
+        "p4-r1-warmup-container.json": {
+          "bytes": 3224,
+          "sha256": "f7fa582b15fa46dc8d4bd16b8bf614219ac2caac84c0f9359573af8b5cc18a86"
+        },
+        "p4-r1-warmup.json": {
+          "bytes": 67796,
+          "sha256": "f7fd9fce024b190a25d599d08187277e1453f886d473614bb04d95db571c9b69"
+        },
+        "p4-r1-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "42e9367895872d90af0e728ebd20cc40a1c014cc7e029991ede073886ed43e4e"
+        },
+        "p4-r1-worker-0.json": {
+          "bytes": 103212,
+          "sha256": "92ecf152d2aad73bf282e9f58247b253d761c526e572e617ed8df772bc10d9ab"
+        },
+        "p4-r1-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "46b31c29858255aac0a3cb941a057ec23c57ba6cf8d46ef724dc989209226b38"
+        },
+        "p4-r1-worker-1.json": {
+          "bytes": 32345,
+          "sha256": "af4b41653da4dcb0d16e862d21ba991948bb8280696be6bbc8e8e90512ec7d53"
+        },
+        "p4-r2-warmup-container.json": {
+          "bytes": 3224,
+          "sha256": "b9c57982351084c51d533c9fb6b1bd5b838619a2fa98bcc6ffff631d616a8cd0"
+        },
+        "p4-r2-warmup.json": {
+          "bytes": 67806,
+          "sha256": "897da5ddff42e800840464098f93ae4a4ec64e59139ae7c87107f589f13fd451"
+        },
+        "p4-r2-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "30dc17f35c012b2699cfd898669642177513321841aa74135d899809e0d0ecf0"
+        },
+        "p4-r2-worker-0.json": {
+          "bytes": 69046,
+          "sha256": "906e1199cc01026d241603f7dcb9efde176d63cbb3493ceb43f89f0d19ebeb59"
+        },
+        "p4-r2-worker-1-container.json": {
+          "bytes": 3223,
+          "sha256": "42a3f95f6ce513702a76faaa406fa76dcae4bc256f1329331cfa7070e86fceaa"
+        },
+        "p4-r2-worker-1.json": {
+          "bytes": 66036,
+          "sha256": "fb1c13e5ef3b50882063a9321d2ab0e7fb9f796065ed0128ebde2c3b8e556e5e"
+        },
+        "p4-r3-warmup-container.json": {
+          "bytes": 3224,
+          "sha256": "eb7cd74bb7e56122204579a439d07be6cce397559017b868a7f591a4a48c61fa"
+        },
+        "p4-r3-warmup.json": {
+          "bytes": 66150,
+          "sha256": "f8b60208fcb0d726d23615e9aa70fb60ba94a53503447cae0c66cc9b836ba487"
+        },
+        "p4-r3-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "8b9990ce6cede49b311658454c2e9837b5ae41cd60ef3f0c053b250499473ac9"
+        },
+        "p4-r3-worker-0.json": {
+          "bytes": 74643,
+          "sha256": "603bb58b43319ab64b219ac5d3dcd9c578e491de226c59d05d5e836999f69ffd"
+        },
+        "p4-r3-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "43c554d96a1f36cb77fcc404c0985016dd276c6c0156c73d4466b748a5403f98"
+        },
+        "p4-r3-worker-1.json": {
+          "bytes": 65168,
+          "sha256": "d6eb5fb540648645f804f17fe1686663e26007dd9b97a7921e2c531ddd6203a0"
+        },
+        "p4-r4-warmup-container.json": {
+          "bytes": 3224,
+          "sha256": "aacdcc076dd8f97498cc07c5c26ec2c6ae2e0a58004c262e1e69665616f2cf25"
+        },
+        "p4-r4-warmup.json": {
+          "bytes": 64696,
+          "sha256": "cc2cb46d80a0447b86fb07bc4df9500f5c7030482a9cef804960b83f6527ad31"
+        },
+        "p4-r4-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "dd74dcfb8e16f132090fc41531ab4c1559b0a314b1cd9a957e72f31fe1fa4bd8"
+        },
+        "p4-r4-worker-0.json": {
+          "bytes": 103566,
+          "sha256": "1953f1aa7beed935c05959ba8cdbcc9dd78e29c8bfcbb87bc9b1c39bd288a754"
+        },
+        "p4-r4-worker-1-container.json": {
+          "bytes": 3223,
+          "sha256": "cfdcd224ff96bcb8c814e4efd6549ddca1c744ff58c5bb7fdbff7440c43db02f"
+        },
+        "p4-r4-worker-1.json": {
+          "bytes": 36703,
+          "sha256": "46e39daaeb03f7cfe636172585f8f4fde36af600b9313c4bd5f84a7d0fb296fd"
+        },
+        "p4-r5-warmup-container.json": {
+          "bytes": 3224,
+          "sha256": "07d4db3e81a8d729cdfa1bef93e1236952dd65015fd12988bde594207e521506"
+        },
+        "p4-r5-warmup.json": {
+          "bytes": 65151,
+          "sha256": "fd9e0f835866ef40d908e865e8de0734f99188e0d64a174002f65d9868c36acd"
+        },
+        "p4-r5-worker-0-container.json": {
+          "bytes": 3224,
+          "sha256": "b0a7dd40896f52fc0bd1891f1276e412a3262dc60ab73a016ceb985354b2a899"
+        },
+        "p4-r5-worker-0.json": {
+          "bytes": 64933,
+          "sha256": "f0775545bf8392619b924cdec2e51f53c0cb35810cba50d18d073a1e0b349a95"
+        },
+        "p4-r5-worker-1-container.json": {
+          "bytes": 3224,
+          "sha256": "0c943e354a7a048870260ee2264899c79327112f66be23574c86e90be968a7e9"
+        },
+        "p4-r5-worker-1.json": {
+          "bytes": 69747,
+          "sha256": "323f639cffe53f458e76edba4606bb9bb5b470a56776d32dfae5907af50473e8"
+        },
+        "postgres-container.json": {
+          "bytes": 2974,
+          "sha256": "b14de7ca6eeec256a8758d1cb17ccdc08893fa4c9a19c0aa40130d1070d046d0"
+        },
+        "workload-1000.toml": {
+          "bytes": 245,
+          "sha256": "3dcfc1447928213c7a4f863e32e61ac5dc068b3aa5e17a23d4c9c34932468cd2"
+        },
+        "workload-10000.toml": {
+          "bytes": 246,
+          "sha256": "c66abde4161721144ae9a32057c60235854901b1a1eeb9865a6ce2e47cd30348"
+        },
+        "workload-100000.toml": {
+          "bytes": 247,
+          "sha256": "76c0d5c40000a83b27f82cd662feaa0c12aacebbe8ebe23c95868986a650c612"
+        }
+      }
+    }
+  ]
+}

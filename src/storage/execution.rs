@@ -111,3 +111,29 @@ where
     )
     .await
 }
+
+/// Captured on the caller before spawning, then installed while work runs.
+pub(crate) struct SpawnObservationContext {
+    #[cfg(any(test, feature = "integration-test-support", feature = "query-capture"))]
+    capture: hubuum_storage_postgres::QueryCaptureContext,
+}
+
+impl SpawnObservationContext {
+    pub(crate) fn current() -> Self {
+        Self {
+            #[cfg(any(test, feature = "integration-test-support", feature = "query-capture"))]
+            capture: hubuum_storage_postgres::QueryCaptureContext::current(),
+        }
+    }
+
+    pub(crate) async fn run<F: Future>(self, future: F) -> F::Output {
+        #[cfg(any(test, feature = "integration-test-support", feature = "query-capture"))]
+        {
+            self.capture.run(future).await
+        }
+        #[cfg(not(any(test, feature = "integration-test-support", feature = "query-capture")))]
+        {
+            future.await
+        }
+    }
+}

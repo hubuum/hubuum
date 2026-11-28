@@ -8,7 +8,7 @@ impl MemoryStorage {
         references: &mut BTreeMap<String, MemoryImportReference>,
     ) -> Result<Option<ResourceRevision>, StorageError> {
         let parts = input.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let existing = state.identity_scope_by_name(&parts.name).cloned();
         if let Some(current) = &existing {
             assert_import_revision(parts.condition, current.revision())?;
@@ -49,7 +49,7 @@ impl MemoryStorage {
             revision,
         )
         .map_err(invalid_contract_value)?;
-        state.identity_scopes.insert(id.id(), scope);
+        state.store_identity_scope(id.id(), scope);
         if let Some(reference) = parts.reference {
             references.insert(reference, MemoryImportReference::IdentityScope(id));
         }
@@ -70,7 +70,7 @@ impl MemoryStorage {
                 references,
             )
             .await?;
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let existing = state
             .groups
             .values()
@@ -122,7 +122,7 @@ impl MemoryStorage {
         .last_sync_success_at(parts.last_sync_success_at)
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.groups.insert(id.id(), group);
+        state.store_group(id.id(), group);
         if let Some(reference) = parts.reference {
             references.insert(reference, MemoryImportReference::Group(id));
         }
@@ -150,7 +150,7 @@ impl MemoryStorage {
                 references,
             )
             .await?;
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let existing = state
             .memberships
             .get(&(principal_id.id(), group_id.id()))
@@ -186,9 +186,7 @@ impl MemoryStorage {
             revision,
         )
         .map_err(invalid_contract_value)?;
-        state
-            .memberships
-            .insert((principal_id.id(), group_id.id()), membership);
+        state.store_membership((principal_id.id(), group_id.id()), membership);
         if parts.sources.is_empty() {
             state
                 .external_memberships

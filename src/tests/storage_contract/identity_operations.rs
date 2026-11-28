@@ -927,10 +927,11 @@ async fn every_available_storage_backend_supplies_complete_identity_operations()
                 ))
                 .request_hash(Some(prefix("identity_contract_sa_task_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .try_build(10)
+                .try_build()
                 .expect("identity contract task request should be valid"),
             )
             .await
+            .map(expect_legacy_task)
             .expect("certified backend should queue service-account work");
         let (disabled, cancelled_task_kinds) = backend
             .disable_service_account(StorageServiceAccountMutation::new(

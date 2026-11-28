@@ -1,9 +1,12 @@
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use actix_web::{http::StatusCode, test};
     use chrono::{Duration, Utc};
     use diesel::{ExpressionMethods, QueryDsl};
     use diesel_async::RunQueryDsl;
+    use hubuum_domain::{IdentityReference, ResourceIdentity, VersionIdentity};
     use rstest::rstest;
 
     use crate::models::{
@@ -18,6 +21,7 @@ mod tests {
     use crate::tests::{TestContext, scoped_token, test_context};
     use hubuum_storage_core::{
         StorageBackupRow, StorageBackupStateSection, StorageBackupStateSections,
+        StorageIdentityEvidence, StorageIdentitySubject,
     };
     use hubuum_storage_postgres::with_connection;
 
@@ -52,6 +56,18 @@ mod tests {
     }
 
     fn minimally_valid_full_backup_document() -> BackupDocument {
+        let identity = || {
+            StorageIdentityEvidence::try_new(
+                Some(StorageIdentitySubject::Resource {
+                    identity: IdentityReference::Known {
+                        identity: ResourceIdentity::generate(),
+                    },
+                    version: VersionIdentity::generate(),
+                }),
+                BTreeMap::new(),
+            )
+            .unwrap()
+        };
         let mut document = empty_full_backup_document();
         document
             .state
@@ -62,6 +78,8 @@ mod tests {
                 StorageBackupRow::try_from_value(serde_json::json!({
                     "id": 1,
                     "name": "local",
+                    "logical_identity": identity(),
+                    "created_at": "2026-07-16T00:00:00Z",
                     "provider_kind": "local",
                     "revision": 1
                 }))
@@ -76,6 +94,8 @@ mod tests {
                 StorageBackupRow::try_from_value(serde_json::json!({
                     "id": 1,
                     "name": "root",
+                    "logical_identity": identity(),
+                    "created_at": "2026-07-16T00:00:00Z",
                     "parent_collection_id": null,
                     "revision": 1
                 }))

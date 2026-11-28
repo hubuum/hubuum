@@ -2,7 +2,6 @@
 
 from unittest.mock import Mock, patch
 import io
-import json
 import subprocess
 import sys
 import traceback
@@ -38,28 +37,35 @@ class FixtureFailureTests(unittest.TestCase):
                 runner.wait_until_ready(probe, "fixture")
 
     def test_cleanup_attempts_every_resource_after_a_timeout(self):
-        def fixtures(_root, containers, _servers, networks, _worker_executable):
+        def fixtures(_root, containers, _servers, networks, _template_worker):
             containers.extend(["first", "second"])
             networks.append("network")
             return 0
 
-        success = subprocess.CompletedProcess([], 0)
-        worker = subprocess.CompletedProcess([], 0, stdout=json.dumps({
-            "reason": "compiler-artifact", "target": {"name": "hubuum-template-worker"},
-            "executable": "/separate build directory/template worker",
-        }))
+        success = subprocess.CompletedProcess([], 0, stdout="")
         expired = subprocess.TimeoutExpired(["docker", "fixture-secret"], 30)
         errors = io.StringIO()
         with patch.object(runner.sys, "platform", "linux"), \
-                patch.object(runner, "run", side_effect=fixtures) as contract, \
+                patch.object(runner, "run", side_effect=fixtures), \
                 patch.object(runner.subprocess, "run",
-                             side_effect=[success, worker, expired, success, success]) as run, \
+                             side_effect=[success, success, expired, success, success]) as run, \
                 patch.object(sys, "stderr", errors):
             self.assertEqual(runner.main(), 1)
-        self.assertEqual(contract.call_args.args[-1], "/separate build directory/template worker")
         self.assertEqual([call.args[0][-1] for call in run.call_args_list[2:]],
                          ["second", "first", "network"])
         self.assertNotIn("fixture-secret", errors.getvalue())
+
+    def test_passes_cargo_renderer_path_to_transport_fixtures(self):
+        executable = "/relocated build/debug/hubuum-template-worker"
+        build = subprocess.CompletedProcess([], 0)
+        worker = subprocess.CompletedProcess([], 0, stdout=executable + "\n")
+        with patch.object(runner.sys, "platform", "linux"), \
+                patch.object(runner.subprocess, "run", side_effect=[build, worker]) as commands, \
+                patch.object(runner, "run", return_value=0) as fixtures:
+            self.assertEqual(runner.main(), 0)
+        self.assertEqual(commands.call_args.args[0],
+                         [runner.ROOT / "scripts" / "build-template-worker.sh"])
+        self.assertEqual(fixtures.call_args.args[-1], executable)
 
     def test_unsupported_platform_fails_before_building_or_provisioning(self):
         for platform in ("darwin", "win32"):

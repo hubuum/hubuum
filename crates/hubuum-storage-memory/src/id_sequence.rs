@@ -17,6 +17,10 @@ impl<T: Default + Ord + Copy + Into<i64> + TryFrom<i64>> IdSequence<T> {
         self.last = self.last.max(id);
     }
 
+    pub(super) fn last(&self) -> T {
+        self.last
+    }
+
     pub(super) fn next(&self) -> Result<T, StorageError> {
         self.after(1)
     }

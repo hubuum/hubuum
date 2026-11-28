@@ -1,6 +1,22 @@
 use super::*;
 
 impl ExecutionStorage for MemoryStorage {
+    fn current_execution_scope(&self) -> StorageExecutionScope {
+        MEMORY_EXECUTION_SCOPE
+            .try_with(Clone::clone)
+            .unwrap_or_default()
+    }
+
+    fn run_in_scope_sync<F, R>(&self, scope: StorageExecutionScope, operation: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let scope = MEMORY_EXECUTION_SCOPE
+            .try_with(|current| merge_memory_execution_scope(current, &scope))
+            .unwrap_or(scope);
+        MEMORY_EXECUTION_SCOPE.sync_scope(scope, operation)
+    }
+
     fn run_in_scope<'a, F, R>(
         &'a self,
         scope: StorageExecutionScope,
@@ -10,10 +26,12 @@ impl ExecutionStorage for MemoryStorage {
         F: Future<Output = R> + 'a,
         R: 'a,
     {
-        let scope = MEMORY_EXECUTION_SCOPE
-            .try_with(|current| merge_memory_execution_scope(current, &scope))
-            .unwrap_or(scope);
-        Box::pin(MEMORY_EXECUTION_SCOPE.scope(scope, future))
+        Box::pin(async move {
+            let scope = MEMORY_EXECUTION_SCOPE
+                .try_with(|current| merge_memory_execution_scope(current, &scope))
+                .unwrap_or(scope);
+            MEMORY_EXECUTION_SCOPE.scope(scope, future).await
+        })
     }
 
     fn run_in_scope_send<'a, F, R>(
@@ -25,10 +43,12 @@ impl ExecutionStorage for MemoryStorage {
         F: Future<Output = R> + Send + 'a,
         R: Send + 'a,
     {
-        let scope = MEMORY_EXECUTION_SCOPE
-            .try_with(|current| merge_memory_execution_scope(current, &scope))
-            .unwrap_or(scope);
-        Box::pin(MEMORY_EXECUTION_SCOPE.scope(scope, future))
+        Box::pin(async move {
+            let scope = MEMORY_EXECUTION_SCOPE
+                .try_with(|current| merge_memory_execution_scope(current, &scope))
+                .unwrap_or(scope);
+            MEMORY_EXECUTION_SCOPE.scope(scope, future).await
+        })
     }
 }
 
@@ -36,39 +56,7 @@ fn merge_memory_execution_scope(
     parent: &StorageExecutionScope,
     child: &StorageExecutionScope,
 ) -> StorageExecutionScope {
-    let mut merged = StorageExecutionScope::default();
-    if let Some(execution) = child
-        .task_execution_override()
-        .or_else(|| parent.task_execution_override())
-    {
-        merged = merged.with_task_execution(execution.clone());
-    }
-
-    if let Some(call_site) = child
-        .call_site_override()
-        .or_else(|| parent.call_site_override())
-    {
-        merged = merged.with_call_site(call_site);
-    }
-    if let Some(provenance) = child
-        .mutation_provenance_override()
-        .or_else(|| parent.mutation_provenance_override())
-    {
-        merged = merged.with_mutation_provenance(provenance.clone());
-    }
-    if let Some(precondition) = child
-        .revision_precondition_override()
-        .or_else(|| parent.revision_precondition_override())
-    {
-        merged = merged.with_revision_precondition(precondition.clone());
-    }
-    if let Some(budget) = child
-        .query_budget_override()
-        .or_else(|| parent.query_budget_override())
-    {
-        merged = merged.with_query_budget(budget);
-    }
-    merged
+    child.clone().nested_within(parent)
 }
 
 pub(crate) fn enforce_memory_revision_precondition(
@@ -132,17 +120,23 @@ impl TransactionStorage for MemoryStorage {
             + Send,
         R: Send,
     {
-        let mut committed = self.state.write().await;
+        let mut committed = self.state.write().await?;
+        if MEMORY_EXECUTION_SCOPE
+            .try_with(|scope| scope.task_execution_override().is_some_and(Option::is_some))
+            .unwrap_or(false)
+        {
+            committed.ensure_task_execution_allowed()?;
+        }
         let transaction = MemoryTransaction {
             storage: Self {
                 schema_limits: self.schema_limits,
-                state: Arc::new(MemoryStateLock::new(committed.clone())),
+                state: Arc::new(self.state.fork(committed.clone())),
             },
             event_context,
         };
         let result = operation(&transaction).await;
         if result.is_ok() {
-            *committed = transaction.storage.state.read().await.clone();
+            *committed = transaction.storage.state.read().await?.clone();
         }
         result
     }

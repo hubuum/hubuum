@@ -1,13 +1,17 @@
 use crate::api::handlers::{meta, probes};
-use crate::api::response::{ApiErrorResponse, CountsResponse, LoginResponse, MessageResponse};
+use crate::api::response::{
+    ApiErrorResponse, ApiRequestAdmissionErrorResponse, CountsResponse, LoginResponse,
+    MessageResponse,
+};
 use crate::api::v1::handlers::auth;
 use crate::api::v1::handlers::collection_event_sinks;
 use crate::api::v1::handlers::history::HistoryResponse;
 use crate::api::v1::handlers::{
     backups, classes, client_config, collections, computed_fields, credential_approvals,
     event_deliveries, event_sinks, event_subscriptions, events, export_templates, exports, groups,
-    imports, me, principals, query_usage, relations, remote_targets, restores, runtime_config,
-    schema_evolution, search, service_accounts, system_event_subscriptions, tasks, users,
+    history_lifecycle, imports, me, principals, query_usage, relations, remote_targets, restores,
+    runtime_config, schema_evolution, search, service_accounts, system_event_subscriptions, tasks,
+    users,
 };
 use crate::config::running::{
     AuthenticationConfig, BackupConfig, ClientAllowlistStatus, ClientConfig,
@@ -67,13 +71,14 @@ use crate::models::{
     RestoreConfirmRequest, RestoreJobStatus, RestoreStageResponse, RestoreTimestamps,
     RestoreValidationSummary, ServiceAccountPointResponse, ServiceAccountResponse,
     SharedComputedScopeResponse, StructuredSearchDoneEvent, StructuredSearchErrorEvent,
-    StructuredSearchStartedEvent, TaskDetails, TaskEventResponse, TaskKind, TaskLinks,
-    TaskProgress, TaskResponse, TaskStatus, TokenListState, TokenResourceScope, TokenScopeDetails,
-    UnifiedSearchBatchResponse, UnifiedSearchDoneEvent, UnifiedSearchErrorEvent, UnifiedSearchKind,
-    UnifiedSearchResponse, UnifiedSearchStartedEvent, UpdateClassRelationLabels, UpdateCollection,
-    UpdateEventSink, UpdateEventSubscription, UpdateExportTemplate, UpdateGroup, UpdateHubuumClass,
-    UpdateHubuumObject, UpdateHubuumObjectRequest, UpdateRemoteTarget, UpdateServiceAccount,
-    UpdateUser, UserPointResponse, UserResponse,
+    StructuredSearchStartedEvent, TaskDetails, TaskDetailsExpiredResponse, TaskEventResponse,
+    TaskKind, TaskLinks, TaskProgress, TaskResponse, TaskStatus, TokenListState,
+    TokenResourceScope, TokenScopeDetails, UnifiedSearchBatchResponse, UnifiedSearchDoneEvent,
+    UnifiedSearchErrorEvent, UnifiedSearchKind, UnifiedSearchResponse, UnifiedSearchStartedEvent,
+    UpdateClassRelationLabels, UpdateCollection, UpdateEventSink, UpdateEventSubscription,
+    UpdateExportTemplate, UpdateGroup, UpdateHubuumClass, UpdateHubuumObject,
+    UpdateHubuumObjectRequest, UpdateRemoteTarget, UpdateServiceAccount, UpdateUser,
+    UserPointResponse, UserResponse,
 };
 use crate::models::{CollectionEventSink, EventSinkRouting};
 use crate::pagination::{
@@ -83,13 +88,14 @@ use actix_web::{HttpResponse, Responder};
 use hubuum_events_core::{
     EventSubject, EventSubscriptionFilter, Provenance, ProvenanceActor, ProvenancePrincipal,
 };
+use utoipa::openapi::Content;
 use utoipa::openapi::OpenApi as OpenApiDoc;
 use utoipa::openapi::header::Header;
 use utoipa::openapi::path::{Operation, Parameter, ParameterBuilder, ParameterIn, PathItem};
 use utoipa::openapi::response::Response;
-use utoipa::openapi::schema::{ObjectBuilder, Schema};
+use utoipa::openapi::schema::{AnyOfBuilder, ObjectBuilder, Schema};
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, Http, HttpAuthScheme, SecurityScheme};
-use utoipa::openapi::{Object, RefOr, Required, Type};
+use utoipa::openapi::{Object, Ref, RefOr, Required, Type};
 use utoipa::{Modify, OpenApi};
 
 #[derive(OpenApi)]
@@ -104,7 +110,20 @@ use utoipa::{Modify, OpenApi};
         probes::healthz,
         probes::readyz,
         client_config::get_client_config,
+        history_lifecycle::policies,
+        history_lifecycle::inspect,
+        history_lifecycle::accounting,
+        history_lifecycle::run,
+        history_lifecycle::preview,
+        history_lifecycle::apply,
+        history_lifecycle::create_hold,
+        history_lifecycle::release_hold,
+        history_lifecycle::operation,
         runtime_config::get_running_config,
+        runtime_config::get_task_capacity,
+        runtime_config::set_task_capacity,
+        runtime_config::get_api_request_capacity,
+        runtime_config::set_api_request_capacity,
         runtime_config::get_runtime_settings,
         runtime_config::get_runtime_settings_schema,
         runtime_config::get_runtime_settings_group,
@@ -378,6 +397,7 @@ use utoipa::{Modify, OpenApi};
     components(
         schemas(
             ApiErrorResponse,
+            ApiRequestAdmissionErrorResponse,
             MessageResponse,
             probes::ProbeResponse,
             LoginResponse,
@@ -521,6 +541,7 @@ use utoipa::{Modify, OpenApi};
             BackupTaskDetails,
             TaskDetails,
             TaskResponse,
+            TaskDetailsExpiredResponse,
             TaskEventResponse,
             EventResponse,
             Provenance,
@@ -729,6 +750,60 @@ impl Modify for OperationDefaults {
 
                 if is_etagged_operation(path, method) {
                     add_etag_response_docs(operation);
+                }
+                if actix_web::http::Method::from_bytes(method.to_ascii_uppercase().as_bytes())
+                    .ok()
+                    .and_then(|method| {
+                        crate::middlewares::api_request_admission::operation(&method, path)
+                    })
+                    .is_some()
+                {
+                    for (status, description) in [
+                        (
+                            "413",
+                            "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+                        ),
+                        (
+                            "422",
+                            "Finite request execution allowance exhausted (api_capacity_deadline_exceeded); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+                        ),
+                        (
+                            "429",
+                            "Shared expensive-request capacity exhausted (api_capacity_deployment or api_capacity_principal); retryable after capacity drains. No other principal workload is disclosed. Cache-Control: no-store; no Retry-After estimate is available.",
+                        ),
+                        (
+                            "503",
+                            "Request admission identity or control state unavailable (api_capacity_identity_unavailable or api_capacity_reconciliation_required); retryable after recovery. Cache-Control: no-store; no Retry-After estimate is available.",
+                        ),
+                    ] {
+                        let response = operation
+                            .responses
+                            .responses
+                            .entry(status.to_owned())
+                            .or_insert_with(|| RefOr::T(Response::new(description)));
+                        if let RefOr::T(response) = response {
+                            if !response.description.contains(description) {
+                                response.description.push(' ');
+                                response.description.push_str(description);
+                            }
+                            // Keep existing client error envelopes compatible; only new
+                            // responses need the admission-specific schema alternative.
+                            response
+                                .content
+                                .entry("application/json".to_owned())
+                                .or_insert_with(|| {
+                                    Content::new(Some(Schema::AnyOf(
+                                        AnyOfBuilder::new()
+                                            .item(Ref::from_schema_name("ApiErrorResponse"))
+                                            .item(Ref::from_schema_name(
+                                                "ApiRequestAdmissionErrorResponse",
+                                            ))
+                                            .build(),
+                                    )))
+                                    .into()
+                                });
+                        }
+                    }
                 }
             });
         }

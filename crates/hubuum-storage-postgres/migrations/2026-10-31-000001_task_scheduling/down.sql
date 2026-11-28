@@ -1,0 +1,21 @@
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
+DROP TRIGGER task_worker_heartbeat ON tasks;
+DROP FUNCTION hubuum_renew_task_worker();
+DROP FUNCTION hubuum_schedule_task(UUID,TEXT[],BIGINT);
+DROP FUNCTION hubuum_task_capacity_snapshot();
+ALTER FUNCTION hubuum_task_capacity_snapshot_without_scheduling() RENAME TO hubuum_task_capacity_snapshot;
+DROP FUNCTION hubuum_task_scheduling_snapshot();
+DROP FUNCTION hubuum_reconcile_task_capacity();
+ALTER FUNCTION hubuum_reconcile_task_capacity_without_scheduling() RENAME TO hubuum_reconcile_task_capacity;
+DROP FUNCTION hubuum_validate_task_policy(JSONB);
+ALTER FUNCTION hubuum_validate_task_admission_policy(JSONB) RENAME TO hubuum_validate_task_policy;
+UPDATE hubuum_control.task_policy SET policy=policy-'scheduling';
+DROP TRIGGER task_scheduler_group ON public.tasks;
+DROP FUNCTION hubuum_register_task_principal();
+DROP INDEX public.tasks_scheduler_queue;
+DROP FUNCTION hubuum_task_capacity_rejection(hubuum_control.task_accounting,BOOLEAN,BOOLEAN,BOOLEAN);
+ALTER FUNCTION hubuum_task_capacity_rejection_before_scheduling(hubuum_control.task_accounting,BOOLEAN,BOOLEAN,BOOLEAN)
+    RENAME TO hubuum_task_capacity_rejection;
+DROP TABLE hubuum_control.task_workers,hubuum_control.task_principal_service,hubuum_control.task_scheduler;
+DROP INDEX hubuum_control.task_accounting_occupied;

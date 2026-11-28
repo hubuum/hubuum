@@ -5,7 +5,9 @@ use diesel_async::pooled_connection::bb8::RunError as PoolError;
 use hubuum_domain::{JsonSchemaError, JsonSchemaErrorKind, PositiveIdError, ResourceRevision};
 use hubuum_events_core::{AuditDocumentError, EventIdentifierError};
 use hubuum_storage_core::{
-    StorageCandidatePage, StorageCandidatePageLimit, StorageError, StorageErrorKind, StoragePage,
+    ApiRequestRejection, HistoryArchiveBudgetEvidence, HistoryObjectPopulationGap,
+    HistoryPolicyReviewConflict, StorageCandidatePage, StorageCandidatePageLimit, StorageError,
+    StorageErrorKind, StoragePage, StorageValidationError, TaskCapacityRejection,
 };
 use hubuum_task_core::TaskStopReason;
 use tracing::{debug, error};
@@ -23,6 +25,11 @@ pub struct PostgresStorageError {
     kind: StorageErrorKind,
     message: String,
     current_revision: Option<ResourceRevision>,
+    task_capacity: Option<TaskCapacityRejection>,
+    api_request: Option<ApiRequestRejection>,
+    history_policy_review: Option<HistoryPolicyReviewConflict>,
+    history_population_gap: Option<Box<HistoryObjectPopulationGap>>,
+    history_archive_budget: Option<Box<HistoryArchiveBudgetEvidence>>,
 }
 
 impl PostgresStorageError {
@@ -50,6 +57,11 @@ impl PostgresStorageError {
             kind,
             message: message.into(),
             current_revision,
+            task_capacity: None,
+            api_request: None,
+            history_policy_review: None,
+            history_population_gap: None,
+            history_archive_budget: None,
         }
     }
 
@@ -92,6 +104,11 @@ impl PostgresStorageError {
     #[must_use]
     pub fn conflict(message: impl Into<String>) -> Self {
         Self::new(StorageErrorKind::Conflict, message, None)
+    }
+
+    #[must_use]
+    pub fn idempotency_conflict(message: impl Into<String>) -> Self {
+        Self::new(StorageErrorKind::IdempotencyConflict, message, None)
     }
 
     #[must_use]
@@ -186,6 +203,12 @@ where
     result.map_err(|error| PostgresStorageError::invalid_persisted_value(projection, error))
 }
 
+impl From<StorageValidationError> for PostgresStorageError {
+    fn from(error: StorageValidationError) -> Self {
+        Self::validation_failed(error.to_string())
+    }
+}
+
 impl From<JsonSchemaError> for PostgresStorageError {
     fn from(error: JsonSchemaError) -> Self {
         let (kind, message) = error.into_parts();
@@ -224,7 +247,34 @@ impl std::error::Error for PostgresStorageError {}
 
 impl From<StorageError> for PostgresStorageError {
     fn from(error: StorageError) -> Self {
-        let (kind, message, current_revision) = error.into_parts();
+        if let Some(reason) = error.history_policy_review_conflict() {
+            let mut converted = Self::new(error.kind(), reason.as_str(), None);
+            converted.history_policy_review = Some(reason);
+            return converted;
+        }
+        if let Some(reason) = error.api_request_rejection() {
+            let mut converted = Self::new(error.kind(), reason.as_str(), None);
+            converted.api_request = Some(reason);
+            return converted;
+        }
+        let gap = error.history_population_gap_evidence().cloned();
+        let archive = error.history_archive_budget_evidence().cloned();
+        let (kind, message, current_revision, task_capacity) = error.into_parts();
+        if let Some(reason) = task_capacity {
+            let mut converted = Self::new(kind, message, current_revision);
+            converted.task_capacity = Some(reason);
+            return converted;
+        }
+        if let Some(proof) = gap {
+            let mut converted = Self::unavailable(message);
+            converted.history_population_gap = Some(Box::new(proof));
+            return converted;
+        }
+        if let Some(evidence) = archive {
+            let mut converted = Self::input_too_large("History capture staging capacity exhausted");
+            converted.history_archive_budget = Some(Box::new(evidence));
+            return converted;
+        }
         match kind {
             StorageErrorKind::TaskCancelled => {
                 Self::new(StorageErrorKind::TaskCancelled, message, None)
@@ -235,6 +285,7 @@ impl From<StorageError> for PostgresStorageError {
             StorageErrorKind::AuthorizationUnavailable => Self::authorization_unavailable(message),
             StorageErrorKind::InvalidInput => Self::invalid_input(message),
             StorageErrorKind::Conflict => Self::conflict(message),
+            StorageErrorKind::IdempotencyConflict => Self::idempotency_conflict(message),
             StorageErrorKind::Backend => Self::database(message),
             StorageErrorKind::ReauthenticationRequired => Self::reauthentication_required(),
             StorageErrorKind::PermissionDenied => Self::permission_denied(message),
@@ -269,8 +320,45 @@ impl From<PoolError> for PostgresStorageError {
     }
 }
 
+// Only fixed, non-secret operation messages cross this boundary. Unrecognized
+// database failures retain the existing opaque backend error surface.
+fn task_retention_error(message: &str) -> Option<PostgresStorageError> {
+    match message {
+        "Task receipt capacity is exhausted"
+        | "Task retention obligation capacity is exhausted"
+        | "Task retention is not activated"
+        | "Task retention authority is unavailable" => {
+            Some(PostgresStorageError::unavailable(message))
+        }
+        "Task detail retention prevents new references"
+        | "Task receipt authority changed or is unavailable"
+        | "Task receipt authority changed"
+        | "Task receipt does not match the exact pending task admission"
+        | "Task receipt settlement does not match the immutable terminal outcome"
+        | "Task admission generation is no longer activatable"
+        | "Task admission already settled without activation"
+        | "Task admission protection deadline expired"
+        | "Receipt expiry protection does not cover the selected authority"
+        | "Receipt expiry generation changed"
+        | "Receipt expiry requires the exact fixed terminal anchor"
+        | "Protected task purge coverage changed"
+        | "Task purge requires READ COMMITTED" => Some(PostgresStorageError::conflict(message)),
+        "Invalid receipt expiry batch bound"
+        | "Invalid pending admission batch bound"
+        | "Invalid bounded task purge request"
+        | "Invalid task purge list bound"
+        | "Invalid task purge budget" => Some(PostgresStorageError::invalid_input(message)),
+        _ => None,
+    }
+}
+
 impl From<DieselError> for PostgresStorageError {
     fn from(error: DieselError) -> Self {
+        if let DieselError::DatabaseError(_, ref info) = error
+            && let Some(retention) = task_retention_error(info.message())
+        {
+            return retention;
+        }
         match error {
             DieselError::NotFound => {
                 debug!(
@@ -308,6 +396,12 @@ impl From<DieselError> for PostgresStorageError {
             }
             DieselError::DatabaseError(DatabaseErrorKind::Unknown, ref info) => {
                 let message = info.message();
+                if let Some(reason) = ApiRequestRejection::from_persisted(message) {
+                    return Self::from(StorageError::api_request(reason));
+                }
+                if let Some(reason) = TaskCapacityRejection::from_persisted(message) {
+                    return Self::from(StorageError::task_capacity(reason));
+                }
                 if message == "hubuum_task_cancelled" {
                     return Self::task_stopped(TaskStopReason::Cancelled);
                 }
@@ -357,6 +451,21 @@ impl From<DieselError> for PostgresStorageError {
 
 impl From<PostgresStorageError> for StorageError {
     fn from(error: PostgresStorageError) -> Self {
+        if let Some(reason) = error.history_policy_review {
+            return Self::history_policy_review(reason);
+        }
+        if let Some(reason) = error.api_request {
+            return Self::api_request(reason);
+        }
+        if let Some(reason) = error.task_capacity {
+            return Self::task_capacity(reason);
+        }
+        if let Some(proof) = error.history_population_gap {
+            return Self::history_population_gap(*proof);
+        }
+        if let Some(evidence) = error.history_archive_budget {
+            return Self::history_archive_capacity(*evidence);
+        }
         match error.kind {
             StorageErrorKind::TaskCancelled => Self::task_stopped(TaskStopReason::Cancelled),
             StorageErrorKind::TaskDeadlineExceeded => {
@@ -367,6 +476,7 @@ impl From<PostgresStorageError> for StorageError {
             }
             StorageErrorKind::InvalidInput => Self::invalid_input(error.message),
             StorageErrorKind::Conflict => Self::conflict(error.message),
+            StorageErrorKind::IdempotencyConflict => Self::idempotency_conflict(error.message),
             StorageErrorKind::Backend => Self::backend_failure(error.message),
             StorageErrorKind::ReauthenticationRequired => Self::reauthentication_required(),
             StorageErrorKind::PermissionDenied => Self::permission_denied(error.message),
@@ -396,6 +506,22 @@ impl From<PostgresStorageError> for StorageError {
 mod tests {
     use super::*;
 
+    #[rstest::rstest]
+    #[case::capacity(TaskCapacityRejection::Deployment)]
+    #[case::unresolved(TaskCapacityRejection::IdentityUnavailable)]
+    fn capacity_reasons_survive_native_and_portable_boundaries(
+        #[case] reason: TaskCapacityRejection,
+    ) {
+        let error = DieselError::DatabaseError(
+            DatabaseErrorKind::Unknown,
+            Box::new(TestDatabaseErrorInformation::new(reason.as_str())),
+        );
+        let portable = StorageError::from(PostgresStorageError::from(error));
+        assert_eq!(portable.task_capacity_rejection(), Some(reason));
+        let roundtrip = StorageError::from(PostgresStorageError::from(portable));
+        assert_eq!(roundtrip.task_capacity_rejection(), Some(reason));
+    }
+
     #[test]
     fn postgres_errors_cross_the_boundary_as_storage_errors() {
         let error = StorageError::from(PostgresStorageError::revision_conflict(
@@ -403,7 +529,7 @@ mod tests {
             ResourceRevision::new(2).unwrap(),
         ));
 
-        let (kind, message, current_revision) = error.into_parts();
+        let (kind, message, current_revision, _) = error.into_parts();
         assert_eq!(kind, StorageErrorKind::RevisionConflict);
         assert_eq!(message, "stale resource");
         assert_eq!(current_revision, Some(ResourceRevision::new(2).unwrap()));

@@ -6,12 +6,13 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 
 use hubuum_storage_core::{
-    StorageExecutionScope, StorageTaskExecutionAdmission, TaskExecutionStorage,
+    ExecutionStorage, StorageExecutionScope, StorageTaskExecutionAdmission, TaskExecutionStorage,
 };
 use hubuum_task_core::{TaskExecutionContext, TaskExecutionLimit, TaskStopReason};
 
 use crate::errors::ApiError;
 use crate::permissions::AppContext;
+use crate::restores::track_application_completion;
 use crate::services::tasks::ClaimedTask;
 use crate::storage::{storage_handle, with_storage_execution_scope};
 
@@ -43,7 +44,7 @@ where
     };
     execution.check()?;
     tokio::select! {
-        result = future => result,
+        result = track_application_completion(future) => result,
         reason = wait_for_stop(&execution) => Err(ApiError::TaskStopped(reason)),
     }
 }
@@ -80,21 +81,27 @@ impl Drop for ControlMonitor {
     }
 }
 
-pub(super) async fn execute<F, T>(
+pub(super) async fn execute<F, T, S>(
     context: &AppContext,
     task: &ClaimedTask,
     limit: TaskExecutionLimit,
     future: F,
+    stopped: S,
 ) -> Result<T, ApiError>
 where
     F: Future<Output = Result<T, ApiError>>,
+    S: Future<Output = ()>,
 {
-    let control = storage_handle(context)
-        .admit_task_execution(StorageTaskExecutionAdmission::new(
-            task.lease().clone(),
-            limit,
-        ))
-        .await?;
+    let storage = storage_handle(context);
+    let control = super::history::retry_control(&storage, || async {
+        Ok(storage
+            .admit_task_execution(StorageTaskExecutionAdmission::new(
+                task.lease().clone(),
+                limit,
+            ))
+            .await?)
+    })
+    .await?;
     let remaining = control.remaining().ok_or_else(|| {
         ApiError::InternalServerError("Admitted execution has no deadline".into())
     })?;
@@ -103,27 +110,47 @@ where
     if let Some(reason) = control.stop_reason() {
         stop.request_stop(reason);
     }
+    let monitor_stop = stop.clone();
     let backend = context.backend().clone();
     let lease = task.lease().clone();
+    let application_scope = backend.current_execution_scope();
     let _monitor = ControlMonitor(spawn_lease_monitor(async move {
-        loop {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            if let Ok(control) = backend.poll_task_execution(lease.clone()).await
-                && let Some(reason) = control.stop_reason()
-            {
-                stop.request_stop(reason);
-                break;
-            }
-        }
+        backend
+            .run_in_scope_send(application_scope, async {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    if let Ok(control) = backend.poll_task_execution(lease.clone()).await
+                        && let Some(reason) = control.stop_reason()
+                    {
+                        monitor_stop.request_stop(reason);
+                        break;
+                    }
+                }
+            })
+            .await
     }));
     let scope = StorageExecutionScope::default().with_task_execution(Some(execution.clone()));
-    EXECUTION
-        .scope(
-            execution,
-            with_storage_execution_scope(context, scope, async {
-                checkpoint()?;
-                future.await
-            }),
-        )
-        .await
+    let original = execution.clone();
+    let work = EXECUTION.scope(
+        execution,
+        with_storage_execution_scope(context, scope, async {
+            checkpoint()?;
+            track_application_completion(future).await
+        }),
+    );
+    tokio::pin!(work, stopped);
+    let result = tokio::select! {
+        biased;
+        _ = &mut stopped => {
+            stop.request_stop(TaskStopReason::Cancelled);
+            // Aborting this future cannot prove that its producer or native
+            // driver stopped. Cooperative work retains its original scope.
+            work.await
+        }
+        result = &mut work => result,
+    };
+    if result.is_err() {
+        original.check()?;
+    }
+    result
 }

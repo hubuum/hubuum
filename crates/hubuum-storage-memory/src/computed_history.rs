@@ -37,6 +37,10 @@ impl MemoryState {
                 .map_err(|error| StorageError::internal(error.to_string()))?;
             Some(
                 StorageComputedFieldHistory::builder(class_id, id, boundary)
+                    .logical_identity(Some(
+                        self.logical_identities
+                            .computed_history(class_id, &definitions),
+                    ))
                     .definitions(definitions)
                     .build()
                     .map_err(invalid_contract_value)?,

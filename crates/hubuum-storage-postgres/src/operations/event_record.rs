@@ -1,8 +1,8 @@
+use chrono::NaiveDateTime;
 use std::collections::HashMap;
 
-#[cfg(feature = "integration-test-support")]
 use diesel::prelude::{ExpressionMethods, QueryDsl};
-use diesel::{Insertable, SelectableHelper};
+use diesel::{Insertable, OptionalExtension, SelectableHelper};
 use diesel_async::RunQueryDsl;
 #[cfg(feature = "integration-test-support")]
 use hubuum_events_core::{Action, EntityType, EventEntityId};
@@ -20,6 +20,7 @@ use super::event_rows::StoredEventProjection;
 #[diesel(table_name = crate::schema::events)]
 struct NewEventRow<'event> {
     event_id: Uuid,
+    occurred_at: Option<NaiveDateTime>,
     entity_type: &'static str,
     entity_id: Option<i32>,
     entity_name: Option<&'event str>,
@@ -46,6 +47,7 @@ impl<'event> From<&'event NewEvent> for NewEventRow<'event> {
     fn from(event: &'event NewEvent) -> Self {
         Self {
             event_id: event.event_id().as_uuid(),
+            occurred_at: event.occurred_at().map(|time| time.naive_utc()),
             entity_type: event.entity_type().as_str(),
             entity_id: event.entity_id().map(Into::into),
             entity_name: event.entity_name(),
@@ -82,6 +84,48 @@ pub async fn append_event(
         .await?;
     log_event_append(&row);
     row.into_audit_event(&HashMap::new(), false)
+}
+
+/// Rehydrate original lifecycle facts under the deletion-authority lock. A
+/// surviving canonical row must match exactly; recovery never creates another
+/// logical success or replaces conflicting history.
+pub(crate) async fn append_retained_lifecycle_event(
+    connection: &mut PostgresConnection,
+    event: &NewEvent,
+) -> Result<(), PostgresStorageError> {
+    use crate::schema::events::dsl::{event_id, events};
+    let stored = events
+        .filter(event_id.eq(event.event_id().as_uuid()))
+        .select(StoredEventProjection::as_select())
+        .first::<StoredEventProjection>(connection)
+        .await
+        .optional()?;
+    if let Some(stored) = stored {
+        let existing = stored.into_envelope(&HashMap::new())?;
+        if existing.entity_type() != event.entity_type()
+            || existing.action() != event.action()
+            || Some(existing.occurred_at()) != event.occurred_at()
+            || existing.actor_kind() != event.actor_kind()
+            || existing.entity_id().is_some()
+            || existing.entity_name().is_some()
+            || existing.collection_id().is_some()
+            || existing.actor_user_id().is_some()
+            || existing.provenance().initiator.is_some()
+            || existing.provenance().task_id.is_some()
+            || existing.request_id().is_some()
+            || existing.correlation_id().is_some()
+            || existing.trace_link().is_some()
+            || existing.schema_version() != event.schema_version()
+            || existing.audit_document() != *event.document()
+        {
+            return Err(PostgresStorageError::database(
+                "Retained lifecycle event conflicts with canonical history",
+            ));
+        }
+    } else {
+        append_event(connection, event).await?;
+    }
+    Ok(())
 }
 
 /// Append a bounded batch of validated events in one PostgreSQL statement.

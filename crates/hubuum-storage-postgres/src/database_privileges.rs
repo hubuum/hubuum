@@ -318,6 +318,14 @@ pub fn database_role_reconciliation_sql(names: &DatabaseRoleNames) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let mut sql = String::new();
+    // Bootstrap may run against an administrator-owned database. The schema
+    // owner needs database-local CREATE to install the protected control schema;
+    // subsequent reconciliation under that owner does not need grant authority.
+    writeln!(sql, "DO $database$ BEGIN
+  IF NOT pg_catalog.has_database_privilege('{owner_name}', pg_catalog.current_database(), 'CREATE') THEN
+    EXECUTE pg_catalog.format('GRANT CREATE ON DATABASE %I TO %I', pg_catalog.current_database(), '{owner_name}');
+  END IF;
+END $database$;", owner_name = names.owner().as_str()).unwrap();
     writeln!(
         sql,
         "REVOKE CREATE ON SCHEMA \"{}\" FROM PUBLIC;",
@@ -385,6 +393,16 @@ END $grants$;",
         names.runtime().as_str(),
     )
     .unwrap();
+    writeln!(sql, "DO $control$ DECLARE object RECORD; BEGIN
+  IF to_regnamespace('hubuum_control') IS NOT NULL THEN
+    EXECUTE 'ALTER SCHEMA hubuum_control OWNER TO {owner}';
+    EXECUTE 'REVOKE ALL ON SCHEMA hubuum_control FROM PUBLIC, {runtime}';
+    FOR object IN SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='hubuum_control' AND c.relkind IN ('r', 'p') LOOP
+      EXECUTE pg_catalog.format('ALTER TABLE hubuum_control.%I OWNER TO %I', object.relname, '{owner_name}');
+      EXECUTE pg_catalog.format('REVOKE ALL ON TABLE hubuum_control.%I FROM PUBLIC, %I', object.relname, '{runtime_name}');
+    END LOOP;
+  END IF;
+END $control$;", owner_name=names.owner().as_str(), runtime_name=names.runtime().as_str()).unwrap();
     writeln!(sql, "ALTER DEFAULT PRIVILEGES FOR ROLE {owner} IN SCHEMA \"{}\" REVOKE ALL ON TABLES FROM PUBLIC;", manifest.schema).unwrap();
     writeln!(sql, "ALTER DEFAULT PRIVILEGES FOR ROLE {owner} IN SCHEMA \"{}\" GRANT SELECT ON TABLES TO {runtime};", manifest.schema).unwrap();
     writeln!(sql, "ALTER DEFAULT PRIVILEGES FOR ROLE {owner} IN SCHEMA \"{}\" REVOKE ALL ON SEQUENCES FROM PUBLIC;", manifest.schema).unwrap();

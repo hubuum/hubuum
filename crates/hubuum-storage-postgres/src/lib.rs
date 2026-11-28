@@ -4,7 +4,9 @@
 //! integration surface for Hubuum's PostgreSQL adapter. They must not cross
 //! the backend-neutral traits in `hubuum-storage-core`.
 
+mod artifacts;
 mod backend;
+pub use artifacts::PostgresArtifactStore;
 mod cursor;
 mod database_privileges;
 mod diagnostics;
@@ -110,7 +112,9 @@ pub use pool::{
     build_postgres_pool,
 };
 #[cfg(feature = "query-capture")]
-pub use query_capture::{QueryCaptureSnapshot, capture_queries, configure_connection};
+pub use query_capture::{
+    QueryCaptureContext, QueryCaptureSnapshot, capture_queries, configure_connection,
+};
 #[cfg(feature = "integration-test-support")]
 #[doc(hidden)]
 pub use revision::PostgresRevision;

@@ -5,6 +5,7 @@ pub(crate) async fn execute_export_task<C>(
     task: &ClaimedTask,
     subject: &ExecutionPrincipal,
     scopes: Option<&TokenScope>,
+    publication: &mut crate::services::artifacts::TaskPublication,
 ) -> Result<TaskStatus, ApiError>
 where
     C: AuthorizationContext,
@@ -53,47 +54,89 @@ where
     )
     .await?;
 
-    let ExportRenderInput {
-        execution,
-        timings,
-        total_metric,
-    } = collect_export_items(&exporter, task, &runtime, total_metric).await?;
-
-    append_task_event(
-        pool,
+    let max_bytes = runtime
+        .export
+        .limits
+        .as_ref()
+        .and_then(|limits| limits.max_output_bytes)
+        .unwrap_or_else(configured_export_max_output_bytes);
+    let retention = get_config()
+        .map(|config| config.export_output_retention_hours)
+        .unwrap_or(DEFAULT_EXPORT_OUTPUT_RETENTION_HOURS);
+    let retention = FutureRetention::from_hours(retention, "export_output_retention_hours")
+        .map_err(ApiError::BadRequest)?;
+    let availability = retention
+        .output_availability()
+        .map_err(ApiError::BadRequest)?;
+    let expires_at = retention
+        .expires_at(chrono::Utc::now().naive_utc())
+        .map_err(ApiError::BadRequest)?
+        .and_utc();
+    let spool_bytes = crate::services::artifacts::spool_limit();
+    let output = crate::services::artifacts::TaskOutput::begin(
+        publication,
         task,
-        NewTaskEventRecord {
-            event_type: "running".to_string(),
-            message: "Rendering export output".to_string(),
-            data: None,
-        },
+        max_bytes,
+        spool_bytes.max(max_bytes as u64),
+        expires_at,
     )
     .await?;
+    let result = async {
+        let ExportRenderInput {
+            execution,
+            timings,
+            total_metric,
+        } = collect_export_items(&exporter, task, &runtime, total_metric).await?;
 
-    let render_metric =
-        metrics::export_phase_timer(metrics::ExportMetricPhase::Render, metric_template_id);
-    crate::tasks::control::checkpoint()?;
-    // Await the bounded render job so its child has been reaped before the
-    // worker acknowledges a stop and releases its claim.
-    let artifact = build_export_artifact(&runtime, execution, timings).await?;
-    crate::tasks::control::checkpoint()?;
-    let mut timings = artifact.timings;
-    if let Err(error) = enforce_export_stage_timeout(render_metric.elapsed(), "template rendering")
-    {
-        render_metric.finish(metrics::ExportMetricOutcome::Timeout);
-        total_metric.finish(metrics::ExportMetricOutcome::Timeout);
-        return Err(error);
+        append_task_event(
+            pool,
+            task,
+            NewTaskEventRecord {
+                event_type: "running".to_string(),
+                message: "Rendering export output".to_string(),
+                data: None,
+            },
+        )
+        .await?;
+
+        let render_metric =
+            metrics::export_phase_timer(metrics::ExportMetricPhase::Render, metric_template_id);
+        crate::tasks::control::checkpoint()?;
+        // Await the bounded render job so its child has been reaped before the
+        // worker acknowledges a stop and releases its claim.
+        let artifact =
+            build_export_artifact(&runtime, execution, timings, &output, availability).await?;
+        crate::tasks::control::checkpoint()?;
+        let mut timings = artifact.timings;
+        if let Err(error) =
+            enforce_export_stage_timeout(render_metric.elapsed(), "template rendering")
+        {
+            render_metric.finish(metrics::ExportMetricOutcome::Timeout);
+            total_metric.finish(metrics::ExportMetricOutcome::Timeout);
+            return Err(error);
+        }
+        let render_elapsed = render_metric.finish(metrics::ExportMetricOutcome::Success);
+        let total_elapsed = total_metric.elapsed();
+        timings.render = render_elapsed;
+        timings.total = total_elapsed;
+        log_export_stage_metrics(task.id, &runtime, timings);
+        let artifact = ExportArtifact {
+            timings,
+            ..artifact
+        };
+        if let Some(template) = &runtime.template {
+            crate::can!(
+                backend,
+                subject,
+                scopes,
+                [Permissions::ReadTemplate],
+                template
+            );
+        }
+        finish_export_task(pool, task, artifact, total_metric).await
     }
-    let render_elapsed = render_metric.finish(metrics::ExportMetricOutcome::Success);
-    let total_elapsed = total_metric.elapsed();
-    timings.render = render_elapsed;
-    timings.total = total_elapsed;
-    log_export_stage_metrics(task.id, &runtime, timings);
-    let artifact = ExportArtifact {
-        timings,
-        ..artifact
-    };
-    finish_export_task(pool, task, artifact, total_metric).await
+    .await;
+    output.finish(publication, result).await
 }
 
 struct ExportRenderInput {
@@ -140,88 +183,137 @@ where
     let export_storage = storage_handle(pool);
     let mut query_options = prepare_query_options(&runtime.export)?;
     let relation_hydration = resolve_relation_hydration_plan(runtime, &mut query_options)?;
-    let query_metric =
-        metrics::export_phase_timer(metrics::ExportMetricPhase::Query, metric_template_id);
-    let (items, mut warnings, truncated) = export_storage
-        .run_in_scope(
-            StorageExecutionScope::default().with_query_budget(query_budget),
-            execute_scope(exporter, runtime.scope, query_options),
-        )
-        .await?;
-    let mut items = items;
-    export_storage
-        .run_in_scope(
-            StorageExecutionScope::default().with_query_budget(query_budget),
-            apply_export_includes(exporter, &runtime.export, &mut items),
-        )
-        .await?;
-    if let Err(error) = enforce_export_stage_timeout(query_metric.elapsed(), "query execution") {
-        query_metric.finish(metrics::ExportMetricOutcome::Timeout);
-        total_metric.finish(metrics::ExportMetricOutcome::Timeout);
-        return Err(error);
-    }
-    let query_elapsed = query_metric.finish(metrics::ExportMetricOutcome::Success);
-    timings.query = query_elapsed;
-
-    if relation_hydration
-        .as_ref()
-        .is_some_and(|plan| plan.enabled_for_scope)
-    {
+    if runtime.template.is_some() {
         append_task_event(
             pool,
             task,
             NewTaskEventRecord {
                 event_type: "running".to_string(),
                 message: "Hydrating relation-aware template context".to_string(),
-                data: relation_hydration.as_ref().map(|plan| {
-                    serde_json::json!({
-                        "depth_limit": plan.depth_limit,
-                    })
-                }),
+                data: None,
             },
         )
         .await?;
     }
-
-    add_truncation_warning(&mut warnings, truncated);
-    let hydration_metric =
-        metrics::export_phase_timer(metrics::ExportMetricPhase::Hydration, metric_template_id);
-    let (template_items, source) = export_storage
-        .run_in_scope(
-            StorageExecutionScope::default().with_query_budget(query_budget),
-            build_template_items(exporter, runtime, &items, relation_hydration),
-        )
-        .await?;
-    if let Err(error) =
-        enforce_export_stage_timeout(hydration_metric.elapsed(), "relation hydration")
-    {
-        hydration_metric.finish(metrics::ExportMetricOutcome::Timeout);
-        total_metric.finish(metrics::ExportMetricOutcome::Timeout);
-        return Err(error);
+    let mut query_metric =
+        metrics::export_phase_timer(metrics::ExportMetricPhase::Query, metric_template_id);
+    let mut rows = hubuum_templates::TemplateRows::new(crate::services::artifacts::spool_limit())
+        .map_err(|error| ApiError::PayloadTooLarge(error.to_string()))?;
+    let max_items = query_options.limit().unwrap_or(1).saturating_sub(1).max(1);
+    normalize_page_order(runtime.scope, &mut query_options)?;
+    let mut collected = 0;
+    let mut warnings = Vec::new();
+    let mut source = None;
+    let aggregate_template = runtime.template.is_some()
+        && matches!(runtime.scope, ValidatedExportScope::RelatedObjects { .. });
+    let mut hydration_metric = None;
+    let mut related_items = Vec::new();
+    let mut related_bytes = 0;
+    let mut hydration_budget = HydrationBudget::new(max_hydrated_template_objects());
+    let mut candidate_budget = CandidateBudget::default();
+    let truncated = loop {
+        crate::tasks::control::checkpoint()?;
+        let page_size = 4.min(max_items - collected);
+        query_options.set_limit(Some(page_size + 1))?;
+        let ExportPage {
+            mut items,
+            continuation,
+        } = export_storage
+            .run_in_scope(
+                StorageExecutionScope::default().with_query_budget(query_budget),
+                execute_scope(
+                    exporter,
+                    runtime.scope,
+                    query_options.clone(),
+                    &mut candidate_budget,
+                ),
+            )
+            .await?;
+        collected += items.len();
+        export_storage
+            .run_in_scope(
+                StorageExecutionScope::default().with_query_budget(query_budget),
+                apply_export_includes(exporter, &runtime.export, &mut items),
+            )
+            .await?;
+        let last_page = continuation.is_none() || collected == max_items;
+        if aggregate_template {
+            // A related-object template hydrates one bounded source graph.
+            for item in items.drain(..) {
+                related_bytes += encoded_row_size(&item)?;
+                if related_bytes > 8 * 1024 * 1024 {
+                    return Err(ApiError::PayloadTooLarge(
+                        "Related template source exceeds 8 MiB".into(),
+                    ));
+                }
+                related_items.push(item);
+            }
+            if last_page {
+                items = std::mem::take(&mut related_items);
+            }
+        }
+        if runtime.template.is_some() && (!aggregate_template || last_page) {
+            query_metric.pause();
+            let timer = hydration_metric.get_or_insert_with(|| {
+                metrics::export_phase_timer(
+                    metrics::ExportMetricPhase::Hydration,
+                    metric_template_id,
+                )
+            });
+            timer.resume();
+            let (hydrated, root) = export_storage
+                .run_in_scope(
+                    StorageExecutionScope::default().with_query_budget(query_budget),
+                    build_template_page(
+                        exporter,
+                        runtime,
+                        &items,
+                        relation_hydration,
+                        &mut hydration_budget,
+                    ),
+                )
+                .await?;
+            timer.pause();
+            query_metric.resume();
+            if aggregate_template {
+                source = root;
+            }
+            for item in hydrated {
+                rows.push(&item)
+                    .map_err(|error| ApiError::PayloadTooLarge(error.to_string()))?;
+            }
+        } else {
+            for item in items {
+                rows.push(&item)
+                    .map_err(|error| ApiError::PayloadTooLarge(error.to_string()))?;
+            }
+        }
+        let elapsed = query_metric.elapsed()
+            + hydration_metric
+                .as_ref()
+                .map_or(Duration::ZERO, metrics::ExportPhaseTimer::elapsed);
+        enforce_export_stage_timeout(elapsed, "query execution and hydration")?;
+        let Some(continuation) = continuation else {
+            break false;
+        };
+        if collected == max_items {
+            break true;
+        }
+        query_options.set_continuation(continuation);
+    };
+    if let Some(timer) = hydration_metric {
+        timings.hydration = timer.finish(metrics::ExportMetricOutcome::Success);
     }
-    let hydration_elapsed = hydration_metric.finish(metrics::ExportMetricOutcome::Success);
-    timings.hydration = hydration_elapsed;
-    let template_export = runtime.template.is_some();
-    let item_count = if template_export {
-        template_items.len()
-    } else {
-        items.len()
-    };
-    let execution_items = if template_export {
-        drop(items);
-        Vec::new()
-    } else {
-        items
-    };
+    timings.query = query_metric.finish(metrics::ExportMetricOutcome::Success);
+    add_truncation_warning(&mut warnings, truncated);
     let execution = ExportExecution {
         meta: ExportMeta {
-            count: item_count,
+            count: rows.len() as usize,
             truncated,
             scope: runtime.export.scope.clone(),
             content_type: runtime.content_type(),
         },
-        items: execution_items,
-        template_items,
+        rows,
         warnings,
         source,
     };
@@ -241,7 +333,7 @@ async fn finish_export_task(
 ) -> Result<TaskStatus, ApiError> {
     let total_elapsed = artifact.timings.total;
     let metric_scope = artifact.meta.scope.kind.as_str();
-    let metric_content_type = artifact.output.content_type().as_mime();
+    let metric_content_type = artifact.content_type.as_mime();
     let metric_truncated = artifact.meta.truncated;
     let metric_warning_count = artifact.warnings.len();
 
@@ -269,7 +361,7 @@ async fn finish_export_task(
             event_type: TaskStatus::Succeeded.as_str().to_string(),
             message: format!("Export completed successfully in {total_elapsed:?}"),
             data: Some(serde_json::json!({
-                "content_type": artifact.output.content_type().as_mime(),
+                "content_type": artifact.content_type.as_mime(),
                 "template_name": artifact.template_name.clone(),
                 "warning_count": artifact.warnings.len(),
                 "truncated": artifact.meta.truncated,
@@ -299,4 +391,46 @@ async fn finish_export_task(
     }
 
     TaskStatus::from_db(&finished.status)
+}
+
+fn encoded_row_size(row: &serde_json::Value) -> Result<usize, ApiError> {
+    let mut sink = hubuum_budget::LimitedWriter::new(
+        std::io::sink(),
+        hubuum_budget::ByteLimit::new(hubuum_templates::MAX_SPOOL_ROW_BYTES),
+    );
+    serde_json::to_writer(&mut sink, row)
+        .map_err(|_| ApiError::PayloadTooLarge("Export row exceeds 4 MiB".into()))?;
+    Ok(sink.budget().used())
+}
+
+fn normalize_page_order(
+    scope: ValidatedExportScope,
+    options: &mut QueryOptions,
+) -> Result<(), ApiError> {
+    use crate::pagination::normalized_sorts;
+    let sorts = match scope {
+        ValidatedExportScope::Collections => normalized_sorts::<Collection>(options.sort())?,
+        ValidatedExportScope::Classes => normalized_sorts::<HubuumClassExpanded>(options.sort())?,
+        ValidatedExportScope::ObjectsInClass(_) => {
+            normalized_sorts::<HubuumObject>(options.sort())?
+        }
+        ValidatedExportScope::ClassRelations => {
+            normalized_sorts::<HubuumClassRelation>(options.sort())?
+        }
+        ValidatedExportScope::ObjectRelations => {
+            normalized_sorts::<HubuumObjectRelation>(options.sort())?
+        }
+        ValidatedExportScope::RelatedObjects { .. } => {
+            normalized_sorts::<RelatedObjectGraphRow>(options.sort())?
+        }
+    };
+    let mut prepared = sorts;
+    let tie_breaker = (prepared.len() > hubuum_query::MAX_QUERY_SORT_FIELDS)
+        .then(|| prepared.pop())
+        .flatten();
+    options.set_sort(prepared.try_into()?);
+    if let Some(sort) = tie_breaker {
+        options.sort_mut().append_tie_breaker(sort)?;
+    }
+    Ok(())
 }

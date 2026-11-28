@@ -135,13 +135,25 @@ async fn every_available_storage_backend_supplies_complete_temporal_history() {
                 .is_none()
         );
 
+        let evidence = hubuum_storage_core::LogicalIdentityStorage::resolve_logical_identity(
+            &backend,
+            hubuum_storage_core::StorageIdentityTarget::Principal(actor.principal_id),
+        )
+        .await
+        .unwrap();
+        let Some(hubuum_storage_core::StorageIdentitySubject::Principal {
+            identity: hubuum_domain::IdentityReference::Known { identity },
+        }) = evidence.subject()
+        else {
+            panic!("native principal UUID");
+        };
         let names = backend
-            .resolve_history_principal_names(vec![actor.principal_id])
+            .resolve_history_principal_names(vec![identity])
             .await
             .expect("certified backend should resolve history principal names");
         assert!(names.into_iter().any(|row| {
             let (principal_id, name) = row.into_parts();
-            principal_id == actor.principal_id && name == actor_name
+            principal_id == identity && name == actor_name
         }));
         delete_backend_object_fixture(&backend, fixture).await;
         delete_backend_user(&backend, actor).await;
@@ -415,27 +427,18 @@ async fn every_available_storage_backend_supplies_computed_fields() {
             .expect("rebuild request should identify its task");
         let lease = match &environment {
             BackendTestEnvironment::Postgres { pool } => {
-                let claim_token = uuid::Uuid::new_v4();
-                hubuum_storage_postgres::test_support::assign_task_lease(
-                    pool,
-                    rebuild_task_id,
-                    StorageTaskStatus::Validating,
-                    claim_token,
-                    chrono::Utc::now().naive_utc()
-                        + chrono::Duration::try_minutes(1).expect("valid compatibility lease"),
-                )
-                .await
-                .expect("compatibility rebuild should receive a live backend claim");
-                StorageTaskLease::new(
-                    rebuild_task_id,
-                    StorageTaskClaimToken::new(claim_token.to_string()),
-                )
+                hubuum_storage_postgres::test_support::claim_task_by_id(pool, rebuild_task_id)
+                    .await
+                    .expect("compatibility rebuild should receive a live fenced claim")
+                    .lease()
+                    .clone()
             }
             BackendTestEnvironment::Memory { .. } => backend
-                .claim_next_task(
+                .claim_next_task(StorageTaskClaimRequest::new(
+                    TaskWorkerId::generate(),
                     StorageTaskLeaseDuration::from_milliseconds(60_000)
                         .expect("computed rebuild lease duration should be valid"),
-                )
+                ))
                 .await
                 .expect("memory rebuild task should be claimable")
                 .expect("memory rebuild task should be queued")

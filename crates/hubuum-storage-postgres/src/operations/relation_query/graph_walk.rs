@@ -6,6 +6,7 @@ use crate::operations::dynamic_sql::SqlValue;
 use crate::operations::visibility::authorized_collection_ids;
 use crate::{PostgresRuntime, PostgresStorageError};
 use diesel_async::RunQueryDsl;
+use futures_util::TryStreamExt;
 use hubuum_query::TraversalBudget;
 use hubuum_storage_core::{
     StorageAuthorizationPermission, StorageBidirectionalRelatedObjectsQuery,
@@ -77,11 +78,23 @@ pub async fn list_related_objects_for_roots(
                 "executing PostgreSQL relation graph query"
             );
             let rows = bind_raw_sql_query!(spec)
-                .get_results::<RelatedObjectIncludeQueryRow>(connection)
+                .load_stream::<RelatedObjectIncludeQueryRow>(connection)
                 .await?;
-            rows.into_iter()
-                .map(RelatedObjectIncludeQueryRow::into_storage)
-                .collect::<Result<Vec<_>, _>>()
+            futures_util::pin_mut!(rows);
+            let mut retained = Vec::new();
+            let mut budget = hubuum_budget::LimitedWriter::new(
+                std::io::sink(),
+                hubuum_budget::ByteLimit::new(8 * 1024 * 1024),
+            );
+            while let Some(row) = rows.try_next().await? {
+                serde_json::to_writer(&mut budget, &row).map_err(|_| {
+                    PostgresStorageError::input_too_large(
+                        "Related export source exceeds 8 MiB; narrow the query",
+                    )
+                })?;
+                retained.push(row.into_storage()?);
+            }
+            Ok::<_, PostgresStorageError>(retained)
         })
         .await
 }
@@ -136,11 +149,23 @@ pub async fn list_bidirectionally_related_objects_for_roots(
                 "executing PostgreSQL relation graph query"
             );
             let rows = bind_raw_sql_query!(spec)
-                .get_results::<RelatedObjectForRootQueryRow>(connection)
+                .load_stream::<RelatedObjectForRootQueryRow>(connection)
                 .await?;
-            rows.into_iter()
-                .map(RelatedObjectForRootQueryRow::into_storage)
-                .collect::<Result<Vec<_>, _>>()
+            futures_util::pin_mut!(rows);
+            let mut retained = Vec::new();
+            let mut budget = hubuum_budget::LimitedWriter::new(
+                std::io::sink(),
+                hubuum_budget::ByteLimit::new(8 * 1024 * 1024),
+            );
+            while let Some(row) = rows.try_next().await? {
+                serde_json::to_writer(&mut budget, &row).map_err(|_| {
+                    PostgresStorageError::input_too_large(
+                        "Related export source exceeds 8 MiB; narrow the query",
+                    )
+                })?;
+                retained.push(row.into_storage()?);
+            }
+            Ok::<_, PostgresStorageError>(retained)
         })
         .await
 }

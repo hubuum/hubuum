@@ -95,9 +95,11 @@ pub(super) fn get_config_from_env() -> Result<AppConfig, ApiError> {
     }
 
     let config = AppConfig {
+        control_recovery: ControlRecoveryOptions::from_environment(),
         runtime_managed_groups: BTreeSet::new(),
         schema_validation: SchemaValidationOptions::from_environment()?,
         query_observations: QueryObservationOptions::from_environment()?,
+        artifacts: artifacts::ArtifactOptions::from_environment()?,
         query_observation_settings: StorageQueryObservationSettings::default(),
         schema_limits: JsonSchemaLimits::default(),
         secrets: SecretSourceOptions::from_environment()

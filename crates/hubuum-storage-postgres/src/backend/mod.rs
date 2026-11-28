@@ -1,5 +1,8 @@
 //! Complete PostgreSQL implementation of the backend-neutral storage contract.
 
+mod api_request_admission;
+mod artifacts;
+mod history_archive;
 use hubuum_domain::JsonSchemaLimits;
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -18,23 +21,34 @@ use hubuum_query::QueryOptions;
 use hubuum_storage_core::*;
 
 use crate::{
-    PostgresObserver, PostgresPool, PostgresPoolState, PostgresRuntime, PostgresStorageError,
-    PostgresStorageSnapshot,
+    PostgresArtifactStore, PostgresObserver, PostgresPool, PostgresPoolState, PostgresRuntime,
+    PostgresStorageError, PostgresStorageSnapshot,
 };
 
 mod backup_snapshot;
 mod capabilities;
 mod computed_fields;
+pub(crate) mod deletion_control;
+pub(crate) use deletion_control::acknowledge_coordinator_drain_on;
 mod export_templates;
+mod history_lifecycle;
+pub(crate) use history_lifecycle::admit_history_expiry_on;
+pub(crate) use history_lifecycle::capture_on as capture_history_lifecycle_on;
+pub(crate) use history_lifecycle::remove_history_expiry_on;
+#[cfg(feature = "integration-test-support")]
+pub(crate) use history_lifecycle::require_history_exposure_safe_on;
 mod imports;
+mod logical_identity;
 mod notifications;
 mod query_usage;
 mod remote_targets;
 mod restores;
 mod runtime_settings;
 mod schema_evolution;
+mod task_capacity;
 mod task_execution;
 mod task_queue;
+mod task_retention;
 mod transaction;
 
 /// Complete statically linked PostgreSQL storage backend.
@@ -49,6 +63,12 @@ pub struct PostgresStorage {
 }
 
 impl PostgresStorage {
+    /// Compose the immutable artifact store with this adapter's configured
+    /// runtime and observer, without exposing its pool or runtime internals.
+    pub fn artifact_store(&self) -> PostgresArtifactStore {
+        PostgresArtifactStore::new(self.runtime.clone())
+    }
+
     #[must_use]
     pub fn new(pool: PostgresPool, observer: Arc<dyn PostgresObserver>) -> Self {
         Self {
@@ -63,6 +83,18 @@ impl PostgresStorage {
     #[must_use]
     pub fn unobserved(pool: PostgresPool) -> Self {
         Self::new(pool, Arc::new(crate::NoopPostgresObserver))
+    }
+
+    #[must_use]
+    pub fn with_runtime_owner(mut self, owner: RuntimeOwner) -> Self {
+        self.runtime = self.runtime.with_runtime_owner(owner);
+        self
+    }
+
+    #[must_use]
+    pub fn with_api_request_execution_slots(mut self, slots: NonZeroUsize) -> Self {
+        self.runtime = self.runtime.with_api_request_execution_slots(slots);
+        self
     }
 
     #[must_use]
@@ -115,3 +147,5 @@ impl PostgresStorage {
 }
 
 impl StorageBackend for PostgresStorage {}
+
+pub(crate) use history_lifecycle::scope_known_on as history_scope_known_on;

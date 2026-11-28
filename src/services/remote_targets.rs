@@ -1,6 +1,6 @@
 pub(crate) mod invocation;
 
-use hubuum_domain::{CollectionId, ResourceId};
+use hubuum_domain::CollectionId;
 use std::str::FromStr;
 
 use crate::errors::ApiError;
@@ -15,9 +15,9 @@ use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::storage::{
     RemoteTargetStorage, StorageContext, StorageRemoteTarget, StorageRemoteTargetCreate,
     StorageRemoteTargetDefinition, StorageRemoteTargetDelete, StorageRemoteTargetHttpMethod,
-    StorageRemoteTargetInvocation, StorageRemoteTargetListQuery, StorageRemoteTargetPatch,
-    StorageRemoteTargetPolicy, StorageRemoteTargetSubjectType, StorageRemoteTargetTransport,
-    StorageRemoteTargetUpdate, storage_handle,
+    StorageRemoteTargetListQuery, StorageRemoteTargetPatch, StorageRemoteTargetPolicy,
+    StorageRemoteTargetSubjectType, StorageRemoteTargetTransport, StorageRemoteTargetUpdate,
+    storage_handle,
 };
 
 pub(crate) async fn get_remote_target(
@@ -215,28 +215,6 @@ pub(crate) async fn delete_remote_target(
         .delete_remote_target(StorageRemoteTargetDelete::new(
             hubuum_domain::RemoteTargetId::new(target_id)
                 .expect("validated remote target id must be positive"),
-            event_context,
-        ))
-        .await?
-        .into_value();
-    Ok(())
-}
-
-pub(crate) async fn record_remote_target_invocation(
-    backend: &impl StorageContext,
-    target_id: i32,
-    task_id: i32,
-    subject_type: RemoteTargetSubjectType,
-    subject_id: i32,
-    event_context: EventContext,
-) -> Result<(), ApiError> {
-    storage_handle(backend)
-        .record_remote_target_invocation(StorageRemoteTargetInvocation::new(
-            hubuum_domain::RemoteTargetId::new(target_id)
-                .expect("validated remote target id must be positive"),
-            hubuum_domain::TaskId::new(task_id).expect("validated task id must be positive"),
-            subject_type_to_storage(subject_type),
-            ResourceId::new(subject_id)?,
             event_context,
         ))
         .await?

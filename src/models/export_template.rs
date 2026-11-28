@@ -1,4 +1,5 @@
 use hubuum_domain::{ClassId, CollectionId};
+use hubuum_storage_core::StorageIdentityEvidence;
 use std::str::FromStr;
 
 use async_trait::async_trait;
@@ -1223,6 +1224,9 @@ fn update_export_template_example() -> UpdateExportTemplate {
 
 #[derive(serde::Serialize, Clone, Debug, ToSchema)]
 pub struct ExportTemplateHistory {
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub(crate) logical_identity: Option<StorageIdentityEvidence>,
     pub id: i32,
     pub collection_id: i32,
     pub name: String,

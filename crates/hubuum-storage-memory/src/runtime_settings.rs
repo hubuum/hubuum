@@ -92,20 +92,20 @@ impl MemoryRuntimeSettings {
 #[async_trait]
 impl RuntimeSettingsStorage for MemoryStorage {
     async fn load_runtime_settings(&self) -> Result<StorageRuntimeSettingsSnapshot, StorageError> {
-        Ok(self.state.read().await.runtime_settings.snapshot.clone())
+        Ok(self.state.read().await?.runtime_settings.snapshot.clone())
     }
 
     async fn update_runtime_settings(
         &self,
         request: StorageRuntimeSettingsUpdate,
     ) -> Result<StorageRuntimeSettingsUpdateOutcome, StorageError> {
-        self.state.write().await.runtime_settings.update(&request)
+        self.state.write().await?.runtime_settings.update(&request)
     }
 
     async fn list_runtime_settings_changes(
         &self,
         query: StorageRuntimeSettingsHistoryQuery,
     ) -> Result<Vec<StorageRuntimeSettingsChange>, StorageError> {
-        Ok(self.state.read().await.runtime_settings.changes(query))
+        Ok(self.state.read().await?.runtime_settings.changes(query))
     }
 }

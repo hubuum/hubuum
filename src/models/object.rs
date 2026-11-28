@@ -4,6 +4,7 @@ use hubuum_storage_core::StorageObject;
 use crate::storage::{StorageObjectSelector, StorageResolvedObject};
 use async_trait::async_trait;
 use hubuum_domain::{ClassId, CollectionId};
+use hubuum_storage_core::StorageIdentityEvidence;
 use hubuum_storage_core::StorageObjectCreate;
 use hubuum_storage_core::StorageObjectUpdate;
 use serde::{Deserialize, Serialize};
@@ -410,6 +411,9 @@ fn update_hubuum_object_example() -> UpdateHubuumObject {
 
 #[derive(serde::Serialize, Clone, Debug, ToSchema)]
 pub struct HubuumObjectHistory {
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub(crate) logical_identity: Option<StorageIdentityEvidence>,
     pub id: i32,
     pub name: String,
     pub collection_id: i32,

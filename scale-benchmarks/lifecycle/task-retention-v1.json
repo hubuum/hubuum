@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "count": 10000,
+  "concurrency": 32,
+  "timeout_seconds": 120,
+  "duplicate_every": 100,
+  "conflict_every": 100,
+  "endpoint": "/api/v1/imports",
+  "body": {
+    "version": 2,
+    "dry_run": true,
+    "graph": {
+      "collections": [{
+        "name": "${cohort}-${sequence}",
+        "description": "Synthetic lifecycle capacity fixture"
+      }]
+    }
+  },
+  "conflict_body": {
+    "version": 2,
+    "dry_run": true,
+    "graph": {
+      "collections": [{
+        "name": "${cohort}-${sequence}",
+        "description": "Changed request must conflict before execution"
+      }]
+    }
+  }
+}

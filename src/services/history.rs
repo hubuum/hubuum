@@ -1,16 +1,24 @@
 pub(crate) mod access;
+pub mod archive;
 pub(crate) mod computed;
 pub(crate) mod navigation;
+pub mod segments;
+
+use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
+use hubuum_storage_core::{
+    LogicalIdentityStorage, StorageIdentityEvidence, StorageIdentityResourceKind,
+    StorageIdentitySubject, StorageIdentityTarget,
+};
 
 mod name;
 mod relations;
-use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalId, ResourceId};
+use hubuum_domain::{ClassId, CollectionId, ObjectId, PrincipalIdentity, ResourceId};
 pub use name::{class_objects_as_of, object_history_by_name};
 
 use crate::errors::ApiError;
-use crate::events::PrincipalNames;
+use crate::events::Provenance;
 use crate::models::search::QueryOptions;
 use crate::models::{
     CollectionHistory, ExportTemplateHistory, HubuumClassHistory, HubuumObjectHistory,
@@ -18,11 +26,11 @@ use crate::models::{
 };
 use crate::pagination::SKIPPED_TOTAL_COUNT;
 use crate::storage::{
-    HistoryStorage, StorageClassHistoryRecord, StorageCollectionHistoryRecord, StorageContext,
-    StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery, StorageHistoryCollectionScope,
-    StorageHistoryListQuery, StorageHistoryMetadata, StorageHistoryOperation,
-    StorageObjectHistoryAsOfQuery, StorageObjectHistoryRecord, StorageRemoteTargetHistoryRecord,
-    storage_handle,
+    ExecutionStorage, HistoryStorage, StorageClassHistoryRecord, StorageCollectionHistoryRecord,
+    StorageContext, StorageExportTemplateHistoryRecord, StorageHistoryAsOfQuery,
+    StorageHistoryCollectionScope, StorageHistoryListQuery, StorageHistoryMetadata,
+    StorageHistoryOperation, StorageObjectHistoryAsOfQuery, StorageObjectHistoryRecord,
+    StorageRemoteTargetHistoryRecord, storage_handle,
 };
 
 /// Collection visibility applied before history rows are counted or paged.
@@ -70,6 +78,7 @@ struct AppHistoryMetadata {
     initiator_principal_id: Option<i32>,
     task_id: Option<i32>,
     revision: ResourceRevision,
+    logical_identity: Option<StorageIdentityEvidence>,
 }
 
 impl From<StorageHistoryMetadata> for AppHistoryMetadata {
@@ -93,6 +102,7 @@ impl From<StorageHistoryMetadata> for AppHistoryMetadata {
             initiator_principal_id: parts.initiator_principal_id().map(|id| id.id()),
             task_id: parts.task_id().map(|id| id.id()),
             revision: parts.revision(),
+            logical_identity: parts.logical_identity().cloned(),
         }
     }
 }
@@ -119,6 +129,7 @@ fn collection_from_storage(
         actor_kind: metadata.actor_kind,
         initiator_user_id: metadata.initiator_principal_id,
         task_id: metadata.task_id,
+        logical_identity: metadata.logical_identity,
         revision: metadata.revision,
     })
 }
@@ -154,6 +165,7 @@ fn class_from_storage(row: StorageClassHistoryRecord) -> Result<HubuumClassHisto
         actor_kind: metadata.actor_kind,
         initiator_user_id: metadata.initiator_principal_id,
         task_id: metadata.task_id,
+        logical_identity: metadata.logical_identity,
         revision: metadata.revision,
     })
 }
@@ -180,6 +192,7 @@ fn object_from_storage(row: StorageObjectHistoryRecord) -> Result<HubuumObjectHi
         actor_kind: metadata.actor_kind,
         initiator_user_id: metadata.initiator_principal_id,
         task_id: metadata.task_id,
+        logical_identity: metadata.logical_identity,
         revision: metadata.revision,
     })
 }
@@ -217,6 +230,7 @@ fn export_template_from_storage(
         actor_kind: metadata.actor_kind,
         initiator_user_id: metadata.initiator_principal_id,
         task_id: metadata.task_id,
+        logical_identity: metadata.logical_identity,
         revision: metadata.revision,
     })
 }
@@ -267,31 +281,87 @@ fn remote_target_from_storage(
         actor_kind: metadata.actor_kind,
         initiator_user_id: metadata.initiator_principal_id,
         task_id: metadata.task_id,
+        logical_identity: metadata.logical_identity,
         revision: metadata.revision,
     })
 }
 
-pub async fn resolve_principal_names(
+/// Names indexed by the captured principal UUID, never the reusable REST id.
+#[derive(Default)]
+pub(crate) struct CapturedPrincipalNames(BTreeMap<PrincipalIdentity, String>);
+
+impl CapturedPrincipalNames {
+    pub(crate) fn enrich(
+        &self,
+        evidence: Option<&StorageIdentityEvidence>,
+        mut provenance: Provenance,
+    ) -> Provenance {
+        for (path, principal) in [
+            ("/actor_principal_id", &mut provenance.actor.principal),
+            ("/initiator_principal_id", &mut provenance.initiator),
+        ] {
+            if let Some(principal) = principal {
+                principal.name = evidence
+                    .and_then(|evidence| evidence.principal_reference(path))
+                    .and_then(|identity| self.0.get(&identity))
+                    .cloned();
+            }
+        }
+        provenance
+    }
+}
+
+pub(crate) async fn resolve_principal_names(
     backend: &impl StorageContext,
-    principal_ids: Vec<i32>,
-) -> Result<PrincipalNames, ApiError> {
-    let principal_ids = principal_ids
-        .into_iter()
-        .map(PrincipalId::new)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(storage_handle(backend)
-        .resolve_history_principal_names(principal_ids)
-        .await?
-        .into_iter()
-        .map(|row| {
-            let (principal_id, name) = row.into_parts();
-            (principal_id.id(), name)
+    principal_ids: Vec<PrincipalIdentity>,
+) -> Result<CapturedPrincipalNames, ApiError> {
+    Ok(CapturedPrincipalNames(
+        storage_handle(backend)
+            .resolve_history_principal_names(principal_ids)
+            .await?
+            .into_iter()
+            .map(|row| row.into_parts())
+            .collect(),
+    ))
+}
+
+async fn original_as_of_query(
+    backend: &impl StorageContext,
+    kind: StorageIdentityResourceKind,
+    entity_id: ResourceId,
+    at: DateTime<Utc>,
+) -> Result<StorageHistoryAsOfQuery, ApiError> {
+    let query = StorageHistoryAsOfQuery::new(entity_id, at);
+    let storage = storage_handle(backend);
+    if storage
+        .current_execution_scope()
+        .history_read_override()
+        .is_none()
+    {
+        return Ok(query);
+    }
+    // Resolve once under the original publication epoch, before history I/O.
+    // A deleted/unresolved canonical subject cannot be replaced with another
+    // historical row's identity. Native selection checks this binding again.
+    let evidence = storage
+        .resolve_logical_identity(StorageIdentityTarget::Resource {
+            kind,
+            id: entity_id,
         })
-        .collect())
+        .await?;
+    let original = evidence
+        .subject()
+        .and_then(StorageIdentitySubject::record_identity)
+        .ok_or_else(|| {
+            ApiError::ServiceUnavailable(
+                "Original history resource correspondence is unresolved".into(),
+            )
+        })?;
+    Ok(query.for_resource(original.resource()))
 }
 
 macro_rules! history_service {
-    ($list:ident, $as_of:ident, $storage_list:ident, $storage_as_of:ident, $from:ident, $ty:ty) => {
+    ($list:ident, $as_of:ident, $storage_list:ident, $storage_as_of:ident, $from:ident, $ty:ty, $kind:ident) => {
         pub async fn $list(
             entity_id: i32,
             backend: &impl StorageContext,
@@ -317,11 +387,15 @@ macro_rules! history_service {
             at: DateTime<Utc>,
             backend: &impl StorageContext,
         ) -> Result<Option<$ty>, ApiError> {
+            let query = original_as_of_query(
+                backend,
+                StorageIdentityResourceKind::$kind,
+                ResourceId::new(entity_id)?,
+                at,
+            )
+            .await?;
             storage_handle(backend)
-                .$storage_as_of(StorageHistoryAsOfQuery::new(
-                    ResourceId::new(entity_id)?,
-                    at,
-                ))
+                .$storage_as_of(query)
                 .await?
                 .map($from)
                 .transpose()
@@ -335,15 +409,23 @@ history_service!(
     list_collection_history,
     get_collection_history_as_of,
     collection_from_storage,
-    CollectionHistory
+    CollectionHistory,
+    Collection
 );
 pub async fn class_as_of(
     class_id: i32,
     at: DateTime<Utc>,
     backend: &impl StorageContext,
 ) -> Result<Option<HubuumClassHistory>, ApiError> {
+    let query = original_as_of_query(
+        backend,
+        StorageIdentityResourceKind::Class,
+        ResourceId::new(class_id)?,
+        at,
+    )
+    .await?;
     storage_handle(backend)
-        .get_class_history_as_of(StorageHistoryAsOfQuery::new(ResourceId::new(class_id)?, at))
+        .get_class_history_as_of(query)
         .await?
         .map(class_from_storage)
         .transpose()
@@ -355,7 +437,8 @@ history_service!(
     list_export_template_history,
     get_export_template_history_as_of,
     export_template_from_storage,
-    ExportTemplateHistory
+    ExportTemplateHistory,
+    ExportTemplate
 );
 history_service!(
     remote_target_history_paginated_with_total_count,
@@ -363,7 +446,8 @@ history_service!(
     list_remote_target_history,
     get_remote_target_history_as_of,
     remote_target_from_storage,
-    RemoteTargetHistory
+    RemoteTargetHistory,
+    RemoteTarget
 );
 
 pub async fn object_as_of(
@@ -372,13 +456,124 @@ pub async fn object_as_of(
     at: DateTime<Utc>,
     backend: &impl StorageContext,
 ) -> Result<Option<HubuumObjectHistory>, ApiError> {
+    let original = original_as_of_query(
+        backend,
+        StorageIdentityResourceKind::Object,
+        ResourceId::new(object_id)?,
+        at,
+    )
+    .await?
+    .expected_resource();
+    let mut query =
+        StorageObjectHistoryAsOfQuery::new(ObjectId::new(object_id)?, ClassId::new(class_id)?, at);
+    if let Some(original) = original {
+        query = query.for_resource(original);
+    }
     storage_handle(backend)
-        .get_object_history_as_of(StorageObjectHistoryAsOfQuery::new(
-            ObjectId::new(object_id)?,
-            ClassId::new(class_id)?,
-            at,
-        ))
+        .get_object_history_as_of(query)
         .await?
         .map(object_from_storage)
         .transpose()
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use crate::events::StoredProvenance;
+    use hubuum_domain::{
+        IdentityReference, LegacyIdentityCohort, LegacyRecordId, UnresolvedIdentity,
+    };
+    use hubuum_storage_core::{StorageCapturedIdentity, StorageIdentityEvidence};
+    use rstest::rstest;
+    use std::collections::BTreeMap;
+
+    #[rstest]
+    #[case::same_principal(true)]
+    #[case::reused_integer(false)]
+    fn names_require_the_captured_principal_identity(#[case] same_identity: bool) {
+        let captured = PrincipalIdentity::generate();
+        let current = if same_identity {
+            captured
+        } else {
+            PrincipalIdentity::generate()
+        };
+        let names = CapturedPrincipalNames(BTreeMap::from([(current, "current-name".into())]));
+        let evidence = StorageIdentityEvidence::try_new(
+            None,
+            BTreeMap::from([(
+                "/actor_principal_id".into(),
+                StorageCapturedIdentity::Principal {
+                    reference: IdentityReference::Known { identity: captured },
+                },
+            )]),
+        )
+        .unwrap();
+        let provenance = StoredProvenance::from_actor_kind(Some("user"))
+            .with_actor_user_id(Some(42))
+            .without_names();
+        assert_eq!(
+            names
+                .enrich(Some(&evidence), provenance)
+                .actor
+                .principal
+                .unwrap()
+                .name
+                .as_deref(),
+            same_identity.then_some("current-name")
+        );
+    }
+
+    #[rstest]
+    #[case::distinct_identities(true, true)]
+    #[case::unresolved_actor(false, true)]
+    #[case::unresolved_initiator(true, false)]
+    fn shared_integer_does_not_mix_actor_and_initiator_names(
+        #[case] actor_known: bool,
+        #[case] initiator_known: bool,
+    ) {
+        let actor = PrincipalIdentity::generate();
+        let initiator = PrincipalIdentity::generate();
+        let names = CapturedPrincipalNames(BTreeMap::from([
+            (actor, "actor".into()),
+            (initiator, "initiator".into()),
+        ]));
+        let reference = |identity, known| StorageCapturedIdentity::Principal {
+            reference: if known {
+                IdentityReference::Known { identity }
+            } else {
+                IdentityReference::Unresolved {
+                    legacy: UnresolvedIdentity::new(
+                        LegacyIdentityCohort::generate(),
+                        LegacyRecordId::new(42).unwrap(),
+                    ),
+                }
+            },
+        };
+        let evidence = StorageIdentityEvidence::try_new(
+            None,
+            BTreeMap::from([
+                ("/actor_principal_id".into(), reference(actor, actor_known)),
+                (
+                    "/initiator_principal_id".into(),
+                    reference(initiator, initiator_known),
+                ),
+            ]),
+        )
+        .unwrap();
+        let provenance = StoredProvenance::from_actor_kind(Some("user"))
+            .with_actor_user_id(Some(42))
+            .with_initiator_user_id(Some(42))
+            .without_names();
+        let provenance = names.enrich(Some(&evidence), provenance);
+        assert_eq!(
+            (
+                provenance.actor.principal.unwrap().name,
+                provenance.initiator.unwrap().name
+            ),
+            (
+                actor_known.then(|| "actor".to_owned()),
+                initiator_known.then(|| "initiator".to_owned())
+            ),
+        );
+    }
 }

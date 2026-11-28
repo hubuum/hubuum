@@ -15,7 +15,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .collections
             .get(&collection_id.id())
             .cloned())
@@ -26,7 +26,7 @@ impl ImportStorage for MemoryStorage {
         key: &StorageImportCollectionKey,
     ) -> Result<Option<StorageCollection>, StorageError> {
         let parts = key.clone().into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut candidates = state
             .collections
             .values()
@@ -72,7 +72,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .collections
             .values()
             .filter(|collection| collection.name() == name)
@@ -88,7 +88,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .collections
             .values()
             .find(|collection| {
@@ -106,7 +106,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .classes
             .values()
             .find(|class| class.collection_id() == collection_id && class.name() == name)
@@ -121,7 +121,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .classes
             .values()
             .filter(|class| {
@@ -140,7 +140,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .objects
             .values()
             .find(|object| object.class_id() == class_id && object.name() == name)
@@ -155,7 +155,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .objects
             .values()
             .filter(|object| {
@@ -173,7 +173,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .class_relations
             .values()
             .any(|relation| {
@@ -190,7 +190,7 @@ impl ImportStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .object_relations
             .values()
             .any(|relation| {
@@ -204,7 +204,7 @@ impl ImportStorage for MemoryStorage {
         identity_scope: &str,
         group_name: &str,
     ) -> Result<bool, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let scope_ids = state
             .identity_scopes
             .values()
@@ -223,7 +223,7 @@ impl ImportStorage for MemoryStorage {
     ) -> Result<StorageImportPreflight, StorageError> {
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(MemoryStateLock::new(self.state.read().await.clone())),
+            state: Arc::new(self.state.fork(self.state.read().await?.clone())),
         };
         let mut references = BTreeMap::new();
         let mut items = Vec::new();
@@ -263,10 +263,12 @@ impl ImportStorage for MemoryStorage {
     }
 
     async fn apply_import_strict(&self, plan: StorageImportPlan) -> Result<(), StorageError> {
-        let mut committed = self.state.write().await;
+        // Keep registration and authority changes ordered with publication of
+        // the whole staged import, just as for a single imported item.
+        let mut state = self.state.write().await?;
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(MemoryStateLock::new(committed.clone())),
+            state: Arc::new(self.state.fork(state.clone())),
         };
         let mut references = BTreeMap::new();
         for item in plan.into_items() {
@@ -274,7 +276,7 @@ impl ImportStorage for MemoryStorage {
                 .apply_import_operation(item.into_parts().1, &mut references)
                 .await?;
         }
-        *committed = scratch.state.read().await.clone();
+        *state = scratch.state.read().await?.clone();
         Ok(())
     }
 
@@ -305,14 +307,14 @@ impl ImportStorage for MemoryStorage {
     ) -> Result<(), StorageError> {
         let (lease, results) = results.into_parts();
         self.check_import_claim(&lease).await?;
-        let snapshot = self.state.read().await.clone();
+        let snapshot = self.state.read().await?.clone();
         let generation = snapshot.generation.clone();
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(MemoryStateLock::new(snapshot)),
+            state: Arc::new(self.state.fork(snapshot)),
         };
         scratch.record_import_results(results).await?;
-        let committed_state = scratch.state.read().await.clone();
+        let committed_state = scratch.state.read().await?.clone();
         self.state
             .commit_import(&generation, committed_state, &lease)
             .await
@@ -322,7 +324,7 @@ impl ImportStorage for MemoryStorage {
         &self,
         results: Vec<StorageImportResult>,
     ) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let mut staged = Vec::with_capacity(results.len());
         let mut ids = state.import_task_results.id_cursor();
         for result in results {
@@ -354,7 +356,7 @@ impl ImportStorage for MemoryStorage {
             staged.push(stored);
         }
         for result in staged {
-            state.import_task_results.insert(result);
+            state.store_import_result(result);
         }
         Ok(())
     }
@@ -434,11 +436,11 @@ impl MemoryStorage {
         references: &mut BTreeMap<String, MemoryImportReference>,
         complete_import: bool,
     ) -> Result<(), StorageError> {
-        let snapshot = self.state.read().await.clone();
+        let snapshot = self.state.read().await?.clone();
         let generation = snapshot.generation.clone();
         let scratch = Self {
             schema_limits: self.schema_limits,
-            state: Arc::new(MemoryStateLock::new(snapshot)),
+            state: Arc::new(self.state.fork(snapshot)),
         };
         let mut next_references = references.clone();
         for item in items {
@@ -448,7 +450,7 @@ impl MemoryStorage {
             if !scratch
                 .state
                 .write()
-                .await
+                .await?
                 .import_execution_receipts
                 .insert((lease.task_id().id(), index))
             {
@@ -464,7 +466,7 @@ impl MemoryStorage {
             scratch.record_import_results(vec![result]).await?;
             tokio::task::yield_now().await;
         }
-        let mut committed_state = scratch.state.read().await.clone();
+        let mut committed_state = scratch.state.read().await?.clone();
         if complete_import {
             committed_state
                 .tasks
@@ -482,7 +484,8 @@ impl MemoryStorage {
     }
 
     async fn check_import_claim(&self, lease: &StorageTaskLease) -> Result<(), StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
+        state.ensure_task_lease_current(lease)?;
         let task = state
             .tasks
             .get(&lease.task_id().id())

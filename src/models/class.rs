@@ -6,6 +6,7 @@ use hubuum_domain::CollectionId;
 use hubuum_storage_core::StorageClassCreate;
 use hubuum_storage_core::StorageClassSchemaPolicy;
 use hubuum_storage_core::StorageClassUpdate;
+use hubuum_storage_core::StorageIdentityEvidence;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use utoipa::ToSchema;
@@ -291,6 +292,9 @@ fn update_hubuum_class_example() -> UpdateHubuumClass {
 
 #[derive(serde::Serialize, Clone, Debug, ToSchema)]
 pub struct HubuumClassHistory {
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub(crate) logical_identity: Option<StorageIdentityEvidence>,
     pub id: i32,
     pub name: String,
     pub collection_id: i32,

@@ -1,4 +1,5 @@
 use crate::config::runtime::current as get_config;
+use hubuum_storage_core::StorageIdentityEvidence;
 use std::{fmt, str::FromStr};
 
 use chrono::NaiveDateTime;
@@ -1299,6 +1300,9 @@ mod tests {
 
 #[derive(serde::Serialize, Clone, ToSchema)]
 pub struct RemoteTargetHistory {
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub(crate) logical_identity: Option<StorageIdentityEvidence>,
     pub id: i32,
     pub collection_id: i32,
     pub class_id: Option<i32>,

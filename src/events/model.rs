@@ -10,7 +10,6 @@
 
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fmt;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -25,39 +24,6 @@ use super::{
     Action, ActorKind, EntityType, EventCatalogError, PrincipalId, Provenance, ProvenanceActor,
     ProvenancePrincipal, TaskId,
 };
-
-/// Principal names resolved in one database query for provenance responses.
-///
-/// Keeping the map private prevents response builders from duplicating lookup
-/// and cloning behavior or treating the resolved names as general-purpose
-/// principal records.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PrincipalNames(HashMap<i32, String>);
-
-impl PrincipalNames {
-    pub(crate) fn name(&self, principal_id: i32) -> Option<&str> {
-        self.0.get(&principal_id).map(String::as_str)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn contains(&self, principal_id: i32) -> bool {
-        self.0.contains_key(&principal_id)
-    }
-
-    fn principal(&self, principal_id: i32) -> ProvenancePrincipal {
-        ProvenancePrincipal {
-            principal_id: PrincipalId::new(principal_id)
-                .expect("persisted provenance principal id must be positive"),
-            name: self.name(principal_id).map(ToOwned::to_owned),
-        }
-    }
-}
-
-impl FromIterator<(i32, String)> for PrincipalNames {
-    fn from_iter<T: IntoIterator<Item = (i32, String)>>(iter: T) -> Self {
-        Self(iter.into_iter().collect())
-    }
-}
 
 /// Stored provenance columns before principal names are resolved.
 ///
@@ -96,17 +62,18 @@ impl<'a> StoredProvenance<'a> {
         self
     }
 
-    pub(crate) fn resolve(self, principal_names: &PrincipalNames) -> Provenance {
+    pub(crate) fn without_names(self) -> Provenance {
+        let principal = |principal_id| ProvenancePrincipal {
+            principal_id: PrincipalId::new(principal_id)
+                .expect("persisted provenance principal id must be positive"),
+            name: None,
+        };
         Provenance {
             actor: ProvenanceActor {
                 kind: self.actor_kind.map(ToOwned::to_owned),
-                principal: self
-                    .actor_user_id
-                    .map(|principal_id| principal_names.principal(principal_id)),
+                principal: self.actor_user_id.map(principal),
             },
-            initiator: self
-                .initiator_user_id
-                .map(|principal_id| principal_names.principal(principal_id)),
+            initiator: self.initiator_user_id.map(principal),
             task_id: self.task_id.map(|task_id| {
                 TaskId::new(task_id).expect("persisted provenance task id must be positive")
             }),
@@ -235,18 +202,18 @@ impl Event {
         ActorKind::parse(&self.actor_kind)
     }
 
-    pub(crate) fn resolved_provenance(&self, principal_names: &PrincipalNames) -> Provenance {
+    pub(crate) fn provenance(&self) -> Provenance {
         StoredProvenance::from_actor_kind(Some(&self.actor_kind))
             .with_actor_user_id(self.actor_user_id)
             .with_initiator_user_id(self.initiator_user_id)
             .with_task_id(self.task_id)
-            .resolve(principal_names)
+            .without_names()
     }
 }
 
-impl EventResponse {
-    pub(crate) fn from_event_with_names(value: Event, principal_names: &PrincipalNames) -> Self {
-        let provenance = value.resolved_provenance(principal_names);
+impl From<Event> for EventResponse {
+    fn from(value: Event) -> Self {
+        let provenance = value.provenance();
         Self {
             id: value.id,
             event_id: value.event_id,
@@ -269,12 +236,6 @@ impl EventResponse {
             before_revision: value.before_revision,
             after_revision: value.after_revision,
         }
-    }
-}
-
-impl From<Event> for EventResponse {
-    fn from(value: Event) -> Self {
-        Self::from_event_with_names(value, &PrincipalNames::default())
     }
 }
 

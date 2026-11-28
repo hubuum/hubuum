@@ -71,6 +71,12 @@ pub(crate) async fn patch(
         ));
     }
     for (name, value) in &request.changes {
+        if crate::config::runtime::task_admission_seed_fields(group.into()).contains(&name.as_str())
+        {
+            return Err(ApiError::BadRequest(format!(
+                "'{name}' is a deployment seed; update shared admission through /api/v1/admin/task-capacity"
+            )));
+        }
         if descriptor.schema["properties"].get(name).is_none() || value.is_null() {
             return Err(ApiError::BadRequest(format!(
                 "Unknown or null runtime setting '{name}'; omit unchanged fields and use DELETE to release a group"
@@ -109,6 +115,17 @@ pub(crate) async fn patch(
             if !value.is_null() {
                 merged[&name] = value;
             }
+        }
+    }
+    let seed_fields = crate::config::runtime::task_admission_seed_fields(group.into());
+    if !seed_fields.is_empty() {
+        let seeds = crate::config::runtime::deployment_document(
+            &crate::config::get_config()?.clone(),
+            group.into(),
+        )
+        .expect("policy group");
+        for field in seed_fields {
+            merged[*field] = seeds[*field].clone();
         }
     }
     for (name, value) in request.changes {
@@ -226,6 +243,23 @@ pub(crate) async fn update_with_origin(
                 )
             })?
             .ensure_allowed(&candidate)?;
+    }
+    if let Some(document) = request.assignment().to_document() {
+        let fields = crate::config::runtime::task_admission_seed_fields(request.group());
+        if !fields.is_empty() {
+            let deployment = crate::config::runtime::deployment_document(
+                &crate::config::get_config()?.clone(),
+                request.group(),
+            )
+            .expect("policy group");
+            for field in fields {
+                if document[*field] != deployment[*field] {
+                    return Err(ApiError::BadRequest(format!(
+                        "'{field}' is a deployment seed; update shared admission through /api/v1/admin/task-capacity"
+                    )));
+                }
+            }
+        }
     }
     if let Some(value) = request.assignment().value() {
         let mut candidate = crate::config::runtime::for_storage(context.backend())?

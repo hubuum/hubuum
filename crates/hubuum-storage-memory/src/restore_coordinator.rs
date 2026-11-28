@@ -62,8 +62,9 @@ impl RestoreCoordinator {
         }
     }
 
-    pub(super) fn after_replay(&self) -> Self {
+    pub(super) fn after_replay(&self, pending: bool) -> Self {
         Self {
+            owner: self.owner.filter(|_| pending),
             generation: self.generation,
             ..Self::default()
         }

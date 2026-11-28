@@ -1,0 +1,1978 @@
+{
+  "contract_version": 1,
+  "status": "proposal",
+  "examples": {
+    "published_audit": {
+      "id": 1,
+      "event_id": "00000000-0000-4000-8000-000000000101",
+      "occurred_at": "2026-10-30T00:00:00",
+      "entity_type": "lifecycle",
+      "entity_id": null,
+      "entity_name": null,
+      "collection_id": 7,
+      "action": "updated",
+      "actor_kind": "worker",
+      "actor_user_id": null,
+      "provenance": {
+        "actor": {
+          "kind": "worker",
+          "principal": null
+        },
+        "initiator": {
+          "principal_id": 42,
+          "name": null
+        },
+        "task_id": 12
+      },
+      "request_id": null,
+      "correlation_id": "example-operation",
+      "summary": "Lifecycle archive published",
+      "before": null,
+      "after": null,
+      "schema_version": 1,
+      "metadata": {
+        "lifecycle": {
+          "contract_version": 1,
+          "name": "lifecycle.archive.published",
+          "projection": "audit",
+          "operation_id": "00000000-0000-4000-8000-000000000010",
+          "operation_revision": "9007199254740993",
+          "scope": {
+            "kind": "collection",
+            "collection_uuid": "00000000-0000-4000-8000-000000000007"
+          },
+          "state": {
+            "outcome": "committed",
+            "reasons": []
+          },
+          "counts": {
+            "versions": 2,
+            "logical_bytes": 4096,
+            "physical_bytes": null,
+            "transferred_bytes": null
+          },
+          "availability": null,
+          "run_id": "00000000-0000-4000-8000-000000000011",
+          "batch_id": "00000000-0000-4000-8000-000000000012",
+          "attempt_id": "00000000-0000-4000-8000-000000000013",
+          "caused_by_event_id": null,
+          "observed_at": null,
+          "attribution": {
+            "actor_principal_uuid": null,
+            "initiator_principal_uuid": "00000000-0000-4000-8000-000000000042",
+            "trigger": "manual"
+          },
+          "authority": {
+            "policy_id": "00000000-0000-4000-8000-000000000030",
+            "policy_revision": "3",
+            "review_id": null,
+            "hold_generation": "1",
+            "deletion_generation": "2"
+          },
+          "copies": {
+            "source_tier": "hot",
+            "destination_tier": "warm",
+            "destination_id": "00000000-0000-4000-8000-000000000050",
+            "artifact_id": "00000000-0000-4000-8000-000000000051",
+            "source_destination_id": null,
+            "source_artifact_id": null
+          },
+          "evidence": {
+            "membership": {
+              "membership_id": "00000000-0000-4000-8000-000000000020",
+              "format_version": 1,
+              "sha256": "3200b1f451d3bfa7e8bcedcc5f81687090fc4c4f41b758edcd5b1873dc35e8c5",
+              "count": 2,
+              "encoded_bytes": 290,
+              "expires_at": "2027-10-30T00:00:00Z"
+            },
+            "verification_id": "00000000-0000-4000-8000-000000000060",
+            "receipt_id": null
+          },
+          "delivery": null
+        }
+      }
+    },
+    "published_sink": {
+      "id": 1,
+      "event_id": "00000000-0000-4000-8000-000000000101",
+      "occurred_at": "2026-10-30T00:00:00",
+      "entity_type": "lifecycle",
+      "entity_id": null,
+      "entity_name": null,
+      "collection_id": 7,
+      "action": "updated",
+      "actor_kind": "worker",
+      "actor_user_id": null,
+      "provenance": {
+        "actor": {
+          "kind": "worker",
+          "principal": null
+        },
+        "initiator": null,
+        "task_id": null
+      },
+      "request_id": null,
+      "correlation_id": null,
+      "summary": "Lifecycle state changed",
+      "before": null,
+      "after": null,
+      "schema_version": 1,
+      "metadata": {
+        "lifecycle": {
+          "contract_version": 1,
+          "name": "lifecycle.archive.published",
+          "projection": "sink",
+          "operation_id": "00000000-0000-4000-8000-000000000010",
+          "operation_revision": "9007199254740993",
+          "scope": {
+            "kind": "collection",
+            "collection_uuid": "00000000-0000-4000-8000-000000000007"
+          },
+          "state": {
+            "outcome": "committed",
+            "reasons": []
+          },
+          "counts": {
+            "versions": 2,
+            "logical_bytes": 4096,
+            "physical_bytes": null,
+            "transferred_bytes": null
+          },
+          "availability": null
+        }
+      }
+    },
+    "source_retired_audit": {
+      "id": 2,
+      "event_id": "00000000-0000-4000-8000-000000000102",
+      "occurred_at": "2026-10-30T00:00:00",
+      "entity_type": "lifecycle",
+      "entity_id": null,
+      "entity_name": null,
+      "collection_id": 7,
+      "action": "updated",
+      "actor_kind": "worker",
+      "actor_user_id": null,
+      "provenance": {
+        "actor": {
+          "kind": "worker",
+          "principal": null
+        },
+        "initiator": {
+          "principal_id": 42,
+          "name": null
+        },
+        "task_id": 12
+      },
+      "request_id": null,
+      "correlation_id": "example-operation",
+      "summary": "Lifecycle archive source retired",
+      "before": null,
+      "after": null,
+      "schema_version": 1,
+      "metadata": {
+        "lifecycle": {
+          "contract_version": 1,
+          "name": "lifecycle.archive.source_retired",
+          "projection": "audit",
+          "operation_id": "00000000-0000-4000-8000-000000000010",
+          "operation_revision": "9007199254740994",
+          "scope": {
+            "kind": "collection",
+            "collection_uuid": "00000000-0000-4000-8000-000000000007"
+          },
+          "state": {
+            "outcome": "committed",
+            "reasons": []
+          },
+          "counts": {
+            "versions": 2,
+            "logical_bytes": 4096,
+            "physical_bytes": null,
+            "transferred_bytes": null
+          },
+          "availability": null,
+          "run_id": "00000000-0000-4000-8000-000000000011",
+          "batch_id": "00000000-0000-4000-8000-000000000012",
+          "attempt_id": "00000000-0000-4000-8000-000000000013",
+          "caused_by_event_id": null,
+          "observed_at": null,
+          "attribution": {
+            "actor_principal_uuid": null,
+            "initiator_principal_uuid": "00000000-0000-4000-8000-000000000042",
+            "trigger": "manual"
+          },
+          "authority": {
+            "policy_id": "00000000-0000-4000-8000-000000000030",
+            "policy_revision": "3",
+            "review_id": null,
+            "hold_generation": "1",
+            "deletion_generation": "2"
+          },
+          "copies": {
+            "source_tier": "hot",
+            "destination_tier": "warm",
+            "destination_id": "00000000-0000-4000-8000-000000000050",
+            "artifact_id": "00000000-0000-4000-8000-000000000051",
+            "source_destination_id": null,
+            "source_artifact_id": null
+          },
+          "evidence": {
+            "membership": {
+              "membership_id": "00000000-0000-4000-8000-000000000020",
+              "format_version": 1,
+              "sha256": "3200b1f451d3bfa7e8bcedcc5f81687090fc4c4f41b758edcd5b1873dc35e8c5",
+              "count": 2,
+              "encoded_bytes": 290,
+              "expires_at": "2027-10-30T00:00:00Z"
+            },
+            "verification_id": "00000000-0000-4000-8000-000000000060",
+            "receipt_id": null
+          },
+          "delivery": null
+        }
+      }
+    },
+    "erasure_restricted_audit": {
+      "id": 3,
+      "event_id": "00000000-0000-4000-8000-000000000103",
+      "occurred_at": "2026-10-30T00:00:00",
+      "entity_type": "lifecycle",
+      "entity_id": null,
+      "entity_name": null,
+      "collection_id": 7,
+      "action": "updated",
+      "actor_kind": "worker",
+      "actor_user_id": null,
+      "provenance": {
+        "actor": {
+          "kind": "worker",
+          "principal": null
+        },
+        "initiator": {
+          "principal_id": 42,
+          "name": null
+        },
+        "task_id": 12
+      },
+      "request_id": null,
+      "correlation_id": "example-operation",
+      "summary": "Lifecycle erasure access restricted",
+      "before": null,
+      "after": null,
+      "schema_version": 1,
+      "metadata": {
+        "lifecycle": {
+          "contract_version": 1,
+          "name": "lifecycle.erasure.access_restricted",
+          "projection": "audit",
+          "operation_id": "00000000-0000-4000-8000-000000000010",
+          "operation_revision": "3",
+          "scope": {
+            "kind": "collection",
+            "collection_uuid": "00000000-0000-4000-8000-000000000007"
+          },
+          "state": {
+            "outcome": "committed",
+            "reasons": []
+          },
+          "counts": {
+            "versions": 2,
+            "logical_bytes": 4096,
+            "physical_bytes": null,
+            "transferred_bytes": null
+          },
+          "availability": null,
+          "run_id": "00000000-0000-4000-8000-000000000011",
+          "batch_id": "00000000-0000-4000-8000-000000000012",
+          "attempt_id": "00000000-0000-4000-8000-000000000013",
+          "caused_by_event_id": null,
+          "observed_at": null,
+          "attribution": {
+            "actor_principal_uuid": null,
+            "initiator_principal_uuid": "00000000-0000-4000-8000-000000000042",
+            "trigger": "manual"
+          },
+          "authority": {
+            "policy_id": "00000000-0000-4000-8000-000000000030",
+            "policy_revision": "3",
+            "review_id": null,
+            "hold_generation": "1",
+            "deletion_generation": "2"
+          },
+          "copies": {
+            "source_tier": "hot",
+            "destination_tier": "warm",
+            "destination_id": "00000000-0000-4000-8000-000000000050",
+            "artifact_id": "00000000-0000-4000-8000-000000000051",
+            "source_destination_id": null,
+            "source_artifact_id": null
+          },
+          "evidence": {
+            "membership": {
+              "membership_id": "00000000-0000-4000-8000-000000000020",
+              "format_version": 1,
+              "sha256": "3200b1f451d3bfa7e8bcedcc5f81687090fc4c4f41b758edcd5b1873dc35e8c5",
+              "count": 2,
+              "encoded_bytes": 290,
+              "expires_at": "2027-10-30T00:00:00Z"
+            },
+            "verification_id": null,
+            "receipt_id": null
+          },
+          "delivery": null
+        }
+      }
+    },
+    "erasure_completed_audit": {
+      "id": 4,
+      "event_id": "00000000-0000-4000-8000-000000000104",
+      "occurred_at": "2026-10-30T00:00:00",
+      "entity_type": "lifecycle",
+      "entity_id": null,
+      "entity_name": null,
+      "collection_id": 7,
+      "action": "succeeded",
+      "actor_kind": "worker",
+      "actor_user_id": null,
+      "provenance": {
+        "actor": {
+          "kind": "worker",
+          "principal": null
+        },
+        "initiator": {
+          "principal_id": 42,
+          "name": null
+        },
+        "task_id": 12
+      },
+      "request_id": null,
+      "correlation_id": "example-operation",
+      "summary": "Lifecycle erasure completed",
+      "before": null,
+      "after": null,
+      "schema_version": 1,
+      "metadata": {
+        "lifecycle": {
+          "contract_version": 1,
+          "name": "lifecycle.erasure.completed",
+          "projection": "audit",
+          "operation_id": "00000000-0000-4000-8000-000000000010",
+          "operation_revision": "4",
+          "scope": {
+            "kind": "collection",
+            "collection_uuid": "00000000-0000-4000-8000-000000000007"
+          },
+          "state": {
+            "outcome": "committed",
+            "reasons": []
+          },
+          "counts": {
+            "versions": 2,
+            "logical_bytes": 4096,
+            "physical_bytes": null,
+            "transferred_bytes": null
+          },
+          "availability": null,
+          "run_id": "00000000-0000-4000-8000-000000000011",
+          "batch_id": "00000000-0000-4000-8000-000000000012",
+          "attempt_id": "00000000-0000-4000-8000-000000000013",
+          "caused_by_event_id": null,
+          "observed_at": null,
+          "attribution": {
+            "actor_principal_uuid": null,
+            "initiator_principal_uuid": "00000000-0000-4000-8000-000000000042",
+            "trigger": "manual"
+          },
+          "authority": {
+            "policy_id": "00000000-0000-4000-8000-000000000030",
+            "policy_revision": "3",
+            "review_id": null,
+            "hold_generation": "1",
+            "deletion_generation": "2"
+          },
+          "copies": {
+            "source_tier": "hot",
+            "destination_tier": "warm",
+            "destination_id": "00000000-0000-4000-8000-000000000050",
+            "artifact_id": "00000000-0000-4000-8000-000000000051",
+            "source_destination_id": null,
+            "source_artifact_id": null
+          },
+          "evidence": {
+            "membership": {
+              "membership_id": "00000000-0000-4000-8000-000000000020",
+              "format_version": 1,
+              "sha256": "3200b1f451d3bfa7e8bcedcc5f81687090fc4c4f41b758edcd5b1873dc35e8c5",
+              "count": 2,
+              "encoded_bytes": 290,
+              "expires_at": "2027-10-30T00:00:00Z"
+            },
+            "verification_id": "00000000-0000-4000-8000-000000000060",
+            "receipt_id": "00000000-0000-4000-8000-000000000070"
+          },
+          "delivery": null
+        }
+      }
+    },
+    "erasure_blocked_audit": {
+      "id": 5,
+      "event_id": "00000000-0000-4000-8000-000000000105",
+      "occurred_at": "2026-10-30T00:00:00",
+      "entity_type": "lifecycle",
+      "entity_id": null,
+      "entity_name": null,
+      "collection_id": 7,
+      "action": "updated",
+      "actor_kind": "worker",
+      "actor_user_id": null,
+      "provenance": {
+        "actor": {
+          "kind": "worker",
+          "principal": null
+        },
+        "initiator": {
+          "principal_id": 42,
+          "name": null
+        },
+        "task_id": 12
+      },
+      "request_id": null,
+      "correlation_id": "example-operation",
+      "summary": "Lifecycle erasure blocked",
+      "before": null,
+      "after": null,
+      "schema_version": 1,
+      "metadata": {
+        "lifecycle": {
+          "contract_version": 1,
+          "name": "lifecycle.erasure.blocked",
+          "projection": "audit",
+          "operation_id": "00000000-0000-4000-8000-000000000010",
+          "operation_revision": "5",
+          "scope": {
+            "kind": "collection",
+            "collection_uuid": "00000000-0000-4000-8000-000000000007"
+          },
+          "state": {
+            "outcome": "blocked",
+            "reasons": [
+              "provider_lock"
+            ]
+          },
+          "counts": {
+            "versions": 2,
+            "logical_bytes": 4096,
+            "physical_bytes": null,
+            "transferred_bytes": null
+          },
+          "availability": null,
+          "run_id": "00000000-0000-4000-8000-000000000011",
+          "batch_id": "00000000-0000-4000-8000-000000000012",
+          "attempt_id": "00000000-0000-4000-8000-000000000013",
+          "caused_by_event_id": null,
+          "observed_at": null,
+          "attribution": {
+            "actor_principal_uuid": null,
+            "initiator_principal_uuid": "00000000-0000-4000-8000-000000000042",
+            "trigger": "manual"
+          },
+          "authority": {
+            "policy_id": "00000000-0000-4000-8000-000000000030",
+            "policy_revision": "3",
+            "review_id": null,
+            "hold_generation": "1",
+            "deletion_generation": "2"
+          },
+          "copies": {
+            "source_tier": "hot",
+            "destination_tier": "warm",
+            "destination_id": "00000000-0000-4000-8000-000000000050",
+            "artifact_id": "00000000-0000-4000-8000-000000000051",
+            "source_destination_id": null,
+            "source_artifact_id": null
+          },
+          "evidence": {
+            "membership": {
+              "membership_id": "00000000-0000-4000-8000-000000000020",
+              "format_version": 1,
+              "sha256": "3200b1f451d3bfa7e8bcedcc5f81687090fc4c4f41b758edcd5b1873dc35e8c5",
+              "count": 2,
+              "encoded_bytes": 290,
+              "expires_at": "2027-10-30T00:00:00Z"
+            },
+            "verification_id": "00000000-0000-4000-8000-000000000060",
+            "receipt_id": null
+          },
+          "delivery": null
+        }
+      }
+    },
+    "ready_audit": {
+      "id": 6,
+      "event_id": "00000000-0000-4000-8000-000000000106",
+      "occurred_at": "2026-10-30T00:00:00",
+      "entity_type": "lifecycle",
+      "entity_id": null,
+      "entity_name": null,
+      "collection_id": 7,
+      "action": "succeeded",
+      "actor_kind": "worker",
+      "actor_user_id": null,
+      "provenance": {
+        "actor": {
+          "kind": "worker",
+          "principal": null
+        },
+        "initiator": {
+          "principal_id": 42,
+          "name": null
+        },
+        "task_id": 12
+      },
+      "request_id": null,
+      "correlation_id": "example-operation",
+      "summary": "Lifecycle data request ready",
+      "before": null,
+      "after": null,
+      "schema_version": 1,
+      "metadata": {
+        "lifecycle": {
+          "contract_version": 1,
+          "name": "lifecycle.data_request.ready",
+          "projection": "audit",
+          "operation_id": "00000000-0000-4000-8000-000000000010",
+          "operation_revision": "6",
+          "scope": {
+            "kind": "collection",
+            "collection_uuid": "00000000-0000-4000-8000-000000000007"
+          },
+          "state": {
+            "outcome": "committed",
+            "reasons": []
+          },
+          "counts": {
+            "versions": 2,
+            "logical_bytes": 4096,
+            "physical_bytes": null,
+            "transferred_bytes": null
+          },
+          "availability": {
+            "ready_at": "2026-10-30T00:00:00Z",
+            "available_until": "2026-11-01T00:00:00Z"
+          },
+          "run_id": "00000000-0000-4000-8000-000000000011",
+          "batch_id": "00000000-0000-4000-8000-000000000012",
+          "attempt_id": "00000000-0000-4000-8000-000000000013",
+          "caused_by_event_id": null,
+          "observed_at": null,
+          "attribution": {
+            "actor_principal_uuid": null,
+            "initiator_principal_uuid": "00000000-0000-4000-8000-000000000042",
+            "trigger": "manual"
+          },
+          "authority": {
+            "policy_id": "00000000-0000-4000-8000-000000000030",
+            "policy_revision": "3",
+            "review_id": null,
+            "hold_generation": "1",
+            "deletion_generation": "2"
+          },
+          "copies": {
+            "source_tier": "hot",
+            "destination_tier": "warm",
+            "destination_id": "00000000-0000-4000-8000-000000000050",
+            "artifact_id": "00000000-0000-4000-8000-000000000051",
+            "source_destination_id": null,
+            "source_artifact_id": null
+          },
+          "evidence": {
+            "membership": {
+              "membership_id": "00000000-0000-4000-8000-000000000020",
+              "format_version": 1,
+              "sha256": "3200b1f451d3bfa7e8bcedcc5f81687090fc4c4f41b758edcd5b1873dc35e8c5",
+              "count": 2,
+              "encoded_bytes": 290,
+              "expires_at": "2027-10-30T00:00:00Z"
+            },
+            "verification_id": "00000000-0000-4000-8000-000000000060",
+            "receipt_id": null
+          },
+          "delivery": null
+        }
+      }
+    },
+    "system_policy_audit": {
+      "id": 7,
+      "event_id": "00000000-0000-4000-8000-000000000107",
+      "occurred_at": "2026-10-30T00:00:00",
+      "entity_type": "lifecycle",
+      "entity_id": null,
+      "entity_name": null,
+      "collection_id": null,
+      "action": "updated",
+      "actor_kind": "worker",
+      "actor_user_id": null,
+      "provenance": {
+        "actor": {
+          "kind": "worker",
+          "principal": null
+        },
+        "initiator": {
+          "principal_id": 42,
+          "name": null
+        },
+        "task_id": 12
+      },
+      "request_id": null,
+      "correlation_id": "example-operation",
+      "summary": "Lifecycle policy changed",
+      "before": null,
+      "after": null,
+      "schema_version": 1,
+      "metadata": {
+        "lifecycle": {
+          "contract_version": 1,
+          "name": "lifecycle.policy.changed",
+          "projection": "audit",
+          "operation_id": "00000000-0000-4000-8000-000000000010",
+          "operation_revision": "7",
+          "scope": {
+            "kind": "system"
+          },
+          "state": {
+            "outcome": "committed",
+            "reasons": []
+          },
+          "counts": {
+            "versions": null,
+            "logical_bytes": null,
+            "physical_bytes": null,
+            "transferred_bytes": null
+          },
+          "availability": null,
+          "run_id": "00000000-0000-4000-8000-000000000011",
+          "batch_id": "00000000-0000-4000-8000-000000000012",
+          "attempt_id": "00000000-0000-4000-8000-000000000013",
+          "caused_by_event_id": null,
+          "observed_at": null,
+          "attribution": {
+            "actor_principal_uuid": null,
+            "initiator_principal_uuid": "00000000-0000-4000-8000-000000000042",
+            "trigger": "manual"
+          },
+          "authority": {
+            "policy_id": "00000000-0000-4000-8000-000000000030",
+            "policy_revision": "3",
+            "review_id": null,
+            "hold_generation": "1",
+            "deletion_generation": "2"
+          },
+          "copies": {
+            "source_tier": null,
+            "destination_tier": null,
+            "destination_id": null,
+            "artifact_id": null,
+            "source_destination_id": null,
+            "source_artifact_id": null
+          },
+          "evidence": {
+            "membership": null,
+            "verification_id": null,
+            "receipt_id": null
+          },
+          "delivery": null
+        }
+      }
+    },
+    "verified_audit_only": {
+      "id": 8,
+      "event_id": "00000000-0000-4000-8000-000000000108",
+      "occurred_at": "2026-10-30T00:00:00",
+      "entity_type": "lifecycle",
+      "entity_id": null,
+      "entity_name": null,
+      "collection_id": 7,
+      "action": "updated",
+      "actor_kind": "worker",
+      "actor_user_id": null,
+      "provenance": {
+        "actor": {
+          "kind": "worker",
+          "principal": null
+        },
+        "initiator": {
+          "principal_id": 42,
+          "name": null
+        },
+        "task_id": 12
+      },
+      "request_id": null,
+      "correlation_id": "example-operation",
+      "summary": "Lifecycle archive verified",
+      "before": null,
+      "after": null,
+      "schema_version": 1,
+      "metadata": {
+        "lifecycle": {
+          "contract_version": 1,
+          "name": "lifecycle.archive.verified",
+          "projection": "audit",
+          "operation_id": "00000000-0000-4000-8000-000000000010",
+          "operation_revision": "8",
+          "scope": {
+            "kind": "collection",
+            "collection_uuid": "00000000-0000-4000-8000-000000000007"
+          },
+          "state": {
+            "outcome": "committed",
+            "reasons": []
+          },
+          "counts": {
+            "versions": 2,
+            "logical_bytes": 4096,
+            "physical_bytes": null,
+            "transferred_bytes": null
+          },
+          "availability": null,
+          "run_id": "00000000-0000-4000-8000-000000000011",
+          "batch_id": "00000000-0000-4000-8000-000000000012",
+          "attempt_id": "00000000-0000-4000-8000-000000000013",
+          "caused_by_event_id": null,
+          "observed_at": null,
+          "attribution": {
+            "actor_principal_uuid": null,
+            "initiator_principal_uuid": "00000000-0000-4000-8000-000000000042",
+            "trigger": "manual"
+          },
+          "authority": {
+            "policy_id": "00000000-0000-4000-8000-000000000030",
+            "policy_revision": "3",
+            "review_id": null,
+            "hold_generation": "1",
+            "deletion_generation": "2"
+          },
+          "copies": {
+            "source_tier": "hot",
+            "destination_tier": "warm",
+            "destination_id": "00000000-0000-4000-8000-000000000050",
+            "artifact_id": "00000000-0000-4000-8000-000000000051",
+            "source_destination_id": null,
+            "source_artifact_id": null
+          },
+          "evidence": {
+            "membership": {
+              "membership_id": "00000000-0000-4000-8000-000000000020",
+              "format_version": 1,
+              "sha256": "3200b1f451d3bfa7e8bcedcc5f81687090fc4c4f41b758edcd5b1873dc35e8c5",
+              "count": 2,
+              "encoded_bytes": 290,
+              "expires_at": "2027-10-30T00:00:00Z"
+            },
+            "verification_id": "00000000-0000-4000-8000-000000000060",
+            "receipt_id": null
+          },
+          "delivery": null
+        }
+      }
+    },
+    "membership_page": {
+      "kind": "lifecycle_membership",
+      "membership_id": "00000000-0000-4000-8000-000000000020",
+      "operation_id": "00000000-0000-4000-8000-000000000010",
+      "collection_uuid": "00000000-0000-4000-8000-000000000007",
+      "coverage": "complete",
+      "expires_at": "2027-10-30T00:00:00Z",
+      "members": [
+        {
+          "resource_uuid": "00000000-0000-4000-8000-000000000081",
+          "version_uuid": "00000000-0000-4000-8000-000000000091"
+        },
+        {
+          "resource_uuid": "00000000-0000-4000-8000-000000000082",
+          "version_uuid": "00000000-0000-4000-8000-000000000092"
+        }
+      ],
+      "next_cursor": null
+    },
+    "empty_membership_page": {
+      "kind": "lifecycle_membership",
+      "membership_id": "00000000-0000-4000-8000-000000000021",
+      "operation_id": "00000000-0000-4000-8000-000000000010",
+      "collection_uuid": "00000000-0000-4000-8000-000000000007",
+      "coverage": "complete",
+      "expires_at": "2027-10-30T00:00:00Z",
+      "members": [],
+      "next_cursor": null
+    },
+    "expired_evidence": {
+      "kind": "lifecycle_evidence_unavailable",
+      "reason": "expired",
+      "receipt_id": "00000000-0000-4000-8000-000000000070"
+    },
+    "minimized_evidence": {
+      "kind": "lifecycle_evidence_unavailable",
+      "reason": "minimized",
+      "receipt_id": null
+    },
+    "corrupt_evidence": {
+      "kind": "lifecycle_evidence_unavailable",
+      "reason": "corrupt",
+      "receipt_id": null
+    },
+    "ready_sink": {
+      "id": 6,
+      "event_id": "00000000-0000-4000-8000-000000000106",
+      "occurred_at": "2026-10-30T00:00:00",
+      "entity_type": "lifecycle",
+      "entity_id": null,
+      "entity_name": null,
+      "collection_id": 7,
+      "action": "succeeded",
+      "actor_kind": "worker",
+      "actor_user_id": null,
+      "provenance": {
+        "actor": {
+          "kind": "worker",
+          "principal": null
+        },
+        "initiator": null,
+        "task_id": null
+      },
+      "request_id": null,
+      "correlation_id": null,
+      "summary": "Lifecycle state changed",
+      "before": null,
+      "after": null,
+      "schema_version": 1,
+      "metadata": {
+        "lifecycle": {
+          "contract_version": 1,
+          "name": "lifecycle.data_request.ready",
+          "projection": "sink",
+          "operation_id": "00000000-0000-4000-8000-000000000010",
+          "operation_revision": "6",
+          "scope": {
+            "kind": "collection",
+            "collection_uuid": "00000000-0000-4000-8000-000000000007"
+          },
+          "state": {
+            "outcome": "committed",
+            "reasons": []
+          },
+          "counts": {
+            "versions": 2,
+            "logical_bytes": 4096,
+            "physical_bytes": null,
+            "transferred_bytes": null
+          },
+          "availability": {
+            "ready_at": "2026-10-30T00:00:00Z",
+            "available_until": "2026-11-01T00:00:00Z"
+          }
+        }
+      }
+    },
+    "same_tier_migration_audit": {
+      "id": 10,
+      "event_id": "00000000-0000-4000-8000-000000000110",
+      "occurred_at": "2026-10-30T00:00:00",
+      "entity_type": "lifecycle",
+      "entity_id": null,
+      "entity_name": null,
+      "collection_id": 7,
+      "action": "updated",
+      "actor_kind": "worker",
+      "actor_user_id": null,
+      "provenance": {
+        "actor": {
+          "kind": "worker",
+          "principal": null
+        },
+        "initiator": {
+          "principal_id": 42,
+          "name": null
+        },
+        "task_id": 12
+      },
+      "request_id": null,
+      "correlation_id": "example-operation",
+      "summary": "Lifecycle archive published",
+      "before": null,
+      "after": null,
+      "schema_version": 1,
+      "metadata": {
+        "lifecycle": {
+          "contract_version": 1,
+          "name": "lifecycle.archive.published",
+          "projection": "audit",
+          "operation_id": "00000000-0000-4000-8000-000000000410",
+          "operation_revision": "1",
+          "scope": {
+            "kind": "collection",
+            "collection_uuid": "00000000-0000-4000-8000-000000000007"
+          },
+          "state": {
+            "outcome": "committed",
+            "reasons": []
+          },
+          "counts": {
+            "versions": 2,
+            "logical_bytes": 4096,
+            "physical_bytes": null,
+            "transferred_bytes": null
+          },
+          "availability": null,
+          "run_id": "00000000-0000-4000-8000-000000000011",
+          "batch_id": "00000000-0000-4000-8000-000000000012",
+          "attempt_id": "00000000-0000-4000-8000-000000000013",
+          "caused_by_event_id": null,
+          "observed_at": null,
+          "attribution": {
+            "actor_principal_uuid": null,
+            "initiator_principal_uuid": "00000000-0000-4000-8000-000000000042",
+            "trigger": "manual"
+          },
+          "authority": {
+            "policy_id": "00000000-0000-4000-8000-000000000030",
+            "policy_revision": "3",
+            "review_id": null,
+            "hold_generation": "1",
+            "deletion_generation": "2"
+          },
+          "copies": {
+            "source_tier": "warm",
+            "destination_tier": "warm",
+            "destination_id": "00000000-0000-4000-8000-000000000050",
+            "artifact_id": "00000000-0000-4000-8000-000000000051",
+            "source_destination_id": "00000000-0000-4000-8000-000000000049",
+            "source_artifact_id": "00000000-0000-4000-8000-000000000051"
+          },
+          "evidence": {
+            "membership": {
+              "membership_id": "00000000-0000-4000-8000-000000000420",
+              "format_version": 1,
+              "sha256": "f09f7d890b20a58f25ec46768f831a0b7fad2145833d42b2108cf7e085a849d5",
+              "count": 2,
+              "encoded_bytes": 290,
+              "expires_at": "2027-10-30T00:00:00Z"
+            },
+            "verification_id": "00000000-0000-4000-8000-000000000060",
+            "receipt_id": null
+          },
+          "delivery": null
+        }
+      }
+    },
+    "delivery_configured": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "configured",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 8,
+        "row_limit": 100,
+        "reserved_payload_bytes": 65536,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "retained",
+      "history_available_since": "2026-10-29T00:00:00Z",
+      "gap": null,
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "delivery_unconfigured": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "unconfigured",
+      "policy_revision": null,
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": null,
+      "gap_history": "unknown",
+      "history_available_since": null,
+      "gap": null,
+      "source_generation": null
+    },
+    "delivery_gap_open": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "configured",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 8,
+        "row_limit": 100,
+        "reserved_payload_bytes": 65536,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "retained",
+      "history_available_since": "2026-10-29T00:00:00Z",
+      "gap": {
+        "gap_id": "00000000-0000-4000-8000-000000000500",
+        "revision": "5",
+        "state": "open",
+        "observed_from": "2026-10-30T00:00:00Z",
+        "observed_through": "2026-10-30T00:30:00Z",
+        "visible_until": "2026-11-06T00:30:00Z",
+        "reasons": [
+          "backlog_capacity"
+        ],
+        "omitted_events": 17,
+        "count_accuracy": "exact",
+        "source_history": {
+          "state": "retained",
+          "reason": null
+        },
+        "acknowledged_revision": null
+      },
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "delivery_gap_unknown_count": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "configured",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 8,
+        "row_limit": 100,
+        "reserved_payload_bytes": 65536,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "retained",
+      "history_available_since": "2026-10-29T00:00:00Z",
+      "gap": {
+        "gap_id": "00000000-0000-4000-8000-000000000500",
+        "revision": "5",
+        "state": "open",
+        "observed_from": "2026-10-30T00:00:00Z",
+        "observed_through": "2026-10-30T00:30:00Z",
+        "visible_until": "2026-11-06T00:30:00Z",
+        "reasons": [
+          "backlog_capacity"
+        ],
+        "omitted_events": null,
+        "count_accuracy": "unknown",
+        "source_history": {
+          "state": "retained",
+          "reason": null
+        },
+        "acknowledged_revision": null
+      },
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "delivery_gap_acknowledged_expired_source": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "configured",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 8,
+        "row_limit": 100,
+        "reserved_payload_bytes": 65536,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "retained",
+      "history_available_since": "2026-10-29T00:00:00Z",
+      "gap": {
+        "gap_id": "00000000-0000-4000-8000-000000000500",
+        "revision": "6",
+        "state": "acknowledged",
+        "observed_from": "2026-10-30T00:00:00Z",
+        "observed_through": "2026-10-30T00:30:00Z",
+        "visible_until": "2026-11-06T00:30:00Z",
+        "reasons": [
+          "backlog_capacity",
+          "source_retention"
+        ],
+        "omitted_events": 17,
+        "count_accuracy": "exact",
+        "source_history": {
+          "state": "unavailable",
+          "reason": "source_expired"
+        },
+        "acknowledged_revision": "5"
+      },
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "delivery_history_expired": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "configured",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 8,
+        "row_limit": 100,
+        "reserved_payload_bytes": 65536,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "expired",
+      "history_available_since": "2026-10-30T00:00:00Z",
+      "gap": null,
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "delivery_draining": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "draining",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 120,
+        "row_limit": 100,
+        "reserved_payload_bytes": 983040,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "retained",
+      "history_available_since": "2026-10-29T00:00:00Z",
+      "gap": null,
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "capture_ready_without_task": {
+      "kind": "lifecycle_capture_receipt",
+      "contract_version": 1,
+      "capture_id": "00000000-0000-4000-8000-000000000510",
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "configuration_revision": "3",
+      "gap_revision": "5",
+      "task_id": null,
+      "state": "ready",
+      "captured_at": "2026-10-30T01:00:00Z",
+      "ready_at": "2026-10-30T01:00:01Z",
+      "available_until": "2026-11-01T01:00:01Z",
+      "result": {
+        "output_id": "00000000-0000-4000-8000-000000000511",
+        "format": "lifecycle-catchup-jsonl-v1",
+        "event_count": 2,
+        "encoded_bytes": 1794,
+        "sha256": "a172eb3e13d06afd0e804e43b7a6e2728ba0d2e30729665183d68df1978a552f"
+      },
+      "coverage": {
+        "basis": "captured_committed_set",
+        "completeness": "complete",
+        "source_history": {
+          "state": "retained",
+          "reason": null
+        },
+        "gap_recovered": false
+      },
+      "reason": null,
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "capture_ready_expired_source": {
+      "kind": "lifecycle_capture_receipt",
+      "contract_version": 1,
+      "capture_id": "00000000-0000-4000-8000-000000000510",
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "configuration_revision": "3",
+      "gap_revision": "5",
+      "task_id": null,
+      "state": "ready",
+      "captured_at": "2026-10-30T01:00:00Z",
+      "ready_at": "2026-10-30T01:00:01Z",
+      "available_until": "2026-11-01T01:00:01Z",
+      "result": {
+        "output_id": "00000000-0000-4000-8000-000000000511",
+        "format": "lifecycle-catchup-jsonl-v1",
+        "event_count": 2,
+        "encoded_bytes": 1794,
+        "sha256": "a172eb3e13d06afd0e804e43b7a6e2728ba0d2e30729665183d68df1978a552f"
+      },
+      "coverage": {
+        "basis": "captured_committed_set",
+        "completeness": "complete",
+        "source_history": {
+          "state": "unavailable",
+          "reason": "source_expired"
+        },
+        "gap_recovered": false
+      },
+      "reason": null,
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "capture_expired": {
+      "kind": "lifecycle_capture_receipt",
+      "contract_version": 1,
+      "capture_id": "00000000-0000-4000-8000-000000000510",
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "configuration_revision": "3",
+      "gap_revision": "5",
+      "task_id": null,
+      "state": "expired",
+      "captured_at": "2026-10-30T01:00:00Z",
+      "ready_at": "2026-10-30T01:00:01Z",
+      "available_until": "2026-11-01T01:00:01Z",
+      "result": null,
+      "coverage": null,
+      "reason": "capture_expired",
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "capture_unavailable": {
+      "kind": "lifecycle_capture_receipt",
+      "contract_version": 1,
+      "capture_id": "00000000-0000-4000-8000-000000000510",
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "configuration_revision": "3",
+      "gap_revision": "5",
+      "task_id": null,
+      "state": "unavailable",
+      "captured_at": "2026-10-30T01:00:00Z",
+      "ready_at": "2026-10-30T01:00:01Z",
+      "available_until": "2026-11-01T01:00:01Z",
+      "result": null,
+      "coverage": null,
+      "reason": "capture_unavailable",
+      "source_generation": "00000000-0000-4000-8000-000000000530"
+    },
+    "delivery_gap_acknowledged_audit": {
+      "id": 11,
+      "event_id": "00000000-0000-4000-8000-000000000111",
+      "occurred_at": "2026-10-30T00:00:00",
+      "entity_type": "lifecycle",
+      "entity_id": null,
+      "entity_name": null,
+      "collection_id": 7,
+      "action": "updated",
+      "actor_kind": "user",
+      "actor_user_id": 42,
+      "provenance": {
+        "actor": {
+          "kind": "user",
+          "principal": {
+            "principal_id": 42,
+            "name": null
+          }
+        },
+        "initiator": null,
+        "task_id": null
+      },
+      "request_id": null,
+      "correlation_id": "example-operation",
+      "summary": "Lifecycle delivery gap acknowledged",
+      "before": null,
+      "after": null,
+      "schema_version": 1,
+      "metadata": {
+        "lifecycle": {
+          "contract_version": 1,
+          "name": "lifecycle.delivery_gap.acknowledged",
+          "projection": "audit",
+          "operation_id": "00000000-0000-4000-8000-000000000520",
+          "operation_revision": "1",
+          "scope": {
+            "kind": "collection",
+            "collection_uuid": "00000000-0000-4000-8000-000000000007"
+          },
+          "state": {
+            "outcome": "committed",
+            "reasons": []
+          },
+          "counts": {
+            "versions": null,
+            "logical_bytes": null,
+            "physical_bytes": null,
+            "transferred_bytes": null
+          },
+          "availability": null,
+          "run_id": null,
+          "batch_id": null,
+          "attempt_id": null,
+          "caused_by_event_id": null,
+          "observed_at": null,
+          "attribution": {
+            "actor_principal_uuid": "00000000-0000-4000-8000-000000000042",
+            "initiator_principal_uuid": null,
+            "trigger": "manual"
+          },
+          "authority": {
+            "policy_id": null,
+            "policy_revision": null,
+            "review_id": null,
+            "hold_generation": null,
+            "deletion_generation": null
+          },
+          "copies": {
+            "source_tier": null,
+            "destination_tier": null,
+            "destination_id": null,
+            "artifact_id": null,
+            "source_destination_id": null,
+            "source_artifact_id": null
+          },
+          "evidence": {
+            "membership": null,
+            "verification_id": null,
+            "receipt_id": null
+          },
+          "delivery": {
+            "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+            "gap_id": "00000000-0000-4000-8000-000000000500",
+            "gap_revision": "5",
+            "configuration_revision": "3",
+            "source_generation": "00000000-0000-4000-8000-000000000530",
+            "capture_id": null
+          }
+        }
+      }
+    },
+    "delivery_gap_recovery_unknown": {
+      "kind": "lifecycle_delivery_status",
+      "contract_version": 1,
+      "subscription_id": 8,
+      "subscription_uuid": "00000000-0000-4000-8000-000000000008",
+      "scope": {
+        "kind": "collection",
+        "collection_uuid": "00000000-0000-4000-8000-000000000007"
+      },
+      "policy_state": "configured",
+      "policy_revision": "1",
+      "configuration_revision": "3",
+      "observed_at": "2026-10-30T01:00:00Z",
+      "capacity": {
+        "retained_rows": 8,
+        "row_limit": 100,
+        "reserved_payload_bytes": 65536,
+        "payload_byte_limit": 819200
+      },
+      "gap_history": "unknown",
+      "history_available_since": null,
+      "gap": {
+        "gap_id": "00000000-0000-4000-8000-000000000500",
+        "revision": "5",
+        "state": "open",
+        "observed_from": "2026-10-30T00:00:00Z",
+        "observed_through": "2026-10-30T00:30:00Z",
+        "visible_until": "2026-11-06T00:30:00Z",
+        "reasons": [
+          "recovery_gap"
+        ],
+        "omitted_events": 17,
+        "count_accuracy": "exact",
+        "source_history": {
+          "state": "unknown",
+          "reason": "recovery_gap"
+        },
+        "acknowledged_revision": null
+      },
+      "source_generation": "00000000-0000-4000-8000-000000000531"
+    }
+  },
+  "reader_cases": {
+    "unknown_optional_field": {
+      "view": "audit",
+      "input": {
+        "id": 1,
+        "event_id": "00000000-0000-4000-8000-000000000101",
+        "occurred_at": "2026-10-30T00:00:00",
+        "entity_type": "lifecycle",
+        "entity_id": null,
+        "entity_name": null,
+        "collection_id": 7,
+        "action": "updated",
+        "actor_kind": "worker",
+        "actor_user_id": null,
+        "provenance": {
+          "actor": {
+            "kind": "worker",
+            "principal": null
+          },
+          "initiator": {
+            "principal_id": 42,
+            "name": null
+          },
+          "task_id": 12
+        },
+        "request_id": null,
+        "correlation_id": "example-operation",
+        "summary": "Lifecycle archive published",
+        "before": null,
+        "after": null,
+        "schema_version": 1,
+        "metadata": {
+          "lifecycle": {
+            "contract_version": 1,
+            "name": "lifecycle.archive.published",
+            "projection": "audit",
+            "operation_id": "00000000-0000-4000-8000-000000000010",
+            "operation_revision": "9007199254740993",
+            "scope": {
+              "kind": "collection",
+              "collection_uuid": "00000000-0000-4000-8000-000000000007"
+            },
+            "state": {
+              "outcome": "committed",
+              "reasons": []
+            },
+            "counts": {
+              "versions": 2,
+              "logical_bytes": 4096,
+              "physical_bytes": null,
+              "transferred_bytes": null
+            },
+            "availability": null,
+            "run_id": "00000000-0000-4000-8000-000000000011",
+            "batch_id": "00000000-0000-4000-8000-000000000012",
+            "attempt_id": "00000000-0000-4000-8000-000000000013",
+            "caused_by_event_id": null,
+            "observed_at": null,
+            "attribution": {
+              "actor_principal_uuid": null,
+              "initiator_principal_uuid": "00000000-0000-4000-8000-000000000042",
+              "trigger": "manual"
+            },
+            "authority": {
+              "policy_id": "00000000-0000-4000-8000-000000000030",
+              "policy_revision": "3",
+              "review_id": null,
+              "hold_generation": "1",
+              "deletion_generation": "2"
+            },
+            "copies": {
+              "source_tier": "hot",
+              "destination_tier": "warm",
+              "destination_id": "00000000-0000-4000-8000-000000000050",
+              "artifact_id": "00000000-0000-4000-8000-000000000051",
+              "source_destination_id": null,
+              "source_artifact_id": null
+            },
+            "evidence": {
+              "membership": {
+                "membership_id": "00000000-0000-4000-8000-000000000020",
+                "format_version": 1,
+                "sha256": "3200b1f451d3bfa7e8bcedcc5f81687090fc4c4f41b758edcd5b1873dc35e8c5",
+                "count": 2,
+                "encoded_bytes": 290,
+                "expires_at": "2027-10-30T00:00:00Z"
+              },
+              "verification_id": "00000000-0000-4000-8000-000000000060",
+              "receipt_id": null
+            },
+            "future_optional_field": {
+              "hint": "retain unknown data"
+            },
+            "delivery": null
+          }
+        }
+      },
+      "expected": "preserve_optional_data_without_new_semantic_claims"
+    },
+    "unknown_optional_reason": {
+      "view": "audit",
+      "input": {
+        "id": 5,
+        "event_id": "00000000-0000-4000-8000-000000000105",
+        "occurred_at": "2026-10-30T00:00:00",
+        "entity_type": "lifecycle",
+        "entity_id": null,
+        "entity_name": null,
+        "collection_id": 7,
+        "action": "updated",
+        "actor_kind": "worker",
+        "actor_user_id": null,
+        "provenance": {
+          "actor": {
+            "kind": "worker",
+            "principal": null
+          },
+          "initiator": {
+            "principal_id": 42,
+            "name": null
+          },
+          "task_id": 12
+        },
+        "request_id": null,
+        "correlation_id": "example-operation",
+        "summary": "Lifecycle erasure blocked",
+        "before": null,
+        "after": null,
+        "schema_version": 1,
+        "metadata": {
+          "lifecycle": {
+            "contract_version": 1,
+            "name": "lifecycle.erasure.blocked",
+            "projection": "audit",
+            "operation_id": "00000000-0000-4000-8000-000000000010",
+            "operation_revision": "5",
+            "scope": {
+              "kind": "collection",
+              "collection_uuid": "00000000-0000-4000-8000-000000000007"
+            },
+            "state": {
+              "outcome": "blocked",
+              "reasons": [
+                "future_optional_reason"
+              ]
+            },
+            "counts": {
+              "versions": 2,
+              "logical_bytes": 4096,
+              "physical_bytes": null,
+              "transferred_bytes": null
+            },
+            "availability": null,
+            "run_id": "00000000-0000-4000-8000-000000000011",
+            "batch_id": "00000000-0000-4000-8000-000000000012",
+            "attempt_id": "00000000-0000-4000-8000-000000000013",
+            "caused_by_event_id": null,
+            "observed_at": null,
+            "attribution": {
+              "actor_principal_uuid": null,
+              "initiator_principal_uuid": "00000000-0000-4000-8000-000000000042",
+              "trigger": "manual"
+            },
+            "authority": {
+              "policy_id": "00000000-0000-4000-8000-000000000030",
+              "policy_revision": "3",
+              "review_id": null,
+              "hold_generation": "1",
+              "deletion_generation": "2"
+            },
+            "copies": {
+              "source_tier": "hot",
+              "destination_tier": "warm",
+              "destination_id": "00000000-0000-4000-8000-000000000050",
+              "artifact_id": "00000000-0000-4000-8000-000000000051",
+              "source_destination_id": null,
+              "source_artifact_id": null
+            },
+            "evidence": {
+              "membership": {
+                "membership_id": "00000000-0000-4000-8000-000000000020",
+                "format_version": 1,
+                "sha256": "3200b1f451d3bfa7e8bcedcc5f81687090fc4c4f41b758edcd5b1873dc35e8c5",
+                "count": 2,
+                "encoded_bytes": 290,
+                "expires_at": "2027-10-30T00:00:00Z"
+              },
+              "verification_id": "00000000-0000-4000-8000-000000000060",
+              "receipt_id": null
+            },
+            "delivery": null
+          }
+        }
+      },
+      "expected": "preserve_reason_and_keep_blocked_outcome"
+    },
+    "unknown_name": {
+      "view": "sink",
+      "input": {
+        "id": 1,
+        "event_id": "00000000-0000-4000-8000-000000000101",
+        "occurred_at": "2026-10-30T00:00:00",
+        "entity_type": "lifecycle",
+        "entity_id": null,
+        "entity_name": null,
+        "collection_id": 7,
+        "action": "updated",
+        "actor_kind": "worker",
+        "actor_user_id": null,
+        "provenance": {
+          "actor": {
+            "kind": "worker",
+            "principal": null
+          },
+          "initiator": null,
+          "task_id": null
+        },
+        "request_id": null,
+        "correlation_id": null,
+        "summary": "Lifecycle state changed",
+        "before": null,
+        "after": null,
+        "schema_version": 1,
+        "metadata": {
+          "lifecycle": {
+            "contract_version": 1,
+            "name": "lifecycle.future_transition",
+            "projection": "sink",
+            "operation_id": "00000000-0000-4000-8000-000000000010",
+            "operation_revision": "9007199254740993",
+            "scope": {
+              "kind": "collection",
+              "collection_uuid": "00000000-0000-4000-8000-000000000007"
+            },
+            "state": {
+              "outcome": "committed",
+              "reasons": []
+            },
+            "counts": {
+              "versions": 2,
+              "logical_bytes": 4096,
+              "physical_bytes": null,
+              "transferred_bytes": null
+            },
+            "availability": null
+          }
+        }
+      },
+      "expected": "unsupported_transition_without_completion_claim"
+    },
+    "unknown_major_version": {
+      "view": "audit",
+      "input": {
+        "id": 1,
+        "event_id": "00000000-0000-4000-8000-000000000101",
+        "occurred_at": "2026-10-30T00:00:00",
+        "entity_type": "lifecycle",
+        "entity_id": null,
+        "entity_name": null,
+        "collection_id": 7,
+        "action": "updated",
+        "actor_kind": "worker",
+        "actor_user_id": null,
+        "provenance": {
+          "actor": {
+            "kind": "worker",
+            "principal": null
+          },
+          "initiator": {
+            "principal_id": 42,
+            "name": null
+          },
+          "task_id": 12
+        },
+        "request_id": null,
+        "correlation_id": "example-operation",
+        "summary": "Lifecycle archive published",
+        "before": null,
+        "after": null,
+        "schema_version": 1,
+        "metadata": {
+          "lifecycle": {
+            "contract_version": 2,
+            "name": "lifecycle.archive.published",
+            "projection": "audit",
+            "operation_id": "00000000-0000-4000-8000-000000000010",
+            "operation_revision": "9007199254740993",
+            "scope": {
+              "kind": "collection",
+              "collection_uuid": "00000000-0000-4000-8000-000000000007"
+            },
+            "state": {
+              "outcome": "committed",
+              "reasons": []
+            },
+            "counts": {
+              "versions": 2,
+              "logical_bytes": 4096,
+              "physical_bytes": null,
+              "transferred_bytes": null
+            },
+            "availability": null,
+            "run_id": "00000000-0000-4000-8000-000000000011",
+            "batch_id": "00000000-0000-4000-8000-000000000012",
+            "attempt_id": "00000000-0000-4000-8000-000000000013",
+            "caused_by_event_id": null,
+            "observed_at": null,
+            "attribution": {
+              "actor_principal_uuid": null,
+              "initiator_principal_uuid": "00000000-0000-4000-8000-000000000042",
+              "trigger": "manual"
+            },
+            "authority": {
+              "policy_id": "00000000-0000-4000-8000-000000000030",
+              "policy_revision": "3",
+              "review_id": null,
+              "hold_generation": "1",
+              "deletion_generation": "2"
+            },
+            "copies": {
+              "source_tier": "hot",
+              "destination_tier": "warm",
+              "destination_id": "00000000-0000-4000-8000-000000000050",
+              "artifact_id": "00000000-0000-4000-8000-000000000051",
+              "source_destination_id": null,
+              "source_artifact_id": null
+            },
+            "evidence": {
+              "membership": {
+                "membership_id": "00000000-0000-4000-8000-000000000020",
+                "format_version": 1,
+                "sha256": "3200b1f451d3bfa7e8bcedcc5f81687090fc4c4f41b758edcd5b1873dc35e8c5",
+                "count": 2,
+                "encoded_bytes": 290,
+                "expires_at": "2027-10-30T00:00:00Z"
+              },
+              "verification_id": "00000000-0000-4000-8000-000000000060",
+              "receipt_id": null
+            },
+            "delivery": null
+          }
+        }
+      },
+      "expected": "unsupported_contract_without_completion_claim"
+    }
+  },
+  "delivery_cases": {
+    "duplicate_out_of_order": {
+      "input": [
+        {
+          "id": 9,
+          "event_id": "00000000-0000-4000-8000-000000000109",
+          "occurred_at": "2026-10-30T00:00:00",
+          "entity_type": "lifecycle",
+          "entity_id": null,
+          "entity_name": null,
+          "collection_id": 7,
+          "action": "succeeded",
+          "actor_kind": "worker",
+          "actor_user_id": null,
+          "provenance": {
+            "actor": {
+              "kind": "worker",
+              "principal": null
+            },
+            "initiator": null,
+            "task_id": null
+          },
+          "request_id": null,
+          "correlation_id": null,
+          "summary": "Lifecycle state changed",
+          "before": null,
+          "after": null,
+          "schema_version": 1,
+          "metadata": {
+            "lifecycle": {
+              "contract_version": 1,
+              "name": "lifecycle.archive.cleanup_completed",
+              "projection": "sink",
+              "operation_id": "00000000-0000-4000-8000-000000000010",
+              "operation_revision": "9007199254740995",
+              "scope": {
+                "kind": "collection",
+                "collection_uuid": "00000000-0000-4000-8000-000000000007"
+              },
+              "state": {
+                "outcome": "committed",
+                "reasons": []
+              },
+              "counts": {
+                "versions": 2,
+                "logical_bytes": 4096,
+                "physical_bytes": null,
+                "transferred_bytes": null
+              },
+              "availability": null
+            }
+          }
+        },
+        {
+          "id": 1,
+          "event_id": "00000000-0000-4000-8000-000000000101",
+          "occurred_at": "2026-10-30T00:00:00",
+          "entity_type": "lifecycle",
+          "entity_id": null,
+          "entity_name": null,
+          "collection_id": 7,
+          "action": "updated",
+          "actor_kind": "worker",
+          "actor_user_id": null,
+          "provenance": {
+            "actor": {
+              "kind": "worker",
+              "principal": null
+            },
+            "initiator": null,
+            "task_id": null
+          },
+          "request_id": null,
+          "correlation_id": null,
+          "summary": "Lifecycle state changed",
+          "before": null,
+          "after": null,
+          "schema_version": 1,
+          "metadata": {
+            "lifecycle": {
+              "contract_version": 1,
+              "name": "lifecycle.archive.published",
+              "projection": "sink",
+              "operation_id": "00000000-0000-4000-8000-000000000010",
+              "operation_revision": "9007199254740993",
+              "scope": {
+                "kind": "collection",
+                "collection_uuid": "00000000-0000-4000-8000-000000000007"
+              },
+              "state": {
+                "outcome": "committed",
+                "reasons": []
+              },
+              "counts": {
+                "versions": 2,
+                "logical_bytes": 4096,
+                "physical_bytes": null,
+                "transferred_bytes": null
+              },
+              "availability": null
+            }
+          }
+        },
+        {
+          "id": 9,
+          "event_id": "00000000-0000-4000-8000-000000000109",
+          "occurred_at": "2026-10-30T00:00:00",
+          "entity_type": "lifecycle",
+          "entity_id": null,
+          "entity_name": null,
+          "collection_id": 7,
+          "action": "succeeded",
+          "actor_kind": "worker",
+          "actor_user_id": null,
+          "provenance": {
+            "actor": {
+              "kind": "worker",
+              "principal": null
+            },
+            "initiator": null,
+            "task_id": null
+          },
+          "request_id": null,
+          "correlation_id": null,
+          "summary": "Lifecycle state changed",
+          "before": null,
+          "after": null,
+          "schema_version": 1,
+          "metadata": {
+            "lifecycle": {
+              "contract_version": 1,
+              "name": "lifecycle.archive.cleanup_completed",
+              "projection": "sink",
+              "operation_id": "00000000-0000-4000-8000-000000000010",
+              "operation_revision": "9007199254740995",
+              "scope": {
+                "kind": "collection",
+                "collection_uuid": "00000000-0000-4000-8000-000000000007"
+              },
+              "state": {
+                "outcome": "committed",
+                "reasons": []
+              },
+              "counts": {
+                "versions": 2,
+                "logical_bytes": 4096,
+                "physical_bytes": null,
+                "transferred_bytes": null
+              },
+              "availability": null
+            }
+          }
+        }
+      ],
+      "expected_unique_event_ids": [
+        "00000000-0000-4000-8000-000000000101",
+        "00000000-0000-4000-8000-000000000109"
+      ],
+      "expected_latest_operation_revision": "9007199254740995",
+      "note": "Consumers reconcile scoped revisions; transport does not prove managed erasure."
+    }
+  },
+  "subscription_cases": {
+    "explicit_v1": {
+      "input": {
+        "entity_types": [
+          "lifecycle"
+        ],
+        "actions": [
+          "updated"
+        ],
+        "filter": {
+          "lifecycle_names": [
+            "lifecycle.archive.published.v1"
+          ]
+        }
+      },
+      "expected": "eligible_only_when_catalog_and_authority_support_it"
+    },
+    "legacy_wildcard": {
+      "input": {
+        "entity_types": [],
+        "actions": [],
+        "filter": {}
+      },
+      "expected": "no_lifecycle_delivery"
+    },
+    "audit_only_name": {
+      "input": {
+        "entity_types": [
+          "lifecycle"
+        ],
+        "actions": [
+          "updated"
+        ],
+        "filter": {
+          "lifecycle_names": [
+            "lifecycle.archive.verified.v1"
+          ]
+        }
+      },
+      "expected": "reject_audit_only_subscription"
+    }
+  }
+}

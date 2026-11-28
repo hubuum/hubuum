@@ -1,5 +1,11 @@
+mod fingerprints;
+pub(crate) use fingerprints::{TaskSubmissionOperation, legacy_task_fingerprint};
+mod submission;
+pub(crate) use submission::{AuthorizedExpiredTaskSubmission, TaskSubmissionAttempt};
+
 use crate::models::task::task_kind_from_db;
-use hubuum_domain::PrincipalId;
+use hubuum_domain::{GroupId, PrincipalId};
+use hubuum_storage_core::StorageTaskClaimRequest;
 use hubuum_task_core::IdempotencyKey;
 use std::ops::Deref;
 use std::time::Duration;
@@ -10,8 +16,8 @@ use crate::models::search::QueryOptions;
 use crate::models::{
     BackupOutputLookup, BackupTaskOutput, BackupTaskOutputSummary, ExportOutputLookup,
     ExportTaskOutput, ExportTaskOutputSummary, ImportTaskResultRecord, NewTaskEventRecord,
-    PrincipalID, TaskEventRecord, TaskID, TaskKind, TaskRecord, TaskResultCounts, TaskStatus,
-    TokenID, TokenScope,
+    PrincipalID, TaskEventRecord, TaskEventResponse, TaskID, TaskKind, TaskRecord,
+    TaskResultCounts, TaskStatus, TokenID, TokenScope,
 };
 use crate::observability::tracing as telemetry;
 use crate::pagination::SKIPPED_TOTAL_COUNT;
@@ -20,18 +26,22 @@ use crate::permissions::{
 };
 
 use crate::storage::{
-    AuthenticationStorage, ComputedFieldStorage, StorageBackupOutput, StorageBackupOutputSummary,
-    StorageContext, StorageExportOutput, StorageExportOutputSummary, StorageImportTaskResult,
-    StorageTask, StorageTaskActiveStatus, StorageTaskActiveUpdate, StorageTaskChildListQuery,
-    StorageTaskClaim, StorageTaskCompletion, StorageTaskCompletionPayload,
-    StorageTaskCreateRequest, StorageTaskEvent, StorageTaskEventAppend, StorageTaskEventInput,
-    StorageTaskFailure, StorageTaskKind, StorageTaskLease, StorageTaskLeaseDuration,
-    StorageTaskListQuery, StorageTaskOutputLookup, StorageTaskResultCounts,
-    StorageTaskScopeSnapshot, StorageTaskStatus, StorageTaskTerminalStatus,
-    StorageTaskTerminalUpdate, TaskExecutionStorage, TaskQueueStorage, storage_handle,
+    AuthenticationStorage, ComputedFieldStorage, ExecutionStorage, StorageBackupOutput,
+    StorageBackupOutputSummary, StorageContext, StorageExecutionScope, StorageExportOutput,
+    StorageExportOutputSummary, StorageImportTaskResult, StorageTask, StorageTaskActiveStatus,
+    StorageTaskActiveUpdate, StorageTaskChildListQuery, StorageTaskClaim, StorageTaskCompletion,
+    StorageTaskCompletionPayload, StorageTaskCreateRequest, StorageTaskEvent,
+    StorageTaskEventAppend, StorageTaskEventInput, StorageTaskFailure, StorageTaskKind,
+    StorageTaskLease, StorageTaskLeaseDuration, StorageTaskListQuery, StorageTaskOutputLookup,
+    StorageTaskResultCounts, StorageTaskScopeSnapshot, StorageTaskStatus,
+    StorageTaskTerminalStatus, StorageTaskTerminalUpdate, TaskExecutionStorage, TaskQueueStorage,
+    storage_handle,
 };
 use crate::traits::AuthzSubject;
-use hubuum_storage_core::StorageTaskSearch;
+use hubuum_storage_core::{
+    StorageTaskRemoteInvocation, StorageTaskSearch, StorageTaskSubmissionOutcome,
+    TaskReceiptBinding,
+};
 
 pub(crate) struct TaskSubmission {
     approval: Option<hubuum_storage_core::StorageCredentialUse>,
@@ -39,10 +49,11 @@ pub(crate) struct TaskSubmission {
     submitted_by: PrincipalID,
     payload: serde_json::Value,
     total_items: i32,
-    maximum_active_tasks: usize,
     idempotency_key: Option<IdempotencyKey>,
     request_hash: Option<String>,
     scope_snapshot: StorageTaskScopeSnapshot,
+    receipt_binding: Option<TaskReceiptBinding>,
+    remote_invocation: Option<StorageTaskRemoteInvocation>,
 }
 
 /// Application-owned task projection paired with an opaque backend claim.
@@ -149,10 +160,10 @@ fn storage_task_event(event: NewTaskEventRecord) -> StorageTaskEventInput {
 
 pub(crate) async fn claim_next_task(
     backend: &impl StorageContext,
-    lease_duration: Duration,
+    request: StorageTaskClaimRequest,
 ) -> Result<Option<ClaimedTask>, ApiError> {
     storage_handle(backend)
-        .claim_next_task(storage_lease_duration(lease_duration)?)
+        .claim_next_task(request)
         .await?
         .map(ClaimedTask::from_storage)
         .transpose()
@@ -174,15 +185,19 @@ pub async fn recover_expired_task_leases(
     backend: &impl StorageContext,
     batch_size: usize,
 ) -> Result<Vec<TaskRecord>, ApiError> {
-    storage_handle(backend)
-        .recover_expired_task_leases(batch_size)
-        .await?
-        .into_iter()
-        .map(|task| {
-            crate::observability::metrics::task_stop_acknowledged(&task);
-            task_from_storage(task)
-        })
-        .collect()
+    let storage = storage_handle(backend);
+    crate::tasks::history::retry_control(&storage, || async {
+        storage
+            .recover_expired_task_leases(batch_size)
+            .await?
+            .into_iter()
+            .map(|task| {
+                crate::observability::metrics::task_stop_acknowledged(&task);
+                task_from_storage(task)
+            })
+            .collect()
+    })
+    .await
 }
 
 pub(crate) async fn append_task_event(
@@ -223,19 +238,25 @@ pub(crate) async fn complete_task(
         storage_task_event(event),
         payload,
     );
-    // Finalization decides the winner under the task lock. An expired local
-    // context must not prevent receipt reconciliation or terminal bookkeeping.
-    crate::storage::with_storage_execution_scope(
-        backend,
-        hubuum_storage_core::StorageExecutionScope::default().with_task_execution(None),
-        storage_handle(backend).complete_task(completion),
-    )
-    .await
-    .map_err(ApiError::from)
-    .and_then(|task| {
-        crate::observability::metrics::task_stop_acknowledged(&task);
-        task_from_storage(task)
-    })
+    let storage = storage_handle(backend);
+    // Publication-bound completion must retain the original supervised task.
+    // Unowned terminal reconciliation keeps its existing deadline exemption.
+    let scope = if storage
+        .current_execution_scope()
+        .history_read_override()
+        .is_some()
+    {
+        StorageExecutionScope::default()
+    } else {
+        StorageExecutionScope::default().with_task_execution(None)
+    };
+    crate::storage::with_storage_execution_scope(backend, scope, storage.complete_task(completion))
+        .await
+        .map_err(ApiError::from)
+        .and_then(|task| {
+            crate::observability::metrics::task_stop_acknowledged(&task);
+            task_from_storage(task)
+        })
 }
 
 pub(crate) async fn acknowledge_task_stop(
@@ -323,19 +344,29 @@ impl TaskSubmission {
         submitted_by: PrincipalID,
         payload: serde_json::Value,
         total_items: i32,
-        maximum_active_tasks: usize,
     ) -> Self {
         Self {
             approval: None,
+            receipt_binding: None,
+            remote_invocation: None,
             kind,
             submitted_by,
             payload,
             total_items,
-            maximum_active_tasks,
             idempotency_key: None,
             request_hash: None,
             scope_snapshot: StorageTaskScopeSnapshot::unscoped(),
         }
+    }
+
+    pub(crate) fn receipt_binding(mut self, binding: Option<TaskReceiptBinding>) -> Self {
+        self.receipt_binding = binding;
+        self
+    }
+
+    pub(crate) fn remote_invocation(mut self, invocation: StorageTaskRemoteInvocation) -> Self {
+        self.remote_invocation = Some(invocation);
+        self
     }
 
     pub(crate) fn idempotency_key(mut self, idempotency_key: Option<IdempotencyKey>) -> Self {
@@ -370,7 +401,7 @@ pub(crate) fn task_scope_snapshot(
 pub(crate) async fn submit_task(
     backend: &impl StorageContext,
     submission: TaskSubmission,
-) -> Result<TaskRecord, ApiError> {
+) -> Result<StorageTaskSubmissionOutcome, ApiError> {
     let approval_actor = submission
         .approval
         .as_ref()
@@ -392,26 +423,20 @@ pub(crate) async fn submit_task(
     .metadata(Some(metadata))
     .idempotency_key(submission.idempotency_key)
     .request_hash(submission.request_hash)
+    .receipt_binding(submission.receipt_binding)
+    .remote_invocation(submission.remote_invocation)
     .scope_snapshot(submission.scope_snapshot)
     .trace_link(telemetry::trace_link_from_span(&span))
-    .try_build(submission.maximum_active_tasks)?
+    .try_build()?
     .with_approval(submission.approval);
     async move {
-        let result = async {
-            let task = storage_handle(backend).create_task(request).await?;
-            if task.status().is_terminal() {
-                return find_task(backend, task.id()).await;
-            }
-            task_from_storage(task)
-        }
-        .await;
+        let result = storage_handle(backend)
+            .create_task(request)
+            .await
+            .map_err(ApiError::from);
         if let Some(actor_id) = approval_actor {
             match &result {
-                Ok(task) => tracing::info!(
-                    message = "Credential-approved import admitted",
-                    actor_id,
-                    task_id = task.id
-                ),
+                Ok(_) => tracing::info!(message = "Credential-approved import admitted", actor_id,),
                 Err(error) => tracing::warn!(
                     message = "Credential-approved import admission rejected",
                     actor_id,
@@ -453,6 +478,24 @@ where
     S: AuthzSubject + ?Sized,
 {
     load_authorized_task_of_kind(backend, requestor, task_id, None, "Task", false).await
+}
+
+/// Authorize the exact task captured by duplicate resolution. Looking up its
+/// integer ID again could cross a concurrent purge and later ID reuse.
+async fn authorize_submission_task<S: AuthzSubject + ?Sized>(
+    backend: &impl AuthorizationContext,
+    requestor: &S,
+    stored: StorageTask,
+) -> Result<TaskRecord, ApiError> {
+    authorize_task_record(
+        backend,
+        requestor,
+        task_from_storage(stored)?,
+        None,
+        "Task",
+        false,
+    )
+    .await
 }
 
 pub(crate) async fn load_authorized_import<S>(
@@ -535,6 +578,25 @@ where
         )));
     }
 
+    authorize_task_record(
+        backend,
+        requestor,
+        task,
+        submitter_owner_group_id,
+        label,
+        hide_external_denial,
+    )
+    .await
+}
+
+async fn authorize_task_record<S: AuthzSubject + ?Sized>(
+    backend: &impl AuthorizationContext,
+    requestor: &S,
+    task: TaskRecord,
+    submitter_owner_group_id: Option<GroupId>,
+    label: &str,
+    hide_external_denial: bool,
+) -> Result<TaskRecord, ApiError> {
     let principal = PrincipalRef::load(backend, requestor).await?;
     let authorization_mode = backend.authorization_mode();
     if task.kind == TaskKind::SchemaValidation.as_str() {
@@ -610,7 +672,7 @@ pub(crate) async fn list_task_events(
     backend: &impl StorageContext,
     task_id: TaskID,
     options: QueryOptions,
-) -> Result<(Vec<crate::models::TaskEventResponse>, i64), ApiError> {
+) -> Result<(Vec<TaskEventResponse>, i64), ApiError> {
     let (events, total) = storage_handle(backend)
         .list_task_events(StorageTaskChildListQuery::new(task_id, options))
         .await?
@@ -621,7 +683,14 @@ pub(crate) async fn list_task_events(
         .collect::<Vec<_>>();
     let principal_ids = records
         .iter()
-        .flat_map(|record| [record.actor_user_id, record.initiator_user_id])
+        .flat_map(|record| {
+            ["/actor_principal_id", "/initiator_principal_id"].map(|path| {
+                record
+                    .logical_identity
+                    .as_ref()
+                    .and_then(|identity| identity.principal_reference(path))
+            })
+        })
         .flatten()
         .collect();
     let principal_names =
@@ -629,8 +698,12 @@ pub(crate) async fn list_task_events(
     Ok((
         records
             .into_iter()
-            .map(|record| {
-                crate::models::TaskEventResponse::from_record_with_names(record, &principal_names)
+            .map(|mut record| {
+                let evidence = record.logical_identity.take();
+                let mut response = TaskEventResponse::from(record);
+                response.provenance =
+                    principal_names.enrich(evidence.as_ref(), response.provenance);
+                response
             })
             .collect(),
         total.unwrap_or(SKIPPED_TOTAL_COUNT),
@@ -760,6 +833,7 @@ fn task_kind_to_storage(kind: TaskKind) -> StorageTaskKind {
         TaskKind::RemoteCall => StorageTaskKind::RemoteCall,
         TaskKind::SchemaValidation => StorageTaskKind::SchemaValidation,
         TaskKind::SchemaProfiling => StorageTaskKind::SchemaProfiling,
+        TaskKind::HistoryExpiry => StorageTaskKind::HistoryExpiry,
     }
 }
 
@@ -768,6 +842,7 @@ fn task_status_to_storage(status: TaskStatus) -> StorageTaskStatus {
         TaskStatus::Queued => StorageTaskStatus::Queued,
         TaskStatus::Validating => StorageTaskStatus::Validating,
         TaskStatus::Running => StorageTaskStatus::Running,
+        TaskStatus::Waiting => StorageTaskStatus::Waiting,
         TaskStatus::Succeeded => StorageTaskStatus::Succeeded,
         TaskStatus::Failed => StorageTaskStatus::Failed,
         TaskStatus::PartiallySucceeded => StorageTaskStatus::PartiallySucceeded,
@@ -785,6 +860,7 @@ pub(crate) fn task_from_storage(task: StorageTask) -> Result<TaskRecord, ApiErro
         discovery_state: task.discovery_state().clone(),
         discovery_authorized: true,
         control: task.control().clone(),
+        checkpoint: task.checkpoint().cloned(),
         id: task.id().id(),
         kind: kind.as_str().to_string(),
         status: status.as_str().to_string(),
@@ -820,6 +896,7 @@ pub(crate) fn task_from_storage(task: StorageTask) -> Result<TaskRecord, ApiErro
 
 fn task_event_from_storage(event: StorageTaskEvent) -> TaskEventRecord {
     TaskEventRecord {
+        logical_identity: event.logical_identity().cloned(),
         id: event.id().get(),
         task_id: event.task_id().id(),
         event_type: event.event_type().to_string(),
@@ -875,6 +952,7 @@ fn backup_summary_from_storage(output: StorageBackupOutputSummary) -> BackupTask
 
 fn export_output_from_storage(output: StorageExportOutput) -> ExportTaskOutput {
     ExportTaskOutput {
+        artifact_reference: output.artifact_reference().cloned(),
         content_type: output.content_type().to_string(),
         json_output: output.json_output().cloned(),
         text_output: output.text_output().map(str::to_string),
@@ -886,7 +964,9 @@ fn export_output_from_storage(output: StorageExportOutput) -> ExportTaskOutput {
 
 fn backup_output_from_storage(output: StorageBackupOutput) -> BackupTaskOutput {
     BackupTaskOutput {
-        document: output.document().to_vec(),
+        artifact_reference: output.artifact_reference().cloned(),
+        byte_size: output.byte_size(),
+        document: output.document().map(<[u8]>::to_vec),
         sha256: output.sha256().to_string(),
     }
 }
@@ -989,7 +1069,9 @@ pub(crate) async fn cancel_task(
         .is_some_and(|id| id.id() == principal.user_id);
     let internal = matches!(
         stored.kind(),
-        StorageTaskKind::Reindex | StorageTaskKind::SchemaValidation
+        StorageTaskKind::Reindex
+            | StorageTaskKind::SchemaValidation
+            | StorageTaskKind::HistoryExpiry
     );
     if requestor.scopes().is_some()
         && (!is_owner || stored.scope_snapshot().token_id() != Some(requestor.token_meta.id()))
@@ -1051,4 +1133,20 @@ pub(crate) async fn cancel_task(
         .await?;
     crate::observability::metrics::task_cancellation_requested(&outcome);
     find_task(backend, outcome.task().id()).await
+}
+
+#[cfg(test)]
+mod lease_recovery_publication_tests {
+    use super::*;
+    use hubuum_storage_core::{DeletionControlStorage, HistoryLifecycleStorage};
+
+    #[actix_web::test]
+    async fn lease_recovery_admits_and_retires_its_online_publication() {
+        let raw = crate::storage::StorageHandle::memory();
+        let registration = raw.register_history_runtime(None).await.unwrap();
+        let storage = raw.clone().with_runtime_owner(registration.owner());
+        let recovered = recover_expired_task_leases(&storage, 100).await;
+        raw.unregister_runtime(registration).await.unwrap();
+        assert!(recovered.unwrap().is_empty());
+    }
 }

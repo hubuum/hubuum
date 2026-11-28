@@ -330,5 +330,6 @@ fn project(entry: StorageRelationHistoryEntry) -> Result<HistoricalRelation, Api
         actor_kind: metadata.actor_kind,
         initiator_user_id: metadata.initiator_principal_id,
         task_id: metadata.task_id,
+        logical_identity: metadata.logical_identity,
     })
 }

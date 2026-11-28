@@ -232,6 +232,17 @@ impl Authenticated {
         self.scope.as_ref()
     }
 
+    pub(crate) async fn into_runtime_admin(
+        self,
+        context: &AppContext,
+    ) -> Result<UnscopedRuntimeAdmin, ApiError> {
+        self.require_runtime_admin(context).await?;
+        Ok(UnscopedRuntimeAdmin {
+            principal: self.principal,
+            token_id: self.token_meta.id(),
+        })
+    }
+
     pub(crate) async fn require_runtime_admin(&self, context: &AppContext) -> Result<(), ApiError> {
         require_unscoped_runtime_admin(context, &self.principal, self.token_meta.is_scoped()).await
     }
@@ -548,12 +559,7 @@ impl FromRequest for UnscopedRuntimeAdmin {
         let authenticated = Authenticated::from_request(req, payload);
         async move {
             let context = context?;
-            let requestor = authenticated.await?;
-            requestor.require_runtime_admin(&context).await?;
-            Ok(Self {
-                principal: requestor.principal,
-                token_id: requestor.token_meta.id(),
-            })
+            authenticated.await?.into_runtime_admin(&context).await
         }
         .boxed_local()
     }

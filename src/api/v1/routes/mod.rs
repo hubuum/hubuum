@@ -82,6 +82,11 @@ pub fn config(cfg: &mut web::ServiceConfig) {
     )
     .service(web::scope("/tasks").configure(tasks::config))
     .service(web::scope("/events").configure(events::config))
+    .service(
+        web::scope("/admin/history-lifecycle")
+            .wrap(actix_web::middleware::DefaultHeaders::new().add(("Cache-Control", "no-store")))
+            .configure(crate::api::v1::handlers::history_lifecycle::config),
+    )
     .service(web::scope("/admin").configure(crate::api::v1::handlers::runtime_config::config))
     .service(web::scope("/export-templates").configure(export_templates::config))
     .service(web::scope("/remote-targets").configure(remote_targets::config))

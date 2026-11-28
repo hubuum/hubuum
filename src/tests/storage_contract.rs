@@ -1,23 +1,33 @@
-use hubuum_storage_core::StorageRestoreStageArtifact;
+use crate::tests::asserts::expect_legacy_task;
+use hubuum_domain::ResourceIdentity;
+use hubuum_storage_core::{HistoryPolicyScope, StorageRestoreStageArtifact};
+use hubuum_storage_core::{StorageTaskClaimRequest, TaskWorkerId};
 mod auth_sessions;
 use hubuum_storage_core::{EventSinkGrantAction, StorageAuditSubject, StorageEventSinkGrantChange};
+mod api_request_admission;
 mod authentication;
 mod authorization_resources;
 mod catalog_filters;
 mod credential_approvals;
 mod event_delivery;
 mod history_access;
+mod history_archive;
+mod history_authentication;
 mod history_computed;
 mod history_fixtures;
+mod history_http_publication;
 mod history_name;
 mod history_navigation;
 mod history_population;
 mod history_relations;
+mod logical_identity;
 mod login_events;
 mod regex;
 mod remote_targets;
 mod schema_evolution;
+mod task_capacity;
 mod task_control;
+mod task_waiting;
 mod webhook_notifications;
 
 use std::collections::HashSet;
@@ -1298,10 +1308,11 @@ impl LeaseLossFaultFixture for PostgresLeaseLossFaultFixture {
                 ))
                 .request_hash(Some(prefix("lease_loss_hash")))
                 .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-                .try_build(1)
+                .try_build()
                 .expect("lease-loss task request should be valid"),
             )
-            .await?;
+            .await
+            .map(expect_legacy_task)?;
         let lease_duration = StorageTaskLeaseDuration::from_milliseconds(50)
             .ok_or_else(|| std::io::Error::other("lease duration must be positive"))?;
         let first_claim = hubuum_storage_postgres::test_support::claim_task_by_id_with_lease(
@@ -1802,6 +1813,7 @@ fn compatibility_completion_payload(kind: StorageTaskKind) -> StorageTaskComplet
     let output_expires_at =
         chrono::Utc::now() + chrono::Duration::try_hours(1).expect("valid duration");
     match kind {
+        StorageTaskKind::HistoryExpiry => StorageTaskCompletionPayload::HistoryExpiry,
         StorageTaskKind::Import => StorageTaskCompletionPayload::Import,
         StorageTaskKind::Reindex => StorageTaskCompletionPayload::Reindex,
         StorageTaskKind::SchemaValidation => StorageTaskCompletionPayload::SchemaValidation,
@@ -1885,3 +1897,51 @@ mod relation_search;
 mod resource_lifecycle;
 mod resource_queries;
 mod task_queue;
+
+#[rstest::rstest]
+#[case::class(HistoryPolicyScope::Class { identity: ResourceIdentity::generate() })]
+#[case::collection(HistoryPolicyScope::Collection { identity: ResourceIdentity::generate() })]
+#[actix_web::test]
+async fn every_backend_rejects_an_unknown_history_inspection_scope(
+    #[case] scope: HistoryPolicyScope,
+) {
+    use hubuum_storage_core::{
+        HistoryLifecycleScan, HistoryLifecycleStorage, HistoryPolicyKey, StorageIdentityHistoryKind,
+    };
+    let _permit = postgres_permit().await;
+    let scan = HistoryLifecycleScan::new(
+        HistoryPolicyKey::new(StorageIdentityHistoryKind::Object, scope).unwrap(),
+        1,
+    )
+    .unwrap();
+    for backend in available_backends() {
+        let error = backend
+            .scan_history_lifecycle(scan.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), StorageErrorKind::NotFound);
+    }
+}
+
+#[actix_web::test]
+async fn every_available_storage_backend_restores_scope_after_synchronous_polling() {
+    for backend in available_backends() {
+        backend
+            .run_in_scope(
+                StorageExecutionScope::default().with_call_site(StorageCallSite::HttpRequest),
+                async {
+                    let polled = backend.run_in_scope_sync(
+                        StorageExecutionScope::default()
+                            .with_call_site(StorageCallSite::TaskWorker),
+                        || backend.current_execution_scope().call_site_override(),
+                    );
+                    assert_eq!(polled, Some(StorageCallSite::TaskWorker));
+                    assert_eq!(
+                        backend.current_execution_scope().call_site_override(),
+                        Some(StorageCallSite::HttpRequest)
+                    );
+                },
+            )
+            .await;
+    }
+}

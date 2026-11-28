@@ -27,7 +27,7 @@ and semantics. Group keys such as `domain_lifecycle` and `catalog_queries` are
 not operation-trait keys or metric labels. `hubuum_storage_core::capabilities`
 exposes broader discovery modules for resources, identity, queries, workflows,
 events, and operational capabilities;
-the 22 detailed groups below are not a one-to-one module map. Neither form
+the detailed groups below are not a one-to-one module map. Neither form
 represents separately versioned or negotiable runtime features.
 
 Each discovery module reexports one method-free family bound with the matching
@@ -70,6 +70,8 @@ StorageBackend
 |   |-- remote targets
 |   |-- computed-field lifecycle
 |   |-- task queue
+|   |-- task capacity
+|   |-- synchronous request admission
 |   |-- task execution
 |   |-- backup snapshots
 |   |-- restores
@@ -244,13 +246,31 @@ visibility, preserving ascending relation IDs; zero returns no rows and
 `None` retains complete results. ID sets are typed inputs and must not be
 restricted by public integer-filter list limits.
 
+### `logical_identity`
+
+Required trait: `LogicalIdentityStorage` in `QueryStorage`.
+
+Resolve a typed resource, principal, task, historical entry or schema revision
+inside the selected backend. Return private-field `StorageIdentityEvidence` with
+its immutable subject identity and captured dependencies. An unresolved legacy
+reference remains unresolved; current integer matches cannot establish identity.
+Missing targets return `NotFound`. The common observer records this operation
+under the `logical_identity` capability.
+
 ### `temporal_history`
 
-Required trait: `HistoryStorage`.
+Required traits: `HistoryStorage` and `HistoryArchiveStorage`.
+
+`HistoryArchiveStorage` owns the bounded persisted collection archive catalog,
+original-selection generation pins, captured hot input, and cumulative read-work
+reservations. It requires an original registered Legacy runtime and application
+permit. Source copies remain required; public archive tasks and API activation
+are disabled. See [archive read limits](../history_archive_reads.md).
 
 Owns revision-filtered pages and point-in-time reads for collections, classes,
 objects, export templates, and remote targets. Visibility applies before
-filtering, counting, and paging. Provenance-name resolution is batched.
+filtering, counting, and paging. Provenance-name resolution is batched by captured principal UUID. A missing or
+unresolved UUID cannot fall back to a current integer ID.
 
 `list_object_history_by_name` matches the stored class ID and exact historical
 name across identities. `StorageObjectHistoryNameQuery` validates query fields
@@ -365,7 +385,7 @@ the actual outbound call.
 
 Required trait: `TaskQueueStorage`.
 
-Owns idempotent submission under active-task limits, access facts, task pages,
+Owns idempotent submission under shared admission policy, access facts, task pages,
 events, import results, and retained export and backup outputs. It is the
 application-facing history of work, not the worker lease state machine.
 Task pages must honor the carrier's `excluded_kind` before counting or applying
@@ -378,10 +398,48 @@ in persisted rows as `Backend` corruption. Queued projections have no start,
 finish, or lease; validating and running projections have a start and lease but
 no finish; terminal projections have a finish and no lease. Cancellation may
 happen before a task is claimed, so a cancelled projection need not have a
-start. Retained export outputs contain
+start. A waiting projection has a start, pinned deadline, bounded checkpoint,
+and no execution lease or finish. Resumed queued export/backup tasks retain
+their original start, checkpoint, and deadline. Retained export outputs contain
 exactly one JSON or text representation and a nonnegative warning count.
 Retained backup outputs carry a canonical lowercase SHA-256 digest, and full
 outputs require their stored size and digest to match the document.
+
+### `task_capacity`
+
+Required trait: `TaskCapacityStorage`.
+
+Owns first-writer policy initialization, revision-checked policy replacement,
+and authoritative policy and accounting snapshots. Validated policy values
+cross the boundary through private-field types. Every backend atomically
+enforces deployment, principal, kind, collection, and internal repair limits
+when admitting and claiming work. Recognized duplicates consume no additional
+reservation; reduced limits allow existing work to drain.
+
+Logical reservations, execution occupancy, resident bytes, and cumulative work
+are distinct dimensions. Restore preserves control policy and cumulative work,
+invalidates obsolete occupancy, and reconciles current task identities before
+admission resumes. Unknown identity or incomplete reconciliation fails closed.
+The application supplies administrator authorization and common observations;
+adapter errors retain a bounded capacity rejection reason. See
+[task admission](../task_admission.md) for ownership and reconciliation rules.
+
+### `api_request_admission`
+
+Required trait: `ApiRequestAdmissionStorage`.
+
+Owns authoritative revision-bound request policy, atomic deployment/principal
+occupancy and exact-owner settlement. Every physical HTTP attempt is charged
+independently of durable task idempotency. `StorageApiRequestPermit` snapshots
+finite limits and accompanies productive storage execution; nested scopes retain
+the original owner. Settlement fences new work and waits for issued work before
+releasing occupancy. Expired unsettled owners remain charged. Policy reductions
+drain admitted requests; logical restore preserves policy/cumulative charges and
+fences obsolete application incarnations.
+
+This is the partial occupancy/fencing slice of #521. Request-wide H5
+candidate/source-byte accounting and hard-heap acceptance remain required.
+See [expensive request admission](../api_request_admission.md).
 
 ### `task_execution`
 
@@ -391,6 +449,15 @@ Owns claims, lease renewal and recovery, claim-checked events and state
 changes, atomic completion artifacts, failure accounting, and output
 retention. Claims are opaque tokens that callers can only return to the
 backend.
+
+`wait_task` atomically checkpoints an uncommitted export/backup claim and releases
+execution while preserving logical admission and resident bytes. `resume_task`
+consumes the matching opaque wait token once and queues the same task for an
+ordinary fresh claim. Waiting is distinct from an expired lease. Cancellation,
+principal disablement, and original-deadline recovery settle a wait without
+reacquiring execution; stale notifications cannot mutate it. The application
+observes both operations through the task-execution capability. See the
+[durable-wait contract](../task_admission.md#durable-waiting-foundation).
 
 A claim is valid only when its task projection is active (`validating` or
 `running`), carries a lease expiry, and has the same task ID as its opaque
@@ -407,6 +474,7 @@ only terminal updates (`succeeded`, `failed`, `partially_succeeded`, or
 | `export` | Export artifact |
 | `backup` | Backup artifact |
 | `remote_call` | Remote-call artifact |
+| `history_expiry` | None for a finished empty pass; an admitted batch must remain pending |
 
 The completion DTO validates the matrix before adapter dispatch. The adapter
 must additionally verify that the DTO's declared task kind matches the claimed
@@ -485,6 +553,7 @@ Sink and subscription mutations include their lifecycle events atomically.
 Required traits:
 
 - `MetricsStorage` and `OperationalStateStorage`;
+- `DeletionControlStorage` and `HistoryLifecycleStorage`;
 - `EventDeliveryWorkerStorage`, `EventFanoutStorage`, `EventHealthStorage`, and
   `EventRetentionStorage`;
 - `RuntimeSettingsStorage`;
@@ -505,6 +574,25 @@ backups exclude them. Native memory instances remain independent process-local
 stores. `WorkerNotificationProvider` is an
 optional application-composition provider: adapters may implement it for
 lower-latency wake-ups, but it is not part of `StorageBackend`.
+
+`DeletionControlStorage` owns read-only runtime authority reads, privileged
+capture, and exact-predecessor transitions for protected deletion authority.
+Recovery may advance several revisions while preserving all newer local decisions.
+Maintenance/readiness and worker claims enforce `RecoveryQuarantine` whenever
+retained intents remain. Logical replacement must preserve these records
+and reject retained intents until restriction reapplication is implemented.
+The application owns independent checkpoint publication and recovery evidence;
+see the [deletion recovery foundation](../deletion_recovery.md) for its durability
+contract and activation gates.
+
+`HistoryLifecycleStorage` owns bounded identity-only policy inspection and
+exact-predecessor policy/hold/review transitions. Capture includes the adapter
+clock and application/deletion/history fences. Commit appends canonical audit
+atomically; recovery preserves every retained policy and hold transition and is
+quarantine-only. Logical replacement preserves this authority and invalidates
+issued previews through the application incarnation. Independent publication is
+an application responsibility; a commit does not authorize physical expiry.
+See [history retention](../history_retention.md) for activation and evidence gaps.
 
 Queue and gauge snapshots correlate optional oldest/last timestamps with their
 counts. A positive queued, active, due, pending, or terminal count requires the
@@ -572,3 +660,26 @@ Query observation control notifications are wake-up hints for the shared overrid
 `WorkerNotificationProvider` accepts a boxed callback so each process can refresh
 its own collector. Providers invoke it on registration/reconnection and changes;
 periodic reads remain the recovery path if notification delivery is interrupted.
+
+## Verified artifacts
+
+Required traits: `ArtifactStore` and `TaskArtifactStore`. Every selectable adapter
+must implement bounded staging, sealing, independent reads, fenced publication,
+and idempotent cleanup. `bind_task` admits physical reservations against the exact
+stable task identity and live lease. Task-owned `publish` calls are rejected;
+`complete_task` consumes the verification proof in the same atomic operation as
+output metadata and terminal status. Restore copies portable frames into fresh
+identities and preserves all pre-existing physical obligations.
+
+The [artifact contract](../artifact_staging.md) defines wire integrity, spool
+lifetime, finite limits, retained-reader compatibility, and cleanup accounting.
+
+### `task_retention`
+
+Required trait: `TaskRetentionStorage`, within the workflow family.
+
+Owns protected receipt authority, immutable prospective policies, holds, bounded
+backfill and expiry selection, scoped task/output purge manifests, composite
+checkpoint capture and recovery reapplication. Runtime creation, duplicate lookup
+and exact admission activation remain on `TaskQueueStorage`. All selected
+backends implement the complete contract; see [task retention](../task_retention.md).

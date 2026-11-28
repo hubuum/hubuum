@@ -6,12 +6,18 @@ use actix_web::{
     web::Data,
     web::JsonConfig,
 };
+use hubuum_storage_core::{DeletionControlStorage, RuntimeRegistration, TaskCapacityStorage};
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    io,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tracing::{error, info, warn};
 
 use crate::api::openapi::openapi_json as openapi_json_handler;
@@ -34,23 +40,31 @@ use crate::events::{
     ensure_event_retention_worker_running,
 };
 use crate::lifecycle::{
-    background_worker_count, shutdown_background_workers, wait_for_background_worker_exit,
+    ShutdownReport, background_worker_count, shutdown_background_workers,
+    wait_for_background_worker_exit,
 };
+use crate::middlewares::maintenance::http_work_is_settled;
 use crate::middlewares::rate_limit::{
     LoginRateLimitStoreSettings, initialize_login_rate_limit_store,
 };
 use crate::permissions::{AppContext, build_permission_backend};
-use crate::restores::{RestoreSettings, ensure_restore_coordinator_running};
+use crate::restores::{
+    RestoreSettings, active_maintenance_work, application_work_is_settled,
+    ensure_restore_coordinator_running,
+};
 use crate::secrets::DatabaseCredential;
+use crate::services::deletion_recovery::{RuntimeRecoveryLifetime, require_runtime_permit};
 use crate::services::event_administration::count_enabled_event_sinks;
 use crate::storage::{
     OperationalStateStorage, StorageBackendKind, StorageDatabaseRole, StorageDatabaseRoleNames,
-    StorageSettings, initialize_storage, inspect_storage_database_privileges,
+    StorageError, StorageSettings, initialize_storage, inspect_storage_database_privileges,
 };
 use crate::tasks::{ensure_task_worker_running_with_settings, initialize_task_worker_settings};
 use crate::token_retention::ensure_token_retention_worker_running;
 use crate::utilities::is_valid_log_level;
 use crate::{api, logger, middlewares, observability, tls, utilities};
+
+const HTTP_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Build and run the configured Hubuum process until it shuts down.
 ///
@@ -62,6 +76,8 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         app_context,
         backup_settings,
         restore_settings,
+        _recovery,
+        registration,
     } = initialize_services(&mut config).await;
     let storage_backend = app_context.storage_backend_descriptor();
     if config.metrics_enabled {
@@ -96,8 +112,28 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
     } else {
         run_worker_role(&config, &app_context, &backup_settings, active_event_sinks).await
     };
-    shutdown_background_workers(Duration::from_secs(30)).await;
-    hubuum_templates::shutdown_template_workers().await;
+    let workers = shutdown_background_workers(Duration::from_secs(30)).await;
+    let templates = hubuum_templates::shutdown_template_workers()
+        .await
+        .map_err(|error| io::Error::other(error.to_string()));
+    let result = RuntimeShutdown {
+        role: result,
+        workers,
+        templates,
+        active_work: active_maintenance_work(),
+        http_settled: http_work_is_settled(),
+        application_settled: application_work_is_settled(),
+    }
+    .finish(app_context.backend().unregister_runtime(registration))
+    .await;
+    if let Err(error) = &result {
+        error!(
+            message = "Runtime shutdown or registration removal could not be confirmed; protected registrations continue to gate offline cleanup",
+            reason = %error,
+        );
+    } else {
+        _recovery.release();
+    }
     drop(app_context);
     if let Err(error) = trace_runtime.shutdown().await {
         warn!(
@@ -106,6 +142,48 @@ pub async fn run_runtime_from_environment() -> std::io::Result<()> {
         );
     }
     result
+}
+
+struct RuntimeShutdown {
+    role: io::Result<()>,
+    workers: ShutdownReport,
+    templates: io::Result<()>,
+    active_work: usize,
+    http_settled: bool,
+    application_settled: bool,
+}
+
+impl RuntimeShutdown {
+    async fn finish(
+        self,
+        unregister: impl Future<Output = Result<(), StorageError>>,
+    ) -> io::Result<()> {
+        self.role?;
+        if !self.workers.panicked.is_empty() || !self.workers.timed_out.is_empty() {
+            return Err(io::Error::other(
+                "Background work did not settle; retaining protected runtime registration",
+            ));
+        }
+        self.templates?;
+        if self.active_work != 0 {
+            return Err(io::Error::other(
+                "Request or worker activity remains; retaining protected runtime registration",
+            ));
+        }
+        if !self.http_settled {
+            return Err(io::Error::other(
+                "HTTP work did not settle; retaining protected runtime registration",
+            ));
+        }
+        if !self.application_settled {
+            return Err(io::Error::other(
+                "Application work did not settle; retaining protected runtime registration",
+            ));
+        }
+        unregister
+            .await
+            .map_err(|error| io::Error::other(error.to_string()))
+    }
 }
 
 async fn initialize_runtime() -> (AppConfig, observability::tracing::TraceRuntime) {
@@ -203,6 +281,8 @@ async fn initialize_runtime() -> (AppConfig, observability::tracing::TraceRuntim
 }
 
 struct RuntimeServices {
+    _recovery: RuntimeRecoveryLifetime,
+    registration: RuntimeRegistration,
     app_context: AppContext,
     backup_settings: BackupSettings,
     restore_settings: RestoreSettings,
@@ -272,148 +352,212 @@ async fn initialize_services(config: &mut AppConfig) -> RuntimeServices {
             EXIT_CODE_DATABASE_ERROR,
         );
     }
-    if let Some(database_roles) = config
-        .runtime_database_roles()
-        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR))
-    {
-        let privilege_report = inspect_storage_database_privileges(
-            &storage_settings,
-            StorageDatabaseRole::Runtime,
-            &database_roles,
-        )
-        .await;
-        match privilege_report {
-            Ok(Some(report)) if report.is_safe() => {
-                info!(
-                    message = "Database runtime privileges satisfy the generated manifest",
-                    role = report.role(),
-                    privilege_mode = config.database_privilege_mode.as_str(),
-                );
-            }
-            Ok(Some(report)) => {
-                for finding in report.dangerous() {
-                    warn!(
-                        message = "Dangerous database runtime privilege detected",
-                        role = report.role(),
-                        code = finding.code(),
-                        object = finding.object(),
-                        detail = finding.detail(),
-                    );
-                }
-                for finding in report.missing() {
-                    warn!(
-                        message = "Required database runtime privilege is missing",
-                        role = report.role(),
-                        code = finding.code(),
-                        object = finding.object(),
-                        detail = finding.detail(),
-                    );
-                }
-                if config.database_privilege_mode == DatabasePrivilegeMode::Strict {
-                    fatal_error(
-                        "Database runtime privileges do not satisfy the generated manifest",
-                        EXIT_CODE_DATABASE_ERROR,
-                    );
-                }
-            }
-            Ok(None) => {}
-            Err(error) => {
-                warn!(
-                    message = "Database runtime privilege inspection failed",
-                    role = database_roles.runtime(),
-                    error = %error,
-                );
-                if config.database_privilege_mode == DatabasePrivilegeMode::Strict {
-                    fatal_error(
-                        "Database runtime privilege inspection failed in strict mode",
-                        EXIT_CODE_DATABASE_ERROR,
-                    );
-                }
-            }
-        }
-    }
-
-    let backup_settings = BackupSettings::new(
-        config.backup_output_retention_hours,
-        config.backup_max_active_tasks_per_user,
-        config
-            .backup_budget()
-            .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR)),
-    )
-    .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
-    let restore_settings = RestoreSettings::new(
-        config.restore_stage_retention_minutes,
-        config.restore_max_upload_bytes,
-    )
-    .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
-
-    let task_worker_settings = config
-        .task_worker_settings()
-        .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
-    initialize_task_worker_settings(task_worker_settings)
-        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_INIT_ERROR));
-
-    let initialization_settings =
-        utilities::init::InitializationSettings::new(config.admin_groupname.clone())
-            .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
-    if let Err(e) = utilities::init::init(&storage, &initialization_settings).await {
-        fatal_error(
-            &format!("Critical storage initialization failed: {}", e),
-            EXIT_CODE_INIT_ERROR,
-        );
-    }
-
-    // Apply shared runtime settings before this process can serve requests or
-    // start background work.
-    let applied = storage
-        .refresh_runtime_settings()
+    let recovery = require_runtime_permit(&storage, &config.control_recovery)
         .await
+        .and_then(|permit| permit.protect_renderers())
         .unwrap_or_else(|error| {
             fatal_error(
-                &format!("Failed to load runtime settings: {error}"),
+                &format!("Recovery startup gate: {error}"),
                 EXIT_CODE_DATABASE_ERROR,
             )
         });
-    let permission_backend = match applied
-        .snapshot()
-        .and_then(|snapshot| snapshot.authorization())
-    {
-        Some(selected) => crate::permissions::build_permission_backend_for_runtime(
-            config,
-            storage.clone(),
-            selected,
-        )
+    // Register under the authority lock before bootstrap writes, services,
+    // workers or listeners can start. Failed initialization deliberately leaves
+    // this durable membership blocking offline cleanup.
+    let registration = storage
+        .register_runtime_isolated(recovery.isolation_domain())
         .await
-        .unwrap_or_else(|_| {
-            Arc::new(crate::permissions::LocalPermissionBackend::new(
-                storage.clone(),
-                config.admin_groupname.clone(),
-            ))
-        }),
-        None => build_permission_backend(config, storage.clone())
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Protected runtime registration failed: {error}"),
+                EXIT_CODE_DATABASE_ERROR,
+            )
+        });
+    let recovery = recovery.into_runtime_lifetime();
+    let storage = storage.with_runtime_owner(registration.owner());
+    let startup_storage = storage.clone();
+    crate::restores::with_application_work(&startup_storage, async {
+        let initial_policy = config
+            .initial_task_admission_policy()
+            .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
+        let task_policy = storage
+            .initialize_task_policy(initial_policy)
             .await
             .unwrap_or_else(|error| {
                 fatal_error(
-                    &format!("Failed to initialize permission backend: {error}"),
-                    EXIT_CODE_PERMISSION_BACKEND_ERROR,
+                    &format!("Failed to initialize shared task policy: {error}"),
+                    EXIT_CODE_DATABASE_ERROR,
                 )
-            }),
-    };
-    let app_context = AppContext::new(storage, permission_backend);
-    app_context.apply_runtime_settings(&applied).await;
-    if let Err(error) = crate::auth::ensure_configured_identity_scopes(app_context.backend()).await
-    {
-        fatal_error(
-            &format!("Failed to initialize authentication identity scopes: {error}"),
-            EXIT_CODE_INIT_ERROR,
+            });
+        info!(
+            task_policy_revision = task_policy.revision().get(),
+            "Shared task admission policy loaded"
         );
-    }
-    app_context.start_runtime_settings_reconciler();
-    RuntimeServices {
-        app_context,
-        backup_settings,
-        restore_settings,
-    }
+        if let Some(database_roles) = config
+            .runtime_database_roles()
+            .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR))
+        {
+            let privilege_report = inspect_storage_database_privileges(
+                &storage_settings,
+                StorageDatabaseRole::Runtime,
+                &database_roles,
+            )
+            .await;
+            match privilege_report {
+                Ok(Some(report)) if report.is_safe() => {
+                    info!(
+                        message = "Database runtime privileges satisfy the generated manifest",
+                        role = report.role(),
+                        privilege_mode = config.database_privilege_mode.as_str(),
+                    );
+                }
+                Ok(Some(report)) => {
+                    for finding in report.dangerous() {
+                        warn!(
+                            message = "Dangerous database runtime privilege detected",
+                            role = report.role(),
+                            code = finding.code(),
+                            object = finding.object(),
+                            detail = finding.detail(),
+                        );
+                    }
+                    for finding in report.missing() {
+                        warn!(
+                            message = "Required database runtime privilege is missing",
+                            role = report.role(),
+                            code = finding.code(),
+                            object = finding.object(),
+                            detail = finding.detail(),
+                        );
+                    }
+                    if config.database_privilege_mode == DatabasePrivilegeMode::Strict {
+                        fatal_error(
+                            "Database runtime privileges do not satisfy the generated manifest",
+                            EXIT_CODE_DATABASE_ERROR,
+                        );
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    warn!(
+                        message = "Database runtime privilege inspection failed",
+                        role = database_roles.runtime(),
+                        error = %error,
+                    );
+                    if config.database_privilege_mode == DatabasePrivilegeMode::Strict {
+                        fatal_error(
+                            "Database runtime privilege inspection failed in strict mode",
+                            EXIT_CODE_DATABASE_ERROR,
+                        );
+                    }
+                }
+            }
+        }
+
+        let backup_settings = BackupSettings::new(
+            config.backup_output_retention_hours,
+            config
+                .backup_budget()
+                .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR)),
+        )
+        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
+        let restore_settings = RestoreSettings::new(
+            config.restore_stage_retention_minutes,
+            config.restore_max_upload_bytes,
+        )
+        .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
+
+        let task_worker_settings = config
+            .task_worker_settings()
+            .unwrap_or_else(|error| fatal_error(&error.to_string(), EXIT_CODE_CONFIG_ERROR));
+        initialize_task_worker_settings(task_worker_settings)
+            .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_INIT_ERROR));
+
+        let initialization_settings =
+            utilities::init::InitializationSettings::new(config.admin_groupname.clone())
+                .unwrap_or_else(|error| fatal_error(&error, EXIT_CODE_CONFIG_ERROR));
+        if let Err(e) = utilities::init::init(&storage, &initialization_settings).await {
+            fatal_error(
+                &format!("Critical storage initialization failed: {}", e),
+                EXIT_CODE_INIT_ERROR,
+            );
+        }
+
+        // Apply shared runtime settings before this process can serve requests or
+        // start background work.
+        let applied = storage
+            .refresh_runtime_settings()
+            .await
+            .unwrap_or_else(|error| {
+                fatal_error(
+                    &format!("Failed to load runtime settings: {error}"),
+                    EXIT_CODE_DATABASE_ERROR,
+                )
+            });
+        let permission_backend = match applied
+            .snapshot()
+            .and_then(|snapshot| snapshot.authorization())
+        {
+            Some(selected) => crate::permissions::build_permission_backend_for_runtime(
+                config,
+                storage.clone(),
+                selected,
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Arc::new(crate::permissions::LocalPermissionBackend::new(
+                    storage.clone(),
+                    config.admin_groupname.clone(),
+                ))
+            }),
+            None => build_permission_backend(config, storage.clone())
+                .await
+                .unwrap_or_else(|error| {
+                    fatal_error(
+                        &format!("Failed to initialize permission backend: {error}"),
+                        EXIT_CODE_PERMISSION_BACKEND_ERROR,
+                    )
+                }),
+        };
+        let task_receipts = crate::services::deletion_recovery::TaskReceiptService::configured(
+            &config.control_recovery,
+        )
+        .await
+        .unwrap_or_else(|error| {
+            fatal_error(
+                &format!("Task receipt configuration: {error}"),
+                EXIT_CODE_CONFIG_ERROR,
+            )
+        });
+        let app_context = AppContext::new(storage, permission_backend)
+            .with_task_receipts(task_receipts)
+            .with_history_retention(config.control_recovery.clone())
+            .with_configured_deployment_authorization(config.permission_backend);
+        app_context.apply_runtime_settings(&applied).await;
+        if let Err(error) =
+            crate::auth::ensure_configured_identity_scopes(app_context.backend()).await
+        {
+            fatal_error(
+                &format!("Failed to initialize authentication identity scopes: {error}"),
+                EXIT_CODE_INIT_ERROR,
+            );
+        }
+        app_context.start_runtime_settings_reconciler();
+        Ok::<_, crate::storage::StorageError>(RuntimeServices {
+            _recovery: recovery,
+            registration,
+            app_context,
+            backup_settings,
+            restore_settings,
+        })
+    })
+    .await
+    .unwrap_or_else(|error| {
+        fatal_error(
+            &format!("Registered startup admission failed: {error}"),
+            EXIT_CODE_DATABASE_ERROR,
+        )
+    })
 }
 
 async fn run_worker_role(
@@ -440,7 +584,7 @@ async fn run_worker_role(
         active_event_sinks,
         metrics_listener = true,
     );
-    let supervision_result = supervise_worker_process(metrics_server).await;
+    let supervision_result = supervise_worker_process(Some(metrics_server)).await;
     if let Err(error) = &supervision_result {
         error!(
             message = "Worker process supervision failed",
@@ -457,6 +601,24 @@ async fn run_http_role(
     restore_settings: &RestoreSettings,
     active_event_sinks: Option<i64>,
 ) -> std::io::Result<()> {
+    let (server, _) = start_http_role(
+        config,
+        app_context,
+        backup_settings,
+        restore_settings,
+        active_event_sinks,
+    )
+    .await?;
+    supervise_http_server(server, wait_for_runtime_shutdown()).await
+}
+
+pub(crate) async fn start_http_role(
+    config: &AppConfig,
+    app_context: &AppContext,
+    backup_settings: &BackupSettings,
+    restore_settings: &RestoreSettings,
+    active_event_sinks: Option<i64>,
+) -> std::io::Result<(Server, std::net::SocketAddr)> {
     let storage_backend = app_context.storage_backend_descriptor();
     let authorization_backend = app_context.permission_backend().kind();
     let login_rate_limit_store_settings = login_rate_limit_store_settings(config)
@@ -481,10 +643,12 @@ async fn run_http_role(
     let background_worker_context = app_context.clone();
     let app_backup_settings = backup_settings.clone();
     let app_restore_settings = restore_settings.clone();
+    let owned_http_publication = server_app_context.backend().uses_online_history();
 
     let server = HttpServer::new(move || {
         let app = App::new()
             .wrap(from_fn(middlewares::actor_context))
+            .wrap(from_fn(middlewares::history_publication::transmit))
             .wrap(from_fn(middlewares::reject_during_maintenance))
             // Actix runs the last registered middleware first. Reject disallowed
             // clients before bearer-token resolution can touch the database.
@@ -514,6 +678,11 @@ async fn run_http_role(
         );
 
         app.configure(api::config)
+    })
+    .on_connect(move |io, extensions| {
+        if owned_http_publication {
+            middlewares::history_publication::on_connect(io, extensions);
+        }
     });
 
     let bind_address = format!("{}:{}", config.bind_ip, config.port);
@@ -567,20 +736,48 @@ async fn run_http_role(
         active_event_sinks,
     );
 
-    let server = server.workers(config.actix_workers).run();
-    if background_worker_count() > 0 {
-        tokio::select! {
-            result = server => result,
-            error = wait_for_background_worker_failure() => {
-                error!(
-                    message = "Background worker supervision failed",
-                    reason = %error,
-                );
-                Err(error)
-            }
-        }
-    } else {
-        server.await
+    // Own the signal path so every successful exit follows an explicit graceful
+    // stop. Actix's built-in forced signal path does not wait for its workers.
+    let address = server.addrs()[0];
+    let server = server
+        .disable_signals()
+        .shutdown_timeout(HTTP_SHUTDOWN_TIMEOUT.as_secs())
+        .workers(config.actix_workers)
+        .run();
+    Ok((server, address))
+}
+
+async fn supervise_http_server(
+    mut server: Server,
+    shutdown: impl Future<Output = io::Result<()>>,
+) -> io::Result<()> {
+    let handle = server.handle();
+    let outcome = tokio::select! {
+        result = &mut server => return result.and(Err(io::Error::other(
+            "HTTP server stopped without an explicit shutdown",
+        ))),
+        outcome = shutdown => outcome,
+    };
+    // Continue polling the server while its stop command drains workers. Merely
+    // dropping the Server future does not establish that its listener stopped.
+    let started = Instant::now();
+    let ((), stopped) = tokio::join!(handle.stop(true), server);
+    stopped?;
+    // Actix discards the worker's graceful/forced completion flag. A stop that
+    // reaches its grace deadline cannot establish clean runtime settlement.
+    if started.elapsed() >= HTTP_SHUTDOWN_TIMEOUT {
+        return Err(io::Error::other("HTTP shutdown reached its grace deadline"));
+    }
+    outcome
+}
+
+async fn wait_for_runtime_shutdown() -> io::Result<()> {
+    if background_worker_count() == 0 {
+        return wait_for_shutdown_signal().await;
+    }
+    tokio::select! {
+        shutdown = wait_for_shutdown_signal() => shutdown,
+        error = wait_for_background_worker_failure() => Err(error),
     }
 }
 
@@ -597,19 +794,27 @@ async fn wait_for_background_worker_failure() -> std::io::Error {
     std::io::Error::other(format!("Background worker supervision failed: {exit}"))
 }
 
-async fn supervise_worker_process(metrics_server: Server) -> std::io::Result<()> {
+async fn supervise_worker_process(metrics_server: Option<Server>) -> std::io::Result<()> {
+    let Some(mut metrics_server) = metrics_server else {
+        return tokio::select! {
+            shutdown = wait_for_shutdown_signal() => shutdown,
+            error = wait_for_background_worker_failure() => Err(error),
+        };
+    };
+
     let metrics_server_handle = metrics_server.handle();
     let result = tokio::select! {
         shutdown = wait_for_shutdown_signal() => shutdown,
         error = wait_for_background_worker_failure() => Err(error),
-        result = metrics_server => match result {
+        result = &mut metrics_server => return match result {
             Ok(()) => Err(std::io::Error::other(
                 "Worker metrics HTTP server stopped unexpectedly",
             )),
             Err(error) => Err(error),
         },
     };
-    metrics_server_handle.stop(true).await;
+    let ((), stopped) = tokio::join!(metrics_server_handle.stop(true), metrics_server);
+    stopped?;
     result
 }
 
@@ -705,6 +910,12 @@ async fn wait_for_shutdown_signal() -> std::io::Result<()> {
 async fn wait_for_shutdown_signal() -> std::io::Result<()> {
     tokio::signal::ctrl_c().await
 }
+
+#[cfg(test)]
+mod runtime_shutdown_tests;
+
+#[cfg(test)]
+mod history_publication_tests;
 
 #[cfg(test)]
 mod tests {

@@ -19,6 +19,7 @@ use super::{
     StorageResolvedObjectRelation,
 };
 use crate::events::EventContext;
+use crate::storage::context::ApplicationAdmission;
 
 #[cfg(test)]
 mod tests {
@@ -30,6 +31,27 @@ mod tests {
     use super::*;
     use crate::observability::tracing::test_support::TraceCapture;
     use crate::storage::StorageHandle;
+
+    #[test]
+    fn artifact_admission_retains_typed_cause_with_generic_diagnostics() {
+        use hubuum_storage_core::{
+            ApiRequestRejection, StorageErrorKind, artifacts::ArtifactError,
+        };
+        // Conversion proof only: this does not authorize projection of an
+        // arbitrary supplied cause as the private bridge's productive failure.
+        let error = <ArtifactError as ObservationError>::admission_error(
+            StorageError::api_request(ApiRequestRejection::DeadlineExceeded),
+        );
+        assert_eq!(error.diagnostic_kind(), StorageErrorKind::Backend);
+        let ArtifactError::Source(source) = error else {
+            panic!("actual admission cause must remain owned");
+        };
+        let original = source.downcast::<StorageError>().unwrap();
+        assert_eq!(
+            original.api_request_rejection(),
+            Some(ApiRequestRejection::DeadlineExceeded)
+        );
+    }
 
     #[rstest]
     #[case::debug("debug")]
@@ -93,6 +115,7 @@ mod tests {
 /// adapter can implement one storage family and is observed only for that
 /// family; complete backend selection is enforced separately at composition.
 pub(crate) struct ObservedStorage<S> {
+    admission: Option<ApplicationAdmission>,
     backend: &'static str,
     inner: Arc<S>,
     observer: Arc<dyn StorageObserver>,
@@ -120,36 +143,76 @@ impl<S> ObservedStorage<S> {
         observer: Arc<dyn StorageObserver>,
     ) -> Self {
         Self {
+            admission: None,
             backend,
             inner: Arc::new(storage),
             observer,
         }
     }
 
-    async fn call<T>(
+    pub(crate) fn with_admission(mut self, admission: Option<ApplicationAdmission>) -> Self {
+        self.admission = admission;
+        self
+    }
+
+    async fn call<T: Send>(
         &self,
         capability: StorageCapability,
         operation: &'static str,
-        future: impl Future<Output = Result<T, StorageError>>,
+        future: impl Future<Output = Result<T, StorageError>> + Send,
     ) -> Result<T, StorageError> {
-        observe_storage_call_with(
+        let observed = observe_storage_call_with(
             self.observer.as_ref(),
             self.backend,
             capability,
             operation,
             future,
-        )
-        .await
+        );
+        match &self.admission {
+            Some(admission) => admission.run(observed).await,
+            None => observed.await,
+        }
     }
 }
 
-pub(super) async fn observe_storage_call_with<T>(
+pub(super) trait ObservationError: std::fmt::Display + Send {
+    fn admission_error(error: StorageError) -> Self;
+    fn diagnostic_kind(&self) -> hubuum_storage_core::StorageErrorKind;
+}
+impl ObservationError for StorageError {
+    fn admission_error(error: StorageError) -> Self {
+        error
+    }
+    fn diagnostic_kind(&self) -> hubuum_storage_core::StorageErrorKind {
+        self.kind()
+    }
+}
+impl ObservationError for hubuum_storage_core::artifacts::ArtifactError {
+    fn admission_error(error: StorageError) -> Self {
+        Self::Source(Box::new(error))
+    }
+    fn diagnostic_kind(&self) -> hubuum_storage_core::StorageErrorKind {
+        use hubuum_storage_core::{StorageErrorKind, artifacts::ArtifactError};
+        match self {
+            ArtifactError::Invalid(_) => StorageErrorKind::InvalidInput,
+            ArtifactError::Limit(_) => StorageErrorKind::InputTooLarge,
+            ArtifactError::Conflict(_) => StorageErrorKind::Conflict,
+            ArtifactError::NotFound => StorageErrorKind::NotFound,
+            ArtifactError::Corrupt(_)
+            | ArtifactError::Backend(_)
+            | ArtifactError::Source(_)
+            | ArtifactError::AbortFailed { .. } => StorageErrorKind::Backend,
+        }
+    }
+}
+
+pub(super) async fn observe_storage_call_with<T, E: ObservationError>(
     observer: &dyn StorageObserver,
     backend: &'static str,
     capability: StorageCapability,
     operation: &'static str,
-    future: impl Future<Output = Result<T, StorageError>>,
-) -> Result<T, StorageError> {
+    future: impl Future<Output = Result<T, E>>,
+) -> Result<T, E> {
     let span = debug_span!(
         "storage_operation",
         backend,
@@ -167,7 +230,7 @@ pub(super) async fn observe_storage_call_with<T>(
         let result_kind = result
             .as_ref()
             .map(|_| "ok")
-            .unwrap_or_else(|error| error.kind().as_str());
+            .unwrap_or_else(|error| error.diagnostic_kind().as_str());
         let span = Span::current();
         span.record("storage.result", result_kind);
         span.record(
@@ -191,15 +254,15 @@ pub(super) async fn observe_storage_call_with<T>(
                 message = "storage operation complete",
                 elapsed_ms = duration.as_millis(),
             ),
-            Err(error) if error.kind().is_backend_failure() => warn!(
+            Err(error) if error.diagnostic_kind().is_backend_failure() => warn!(
                 message = "storage operation failed",
-                error_kind = error.kind().as_str(),
+                error_kind = error.diagnostic_kind().as_str(),
                 elapsed_ms = duration.as_millis(),
                 error = %error,
             ),
             Err(error) => debug!(
                 message = "storage operation rejected",
-                error_kind = error.kind().as_str(),
+                error_kind = error.diagnostic_kind().as_str(),
                 elapsed_ms = duration.as_millis(),
                 error = %error,
             ),

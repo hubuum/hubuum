@@ -32,6 +32,9 @@ pub struct ApiErrorResponse {
     /// Machine-readable reason for errors with a client recovery flow.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Whether an admission rejection can be retried after capacity or control recovers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
     pub error: String,
     pub message: String,
 }
@@ -84,6 +87,7 @@ pub struct CountsResponse {
 fn api_error_response_example() -> ApiErrorResponse {
     ApiErrorResponse {
         reason: None,
+        retryable: None,
         error: "Unauthorized".to_string(),
         message: "Authentication failure".to_string(),
     }
@@ -458,4 +462,12 @@ mod tests {
         assert!(logs.contains(header_name));
         assert!(!logs.contains(header_value));
     }
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ApiRequestAdmissionErrorResponse {
+    pub error: String,
+    pub reason: hubuum_storage_core::ApiRequestRejection,
+    pub retryable: bool,
+    pub message: String,
 }

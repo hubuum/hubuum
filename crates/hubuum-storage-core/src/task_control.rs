@@ -50,6 +50,9 @@ impl StorageTaskCancellation {
 pub enum StorageTaskExecutionPhase {
     #[default]
     Uncommitted,
+    /// Expiry effects belong to retained history authority, independently of
+    /// task cancellation, detail retention and physical cleanup completion.
+    HistoryAuthority,
     ImportCommitted {
         at: DateTime<Utc>,
     },
@@ -75,7 +78,11 @@ impl StorageTaskControl {
             kind,
             cancellation: None,
             deadline: None,
-            phase: StorageTaskExecutionPhase::Uncommitted,
+            phase: if matches!(kind, StorageTaskKind::HistoryExpiry) {
+                StorageTaskExecutionPhase::HistoryAuthority
+            } else {
+                StorageTaskExecutionPhase::Uncommitted
+            },
             terminal_reason: None,
         }
     }
@@ -149,6 +156,13 @@ impl StorageTaskControl {
         phase: StorageTaskExecutionPhase,
         terminal_reason: Option<TaskStopReason>,
     ) -> Result<Self, StorageValidationError> {
+        if (kind == StorageTaskKind::HistoryExpiry)
+            != (phase == StorageTaskExecutionPhase::HistoryAuthority)
+        {
+            return Err(StorageValidationError::invalid(
+                "History expiry effects must retain their separate authority",
+            ));
+        }
         match phase {
             StorageTaskExecutionPhase::ImportCommitted { .. }
                 if kind != StorageTaskKind::Import =>
@@ -265,6 +279,7 @@ pub enum StorageTaskStatus {
     Queued,
     Validating,
     Running,
+    Waiting,
     Succeeded,
     Failed,
     PartiallySucceeded,
@@ -272,10 +287,11 @@ pub enum StorageTaskStatus {
 }
 
 impl StorageTaskStatus {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Queued,
         Self::Validating,
         Self::Running,
+        Self::Waiting,
         Self::Succeeded,
         Self::Failed,
         Self::PartiallySucceeded,
@@ -295,6 +311,7 @@ impl StorageTaskStatus {
             Self::Queued => "queued",
             Self::Validating => "validating",
             Self::Running => "running",
+            Self::Waiting => "waiting",
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
             Self::PartiallySucceeded => "partially_succeeded",
@@ -308,6 +325,7 @@ impl StorageTaskStatus {
             "queued" => Some(Self::Queued),
             "validating" => Some(Self::Validating),
             "running" => Some(Self::Running),
+            "waiting" => Some(Self::Waiting),
             "succeeded" => Some(Self::Succeeded),
             "failed" => Some(Self::Failed),
             "partially_succeeded" => Some(Self::PartiallySucceeded),

@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::StorageBackupTaskContent;
 
 #[async_trait]
 impl RemoteTargetStorage for MemoryStorage {
@@ -8,7 +9,7 @@ impl RemoteTargetStorage for MemoryStorage {
     ) -> Result<StorageRemoteTarget, StorageError> {
         self.state
             .read()
-            .await
+            .await?
             .remote_targets
             .get(&target_id.id())
             .cloned()
@@ -25,7 +26,7 @@ impl RemoteTargetStorage for MemoryStorage {
         let rows = self
             .state
             .read()
-            .await
+            .await?
             .remote_targets
             .values()
             .filter(|target| collection_ids.contains(&target.collection_id()))
@@ -39,7 +40,7 @@ impl RemoteTargetStorage for MemoryStorage {
         request: StorageRemoteTargetCreate,
     ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, StorageError> {
         let (collection_id, name, definition, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if !state.collections.contains_key(&collection_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Collection {} was not found",
@@ -66,7 +67,7 @@ impl RemoteTargetStorage for MemoryStorage {
         )
         .map_err(invalid_contract_value)?;
         let target = StorageRemoteTarget::new(metadata, collection_id, &name, definition);
-        state.remote_targets.insert(id, target.clone());
+        state.store_remote_target(id, target.clone());
         let receipt = state.append_simple_event(
             EntityType::RemoteTarget,
             id,
@@ -88,7 +89,7 @@ impl RemoteTargetStorage for MemoryStorage {
         request: StorageRemoteTargetUpdate,
     ) -> Result<StorageMutationOutcome<StorageRemoteTarget>, StorageError> {
         let (target_id, expected_revision, patch, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state
             .remote_targets
             .get(&target_id.id())
@@ -165,7 +166,7 @@ impl RemoteTargetStorage for MemoryStorage {
             StorageRemoteTargetDefinition::new(description, updated_transport, updated_policy),
         );
         state.ensure_audited_history_capacity(1)?;
-        state.remote_targets.insert(target_id.id(), target.clone());
+        state.store_remote_target(target_id.id(), target.clone());
         let receipt = state.append_simple_event(
             EntityType::RemoteTarget,
             target_id.id(),
@@ -187,7 +188,7 @@ impl RemoteTargetStorage for MemoryStorage {
         request: StorageRemoteTargetDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let (target_id, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let Some(target) = state.remote_targets.get(&target_id.id()).cloned() else {
             return Ok(StorageMutationOutcome::unchanged(()));
         };
@@ -215,7 +216,7 @@ impl RemoteTargetStorage for MemoryStorage {
         request: StorageRemoteTargetInvocation,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let (target_id, task_id, subject_type, subject_id, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let target = state
             .remote_targets
             .get(&target_id.id())
@@ -243,11 +244,25 @@ impl RemoteTargetStorage for MemoryStorage {
 
 #[async_trait]
 impl TaskQueueStorage for MemoryStorage {
+    async fn lookup_task_submission(
+        &self,
+        lookup: TaskSubmissionLookup,
+    ) -> Result<TaskSubmissionResolution, StorageError> {
+        self.state.read().await?.receipt_lookup(&lookup)
+    }
+
+    async fn activate_task_submission(
+        &self,
+        request: ProtectedTaskAdmission,
+    ) -> Result<TaskActivationOutcome, StorageError> {
+        self.activate_receipt(request).await
+    }
+
     async fn create_task(
         &self,
         request: StorageTaskCreateRequest,
-    ) -> Result<StorageTask, StorageError> {
-        let mut guard = self.state.write().await;
+    ) -> Result<StorageTaskSubmissionOutcome, StorageError> {
+        let mut guard = self.state.write().await?;
         let mut state = guard.clone();
         if !state.principals.contains_key(&request.submitted_by().id()) {
             return Err(StorageError::not_found(format!(
@@ -256,7 +271,49 @@ impl TaskQueueStorage for MemoryStorage {
             )));
         }
         let idempotency_key = request.idempotency_key().map(|key| key.as_str().to_owned());
+        let protected = idempotency_key.is_some()
+            && !matches!(
+                state.task_control.activation(),
+                TaskReceiptActivation::Disabled
+            );
+        if protected {
+            state.validate_receipt_binding(&request)?;
+            let lookup = request
+                .receipt_binding()
+                .expect("validated receipt binding")
+                .lookup();
+            match state.receipt_lookup(lookup)? {
+                TaskSubmissionResolution::Fresh => {}
+                TaskSubmissionResolution::PendingProtection(ticket) => {
+                    return Ok(StorageTaskSubmissionOutcome::DuplicatePendingProtection(
+                        ticket,
+                    ));
+                }
+                TaskSubmissionResolution::Available(task) => {
+                    return Ok(StorageTaskSubmissionOutcome::DuplicateAvailable(*task));
+                }
+                TaskSubmissionResolution::DetailsExpired(receipt) => {
+                    return Ok(StorageTaskSubmissionOutcome::DuplicateDetailsExpired(
+                        receipt,
+                    ));
+                }
+                TaskSubmissionResolution::ExpiryProtectionRequired(receipt) => {
+                    return Ok(StorageTaskSubmissionOutcome::ExpiryProtectionRequired(
+                        receipt,
+                    ));
+                }
+                TaskSubmissionResolution::LegacyUnverifiable(receipt) => {
+                    return Ok(StorageTaskSubmissionOutcome::LegacyUnverifiable(receipt));
+                }
+                TaskSubmissionResolution::ProtectionDisabled => {
+                    return Err(StorageError::internal(
+                        "Receipt activation changed under the state lock",
+                    ));
+                }
+            }
+        }
         if let Some(key) = idempotency_key.as_deref()
+            && !protected
             && let Some(existing) = state.tasks.values().find(|task| {
                 task.submitted_by == Some(request.submitted_by())
                     && task.idempotency_key.as_deref() == Some(key)
@@ -265,21 +322,20 @@ impl TaskQueueStorage for MemoryStorage {
             if existing.kind == request.kind()
                 && existing.request_hash.as_deref() == request.request_hash()
             {
-                return existing.projection();
+                return existing
+                    .projection()
+                    .map(StorageTaskSubmissionOutcome::DuplicateAvailable);
             }
             return Err(StorageError::conflict(
                 "Idempotency-Key is already in use for a different task submission",
             ));
         }
-        state.ensure_task_capacity(
-            request.submitted_by(),
-            request.kind(),
-            request.maximum_active_tasks(),
-        )?;
         let id = TaskId::new(state.task_ids.allocate()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
         let now = Utc::now();
         let record = MemoryTaskRecord {
+            checkpoint: None,
+            wait_token: None,
             control: StorageTaskControl::new(request.kind()),
             id,
             kind: request.kind(),
@@ -305,13 +361,58 @@ impl TaskQueueStorage for MemoryStorage {
             initiator_principal_id: Some(request.submitted_by()),
             trace_link: request.trace_link().cloned(),
             claim_token: None,
+            execution_fence: None,
+            receipt_admission: None,
+            retention_policy: None,
+            details_expires_at: None,
+            recovery_unavailable: false,
+            invocation: request
+                .remote_invocation()
+                .map(|invocation| state.capture_task_invocation(invocation))
+                .transpose()?,
         };
         let task = record.projection()?;
-        state.tasks.insert(id.id(), record);
-        state.append_task_event_record(
-            id,
-            StorageTaskEventInput::new(StorageTaskStatus::Queued.as_str(), "Task queued"),
-        )?;
+        state.store_task(id.id(), record)?;
+        let outcome = if protected {
+            let receipt = TaskReceipt::admit(
+                TaskReceiptAdmission::new(
+                    request
+                        .receipt_binding()
+                        .expect("protected binding")
+                        .lookup()
+                        .clone(),
+                    state.task_identity(id)?,
+                    state.application_control.fence().incarnation(),
+                    now,
+                )
+                .map_err(invalid_contract_value)?,
+                state.task_control.policy(),
+                state
+                    .task_control
+                    .revision()
+                    .next()
+                    .map_err(invalid_contract_value)?,
+            )
+            .map_err(invalid_contract_value)?;
+            let ticket = receipt.ticket().clone();
+            state.task_control = state
+                .task_control
+                .with_receipt(receipt)
+                .map_err(invalid_contract_value)?;
+            state
+                .tasks
+                .get_mut(&id.id())
+                .expect("created task")
+                .receipt_admission = Some(crate::task_retention::MemoryTaskAdmission {
+                ticket: ticket.clone(),
+                activated: None,
+                emit_admission_event: true,
+            });
+            StorageTaskSubmissionOutcome::PendingProtection(ticket)
+        } else {
+            state.emit_task_admission(id)?;
+            StorageTaskSubmissionOutcome::CreatedReady(task)
+        };
         if let Some(approval) = request.approval() {
             if request.kind() != StorageTaskKind::Import
                 || approval.claim().actor_id() != request.submitted_by()
@@ -326,11 +427,12 @@ impl TaskQueueStorage for MemoryStorage {
             )?;
         }
         *guard = state;
-        Ok(task)
+        Ok(outcome)
     }
 
     async fn get_task_access(&self, task_id: TaskId) -> Result<StorageTaskAccess, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
+        state.require_task_details(task_id)?;
         let task = state.tasks.get(&task_id.id()).ok_or_else(|| {
             StorageError::not_found(format!("Task {} was not found", task_id.id()))
         })?;
@@ -353,11 +455,12 @@ impl TaskQueueStorage for MemoryStorage {
         let search = query.search().cloned().unwrap_or_default();
         let excluded_kind = query.excluded_kind();
         let (submitted_by, kind, status, options) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let rows = state
             .tasks
             .values()
             .filter(|task| task.deleted_at.is_none())
+            .filter(|task| state.task_details_visible(task.id))
             .filter(|task| submitted_by.is_none_or(|value| task.submitted_by == Some(value)))
             .filter(|task| kind.is_none_or(|value| task.kind == value))
             .filter(|task| excluded_kind != Some(task.kind))
@@ -377,7 +480,8 @@ impl TaskQueueStorage for MemoryStorage {
         query: StorageTaskChildListQuery,
     ) -> Result<StoragePage<StorageTaskEvent>, StorageError> {
         let (task_id, options) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
+        state.require_task_details(task_id)?;
         if !state.tasks.contains_key(&task_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Task {} was not found",
@@ -388,8 +492,16 @@ impl TaskQueueStorage for MemoryStorage {
             state
                 .task_events
                 .get(&task_id.id())
+                .into_iter()
+                .flatten()
+                .filter(|event| {
+                    event
+                        .logical_identity()
+                        .and_then(|evidence| evidence.task_reference("/entity_id"))
+                        == state.task_identity(task_id).ok()
+                })
                 .cloned()
-                .unwrap_or_default(),
+                .collect(),
             &options,
         )
     }
@@ -399,7 +511,8 @@ impl TaskQueueStorage for MemoryStorage {
         query: StorageTaskChildListQuery,
     ) -> Result<StoragePage<StorageImportTaskResult>, StorageError> {
         let (task_id, options) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
+        state.require_task_details(task_id)?;
         if !state.tasks.contains_key(&task_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Task {} was not found",
@@ -416,10 +529,11 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         task_ids: Vec<TaskId>,
     ) -> Result<Vec<StorageExportOutputSummary>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let now = Utc::now();
         task_ids
             .into_iter()
+            .filter(|task_id| state.task_outputs_visible(*task_id))
             .filter_map(|task_id| state.export_outputs.get(&task_id.id()))
             .filter(|output| output.output_expires_at() > now)
             .map(export_output_summary)
@@ -430,10 +544,11 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         task_ids: Vec<TaskId>,
     ) -> Result<Vec<StorageBackupOutputSummary>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let now = Utc::now();
         task_ids
             .into_iter()
+            .filter(|task_id| state.task_outputs_visible(*task_id))
             .filter_map(|task_id| state.backup_outputs.get(&task_id.id()))
             .filter(|output| output.output_expires_at() > now)
             .map(backup_output_summary)
@@ -444,7 +559,10 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutputSummary>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
+        if !state.task_outputs_visible(task_id) {
+            return Ok(StorageTaskOutputLookup::Missing);
+        }
         let Some(output) = state.export_outputs.get(&task_id.id()) else {
             return Ok(StorageTaskOutputLookup::Missing);
         };
@@ -462,7 +580,10 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutputSummary>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
+        if !state.task_outputs_visible(task_id) {
+            return Ok(StorageTaskOutputLookup::Missing);
+        }
         let Some(output) = state.backup_outputs.get(&task_id.id()) else {
             return Ok(StorageTaskOutputLookup::Missing);
         };
@@ -480,7 +601,10 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageExportOutput>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
+        if !state.task_outputs_visible(task_id) {
+            return Ok(StorageTaskOutputLookup::Missing);
+        }
         let Some(output) = state.export_outputs.get(&task_id.id()) else {
             return Ok(StorageTaskOutputLookup::Missing);
         };
@@ -496,7 +620,10 @@ impl TaskQueueStorage for MemoryStorage {
         &self,
         task_id: TaskId,
     ) -> Result<StorageTaskOutputLookup<StorageBackupOutput>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
+        if !state.task_outputs_visible(task_id) {
+            return Ok(StorageTaskOutputLookup::Missing);
+        }
         let Some(output) = state.backup_outputs.get(&task_id.id()) else {
             return Ok(StorageTaskOutputLookup::Missing);
         };
@@ -518,7 +645,10 @@ impl TaskExecutionStorage for MemoryStorage {
         StorageTaskOutputLookup<hubuum_storage_core::StorageSchemaProfileArtifact>,
         StorageError,
     > {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
+        if !state.task_outputs_visible(task_id) {
+            return Ok(StorageTaskOutputLookup::Missing);
+        }
         Ok(match state.schema_profile_outputs.get(&task_id.id()) {
             Some(output) if output.expires_at() <= Utc::now() => StorageTaskOutputLookup::Expired {
                 expires_at: output.expires_at(),
@@ -528,13 +658,8 @@ impl TaskExecutionStorage for MemoryStorage {
         })
     }
     async fn purge_expired_schema_profile_outputs(&self) -> Result<usize, StorageError> {
-        let mut state = self.state.write().await;
-        let before = state.schema_profile_outputs.len();
-        let now = Utc::now();
-        state
-            .schema_profile_outputs
-            .retain(|_, output| output.expires_at() > now);
-        Ok(before - state.schema_profile_outputs.len())
+        let mut state = self.state.write().await?;
+        state.sweep_expired_outputs(StorageTaskKind::SchemaProfiling)
     }
 
     async fn request_task_cancellation(
@@ -572,24 +697,50 @@ impl TaskExecutionStorage for MemoryStorage {
         self.begin_dispatch(request).await
     }
 
+    async fn wait_task(
+        &self,
+        request: StorageTaskWaitRequest,
+    ) -> Result<StorageTaskWait, StorageError> {
+        self.enter_wait(request).await
+    }
+
+    async fn resume_task(
+        &self,
+        request: StorageTaskResumeRequest,
+    ) -> Result<StorageTaskResumeOutcome, StorageError> {
+        self.resume_wait(request).await
+    }
+
     async fn claim_next_task(
         &self,
-        lease_duration: StorageTaskLeaseDuration,
+        request: hubuum_storage_core::StorageTaskClaimRequest,
     ) -> Result<Option<StorageTaskClaim>, StorageError> {
-        let mut state = self.state.write().await;
-        let Some(task_id) = state
-            .tasks
-            .values()
-            .find(|task| task.status == StorageTaskStatus::Queued)
-            .map(|task| task.id)
-        else {
+        let mut state = self.state.write().await?;
+        if !state
+            .application_control
+            .is_released_for(&state.deletion_control)
+            || state.restore_coordinator.maintenance_state() != MaintenanceState::Normal
+        {
+            return Ok(None);
+        }
+        state.task_capacity = state.task_accounting_snapshot()?;
+        let now = Utc::now();
+        let Some(selection) = state.select_scheduled_task(request, now)? else {
             return Ok(None);
         };
-        let now = Utc::now();
+        let task_id = selection.id();
         let expires_at = now
-            .checked_add_signed(Duration::milliseconds(lease_duration.milliseconds()))
+            .checked_add_signed(Duration::milliseconds(
+                request.lease_duration().milliseconds(),
+            ))
             .ok_or_else(|| StorageError::invalid_input("Task lease duration is too large"))?;
+        let attempt_count = state.tasks[&task_id.id()]
+            .attempt_count
+            .checked_add(1)
+            .ok_or_else(|| StorageError::internal("Task attempt count exhausted"))?;
+        state.charge_task_claim(task_id)?;
         let claim_token = Uuid::new_v4().to_string();
+        let fence = state.application_control.fence();
         let task = state
             .tasks
             .get_mut(&task_id.id())
@@ -598,10 +749,16 @@ impl TaskExecutionStorage for MemoryStorage {
         task.started_at.get_or_insert(now);
         task.updated_at = now;
         task.lease_expires_at = Some(expires_at);
-        task.attempt_count += 1;
+        task.attempt_count = attempt_count;
         task.claim_token = Some(claim_token.clone());
+        task.execution_fence = Some(fence);
         let projection = task.projection()?;
-        let lease = StorageTaskLease::new(task_id, StorageTaskClaimToken::new(claim_token));
+        state
+            .task_capacity
+            .scheduler
+            .assign_worker(request.worker(), task_id, claim_token.clone());
+        let lease = StorageTaskLease::new(task_id, StorageTaskClaimToken::new(claim_token))
+            .with_execution_fence(fence);
         state.append_task_event_record(
             task_id,
             StorageTaskEventInput::new(
@@ -609,9 +766,9 @@ impl TaskExecutionStorage for MemoryStorage {
                 "Task claimed for validation",
             ),
         )?;
-        StorageTaskClaim::try_new(projection, lease)
-            .map(Some)
-            .map_err(invalid_contract_value)
+        let claim = StorageTaskClaim::try_new(projection, lease).map_err(invalid_contract_value)?;
+        state.task_capacity.scheduler.commit_selection(selection);
+        Ok(Some(claim))
     }
 
     async fn renew_task_lease(
@@ -632,6 +789,8 @@ impl TaskExecutionStorage for MemoryStorage {
                 .ok_or_else(|| StorageError::invalid_input("Task lease duration is too large"))?,
         );
         task.updated_at = now;
+        let expires = task.lease_expires_at.expect("renewed lease");
+        state.task_capacity.scheduler.renew_worker(&lease, expires);
         Ok(true)
     }
 
@@ -642,7 +801,8 @@ impl TaskExecutionStorage for MemoryStorage {
         if batch_size == 0 {
             return Ok(Vec::new());
         }
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
+        state.task_capacity = state.task_accounting_snapshot()?;
         let now = Utc::now();
         let task_ids = state
             .tasks
@@ -652,11 +812,18 @@ impl TaskExecutionStorage for MemoryStorage {
                     && task
                         .lease_expires_at
                         .is_none_or(|expires_at| expires_at <= now))
+                    || (matches!(
+                        task.status,
+                        StorageTaskStatus::Queued | StorageTaskStatus::Waiting
+                    ) && task
+                        .control
+                        .deadline()
+                        .is_some_and(|deadline| deadline <= now))
                     || (task.status == StorageTaskStatus::Queued
-                        && task
-                            .control
-                            .deadline()
-                            .is_some_and(|deadline| deadline <= now))
+                        && task.receipt_admission.as_ref().is_some_and(|admission| {
+                            admission.activated.is_none()
+                                && admission.ticket.protection_deadline() <= now
+                        }))
             })
             .take(batch_size)
             .map(|task| task.id)
@@ -686,7 +853,9 @@ impl TaskExecutionStorage for MemoryStorage {
                 .tasks
                 .get_mut(&task_id.id())
                 .expect("selected task remains present");
-            if task.kind == StorageTaskKind::SchemaValidation && has_schema_work {
+            if (task.kind == StorageTaskKind::SchemaValidation && has_schema_work)
+                || task.kind == StorageTaskKind::HistoryExpiry
+            {
                 task.status = StorageTaskStatus::Queued;
                 task.lease_expires_at = None;
                 task.claim_token = None;
@@ -696,7 +865,7 @@ impl TaskExecutionStorage for MemoryStorage {
                     task_id,
                     StorageTaskEventInput::new(
                         "queued",
-                        "Schema validation resumed from durable checkpoint after lease expiry",
+                        "Internal work resumed from durable checkpoint after lease expiry",
                     ),
                 )?;
                 continue;
@@ -732,6 +901,8 @@ impl TaskExecutionStorage for MemoryStorage {
             task.request_redacted_at = Some(now);
             task.lease_expires_at = None;
             task.claim_token = None;
+            task.checkpoint = None;
+            task.wait_token = None;
             task.updated_at = now;
             recovered.push(task.projection()?);
             state.append_task_event_record(
@@ -739,12 +910,44 @@ impl TaskExecutionStorage for MemoryStorage {
                 StorageTaskEventInput::new(status.as_str(), summary),
             )?;
         }
+        let unsettled: Vec<_> = state
+            .tasks
+            .values()
+            .filter(|task| task.status.is_terminal() && !task.recovery_unavailable)
+            .filter(|task| {
+                state
+                    .task_identity(task.id)
+                    .ok()
+                    .and_then(|identity| state.task_control.receipt_for_task(identity))
+                    .is_some_and(|receipt| {
+                        matches!(receipt.outcome(), TaskReceiptOutcome::MayExecute)
+                    })
+            })
+            .take(
+                batch_size
+                    .saturating_sub(recovered.len())
+                    .min(TaskPurgeBudget::MAX_ROWS as usize),
+            )
+            .map(|task| task.id)
+            .collect();
+        let mut bytes = 0_u64;
+        for id in unsettled {
+            let size = state.tasks[&id.id()].detail_bytes()?;
+            if size > TaskPurgeBudget::MAX_BYTES || bytes + size > TaskPurgeBudget::MAX_BYTES {
+                break;
+            }
+            state.settle_task_receipt(id)?;
+            bytes += size;
+            recovered.push(state.tasks[&id.id()].projection()?);
+        }
+        state.task_capacity = state.task_accounting_snapshot()?;
         Ok(recovered)
     }
 
     async fn append_task_event(&self, event: StorageTaskEventAppend) -> Result<(), StorageError> {
         let (lease, event) = event.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
+        state.ensure_task_lease_current(&lease)?;
         let task = state
             .tasks
             .get(&lease.task_id().id())
@@ -760,7 +963,8 @@ impl TaskExecutionStorage for MemoryStorage {
         update: StorageTaskActiveUpdate,
     ) -> Result<StorageTask, StorageError> {
         let (lease, status, summary, counts, started_at) = update.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
+        state.ensure_task_lease_current(&lease)?;
         let now = Utc::now();
         let task = state
             .tasks
@@ -780,7 +984,9 @@ impl TaskExecutionStorage for MemoryStorage {
         .map_err(invalid_contract_value)?;
         task.started_at = started_at.or(task.started_at).or(Some(now));
         task.updated_at = now;
-        task.projection()
+        let projection = task.projection()?;
+        state.task_capacity = state.task_accounting_snapshot()?;
+        Ok(projection)
     }
 
     async fn complete_task(
@@ -789,8 +995,21 @@ impl TaskExecutionStorage for MemoryStorage {
     ) -> Result<StorageTask, StorageError> {
         let (update, event, payload) = completion.into_parts();
         let expected_kind = payload.task_kind();
+        let produces_output = !matches!(
+            &payload,
+            StorageTaskCompletionPayload::Import
+                | StorageTaskCompletionPayload::HistoryExpiry
+                | StorageTaskCompletionPayload::Reindex
+                | StorageTaskCompletionPayload::SchemaValidation
+        );
         let (lease, status, summary, counts, started_at) = update.into_parts();
-        let mut state = self.state.write().await;
+        let mut guard = self.state.write().await?;
+        guard.ensure_task_lease_current(&lease)?;
+        guard.require_task_details(lease.task_id())?;
+        if produces_output {
+            guard.require_task_outputs(lease.task_id())?;
+        }
+        let mut state = guard.clone();
         let stored = state
             .tasks
             .get(&lease.task_id().id())
@@ -810,11 +1029,39 @@ impl TaskExecutionStorage for MemoryStorage {
         if stored.control.stop_reason(now).is_some() {
             if let StorageTaskCompletionPayload::RemoteCall(artifact) = payload {
                 state.store_remote_call_result(lease.task_id(), artifact, now, phase)?;
+                state.account_task_output(lease.task_id())?;
             }
-            return state.finish_stopped_task(lease.task_id(), now, None);
+            let stopped = state.finish_stopped_task(lease.task_id(), now, None)?;
+            *guard = state;
+            return Ok(stopped);
+        }
+        if stored.kind == StorageTaskKind::HistoryExpiry {
+            let evidence = state
+                .logical_identities
+                .record(StorageIdentityTarget::Task(lease.task_id()))?;
+            let checkpoint =
+                HistoryExpiryTaskCheckpoint::from_task(&stored.projection()?, &evidence)
+                    .map_err(invalid_contract_value)?;
+            checkpoint
+                .validate_completion(&state.history_lifecycle_snapshot()?)
+                .map_err(invalid_contract_value)?;
+            if status.as_status() != StorageTaskStatus::Succeeded || !checkpoint.finished() {
+                return Err(StorageError::invalid_input(
+                    "History expiry task cannot complete while its admitted batch remains pending",
+                ));
+            }
+            if counts.processed() != checkpoint.removed_count() as i32
+                || counts.succeeded() != checkpoint.removed_count() as i32
+                || counts.failed() != 0
+            {
+                return Err(StorageError::invalid_input(
+                    "History expiry completion counts differ from exact receipts",
+                ));
+            }
         }
         match payload {
             StorageTaskCompletionPayload::Import
+            | StorageTaskCompletionPayload::HistoryExpiry
             | StorageTaskCompletionPayload::Reindex
             | StorageTaskCompletionPayload::SchemaValidation => {}
             StorageTaskCompletionPayload::RemoteCall(artifact) => {
@@ -831,15 +1078,20 @@ impl TaskExecutionStorage for MemoryStorage {
                     })
                     .record_schema_profile(artifact.expires_at())
                     .map_err(invalid_contract_value)?;
+                state.capture_task_output(lease.task_id());
                 state
                     .schema_profile_outputs
                     .insert(lease.task_id().id(), artifact);
             }
             StorageTaskCompletionPayload::Export(artifact) => {
                 let (identity, content, report, output_expires_at, durations) =
-                    artifact.into_parts();
+                    artifact.into_parts(now)?;
                 let (template_name, content_type) = identity.into_parts();
-                let (json_output, text_output) = content.into_parts();
+                let (json_output, text_output, proof) = content.into_parts();
+                let reference = proof
+                    .as_ref()
+                    .map(|proof| state.publish_task_artifact(&lease, proof, output_expires_at))
+                    .transpose()?;
                 let (metadata, warnings, warning_count, truncated) = report.into_parts();
                 let output = StorageExportOutput::builder(
                     lease.task_id(),
@@ -851,6 +1103,7 @@ impl TaskExecutionStorage for MemoryStorage {
                 )
                 .template_name(template_name)
                 .output(json_output, text_output)
+                .artifact_reference(reference)
                 .warning_state(warning_count, truncated)
                 .durations(durations)
                 .try_build()
@@ -878,18 +1131,33 @@ impl TaskExecutionStorage for MemoryStorage {
                         .record_export(warning_count, truncated, output_expires_at)
                         .map_err(invalid_contract_value)?;
                 }
+                state.capture_task_output(lease.task_id());
                 state.export_outputs.insert(lease.task_id().id(), output);
             }
             StorageTaskCompletionPayload::Backup(artifact) => {
-                let (document, byte_size, sha256, output_expires_at) = artifact.into_parts();
-                let output = StorageBackupOutput::try_new(
-                    lease.task_id(),
-                    document,
-                    byte_size,
-                    sha256,
-                    output_expires_at,
-                    now,
-                )
+                let (document, byte_size, sha256, output_expires_at) = artifact.into_parts(now)?;
+                let output = match document {
+                    StorageBackupTaskContent::Verified(proof) => {
+                        let reference =
+                            state.publish_task_artifact(&lease, &proof, output_expires_at)?;
+                        StorageBackupOutput::from_reference(
+                            lease.task_id(),
+                            reference,
+                            byte_size,
+                            sha256,
+                            output_expires_at,
+                            now,
+                        )
+                    }
+                    StorageBackupTaskContent::Inline(document) => StorageBackupOutput::try_new(
+                        lease.task_id(),
+                        document,
+                        byte_size,
+                        sha256,
+                        output_expires_at,
+                        now,
+                    ),
+                }
                 .map_err(invalid_contract_value)?;
                 let task = state
                     .tasks
@@ -903,8 +1171,12 @@ impl TaskExecutionStorage for MemoryStorage {
                         .record_backup(output_expires_at)
                         .map_err(invalid_contract_value)?;
                 }
+                state.capture_task_output(lease.task_id());
                 state.backup_outputs.insert(lease.task_id().id(), output);
             }
+        }
+        if produces_output {
+            state.account_task_output(lease.task_id())?;
         }
         let task = state
             .tasks
@@ -925,15 +1197,19 @@ impl TaskExecutionStorage for MemoryStorage {
         task.request_redacted_at = Some(now);
         task.lease_expires_at = None;
         task.claim_token = None;
+        task.checkpoint = None;
+        task.wait_token = None;
         task.updated_at = now;
         let projection = task.projection()?;
+        state.task_capacity = state.task_accounting_snapshot()?;
         state.append_task_event_record(lease.task_id(), event)?;
+        *guard = state;
         Ok(projection)
     }
 
     async fn fail_task(&self, failure: StorageTaskFailure) -> Result<StorageTask, StorageError> {
         let (lease, summary, event) = failure.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         let now = Utc::now();
         let task = state
             .tasks
@@ -958,6 +1234,8 @@ impl TaskExecutionStorage for MemoryStorage {
         task.request_redacted_at = Some(now);
         task.lease_expires_at = None;
         task.claim_token = None;
+        task.checkpoint = None;
+        task.wait_token = None;
         task.updated_at = now;
         let projection = task.projection()?;
         if let Some(work) = state.schema_work.get(&lease.task_id().id()) {
@@ -977,23 +1255,13 @@ impl TaskExecutionStorage for MemoryStorage {
     }
 
     async fn purge_expired_export_outputs(&self) -> Result<usize, StorageError> {
-        let mut state = self.state.write().await;
-        let before = state.export_outputs.len();
-        let now = Utc::now();
-        state
-            .export_outputs
-            .retain(|_, output| output.output_expires_at() > now);
-        Ok(before - state.export_outputs.len())
+        let mut state = self.state.write().await?;
+        state.sweep_expired_outputs(StorageTaskKind::Export)
     }
 
     async fn purge_expired_backup_outputs(&self) -> Result<usize, StorageError> {
-        let mut state = self.state.write().await;
-        let before = state.backup_outputs.len();
-        let now = Utc::now();
-        state
-            .backup_outputs
-            .retain(|_, output| output.output_expires_at() > now);
-        Ok(before - state.backup_outputs.len())
+        let mut state = self.state.write().await?;
+        state.sweep_expired_outputs(StorageTaskKind::Backup)
     }
 }
 
@@ -1004,7 +1272,7 @@ impl BackupSnapshotStorage for MemoryStorage {
         include_history: bool,
         budget: StorageBackupBudget,
     ) -> Result<StorageBackupReplay, StorageError> {
-        let state = self.state.read().await.clone();
+        let state = self.state.read().await?.clone();
         StorageBackupReplay::from_snapshot(
             crate::backup::capture(&state, include_history, self.schema_limits, budget)?,
             budget,
@@ -1020,7 +1288,10 @@ impl RestoreStorage for MemoryStorage {
     ) -> Result<StorageRestoreStatus, StorageError> {
         let (initiator, artifact, capability_hash, validation_summary, expires_at) =
             request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
+        let logical_identity = state
+            .logical_identities
+            .restore_requester(initiator.clone().into_parts().principal_id());
         let id = RestoreJobId::new(state.restore_job_ids.next()?)
             .map_err(|error| StorageError::internal(error.to_string()))?;
         let now = Utc::now();
@@ -1045,6 +1316,7 @@ impl RestoreStorage for MemoryStorage {
         state.restore_jobs.insert(
             id.id(),
             MemoryRestoreRecord {
+                logical_identity,
                 job: job.clone(),
                 validation_summary: validation_summary.clone(),
             },
@@ -1057,11 +1329,11 @@ impl RestoreStorage for MemoryStorage {
         &self,
         job_id: RestoreJobId,
     ) -> Result<StorageRestoreArtifactJob, StorageError> {
-        self.state
-            .read()
-            .await
+        let state = self.state.read_control().await;
+        state
             .restore_jobs
             .get(&job_id.id())
+            .or_else(|| state.restore_receipts.get(&job_id.id()))
             .map(|record| record.job.clone())
             .ok_or_else(|| {
                 StorageError::not_found(format!("Restore job {} was not found", job_id.id()))
@@ -1072,7 +1344,7 @@ impl RestoreStorage for MemoryStorage {
         &self,
         job_id: RestoreJobId,
     ) -> Result<StorageRestoreStatus, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read_control().await;
         let record = state
             .restore_jobs
             .get(&job_id.id())
@@ -1086,7 +1358,7 @@ impl RestoreStorage for MemoryStorage {
     }
 
     async fn expire_restore_stage(&self, job_id: RestoreJobId) -> Result<bool, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         let Some(current) = state.restore_jobs.get(&job_id.id()).cloned() else {
             return Err(StorageError::not_found(format!(
                 "Restore job {} was not found",
@@ -1115,7 +1387,7 @@ impl RestoreStorage for MemoryStorage {
         request: hubuum_storage_core::StorageRestoreConfirmation,
     ) -> Result<DateTime<Utc>, StorageError> {
         let job_id = request.job_id();
-        let mut guard = self.state.write().await;
+        let mut guard = self.state.write_control().await;
         let mut state = guard.clone();
         if let Some(approval) = request.approval() {
             if approval.claim().restore_job_id() != Some(job_id) {
@@ -1163,7 +1435,7 @@ impl RestoreStorage for MemoryStorage {
         request: StorageRestoreReplayApply,
     ) -> Result<StorageRestoreCompletion, StorageError> {
         let (job_id, metadata, snapshot, source_includes_history) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         if !state.restore_coordinator.owns(job_id) {
             return Err(StorageError::conflict(
                 "The restore job does not own draining maintenance",
@@ -1180,14 +1452,40 @@ impl RestoreStorage for MemoryStorage {
             return Err(StorageError::conflict("The restore job is not confirmed"));
         }
         let started_at = Utc::now();
-        let mut replacement = crate::backup::restore(
+        let mut replacement = crate::backup::restore_without_repairs(
             snapshot
                 .with_schema_limits(self.schema_limits)?
+                .into_replay()
                 .materialize()?,
+            state.task_accounting_snapshot()?,
+            state.artifacts.clone(),
         )?;
         replacement.credential_approvals = state
             .credential_approvals
             .invalidated_for_restore(started_at);
+        replacement.api_requests = state.api_requests.clone();
+        replacement.history_publications = state.history_publications.clone();
+
+        replacement.history_archive = state.history_archive.clone();
+        replacement.deletion_control = state.deletion_control.clone();
+        replacement.history_lifecycle = state.history_lifecycle.clone();
+        replacement.task_control = state.task_control.clone();
+        replacement.task_reapplication = None;
+        replacement.application_control = ApplicationControlState::initial(&state.deletion_control);
+        replacement.pending_restore = state.history_lifecycle.authority().revision().value() != 0
+            || !state.deletion_control.intents().is_empty()
+            || !matches!(
+                state.task_control.activation(),
+                TaskReceiptActivation::Disabled
+            );
+        replacement.restore_repairs_pending = replacement.pending_restore;
+        if replacement.pending_restore {
+            replacement.application_control =
+                ApplicationControlState::quarantined(replacement.application_control.fence());
+        } else {
+            crate::backup::enqueue_restored_repairs(&mut replacement)?;
+        }
+        replacement.runtime_registrations = state.runtime_registrations.clone();
         // Runtime settings are deployment configuration and survive restores.
         replacement.runtime_settings = state.runtime_settings.clone();
         crate::backup::append_restore_event(
@@ -1211,7 +1509,9 @@ impl RestoreStorage for MemoryStorage {
             true,
         )?;
         replacement.restore_receipts.insert(job_id.id(), succeeded);
-        replacement.restore_coordinator = state.restore_coordinator.after_replay();
+        replacement.restore_coordinator = state
+            .restore_coordinator
+            .after_replay(replacement.pending_restore);
         replacement.restore_job_ids = state.restore_job_ids;
         let completion = StorageRestoreCompletion::try_new(started_at, finished_at)
             .map_err(invalid_contract_value)?;
@@ -1224,7 +1524,7 @@ impl RestoreStorage for MemoryStorage {
         request: StorageRestoreFailure,
     ) -> Result<(), StorageError> {
         let (job_id, error) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         let current = state
             .restore_jobs
             .get(&job_id.id())
@@ -1259,21 +1559,24 @@ impl RestoreStorage for MemoryStorage {
     async fn get_restore_coordinator_snapshot(
         &self,
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read_control().await;
         Ok(state.restore_coordinator.snapshot(Utc::now()))
     }
 
     async fn resume_maintenance_without_restore(&self) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
-        state.restore_coordinator.resume(None);
+        let mut state = self.state.write_control().await;
+        if !state.pending_restore {
+            state.restore_coordinator.resume(None);
+        }
         Ok(())
     }
 
     async fn resume_terminal_restore(&self, job_id: RestoreJobId) -> Result<(), StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
         let status = state
             .restore_jobs
             .get(&job_id.id())
+            .or_else(|| state.restore_receipts.get(&job_id.id()))
             .map(|record| record.job.summary().status())
             .ok_or_else(|| {
                 StorageError::not_found(format!("Restore job {} was not found", job_id.id()))
@@ -1283,7 +1586,8 @@ impl RestoreStorage for MemoryStorage {
             StorageRestoreJobStatus::Succeeded
                 | StorageRestoreJobStatus::Failed
                 | StorageRestoreJobStatus::Expired
-        ) {
+        ) && !state.pending_restore
+        {
             state.restore_coordinator.resume(Some(job_id));
         }
         Ok(())
@@ -1295,7 +1599,10 @@ impl RestoreStorage for MemoryStorage {
         local_work_is_idle: &(dyn Fn() -> bool + Send + Sync),
         expire_validated_jobs: bool,
     ) -> Result<StorageRestoreCoordinatorSnapshot, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_control().await;
+        if let Some(owner) = self.state.runtime_owner() {
+            state.acknowledge_coordinator_drain(owner, local_work_is_idle)?;
+        }
         let now = Utc::now();
         if expire_validated_jobs {
             let expired_ids = state
@@ -1336,13 +1643,13 @@ impl RestoreStorage for MemoryStorage {
         &self,
         heartbeat_cutoff: DateTime<Utc>,
     ) -> Result<StorageRestoreDrainState, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read_control().await;
         state.restore_coordinator.drain_state(heartbeat_cutoff)
     }
 
     async fn remove_restore_instance(&self, instance_id: Uuid) -> Result<(), StorageError> {
         self.state
-            .write()
+            .write_control()
             .await
             .restore_coordinator
             .remove_instance(instance_id);
@@ -1358,7 +1665,7 @@ impl ExportTemplateStorage for MemoryStorage {
     ) -> Result<StorageExportTemplate, StorageError> {
         self.state
             .read()
-            .await
+            .await?
             .export_templates
             .get(&template_id.id())
             .cloned()
@@ -1378,7 +1685,7 @@ impl ExportTemplateStorage for MemoryStorage {
         let rows = self
             .state
             .read()
-            .await
+            .await?
             .export_templates
             .values()
             .filter(|template| {
@@ -1400,7 +1707,7 @@ impl ExportTemplateStorage for MemoryStorage {
         Ok(self
             .state
             .read()
-            .await
+            .await?
             .export_templates
             .values()
             .filter(|template| {
@@ -1418,7 +1725,7 @@ impl ExportTemplateStorage for MemoryStorage {
         request: StorageExportTemplateCreate,
     ) -> Result<StorageMutationOutcome<StorageExportTemplate>, StorageError> {
         let (collection_id, name, definition, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         if !state.collections.contains_key(&collection_id.id()) {
             return Err(StorageError::not_found(format!(
                 "Collection {} was not found",
@@ -1445,7 +1752,7 @@ impl ExportTemplateStorage for MemoryStorage {
         )
         .map_err(invalid_contract_value)?;
         let template = StorageExportTemplate::new(metadata, collection_id, &name, definition);
-        state.export_templates.insert(id, template.clone());
+        state.store_export_template(id, template.clone());
         let receipt = state.append_simple_event(
             EntityType::ExportTemplate,
             id,
@@ -1467,7 +1774,7 @@ impl ExportTemplateStorage for MemoryStorage {
         request: StorageExportTemplateReplace,
     ) -> Result<StorageMutationOutcome<StorageExportTemplate>, StorageError> {
         let (template_id, collection_id, name, definition, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let current = state
             .export_templates
             .get(&template_id.id())
@@ -1497,9 +1804,7 @@ impl ExportTemplateStorage for MemoryStorage {
         .map_err(invalid_contract_value)?;
         let template = StorageExportTemplate::new(metadata, collection_id, &name, definition);
         state.ensure_audited_history_capacity(1)?;
-        state
-            .export_templates
-            .insert(template_id.id(), template.clone());
+        state.store_export_template(template_id.id(), template.clone());
         let receipt = state.append_simple_event(
             EntityType::ExportTemplate,
             template_id.id(),
@@ -1521,7 +1826,7 @@ impl ExportTemplateStorage for MemoryStorage {
         request: StorageExportTemplateDelete,
     ) -> Result<StorageMutationOutcome<()>, StorageError> {
         let (template_id, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let Some(template) = state.export_templates.get(&template_id.id()).cloned() else {
             return Ok(StorageMutationOutcome::unchanged(()));
         };
@@ -1546,31 +1851,7 @@ impl ExportTemplateStorage for MemoryStorage {
 }
 
 impl MemoryState {
-    pub(super) fn ensure_task_capacity(
-        &self,
-        submitted_by: PrincipalId,
-        kind: StorageTaskKind,
-        maximum_active_tasks: usize,
-    ) -> Result<(), StorageError> {
-        let active_count = self
-            .tasks
-            .values()
-            .filter(|task| {
-                task.submitted_by == Some(submitted_by)
-                    && task.kind == kind
-                    && !task.status.is_terminal()
-            })
-            .count();
-        if active_count >= maximum_active_tasks {
-            return Err(StorageError::rate_limited(format!(
-                "Too many active {} tasks for user ({active_count} >= {maximum_active_tasks}); wait for queued or running tasks to finish",
-                kind.as_str(),
-            )));
-        }
-        Ok(())
-    }
-
-    fn task_discovery_projection(
+    pub(super) fn task_discovery_projection(
         &self,
         task: &MemoryTaskRecord,
     ) -> Result<StorageTask, StorageError> {
@@ -1579,9 +1860,10 @@ impl MemoryState {
             self.schema_work
                 .get(&task.id.id())
                 .map(|work| (work.kind(), work.status())),
-            self.schema_profile_outputs.contains_key(&task.id.id())
-                || self.export_outputs.contains_key(&task.id.id())
-                || self.backup_outputs.contains_key(&task.id.id()),
+            self.task_outputs_visible(task.id)
+                && (self.schema_profile_outputs.contains_key(&task.id.id())
+                    || self.export_outputs.contains_key(&task.id.id())
+                    || self.backup_outputs.contains_key(&task.id.id())),
         ));
         Ok(projection)
     }

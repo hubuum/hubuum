@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use hubuum_domain::HistoryRecordId;
+use hubuum_storage_core::StorageIdentityEvidence;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -11,6 +12,9 @@ use crate::traits::{CursorPaginated, CursorValue};
 /// Metadata used to navigate history without downloading object data or class schemas.
 #[derive(Clone, Serialize, ToSchema)]
 pub struct HistoryMarker {
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub(crate) logical_identity: Option<StorageIdentityEvidence>,
     pub(crate) id: i32,
     pub(crate) collection_id: i32,
     pub(crate) hubuum_class_id: Option<i32>,

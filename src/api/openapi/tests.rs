@@ -161,6 +161,16 @@ fn openapi_paths_match_mounted_routes() {
         "/api/v0/meta/login-rate-limit/{id}",
         "/api/v1/config",
         "/api/v1/admin/config",
+        "/api/v1/admin/task-capacity",
+        "/api/v1/admin/history-lifecycle/policies",
+        "/api/v1/admin/history-lifecycle/policy-previews",
+        "/api/v1/admin/history-lifecycle/inspect",
+        "/api/v1/admin/history-lifecycle/accounting",
+        "/api/v1/admin/history-lifecycle/runs",
+        "/api/v1/admin/history-lifecycle/holds",
+        "/api/v1/admin/history-lifecycle/holds/{hold_id}/release",
+        "/api/v1/admin/history-lifecycle/operations/{operation_id}",
+        "/api/v1/admin/api-request-capacity",
         "/api/v1/admin/runtime-settings",
         "/api/v1/admin/runtime-settings/schema",
         "/api/v1/admin/runtime-settings/{group}",
@@ -1002,4 +1012,57 @@ async fn openapi_operations_resolve_to_mounted_routes() {
             );
         }
     }
+}
+
+#[rstest]
+#[case("/api/v1/classes/{class_id}/object-aggregates", "get", "413")]
+#[case("/api/v1/classes/by-name/{class_name}/object-aggregates", "get", "413")]
+#[case("/api/v1/imports", "post", "429")]
+#[case("/api/v1/exports", "post", "429")]
+fn admission_preserves_existing_error_response_schema(
+    #[case] path: &str,
+    #[case] method: &str,
+    #[case] status: &str,
+) {
+    let json = openapi_json();
+    let response = &json["paths"][path][method]["responses"][status];
+    assert_eq!(
+        response["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ApiErrorResponse"
+    );
+    let envelope = &json["components"]["schemas"]["ApiErrorResponse"];
+    assert_eq!(envelope["type"], "object");
+    assert_eq!(
+        envelope["required"],
+        serde_json::json!(["error", "message"])
+    );
+    assert!(envelope["properties"]["retryable"].is_object());
+    assert!(
+        response["description"]
+            .as_str()
+            .unwrap()
+            .contains("no-store")
+    );
+}
+
+#[test]
+fn admission_adds_bounded_schema_to_new_responses() {
+    let json = openapi_json();
+    let schema = &json["paths"]["/api/v1/imports"]["post"]["responses"]["422"]["content"]["application/json"]
+        ["schema"];
+    assert_eq!(
+        schema["anyOf"][1]["$ref"],
+        "#/components/schemas/ApiRequestAdmissionErrorResponse"
+    );
+    let admission = &json["components"]["schemas"]["ApiRequestAdmissionErrorResponse"];
+    assert_eq!(
+        admission["properties"]["reason"]["$ref"],
+        "#/components/schemas/ApiRequestRejection"
+    );
+    assert!(
+        admission["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("retryable"))
+    );
 }

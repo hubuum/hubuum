@@ -7,20 +7,688 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Backup and export downloads include the exact `Content-Length` and an RFC 9530
+  SHA-256 `Content-Digest`. Clients can verify the downloaded bytes before using
+  a file. Existing backup digest headers remain available.
+
+- Offline recovery can reconcile an interrupted filesystem archive publication
+  against its original private root and committed v2 intent, including a crash
+  while reserving IDs before staging begins. Signed reapplication
+  can release quarantine after physical cleanup and retirement of all obligations.
+  Older unbound claims stay quarantined. Upgrade all writers and preserve the root
+  and its issuer file before using v2 intents.
+- **Breaking storage SDK 0.20 change.** Complete adapters must implement
+  `load_history_archive_cleanup` and `settle_history_archive_cleanup` and
+  recheck the pinned claim under the isolated recovery fence. Upgrade adapters
+  and the recovery binary together.
+
+- Gated logical-size expiry selects the oldest eligible original history clocks
+  from complete bounded accounting, reserves pending exact copies against the
+  lower target, and retains each selected copy's original pressure episode.
+  Protected cleanup and signed restore/replay preserve that selection cause
+  after pressure clears while rechecking policies, holds and dependencies.
+  Empty passes independently protect pressure transitions before task success.
+  Administrator operation evidence shows size selection witnesses without
+  exposing retained object names or payloads.
+  Production activation remains gated and P6 remains deferred.
+- **Breaking storage SDK 0.20 size admission/recovery:** complete adapters must
+  preserve `HistoryExpirySizeAuthorization` with exact membership and enforce
+  complete two-pass selection budgets. `HistoryExpiryAdmissionResult::scanned`
+  can report up to 200,000 source examinations for an initial size pass; preserve
+  its accounting-unavailable diagnostic when falling back to independent age
+  eligibility. Deploy matching adapters and all checkpoint/restore readers
+  before retaining size-selected membership; older decoders cannot preserve its
+  original authorization. Preserve signed evidence and roll forward.
+
+- Administrator history accounting refresh measures complete bounded retained
+  sets using compact JSON v1 logical bytes and records independently protected
+  pressure start/end transitions with durable hysteresis and audit evidence.
+  Partial, ambiguous and over-budget scans fail closed. Size-driven deletion
+  and production expiry remain gated; P6 remains deferred.
+- **Breaking storage SDK 0.20 accounting capability:** complete adapters must
+  implement `HistoryLifecycleStorage::observe_history_size` and preserve pressure
+  transition lineage and reserved terminal capacity through recovery. Deploy
+  matching adapters and binaries with the history lifecycle migration and refreshed
+  grants; older binaries cannot decode retained pressure facts.
+
+- **Breaking storage SDK 0.20 recovery capability:** complete adapters must
+  implement `HistoryLifecycleStorage::reapply_history_expiry` for quarantined,
+  independently protected exact-copy replay. Restore preserves first-removal
+  clocks and refuses exposure while excluded or unresolved copies remain.
+  Upgrade external adapters and refresh lifecycle migration grants together.
+- Gated manual and periodic history expiry admission share one active task per
+  exact stable family/scope. Coalesced requests preserve the original initiation
+  and clocks; retained cleanup precedes fresh scans. Manual admission rechecks
+  configured administrator authority, and periodic work retains its policy root.
+  Production admission remains disabled pending restore and resource qualification.
+- Gated history expiry reports source rows exceeding its input or identity
+  budgets as explicit task warnings, preserves those rows and advances the
+  bounded scan so later eligible versions can progress. This also covers object
+  authorization facts that exceed their 64 KiB retention limit.
+
+- Gated history expiry tasks can remove retained exact closed versions in bounded
+  transactions after independent membership protection and positive publication
+  retirement. Deletion, first receipts and canonical audit commit atomically;
+  completion requires independent protection of every receipt. Holds, changed
+  policies, dependencies, cancellation and stale ownership preserve pending
+  obligations. Qualified workers can wake retained continuations without changing
+  their deadline, and adopt cancelled, timed-out or purged tasks into separate
+  cleanup tasks while preserving original membership and receipts. Production
+  expiry and manual/periodic triggers remain disabled.
+
+- **Breaking storage SDK 0.20 isolation descriptors:** renderer subprocesses
+  inherit configured runtime exclusion across exec. Parent
+  crashes cannot release offline recovery while a renderer remains alive. HTTP
+  and export ownership may retire only with the original versioned inheritance
+  proof and exclusive isolation; older owners and external claims stay charged.
+  Stop older producers/readers, upgrade all producers, descriptor readers and
+  matching renderer binaries, then restart. Configured startup records the new
+  proof automatically; preserve unresolved older ownership and roll forward.
+
+- **Breaking storage SDK 0.20 error contract:** `ArtifactError` drops `Clone`,
+  `Eq` and `PartialEq` to retain an owned, non-serializable source without copying
+  private evidence. Move errors and match typed categories; producer failures
+  retain both the primary cause and failed abort, with redacted diagnostics.
+  Cleanup failure does not replace productive causality or prove removal.
+- Optional producer-owned artifact staging for filesystem and S3 stores binds
+  exact creation intent before returning a private admission receipt. Legacy
+  mutators reject owned attempts; cancellation, errors and publication fences
+  retain unresolved physical obligations. **Owned-state upgrade restriction:**
+  upgrade every writer and maintenance process before using owned staging;
+  older binaries reject its filesystem v2/S3 records. Preserve durable producer
+  intents and roll forward; do not adopt existing legacy staging as owned.
+  This does not enable the default database/memory history producer or expiry.
+- **Breaking storage SDK 0.20:** upgrade all ten exact SDK dependencies together
+  and implement the required `HistoryLifecycleStorage` control, audit, scoped read,
+  publication and recovery contracts, including bounded native
+  `admit_history_expiry` with atomic membership/audit retention and no payload
+  removal. Its return type is now `HistoryExpiryAdmissionResult`: update
+  adapters and consumers to handle bounded continuations even without an admitted
+  batch, finish each finite pass, and restart to revisit late commits and closures.
+  Holds, open/retained versions and oversized rows cannot pin every later page;
+  subsequent native batches preserve all earlier retained membership.
+  Implement exact nonproductive
+  `TaskArtifactStore::abort_task` cleanup using the original attempt/task/claim. Deploy the new
+  `2026-11-19-000002_history_lifecycle` migration after the idle scheduler migration;
+  refresh grants and preserve signed format-3 authority for roll-forward recovery.
+  Archive entries now preserve the original history publication and producer
+  owners for both supported protocols, and retained collection expiry prevents
+  archive fallback. Production remains Legacy; generic online expiry stays
+  disabled until the remaining safety gates are qualified. See the 0.19 to 0.20
+  adapter upgrade guidance.
+  Upgrade every API, backup and publication producer before enabling expiry;
+  retained expiry refuses subsequent Legacy startup.
+- **Breaking (REST clients with closed task-kind enums):** the task vocabulary adds `history_expiry`.
+  Regenerate clients from OpenAPI or extend closed task-kind enums before
+  upgrading. Complete task-policy updates must include its capacity and
+  scheduling weight; public and periodic submission remain disabled.
+- Task execution accepts human submitters without querying a nonexistent
+  service-account record. Service-account submitters still require the current
+  enabled-state check before execution.
+- **Breaking storage SDK 0.20 task vocabulary:** `history_expiry` adds a closed
+  task kind, versioned payload/checkpoint reader and required
+  `HistoryLifecycleStorage::process_history_expiry_task` and
+  `HistoryLifecycleStorage::recover_history_expiry_task` capabilities. Complete
+  adapters must also implement shared
+  `HistoryLifecycleStorage::submit_history_expiry_task` admission.
+  Preserve durable admission scope and optional scheduled policy roots through
+  cleanup ownership changes. Add `policy` to scheduled-origin constructors and
+  `admission_scope` to expiry discovery constructors (`None` for legacy values).
+  Upgrade adapters and exhaustive kind matches
+  together. Stop older API, worker, restore
+  and administrator processes, back up the database, apply lifecycle migration
+  and refresh grants before starting matching binaries. Include the eighth kind and scheduling
+  weight when editing task policy. Migration preserves all existing limits and
+  adds one execution, 64 outstanding runs, 64 MiB resident capacity, one run per
+  principal and weight one. Admission, required audit, exclusions and the original
+  task checkpoint commit atomically; restart retains exact batch membership.
+  Pending batches wait for independently protected execution, and task
+  cancellation preserves every retained history obligation. Unknown payload or
+  checkpoint versions stay unclaimed. Production workers keep their existing
+  seven-kind support; manual/periodic admission and production physical cleanup
+  remain disabled. Retained eighth-kind work prevents downgrade; preserve recovery
+  evidence and roll forward.
+- Historical population reads preserve explicitly selected logical class UUIDs.
+  Retained expiry gaps require original authorization facts and configured
+  permission checks; unproved correspondence remains unavailable. Supported
+  logical restores may remap numeric object, collection and class coordinates
+  only after validating all original UUIDs, relationships and restore provenance.
+  Configured current and historical authorization still apply before any expired
+  population response; reused IDs, changed identities and stale scopes fail closed.
+- Scoped history policy revisions, bounded deadline inspection and issued
+  preview/application with independent recovery protection; administrator holds
+  preserve original creation and expiry clocks. Maintenance settles natural hold
+  expiry once and protects its original audit fact independently. Physical history-expiry execution remains under
+  development; see [scoped history retention](docs/history_retention.md).
+  Inspection returns HTTP 409 when authority changes during its scan. An
+  initialized independent checkpoint reports pristine history as protected.
+
+- **Breaking storage SDK 0.19:** all ten SDK crates advance together. Complete
+  adapters must implement `HistoryArchiveStorage` with persisted catalogs,
+  bounded captured hot inputs, generation-checked pins and original registered
+  Legacy owner/application fences. Preserve bounded prepared-capture budget
+  evidence through adapter errors and reauthorize before budget projections.
+  Recheck original authority after external authorization, and retain bounded
+  expired-capture cleanup when admission is rejected for insufficient capacity.
+  Update exact SDK dependencies together; see
+  `docs/storage_adapter_sdk.md` for the 0.18 to 0.19 upgrade. Deploy migration
+  `2026-11-03-000004_history_archive_reads` and refresh runtime grants. The fixed
+  Legacy restriction prevents combining this slice with online history expiry
+  until a later qualified integration. Public archive tasks/routes and source
+  retirement remain disabled; full #514 acceptance is still open.
+
+- **Breaking storage SDK 0.18:** all ten SDK crates advance together. Complete
+  external adapters must implement `ApiRequestAdmissionStorage`, carry the
+  admitted request owner through productive execution scopes, and fence/settle
+  issued work before releasing occupancy. Update exact SDK dependencies together;
+  see `docs/storage_adapter_sdk.md` for the 0.17 to 0.18 upgrade contract.
+
+- Shared admission occupancy for selected expensive authenticated API requests,
+  with principal/deployment ceilings, fenced cancellation settlement, finite
+  ingress/execution/publication allowances and administrator policy revision
+  updates. This is a partial slice of #521; H5 scan/candidate and hard-heap
+  acceptance and automatic crashed-owner reconciliation remain open. Lost owners
+  remain charged until fenced operator recovery. Deploy the admission migration and refresh
+  runtime grants before upgrading. See `docs/api_request_admission.md`.
+
+- Preserve exact offline deletion membership and original lifecycle audit facts
+  in independent recovery evidence. Required audit failure prevents the transition
+  or completion acknowledgement; unchanged retries retain their original event IDs.
+  Administrator status reports retained evidence after ordinary event expiry.
+
+- Add read-only `hubuum-admin --control-status` JSON reports for protected
+  deletion recovery, bounded copy blockers and operator actions. Completion
+  confirmation requires independently protected reapplication of the current
+  application and remains independent of task-detail retention.
+
+- Verified, chunked PostgreSQL export and backup outputs with bounded producer
+  backpressure, streamed downloads, and durable cancellation/expiry cleanup.
+  Templates replay indexed temporary files; backup capture reuses its row spool.
+  Configure spool and worker resident limits with
+  `HUBUUM_ARTIFACT_MAX_SPOOL_BYTES` and `HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES`.
+- Protected idempotency receipts preserve retry behavior after task details expire.
+  Authorized matching retries receive a minimal HTTP 410 response using the
+  standard error/message envelope; changed requests conflict during their fixed
+  deduplication window. Task/output cleanup
+  uses protected bounded batches, honors holds and available outputs, and
+  preserves retained decisions across backup recovery. Administrators can preview
+  and enable receipt protection, set prospective policy, manage holds and run
+  maintenance; see [task retention](docs/task_retention.md).
+  Protected output cleanup includes physical artifact chunks, manifests and
+  reservations; holds and producer grace cannot be bypassed by ordinary cleanup.
+  Export and backup result availability starts at successful publication, so
+  preparation time does not shorten the configured post-ready window.
+  Concurrent receipt settlement does not prevent retention policy or hold
+  updates; competing edits to the same decision still conflict.
+  Cleanup shares its fixed row/byte budget across multiple protected manifests
+  and coalesces their completion checkpoints; receipt retirement has a separate
+  bounded metadata batch instead of inheriting the physical task-manifest limit.
+  Concurrent protected admissions share bounded repository verification work
+  while retaining each submission's exact generation and recovery checks.
+  A small admission group allows up to 10 ms for concurrent reservations to join
+  before acquiring the publication lock, reducing tiny checkpoint publications.
+  Exact-ticket activations overlap under shared authority locks; retention changes
+  and recovery remain excluded until those activations finish.
+  Admission briefly waits for a contended cross-replica publication lock before
+  returning HTTP 503 and groups requests that arrive during that wait, avoiding
+  repeated full requests and checkpoint work during ordinary contention.
+  Already protected requests at the head of an admission queue complete without
+  republishing for newer requests; uncaptured requests retain their queue order.
+  Checkpoint cleanup reuses at most three authenticated snapshot decodings while
+  still checking current files, signing keys and supersession before collection.
+  Protected maintenance checks for newly eligible work at the worker poll cadence
+  after idle passes, avoiding the legacy output cleanup timer's five-minute delay.
+  Productive or temporarily contended protected passes retry after a bounded
+  100 ms publisher pause instead of waiting for the full idle poll interval.
+
+- `--reapply-control` verifies retained deletion decisions against the current
+  application image, independently protects completion, and reopens access.
+  Logical restore reapplies later supported decisions before exposing data;
+  unresolved identities and unsupported obligations remain quarantined.
+  History-free restores preserve source-version ancestry through later backups
+  so baseline version changes cannot bypass retained deletion decisions.
+- Offline control recovery can retire crashed runtimes only after proving that
+  every registered process in the same local repository domain has stopped.
+  Requests, streaming bodies, administrator output and background producers carry
+  their original application fence through completion.
+
+- Administrators can remove one exact closed object-history version through
+  `--delete-object-history-version`. The command requires drained runtimes and
+  independent protection of both its intent and completion receipt. It removes
+  only that hot history copy and keeps recovery quarantine active.
+
+- Offline authenticated control recovery restores missing deletion authority.
+  Configured API and worker startup checks independent recovery evidence; retained
+  deletion decisions enforce deployment-wide recovery quarantine.
+
+- Administrator commands can publish authenticated deletion-control checkpoints
+  to an independent durable directory and verify recovered authority against the
+  latest checkpoint. These checkpoint commands alone authorize neither physical
+  cleanup nor quarantine release; see [deletion recovery](docs/deletion_recovery.md).
+- Shared weighted task scheduling across worker replicas, principal start fairness,
+  bounded overdue-task promotion, and live worker/reservation diagnostics.
+  Small eligible pools share execution capacity without preempting existing work.
+  Ordinary claims stop reading queue heads once service ordering determines the
+  winner, reducing database work while preserving promotion and locking rules.
+  The queue-head optimization also applies on PostgreSQL 16.
+- Administrator task queue diagnostics expose `waiting_tasks` separately from
+  queued work and occupied execution. The durable-wait storage foundation is
+  dormant; current built-in producers do not create waiting tasks.
+
+- Shared task admission and execution limits across API/worker replicas, with
+  separate resident-byte and cumulative-work accounting, internal repair
+  admission, and administrator policy/usage endpoints at
+  `/api/v1/admin/task-capacity`. Policy and cumulative charges survive logical
+  restore; stale claims cannot occupy capacity after reconciliation.
+
 ### Changed
+
+- **Breaking for older experimental archive readers.** New history segments use
+  a compact v2 index and 64 KiB blocks to reduce cold exact and as-of reads.
+  Upgrade all archive readers and recovery tools before publishing v2 segments.
+  Existing v1 segments remain readable without conversion.
+
+- Opening a retained history segment now reuses verified header and footer
+  blocks while loading the index. Each new open and each subsequent record
+  lookup still charges the bytes it fetches.
+
+- **Breaking for experimental Windows history-aware HTTP runtimes:** owned
+  publication now fails with HTTP 503 before history admission because bounded
+  socket-abort retirement under backpressure is unqualified on Windows. Keep
+  production registration Legacy; Windows OnlineV1 HTTP requires a separately
+  qualified driver-cancellation mechanism. Ordinary Legacy HTTP is unchanged.
+
+- **Breaking HTTP compatibility:** unsupported methods on known macro-routed
+  endpoints now return HTTP 405 with an `Allow` header instead of HTTP 404.
+  Clients that treated these responses as missing resources must handle 405.
 
 - PostgreSQL computed-field rebuild and read-repair workers now read only the
   task settings row when selecting the size of each batch.
 
-### Security
+- **Breaking for project deployments using runtime admission overrides:** shared
+  task capacity remains authoritative. Runtime task/backup per-user fields are
+  read-only deployment seeds; update live limits through
+  `/api/v1/admin/task-capacity` with its current policy revision. Existing runtime
+  assignments do not overwrite shared capacity or reset accounted usage.
 
-- Remove the unused Actix Web cookie feature and its dependency on
-  `cookie` 0.16.2 (RUSTSEC-2026-0594).
+- **Breaking storage SDK and operational change:** upgrade all ten SDK crates to
+  `0.14.0` together; adapters must implement atomic
+  `observe_deletion_checkpoint` and preserve lifecycle event identities and recording
+  times through recovery. Stop older producers, apply
+  `2026-10-30-000001_protected_deletion_audit`, reconcile grants and deploy matching
+  binaries. Retain the independent repository; format-3 evidence prevents downgrade.
+  See the [0.14 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-013-to-014).
 
-- Require `url` 2.5.9 or later to fix a stack overflow during URL origin
-  calculation (RUSTSEC-2026-0592).
+- **Breaking configuration limit:** export and backup output settings now have a
+  64 GiB format ceiling. Before restarting upgraded processes, reduce
+  `HUBUUM_EXPORT_MAX_OUTPUT_BYTES` and `HUBUUM_BACKUP_MAX_OUTPUT_BYTES` values above
+  `68719476736` and partition larger workloads. Tune shared capacity consistently;
+  the format ceiling does not imply resource qualification at that size.
+- **Breaking (storage SDK):** advance all ten SDK crates to `0.9.0` and implement
+  the required artifact contract and verified completion variants. Follow the
+  [0.9 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-08-to-09).
+- **Breaking backup compatibility:** new backups use format 12, including portable
+  retained export artifact frames. Upgrade restore binaries before consuming
+  them; formats 6–11 remain readable. Restore assigns fresh physical artifact
+  identities and retains earlier cleanup obligations.
+- **Breaking operational change:** stop older API/worker processes and run
+  `hubuum-admin --migrate` before starting matching artifact-aware binaries.
+  Reconcile task-owned artifacts before downgrading. New export replay rows and
+  backup source rows are capped at 4 MiB; related template input is capped at
+  8 MiB per batch and hydrated output at 4 MiB per row. Narrow oversized queries.
+- **Breaking operational change:** stop older producers, apply migration
+  `2026-10-31-000008_task_retention`, reconcile grants and deploy matching binaries.
+  Explicitly preview and enable finite legacy deduplication with the independent
+  repository configured on every producer. Original terminal timestamps remain
+  authoritative; old receipts may expire immediately. Existing task details
+  remain grandfathered out of new expiry policy.
+  Legacy backups with reminted task or principal identities remain quarantined
+  when correspondence to retained purges or receipt owners cannot be proven;
+  restore from a backup with matching stable identity evidence.
+- **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.16.0 and implement
+  protected task admission, receipt/retention capabilities, composite checkpoints
+  and combined exposure proofs. Policy replacement compares the policy revision;
+  hold updates compare the captured hold decision, preserving concurrent receipts. See the
+  [0.16 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-015-to-016).
+
+- **Breaking operational change:** stop every older API, worker and administrator
+  process, apply the application-reapplication migration and reconcile grants,
+  then start matching binaries. Configure the independent repository on all
+  producers. Keep its stable `RUNTIME_LOCK` file; do not copy, replace or unlink it
+  to clear registrations. Recovery always requires fresh application reapplication.
+  History-free restore refuses to discard ancestry after 64 source versions;
+  older derived versions without provenance remain quarantined when a retained
+  deletion targets the same resource. Use a backup with proven ancestry that
+  permits reapplication before reopening access.
+  See [deletion recovery](docs/deletion_recovery.md).
+- **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.13.0 and implement
+  application permits, runtime drain acknowledgements, reapplication/release and
+  task-claim fencing in every adapter. See the
+  [0.13 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-012-to-013).
+
+- **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.12.0 and implement
+  protected runtime registrations and exact managed-copy prepare/cleanup in every
+  complete adapter. Preserve registrations across logical restore and keep
+  legacy unbound deletion obligations unchanged. See the
+  [0.12 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-011-to-012).
+- **Breaking operational change:** stop every older API/worker process, apply the
+  managed-cleanup migration and reconcile grants before starting matching binaries.
+  The migration rejects malformed or duplicate object-history version UUIDs;
+  repair their identity provenance before retrying. Runtime registrations have no
+  expiry: crashed processes or uncertain request/worker shutdown block offline
+  cleanup. There is no force-clear operation or automatic quarantine release.
+  Retain independent v2 control checkpoints; older binaries cannot read them.
+
+- **Breaking Rust SDK change:** upgrade all ten SDK crates to 0.11.0 and handle
+  `MaintenanceState::RecoveryQuarantine` in adapter maintenance, readiness, and
+  worker gates. Follow the [0.11 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-010-to-011).
+- **Breaking operational change:** stop runtime replicas, apply the recovery-gate
+  migration, and reconcile split-role grants before restarting matching binaries.
+  Deployments requiring physical recovery protection must configure
+  `HUBUUM_CONTROL_RECOVERY_DIRECTORY` and `HUBUUM_CONTROL_RECOVERY_KEY` outside
+  database backups on every runtime replica. Retained deletion intents prevent
+  startup and ordinary exposure until lifecycle restrictions can be reapplied.
+
+- **Breaking Rust SDK change:** the storage SDK moves to 0.10.0 and requires
+  `DeletionControlStorage` for complete adapters. Upgrade all ten SDK crates
+  together, preserve control authority across logical replacement, and implement
+  the restore gate described in the [upgrade guide](docs/storage_adapter_sdk.md).
+- **Breaking operational/API change:** stop API and worker replicas and back up
+  the database before applying the scheduling migration and role grants. Restart
+  matching binaries together. Administrator policy updates must include the new
+  `scheduling` object; internal repairs now also obey per-kind execution caps.
+  See [task scheduling](docs/task_scheduling.md).
+- **Breaking storage SDK change:** upgrade all ten crates to `0.15.0` together.
+  Claims require `StorageTaskClaimRequest` with a stable worker-slot identity;
+  adapters must implement durable scheduling and availability diagnostics. See
+  the [0.15 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-014-to-015).
+
+- **Breaking (REST clients with closed task-status enums):** task responses and
+  cancellation requests support `waiting`. Regenerate clients from OpenAPI or
+  extend task-status enums before enabling a wait-capable consumer. Waiting
+  cancellation completes without an execution lease; private checkpoints and
+  wake tokens are never exposed through the task API.
+- **Breaking (supported Rust crates / storage SDK):** advance all ten SDK
+  dependencies together to `0.17.0`. Adapters must implement
+  `wait_task` and `resume_task`, preserve bounded typed checkpoints and original
+  deadlines, and handle nonterminal `StorageTaskStatus::Waiting` without counting
+  it as occupied execution. See the
+  [0.17 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-016-to-017).
+- **Breaking operational change:** install durable-wait migration `20261101000001` during a
+  rolling upgrade while waiting remains dormant. Drain old workers and deploy
+  matching API/worker binaries before enabling consumers. Current executors
+  reject stored checkpoints they cannot interpret. Finish or
+  cancel all checkpointed tasks before downgrade; migration rollback refuses to
+  discard them. Logical backups retain terminal tasks only and do not resume
+  pending waits after replacement.
+- **Breaking operational change:** task capacity requires an offline upgrade.
+  Stop API/worker replicas, back up the database, run `hubuum-admin --migrate`
+  through capacity backfill and role grants, then start matching binaries.
+  Per-kind active-task environment settings initialize the shared policy once;
+  later changes use the revision-checked administrator endpoint. Existing work
+  drains after limit reductions. See [task admission](docs/task_admission.md).
+- **Breaking (supported Rust crates / storage SDK):** advance the coordinated
+  train to `0.8.0`, implement `TaskCapacityStorage`, and remove the local quota
+  argument from `StorageTaskCreateRequestBuilder::try_build()`. Preserve the new
+  fourth element of `StorageError::into_parts()` when translating errors. Update all ten
+  SDK dependencies together and follow the
+  [0.8 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-07-to-08).
+
+- **Breaking operational change:** logical identity migration requires an offline
+  upgrade. Stop older API and worker processes and take a database backup. For
+  split roles, reapply generated role setup/grants SQL as the database
+  administrator before migration so the owner can create the control schema. Run
+  `hubuum-admin --migrate` to finish the resumable identity backfill, then start
+  matching binaries. Internal resource, principal, task and historical-version
+  UUIDs survive restore without replacing REST integer IDs or revision counters.
+  See the [upgrade instructions](docs/logical_identity.md#upgrade-and-backup-compatibility).
+- **Breaking backup compatibility:** new backups use format 11 with captured
+  identity evidence. Upgrade restore binaries before consuming them. Formats
+  6–10 remain readable through an isolated identity upgrade; ambiguous legacy
+  references do not establish correspondence to existing archives or receipts.
+- **Breaking (supported Rust crates / storage SDK):** advance the coordinated
+  SDK train to `0.7.0`. Update all ten SDK dependencies together, implement
+  `LogicalIdentityStorage`, use captured principal UUIDs for history-name
+  resolution, and consume the validated restore replay as described in the
+  [0.7 upgrade guide](docs/storage_adapter_sdk.md#upgrading-from-06-to-07).
 
 ### Fixed
+
+- History recovery rejects missing policy revisions and expiry selections or
+  size-pressure observations that cite a policy before it could have existed.
+  Policy previews also reject false coverage, repeated versions, and eligibility
+  counts or sampled decisions that contradict the recorded evidence. Decoding
+  rejects schema-event clocks on ordinary history and invalid size thresholds
+  in saved previews, and checks revision continuity when loading a policy catalog.
+- History policy previews return HTTP 409 if they expire or lose hold protection
+  before issuance commits. Recovery rejects retrospective policies whose original
+  review is missing or inconsistent with the cutoff, revision or hold history.
+- History recovery keeps the database quarantined when a restored checkpoint and
+  local history disagree on whether policies, holds or size pressure authorized
+  an expiry selection. Recovery checks each endpoint at the original selection
+  revision and time, and rejects expiry IDs that reuse an applied review ID.
+- History size accounting returns a validation error when a JSON number's
+  expanded decimal representation exceeds the supported byte count.
+- In-memory expiry scans check ordinary history row sizes without copying their
+  payloads. Size accounting includes policy lookup in its five-second deadline.
+- History policy inspection and previews omit copies already owned by expiry.
+  A review that expires or loses hold protection during commit returns its
+  specific conflict reason. Policy listing reports recovery when protected task
+  authority is ahead of the primary and documents both pagination parameters.
+- In-memory history expiry continues past concurrently removed rows within the
+  original pass. New schema events keep distinct IDs after expiry removes the
+  highest retained event.
+
+- History expiry blocks templates and remote targets with unresolved class
+  references. Memory storage also protects schema history when a retained
+  revision's class is unresolved. PostgreSQL indexes this dependency check.
+- New size-pressure audit events keep the policy ID across revisions and
+  distinguish administrator observations from manual and scheduled worker runs.
+- Retrying a hold release after it recorded natural expiry returns the original
+  terminal hold even if the authority revision has advanced.
+
+- History inspection returns HTTP 404 for unknown class and collection UUIDs.
+  Policy preview issuance reports HTTP 429 when review capacity is exhausted.
+- Pending history expiry reserves only the bytes currently charged to each
+  policy. Artifact cleanup continues while the history checkpoint writer is busy.
+- The history lifecycle migration gives each history dependency index its own
+  statement timeout and checks rollback eligibility before dropping the task index.
+
+- History-aware HTTP rejects queued follow-up requests on a connection that
+  already started an owned response. The first response can drain and retire
+  its publication without admitting another owner on the same connection.
+- Gated history recovery can verify larger current/open inventories in bounded
+  metadata pages instead of rejecting the whole inventory after 1,000 rows or
+  1 MiB. All pages share the original scan clock and authority locks; quarantine
+  remains until complete verification, and oversized identities or unresolved
+  ancestry still block exposure. Production expiry activation remains gated.
+- Bound gated history-expiry recovery maintenance to 16 retained intents per
+  worker poll, rotating across the complete journal. Full or busy task admission
+  no longer forces every queue claim to retry all 256 obligations. Existing
+  authority, completion recovery and original deadlines remain enforced.
+- Gated history expiry retries unavailable bounded age-source reads under the
+  original task lease and deadline instead of permanently failing the task on a
+  query timeout. Failed reads admit no partial membership or pressure state;
+  required audit and admission-write failures remain fatal.
+
+- Gated history expiry counts PostgreSQL JSON separator overhead in retained
+  manifest, journal and control budgets. Large batches stop before the native
+  byte limit and continue from the deferred row while preserving completion space.
+- Administrator history accounting reports unavailable when its bounded native
+  census query fails or times out, preserving shorter inherited timeouts and
+  leaving no partial pressure or audit facts.
+- Gated history expiry uses indexed open-copy dependency checks so large closed
+  histories do not starve independently eligible age cleanup after accounting
+  reaches its census budget.
+
+- History control writes pin application authority before history authority,
+  avoiding a deadlock between runtime registration and a later control commit.
+
+- Gated history expiry avoids copying the retained journal during serialization
+  and discarding complete ledger copies during exact receipt updates. Updates
+  preserve validated fixed membership, original receipts and the existing array
+  encoding while still enforcing encoded capacity and completion reserves.
+  PostgreSQL captures decode directly into validated control and encode removal
+  predecessors once, retaining the complete native outcome comparison.
+
+- Native history expiry compares complete returned control against validated
+  canonical control without decoding the retained ledger again for every copy.
+  Physical replay preserves existing receipts and audits without rebuilding an
+  unchanged logical transition or recapturing the complete checkpoint per copy.
+  New first receipts still receive independent protection, and all exact outcome
+  and final exposure checks remain enforced.
+
+- Gated history expiry requests fresh receipt protection directly from the last
+  exact-copy transaction instead of rereading advisory task progress for every
+  removal. The transient request is not persisted or accepted as completion
+  proof; restarted execution still protects the retained batch on entry.
+
+- Gated history expiry uses ordered receipt lookups during exact-copy removal,
+  recovery and audit generation, avoiding repeated full receipt scans across
+  concurrent batches while preserving original membership and outcome facts.
+
+- Gated history expiry reuses independently protected immutable membership during
+  exact-copy removal and freshly protects every receipt before completion.
+  Repository contention waits under the original task deadline instead of
+  repeatedly suspending the batch; current eligibility and lease checks remain
+  native to every deletion.
+
+- Gated history expiry records oversized-source warnings through the supported
+  running event action, preserving explicit diagnostics, deferred rows and
+  continuation progress instead of failing on an unknown event action.
+
+- Gated history expiry control reads retain their original owner across
+  receipt-only progress. Policy, hold and exclusion changes still fence them;
+  response and external producer scopes keep full-revision fencing. Deploy
+  matching storage SDK adapters and the history lifecycle migration together as part
+  of the coordinated offline upgrade.
+
+- Retained history visibility uses indexed exact-copy and restore-ancestor
+  lookups, keeping bounded expiry scans responsive as exclusions accumulate.
+- Gated history expiry retries temporary checkpoint contention and service
+  unavailability under its original execution deadline instead of failing the
+  task immediately. Each attempt rechecks authorization; permission denials
+  remain terminal.
+- History-aware queue claims, lease recovery, execution admission and expiry
+  wait/completion transitions
+  retry atomic control operations fenced by concurrent expiry, retaining the
+  original application permit and execution deadline. A new publication follows
+  positive settlement of the previous attempt; inherited producers are never
+  restarted.
+- Concurrent gated history expiry workers preserve the shared restore fence
+  without deadlocking routine history readers or other workers.
+- Gated history expiry reduces batch membership to the remaining retained
+  completion capacity, preserving existing exclusions and reservations when
+  workers select concurrently.
+
+- Rolling back the unmerged history lifecycle migration preserves Legacy archive
+  entry when the idle scheduler checkpoint remains installed.
+  Unknown future checkpoints still fail closed; retained lifecycle authority
+  continues to prevent rollback.
+
+- History lifecycle inspection and native admission preserve zero-length deletion
+  tombstones and their subsequent read exclusions. Unknown restore ancestry stays
+  unresolved in previews, and memory policy commits recheck review and hold expiry
+  under the commit lock, matching PostgreSQL.
+
+- History inspection and policy previews preserve retained dependency blockers.
+  Memory expiry admission counts skipped source rows against its scan limits,
+  and concurrent policy updates cannot cause a false recovery-required status
+  in policy listings.
+
+- Task workers cooperatively stop and drain execution during shutdown or lease
+  loss. Cancelled and timed-out backup/export attempts can confirm exact staging
+  abort without reopening productive admission. Offline recovery retires local
+  backup, metadata and archive-read owners only after exclusive process isolation;
+  older parent-only renderer owners and unresolved external outcomes remain charged.
+- Handler-local conditional mutations and export query limits retain their
+  original history publication while binding additional restrictions. Nested
+  work cannot discard an inherited condition or weaken an inherited limit.
+  The memory adapter now enforces revision preconditions on user updates.
+- History-aware backup and export tasks retain publication ownership through
+  producer completion and final output publication or confirmed cleanup. Failed
+  aborts and interrupted work remain charged; production expiry stays disabled.
+- API occupancy and history publication/producer settlement validate their
+  existing ownership without acquiring a fresh application permit. Cleanup
+  remains independent of productive admission and API response buffering.
+- Artifact downloads keep their reader inside the response stream and preserve
+  the original execution scope. Disconnecting drops pending reads instead of
+  detaching a producer; final-block and whole-stream verification remain required.
+
+- Keep query-usage analysis available when a PostgreSQL index disappears during
+  catalog inspection; omit vanished indexes from native resource coverage.
+
+- Full-history backups omit export bytes as soon as retention hides their output
+  and exclude audit events and deliveries for waiting tasks. Backup diagnostics
+  and the operational contract report the supported versions, 6 through 12.
+- Streamed export and backup downloads retain their original execution permit.
+  Related-object exports support graph sort fields across pages, share one
+  authorization candidate budget, and account for final template hydration in
+  both the stage timeout and the reported duration.
+- Runtime export and backup limits must fit the configured artifact worker
+  reservation. Ordinary object-name lookups avoid history and audit admission
+  limits. Artifact cleanup continues after a zero-block state transition, and
+  idle worker polls avoid scanning historical principals. The scheduler migration
+  also qualifies the Legacy archive registry at its new schema checkpoint.
+
+- The runtime permission proxy preserves external task-read, bulk-read and
+  cancellation decisions instead of substituting default owner/admin behavior.
+
+- Runtime-settings refresh failures during application admission mark security
+  policy stale. Reconciliation preserves an explicitly selected external
+  permission backend when runtime ownership is released, rather than replacing
+  it with a different global deployment default.
+
+- Collection archive captures remain available after project synchronization
+  brings in newer runtime-setting migrations. Apply
+  `2026-11-11-000001_archive_runtime_compatibility`; it qualifies the known Legacy
+  registry layout without enabling online expiry or replacing an installed
+  versioned history protocol. Unknown future checkpoints still fail closed.
+
+- Task cleanup reports retain their exact verified checkpoint instead of
+  reacquiring a contended repository or mixing it with newer database state.
+  Receipt expiry reuses existing protection only when it covers the selected
+  revision and every fixed terminal anchor.
+
+- Task claim and retention lookups use indexed UUID comparisons and queue order,
+  avoiding repeated scans as retained removal decisions and queued tasks grow.
+
+- Background task cleanup defers a contended checkpoint publication without
+  aborting the worker's next task claim. Explicit cleanup commands retain their
+  retryable refusal, and authentication or filesystem failures remain fatal.
+- Task maintenance runs independently of queue claimants, so bounded cleanup
+  and artifact work can finish without pausing the next task execution. Each
+  maintenance pass retains its application admission and recovery checks and
+  pauses for the configured worker poll interval before reacquiring the
+  repository, allowing other publishers to make progress.
+- Startup readiness requires every migration packaged with the adapter,
+  preventing an incomplete schema from passing after parallel migrations are
+  integrated.
+- Artifact cleanup backs off after an empty batch using the configured output
+  cleanup interval, avoiding an extra database acquisition on every idle worker
+  poll while retaining bounded draining and retries when work remains.
+- Restore and offline verification accept the original manifest exclusions in
+  backup formats 6–11, including backups created before protected deletion
+  authority was introduced. New backups retain the current format-12 manifest.
+
+- Runtime safety checks reuse coordinator and worker database connections,
+  avoiding extra connection acquisitions while workers are idle.
+
+- Prevent an HTTP connection from being closed prematurely during graceful
+  shutdown by updating the server dependency's connection accounting.
+
+- Restore draining now waits for active HTTP handlers and streamed response
+  bodies to finish or disconnect. Deletion recovery quarantine fences productive
+  task transactions and output publication against committed deletion intents,
+  while cancellation and failure settlement remain available. Apply the
+  execution-fence migration and reconcile runtime grants before restarting
+  matching workers; permanent deletion remains disabled.
+
+- Retained history and task-event actor names no longer attach to a different
+  principal when a restore timeline reuses an integer ID. Historical relation
+  endpoint hydration also requires the captured endpoint identity.
 
 - Best-effort imports can resolve a parent collection by name after an
   earlier item failed to find it and a later item planned its creation.
@@ -36,6 +704,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - On the memory backend, a failed event configuration change preserves the
   previous settings. Deleting a subscription in the wrong scope leaves the
   subscription and its pending deliveries intact.
+
+### Security
+
+- Require Actix Web 4.18.2 or later and use the patched Actix HTTP dependency
+  to reject malformed chunked request trailers and bound compressed request-body
+  decoding, including large-window Brotli streams (RUSTSEC-2026-0446,
+  RUSTSEC-2026-0447, RUSTSEC-2026-0448 and RUSTSEC-2026-0455).
+
+- Remove the unused Actix Web cookie feature and its dependency on
+  `cookie` 0.16.2 (RUSTSEC-2026-0594).
+
+- Require `url` 2.5.9 or later to fix a stack overflow during URL origin
+  calculation (RUSTSEC-2026-0592).
 
 ## [0.0.23] - 2026-11-21
 

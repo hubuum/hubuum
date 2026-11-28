@@ -444,7 +444,7 @@ async fn historical_computation_api_is_private_and_has_no_computation_or_object_
                 .any(|verb| sql.trim_start().starts_with(verb))
         }));
         assert_eq!(
-            queries.queries_matching("FROM computed_field_history"),
+            queries.queries_matching("FROM \"computed_field_history\""),
             usize::from(backend.descriptor().kind() == StorageBackendKind::Postgres)
         );
         let before_state = backend

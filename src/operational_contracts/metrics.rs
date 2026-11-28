@@ -69,6 +69,69 @@ pub(super) use metric;
 
 pub(crate) const METRICS: &[MetricDefinition] = &[
     metric!(
+        "hubuum_control_checkpoint_io_bytes_total",
+        Counter,
+        Some("bytes"),
+        ["operation"],
+        &[],
+        Process,
+        "Actual checkpoint file data bytes read or written, including partial operations"
+    ),
+    metric!(
+        "hubuum_control_checkpoint_operations_total",
+        Counter,
+        None,
+        ["operation", "outcome"],
+        &[],
+        Process,
+        "Checkpoint publisher operation outcomes"
+    ),
+    metric!(
+        "hubuum_control_checkpoint_operation_duration_seconds",
+        Histogram,
+        Some("seconds"),
+        ["operation", "outcome"],
+        BACKGROUND_BUCKETS_SECONDS,
+        Process,
+        "Checkpoint publisher operation duration"
+    ),
+    metric!(
+        "hubuum_control_checkpoint_lock_attempts_total",
+        Counter,
+        None,
+        ["outcome"],
+        &[],
+        Process,
+        "Nonblocking checkpoint publication lock attempts"
+    ),
+    metric!(
+        "hubuum_control_checkpoint_lock_duration_seconds",
+        Histogram,
+        Some("seconds"),
+        ["outcome"],
+        LATENCY_BUCKETS_SECONDS,
+        Process,
+        "Checkpoint publication lock attempt duration"
+    ),
+    metric!(
+        "hubuum_control_checkpoint_gc_files_total",
+        Counter,
+        None,
+        [],
+        &[],
+        Process,
+        "Authenticated superseded checkpoint files removed"
+    ),
+    metric!(
+        "hubuum_control_checkpoint_gc_bytes_total",
+        Counter,
+        Some("bytes"),
+        [],
+        &[],
+        Process,
+        "File lengths of authenticated superseded checkpoints removed"
+    ),
+    metric!(
         "hubuum_tracing_info",
         Gauge,
         None,

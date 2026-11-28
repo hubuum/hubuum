@@ -19,7 +19,7 @@ impl MemoryStorage {
             (None, None) => None,
             (reference, key) => Some(self.import_class_id(reference, key, references).await?),
         };
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let existing = state
             .export_templates
             .values()
@@ -82,7 +82,7 @@ impl MemoryStorage {
             parts.name,
             definition,
         );
-        state.export_templates.insert(id.id(), template);
+        state.store_export_template(id.id(), template);
         Ok(Some(revision))
     }
 
@@ -119,7 +119,7 @@ impl MemoryStorage {
             parts.enabled,
         )
         .map_err(invalid_contract_value)?;
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let existing = state
             .remote_targets
             .values()
@@ -170,7 +170,7 @@ impl MemoryStorage {
             parts.name,
             StorageRemoteTargetDefinition::new(parts.description, transport, policy),
         );
-        state.remote_targets.insert(id.id(), target);
+        state.store_remote_target(id.id(), target);
         Ok(Some(revision))
     }
 
@@ -181,7 +181,7 @@ impl MemoryStorage {
         references: &mut BTreeMap<String, MemoryImportReference>,
     ) -> Result<Option<ResourceRevision>, StorageError> {
         let parts = input.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let existing = state
             .event_sinks
             .values()
@@ -228,7 +228,7 @@ impl MemoryStorage {
                 .enabled(parts.enabled)
                 .try_build()
                 .map_err(invalid_contract_value)?;
-        state.event_sinks.insert(id.id(), sink);
+        state.store_event_sink(id.id(), sink);
         if let Some(reference) = parts.reference {
             references.insert(reference, MemoryImportReference::EventSink(id));
         }
@@ -273,10 +273,8 @@ impl MemoryStorage {
             .collect::<Result<Vec<_>, _>>()?;
         let filter = serde_json::from_value(parts.filter)
             .map_err(|error| StorageError::invalid_input(error.to_string()))?;
-        let mut state = self.state.write().await;
-        state
-            .event_sink_grants
-            .insert((sink_id.id(), collection_id.id()));
+        let mut state = self.state.write().await?;
+        state.store_sink_grant(sink_id, collection_id);
         let existing = state
             .event_subscriptions
             .values()
@@ -332,7 +330,7 @@ impl MemoryStorage {
         .enabled(parts.enabled)
         .try_build()
         .map_err(invalid_contract_value)?;
-        state.event_subscriptions.insert(id.id(), subscription);
+        state.store_event_subscription(id.id(), subscription);
         Ok(Some(revision))
     }
 }

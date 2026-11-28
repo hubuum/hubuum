@@ -90,9 +90,6 @@ impl AppConfig {
                 self.task_heartbeat_seconds = *policy.heartbeat_seconds();
                 self.task_recovery_interval_seconds = *policy.recovery_interval_seconds();
                 self.computed_reindex_batch_size = *policy.computed_reindex_batch_size();
-                self.import_max_active_tasks_per_user = *policy.imports_per_user();
-                self.export_max_active_tasks_per_user = *policy.exports_per_user();
-                self.remote_call_max_active_tasks_per_user = *policy.remote_calls_per_user();
             }
             StorageRuntimeSettingsValue::RemoteCalls(policy) => {
                 self.remote_call_timeout_ms = *policy.timeout_ms();
@@ -143,7 +140,6 @@ impl AppConfig {
                 self.export_template_fuel = *policy.template_fuel();
             }
             StorageRuntimeSettingsValue::Backups(policy) => {
-                self.backup_max_active_tasks_per_user = *policy.max_active_per_user();
                 self.backup_max_output_bytes = *policy.max_output_bytes();
                 self.backup_max_capture_rows = *policy.max_capture_rows();
                 self.backup_output_retention_hours = *policy.retention_hours();
@@ -168,6 +164,8 @@ impl AppConfig {
         self.token_issuance_policy()?;
         self.token_retention_settings()?;
         self.backup_budget()?;
+        self.artifacts
+            .validate(self.export_max_output_bytes, self.backup_max_output_bytes)?;
         if self.event_retention_file_archive_enabled
             && self
                 .event_retention_archive_path
@@ -181,6 +179,22 @@ impl AppConfig {
         tracing_subscriber::EnvFilter::try_new(&self.log_level)
             .map_err(|error| ApiError::BadRequest(format!("Invalid log filter: {error}")))?;
         Ok(())
+    }
+}
+
+/// Legacy seed values remain readable for persisted-policy compatibility.
+/// Shared task capacity is changed only through its own revisioned capability.
+pub(crate) fn task_admission_seed_fields(
+    group: StorageRuntimeSettingsGroup,
+) -> &'static [&'static str] {
+    match group {
+        StorageRuntimeSettingsGroup::Tasks => &[
+            "imports_per_user",
+            "exports_per_user",
+            "remote_calls_per_user",
+        ],
+        StorageRuntimeSettingsGroup::Backups => &["max_active_per_user"],
+        _ => &[],
     }
 }
 

@@ -179,6 +179,8 @@ for an exception.
   Worker-only transitions are `TaskExecutionStorage::admit_task_execution`,
   `TaskExecutionStorage::acknowledge_task_stop`,
   `TaskExecutionStorage::begin_remote_dispatch`,
+  `TaskExecutionStorage::wait_task`,
+  `TaskExecutionStorage::resume_task`,
   `TaskExecutionStorage::claim_next_task`,
   `TaskExecutionStorage::renew_task_lease`,
   `TaskExecutionStorage::recover_expired_task_leases`,
@@ -188,6 +190,19 @@ for an exception.
   `TaskExecutionStorage::purge_expired_schema_profile_outputs`,
   `TaskExecutionStorage::purge_expired_export_outputs`, and
   `TaskExecutionStorage::purge_expired_backup_outputs`.
+- History publication coordination:
+  `HistoryLifecycleStorage::admit_history_publication` reserves bounded durable
+  ownership under the original registered application and history fences.
+  `HistoryLifecycleStorage::settle_history_publication` removes only that exact
+  owner after positive producer and driver completion.
+  `HistoryLifecycleStorage::admit_history_archive_execution` atomically reserves
+  the archive parent and producer; `HistoryLifecycleStorage::admit_history_producer`
+  reserves a child in its original scope, and
+  `HistoryLifecycleStorage::settle_history_producer` records exact positive
+  completion without reacquiring a retired API owner. These registry writes
+  do not create retention policy, expiry or removal audit events. Ledger and
+  read-scope tests cover this capability; production transport integration,
+  protected expiry execution and H4 resource acceptance remain separate gates.
 - Event coordination:
   `EventDeliveryAdministrationStorage::release_event_delivery_for_retry` and
   `EventDeliveryAdministrationStorage::mark_event_delivery_dead` are explicit
@@ -204,6 +219,59 @@ for an exception.
   ordinary domain lifecycle shortcut.
 - Retention: `TokenRetentionStorage::purge_expired_tokens` applies configured
   expiry and emits the token-purge semantics owned by the retention worker.
+- Application admission and recovery: `DeletionControlStorage::register_runtime_isolated`
+  records the trusted local process-isolation identity. `DeletionControlStorage::capture_application_execution`
+  validates live ownership and released application state, then invalidates any
+  prior drain acknowledgement before admitting work.
+  `DeletionControlStorage::capture_application_execution_with_maintenance` also
+  observes maintenance in the same protected operation; an inherited permit is
+  validated and preserved rather than refreshed. `DeletionControlStorage::acknowledge_runtime_drain`
+  acknowledges only an exact current application fence. `DeletionControlStorage::reapply_deletion_decisions`
+  rechecks all supported bindings, removes recovered closed history, and records
+  an application-specific receipt atomically. `DeletionControlStorage::release_application_exposure`
+  requires that exact receipt and its independently protected checkpoint identity;
+  it releases pending restore maintenance in the same transaction.
+  `DeletionControlStorage::recover_application_control` preserves newer compatible
+  authority, rotates local application identity and revokes only owners covered
+  by the caller's actual exclusive process-isolation proof. Unknown domains block.
+  Registration and drain housekeeping emit no application audit events. Physical
+  deletion transitions retain required canonical audit facts without erased payload.
+- Deletion authority maintenance: `DeletionControlStorage::commit_deletion_control`
+  persists a validated exact-predecessor transition under privileged authority.
+  `DeletionControlStorage::register_runtime` records bounded, restore-isolated
+  ownership before runtime work starts; `DeletionControlStorage::unregister_runtime`
+  consumes that ownership only after a confirmed shutdown.
+  `DeletionControlStorage::prepare_hot_object_history_deletion` checks the exact
+  predecessor and a closed UUID-bound history
+  copy before retaining its deletion intent, exact historical membership, and
+  requested/access-restricted canonical events in the same transaction.
+  `DeletionControlStorage::cleanup_hot_object_history` rechecks those fences and
+  commits exact-copy removal with its receipt and required audit fact in one transaction, including
+  reconciliation of a recovered copy whose prior outcome was already removed.
+  These operations retain only UUID selectors, ownership, copy outcomes, and
+  checkpoint identities outside logical application replacement. Independent
+  durable intent protection precedes cleanup; completion acknowledgement requires
+  independently protected removal evidence. This workflow does not release
+  application quarantine or erase other managed copies.
+  `DeletionControlStorage::observe_deletion_checkpoint` atomically records an
+  independently verified intent/completion observation and its canonical event.
+  The service retains the authenticated repository session and independently
+  protects required audit evidence before cleanup or completion acknowledgement.
+- Synchronous request accounting: `ApiRequestAdmissionStorage::admit_api_request`
+  and `ApiRequestAdmissionStorage::settle_api_request` acquire/fence/release occupancy for an exact request
+  owner without ordinary resource mutations. Physical-attempt time charges are
+  monotonic and survive settlement and logical restore. Explicit administrator
+  policy replacement uses `ApiRequestAdmissionStorage::replace_api_request_policy`
+  with a required revision;
+  the application records its actor/revision through common diagnostics. These
+  operations do not publish domain payloads or create durable tasks.
+- Task policy maintenance: `TaskCapacityStorage::initialize_task_policy`
+  establishes deployment control state only once; subsequent initializers read
+  the existing policy. `TaskCapacityStorage::replace_task_policy` is an explicit
+  administrator action with a required revision token. Both serialize with
+  admission, retain control state across restore, and return the effective
+  revision. The application records the authorized administrator and resulting
+  revision through its common diagnostics.
 - Maintenance: `RestoreStorage::stage_restore_artifact`,
   `RestoreStorage::expire_restore_stage`,
   `RestoreStorage::start_restore_draining`, `RestoreStorage::apply_restore_replay`,
@@ -395,3 +463,265 @@ revision; requesting the current assignment returns `Unchanged` without a
 revision, audit record, or notification. These records are separate from the
 domain event stream. Logical restores preserve settings and their audit
 records, and portable backups exclude them.
+
+### Artifact workflow mutations
+
+`ArtifactStore::register_destination`, `ArtifactStore::stage`,
+`ArtifactStore::append`, `ArtifactStore::seal`, `ArtifactStore::publish`,
+`ArtifactStore::abort`, `ArtifactStore::cleanup`, `TaskArtifactStore::bind_task`,
+`TaskArtifactStore::abort_task`, and `TaskArtifactStore::cleanup_batch` are
+context-free workflow operations. They change
+physical storage state and durable ownership, not ordinary domain resources.
+Task completion owns the terminal task event and atomic output publication.
+Exact task abort validates the original immutable attempt, task ID and claim
+token, including after productive admission closes. It cannot authorize reads
+or publication, and cannot release physical reservations by itself.
+Cleanup retains obligations and reservations until bounded physical deletion
+finishes, independently of application task deletion and logical restore.
+
+## Protected task-control mutations
+
+`TaskQueueStorage::activate_task_submission` atomically acknowledges an exact
+protected admission generation. It consumes no fresh capacity or approval and
+emits creation provenance once. The following administrator/worker state-machine
+operations carry canonical protected authority and generation preconditions
+instead of ordinary domain mutation event contexts:
+
+- `TaskRetentionStorage::prepare_expired_task_outputs`
+- `TaskRetentionStorage::commit_task_control`
+- `TaskRetentionStorage::recover_task_control`
+- `TaskRetentionStorage::replace_task_retention_policy`
+- `TaskRetentionStorage::change_task_hold`
+- `TaskRetentionStorage::expire_task_receipts`
+- `TaskRetentionStorage::prepare_task_details_purge`
+- `TaskRetentionStorage::purge_task_details_batch`
+- `TaskRetentionStorage::reapply_task_retention`
+- `TaskRetentionStorage::backfill_task_receipts`
+
+Their immutable manifests, receipt generations, policy revisions, holds and
+independently authenticated checkpoints provide recovery provenance. Normal
+domain mutations retain their existing event-context requirements.
+
+## History lifecycle control
+
+History policy/hold/review transitions are context-free workflow mutations with
+mandatory canonical audit derived from their private typed receipts. Principal,
+operation identity, original clock, proposal and review evidence are validated
+before commit. `HistoryLifecycleStorage::commit_history_lifecycle` compares the
+exact predecessor and application/deletion/history fences and appends these facts
+atomically with protected control state. An audit failure rolls back authority.
+`HistoryLifecycleStorage::recover_history_lifecycle` is quarantine-only and replays stable original facts;
+it cannot discard newer compatible local authority. These operations grant no
+physical deletion authority and do not enable a runtime expiry path.
+
+`HistoryLifecycleStorage::register_history_runtime` is a startup ownership
+transition declaring the complete online history protocol. It preserves runtime
+ownership, isolation, capacity and application exposure checks. Registrations
+never expire from a timer; disappearance of an API request owner is not evidence
+of publication quiescence. Legacy registration is refused once retained expiry
+requires the new protocol. Admission must serialize its mixed-fleet check with
+registration before recording an intent; native race qualification remains
+required.
+
+## History archive catalog and captured query control
+
+`HistoryArchiveStorage::publish_history_archive` installs immutable descriptors
+under a catalog generation check after confirming retained primary versions.
+`HistoryArchiveStorage::capture_history_archive` persists bounded hot input and
+selected-location pins under the same catalog scope lock. Both use short
+transactions after original application/deletion and registered Legacy-owner
+validation. Catalogs and captures remain outside logical application replacement.
+
+`HistoryArchiveStorage::reserve_history_archive_read` reserves cumulative work
+against the principal-owned capture before external segment reads. These are
+control/workflow mutations, without ordinary resource events or source deletion.
+Every access retains the original owner, fence, identities and deadline; external
+I/O never holds a transaction. Service authorization remains configured and live.
+
+## History producer slot transactions
+
+Productive admission orders deletion/application authority, history authority,
+API-owner SHARE, then publication parent UPDATE and child INSERT. Child admission
+updates the parent directly; taking parent SHARE first would introduce a lock
+upgrade. The counter, monotonic assigned bit and single-assignment child record change
+atomically. The only child unique key is its parent; child nonce collisions
+across parents do not introduce index waits. Settlement never clears assigned.
+A retained RR snapshot conflicts rather than admitting work across retirement.
+
+Child settlement takes only exact child UPDATE followed by its matching parent
+counter UPDATE; it records a retired child without deleting unknown obligations.
+Parent retirement deletes only an exact parent with zero occupied slots and no
+unretired child, then its retired child record. Both paths are exempt from
+productive application/history/API locks. Rollback preserves the counter and
+child together; retries within the parent lifetime do not decrement twice.
+Known physical completion may settle after fencing, while drop, timeout, missing
+owner and clock expiry provide no retirement evidence. Restore and production
+transport/producer recovery remain separate qualification requirements.
+
+## Fixed archive publication claims (unpublished lifecycle contract)
+
+`HistoryArchiveStorage::claim_history_archive_publication` reloads one original
+closed-version capture and commits a single-assignment claim before returning its
+private, non-wire claim handle. It issues no artifact operation. The manifest
+retains original selection, principal, interval, absolute deadline, generation,
+execution binding and bounded input/authorization digests. It neither selects a
+replacement version nor grants authorization or physical artifact ownership.
+
+Claim admission chooses child **UPDATE NOWAIT** at the outermost productive
+validator, after deletion/application/history authority and API ownership, before
+parent SHARE and capture/claim targets. The five read entries retain child SHARE
+NOWAIT. Claim admission changes the child tuple and capture pin flag atomically
+with its parent-keyed claim insert. A retained RR settlement must conflict with
+that changed tuple rather than miss a newly inserted claim. There is no new
+claim foreign key, trigger or secondary unique key. Every same-parent admission
+already owns the same exclusive child lock before it reaches the claim index.
+
+Claimed input is excluded from bounded expired-pin cleanup through a flag on the
+capture tuple, so cleanup cannot use an old snapshot to discard a concurrent
+claim. The original capture reservation stays charged; claim metadata is bounded
+to 256 KiB plus a ledger allowance. Each claim additionally reserves a fixed
+16 MiB artifact ceiling, which the future physical producer must enforce. These
+are logical bounds, not measured RSS, spool, H4 or liveness qualification.
+
+Child and parent settlement refuse any unfinished claim, including after API
+settlement, restore or a successful application task join. No outcome/cleanup
+receipt is inferred from a task result, identity, timeout, cancellation or drop.
+The provider ownership/outcome bridge remains required before external effects;
+current claim admission cannot retire its physical obligation. Production remains
+Legacy, and generic expiry remains disabled.
+
+During isolated offline recovery, `HistoryArchiveStorage::load_history_archive_cleanup`
+reads the original claim and pinned capture under the quarantined application
+fence. Provider I/O runs outside database transactions.
+`HistoryArchiveStorage::settle_history_archive_cleanup` locks and compares the
+same claim and retires its reservation, child and parent while unpinning the
+capture in a single transaction. Only an exact physical cleanup receipt for
+the precommitted filesystem intent permits this transition. Signed reapplication
+checks exposure separately.
+
+### Native history-expiry admission
+
+`HistoryLifecycleStorage::admit_history_expiry` requires an original OnlineV1
+application scope and selects exact native membership inside the authority
+transaction. Lock deletion/application authority before history authority UPDATE,
+API/task validation and native source rows. First intent admission serializes
+with runtime registration; a Legacy producer blocks admission. Recheck the
+captured policy/hold fence, native original intervals/identities and protected
+current/open copies. Ordinary age pages keep complete-row input within 16 MiB,
+source rows within 1000 and transferred metadata within 1 MiB. A bounded empty result does not prove
+source exhaustion. Return `HistoryExpiryAdmissionResult` with examined-row counts
+and a finite-pass continuation even without membership. Count every examined
+source row before filtering and advance after deciding it; preserve byte-deferred rows for a fresh page
+and skip individually oversized rows. Each pass keeps its original native bound;
+`PassFinished` requires a later pass to restart at the beginning. Neither native
+positions nor pass boundaries establish a committed-data watermark. Preserve the
+run, origin, scope and application/deletion fence while checking current policy
+authority on every page. Persist the intent, read-exclusion projection and required
+canonical audit facts together; append failure rolls back all of them. Existing
+publications stay charged after their original revision is fenced and require
+exact positive settlement. Primary commit grants no deletion authority: capture
+and independently publish its recovery authority before any removal step.
+
+Initial size passes use complete family accounting followed by an unchanged
+second pass, both under the same control gate. Share the original five-second
+planning clock and 64-MiB metadata budget; cap each pass at 100,000 rows and report
+all examinations. Keep at most 1000 oldest eligible candidates and 1 MiB of
+metadata, retaining the ordinary input/manifest/completion bounds. Resolve
+original clocks and exact sources, reserve pending unreceipted copies once per
+source, and stop size-dependent selection at the lower target. Persist each
+member's original pressure episode and observed/reserved byte witness. Ending
+pressure changes no admitted cleanup obligation; current policy, hold, native
+interval and dependency checks remain mandatory. Preserve these witnesses through
+independent checkpointing and physical recovery replay. Empty size passes must
+protect pressure transitions before acknowledging task completion, also on retry.
+Only read-only unavailable planning may fall back to independent age eligibility;
+report `size_accounting_unavailable`. Required audit/commit failure is terminal
+to the transaction. Existing native-position cursors finish their original pass.
+
+`HistoryLifecycleStorage::recover_history_expiry_task` uses independent original
+OnlineV1 application admission and locks history authority before task capacity
+and owner rows. Resolve one batch from the bounded retained journal, never source
+rows. Indexed original-run and latest-cleanup discovery-metadata lookups bound task work.
+The non-secret cleanup batch reference survives terminal payload redaction. An active
+owner prevents adoption; a busy row is retryable, never evidence of deletion.
+Waiting owners resume through the generic transition, retaining their exact
+checkpoint, deadline, progress and accounting; retries are spaced by 30 seconds.
+Terminal owners remain terminal. A missing, cancelled, timed-out or failed owner
+can be replaced by one internal cleanup task bound to the original batch/run,
+origin and application image. The history lock and active-cleanup unique index
+serialize competing recovery. The queued payload binding, admission accounting
+and required audit commit together. The claimed owner persists its execution
+checkpoint only after the original execution deadline is pinned. Recovery payload v2 cannot select new membership. Protection,
+positive publication retirement and current eligibility are rechecked by the
+physical executor; wakeup grants no removal authority. Restored application images
+fail closed here and still require explicit restore qualification.
+
+`HistoryLifecycleStorage::process_history_expiry_task` requires that same
+independent original OnlineV1 control scope and the current task lease with its
+pinned deadline. Lock history authority before task capacity/accounting, the task
+row and native sources. Fresh selection also requires current initiation-bound
+authorization from the configured service. Native admission, required audit,
+exclusions, the original versioned checkpoint and resident accounting commit in
+one transaction. Any failure rolls back the entire step. Restart resolves an
+admitted checkpoint to its original retained manifest before selecting again;
+missing or changed correspondence is unavailable. Waiting and cancellation retain
+history obligations. The service independently publishes and reads back admitted authority. A trusted,
+nonserialized `HistoryExposureProtection` on the request permits at most one exact
+closed-copy removal per call. Recheck the original membership and native interval,
+current governing policy revisions, holds, dependencies, fleet and application
+fence under the same authority lock. Every publication owner admitted at or before
+the intent's predecessor revision must positively settle; clocks, lost runtimes
+and API-owner retirement cannot substitute. Newer owners obey exclusions and do
+not block this batch.
+
+The native DELETE, exact one-row receipt, canonical audit, task checkpoint,
+accounting and final live-lease/deadline/cancellation check commit together.
+Absence cannot create a receipt. A retry skips already receipted members and
+preserves first clocks and checkpoint identities. Independent read-back must cover
+all committed receipts before a completed checkpoint can be written. Finalization
+rechecks that checkpoint against the retained ledger and exact success count.
+One task completes after one bounded admitted batch, or after an empty finite
+pass; later tasks restart scanning to revisit late rows and closures. Production
+workers still exclude this kind and no submission trigger is enabled.
+
+### Shared history task admission
+
+`HistoryLifecycleStorage::reapply_history_expiry` takes trusted authenticated
+recovery evidence and exact retained membership. Serialize authority, quarantine,
+positive runtime/publication drain, policy/hold/dependency revalidation, native
+deletion, first receipt and required audit in one transaction. Return `true` only
+for one physical deletion; return `false` only for an absent already-receipted
+copy. Replay preserves original receipts and canonical audit identities. A new
+application image cannot resume the old task. Release independently verifies
+complete first receipts and absence of every excluded exact or derived copy.
+
+`HistoryLifecycleStorage::submit_history_expiry_task` takes trusted typed service
+input, never a serialized permission grant. Acquire history authority, task
+capacity, then the existing task row in that order. Serialize both manual and
+periodic triggers by their exact stable family/scope key. Return the original
+active owner without replacing its origin, payload, creation time, checkpoint,
+deadline or accounting. A busy owner requires retry. Retained cleanup for the key
+precedes a fresh scan. New tasks atomically retain discovery scope, bounded
+payload, capacity accounting and canonical queued audit. A partial unique index
+protects active scopes in PostgreSQL, including legacy payload-only owners.
+
+Manual services recheck configured unscoped administrator authorization before
+coalescing. Bind manual input to the original stable principal identity. Periodic
+input names an immutable retained expiry policy revision and its original
+principal; it requires no new human approval. Preserve that root through batch
+admission and cleanup adoption. A later prospective override does not erase older
+closure obligations. Both adapters reject stale application images, maintenance,
+unknown scopes and unavailable admission capacity. Production workers remain
+gated until restore and resource qualification is complete.
+
+### Complete logical-size pressure observation
+
+`HistoryLifecycleStorage::observe_history_size` is a context-free workflow write
+with an explicit stable principal UUID. It exhausts the complete retained family,
+measures compact JSON v1 logical bytes and resolves captured original policy
+attribution under the same control transaction that retains any start/end
+pressure receipt and canonical audit. Incomplete, ambiguous and over-budget
+scans cannot publish a partial gauge or mutate pressure. Intermediate gauges are
+no-ops; terminal capacity is reserved for active episodes. Independent recovery
+publication and read-back are required before service acknowledgement. Pressure
+observation authorizes no physical expiry, and P6 remains deferred.

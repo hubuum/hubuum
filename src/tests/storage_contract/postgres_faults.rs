@@ -80,26 +80,16 @@ async fn postgres_rolls_back_task_finalization_at_an_injected_failure() {
             ))
             .request_hash(Some(prefix("task_failpoint_hash")))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .try_build(10)
+            .try_build()
             .expect("failpoint task request should be valid"),
         )
         .await
+        .map(expect_legacy_task)
         .expect("task rollback fixture should be created");
-    let claim_token = uuid::Uuid::new_v4();
-    hubuum_storage_postgres::test_support::assign_task_lease(
-        pool.get_ref(),
-        task.id(),
-        StorageTaskStatus::Validating,
-        claim_token,
-        chrono::Utc::now().naive_utc()
-            + chrono::Duration::try_minutes(1).expect("valid failpoint lease"),
-    )
-    .await
-    .expect("task rollback fixture should receive a live claim");
-    let lease = StorageTaskLease::new(
-        task.id(),
-        StorageTaskClaimToken::new(claim_token.to_string()),
-    );
+    let claim = hubuum_storage_postgres::test_support::claim_task_by_id(pool.get_ref(), task.id())
+        .await
+        .expect("task rollback fixture should receive a live fenced claim");
+    let lease = claim.lease().clone();
 
     let error = PostgresFaultController::failing(PostgresFaultPoint::TaskFinalizeAfterEvent)
         .run(
@@ -170,10 +160,11 @@ async fn postgres_task_page_count_and_rows_share_one_snapshot() {
                     .expect("snapshot idempotency key should be valid"),
             ))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .try_build(10)
+            .try_build()
             .expect("initial snapshot task request should be valid"),
         )
         .await
+        .map(expect_legacy_task)
         .expect("initial snapshot task should be created");
 
     let controller = PostgresFaultController::pausing(PostgresFaultPoint::PageAfterCount);
@@ -211,10 +202,11 @@ async fn postgres_task_page_count_and_rows_share_one_snapshot() {
                     .expect("snapshot idempotency key should be valid"),
             ))
             .scope_snapshot(StorageTaskScopeSnapshot::unscoped())
-            .try_build(10)
+            .try_build()
             .expect("concurrent snapshot task request should be valid"),
         )
         .await
+        .map(expect_legacy_task)
         .expect("concurrent snapshot task should be created");
     controller.resume();
 

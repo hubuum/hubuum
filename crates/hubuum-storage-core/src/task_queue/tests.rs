@@ -172,22 +172,8 @@ fn task_create_rejects_negative_total_items() {
         serde_json::json!({}),
         -1,
     )
-    .try_build(1)
+    .try_build()
     .expect_err("negative task totals must be rejected");
-
-    assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
-}
-
-#[test]
-fn task_create_rejects_zero_capacity() {
-    let error = StorageTaskCreateRequest::builder(
-        StorageTaskKind::Import,
-        PrincipalId::new(91_001).unwrap(),
-        serde_json::json!({}),
-        0,
-    )
-    .try_build(0)
-    .expect_err("zero task capacity must be rejected");
 
     assert_eq!(error.kind(), crate::StorageErrorKind::InvalidInput);
 }
@@ -203,7 +189,7 @@ fn task_create_and_projection_preserve_only_a_typed_trace_link() {
         0,
     )
     .trace_link(Some(link.clone()))
-    .try_build(1)
+    .try_build()
     .unwrap();
     assert_eq!(request.trace_link(), Some(&link));
 

@@ -312,6 +312,24 @@ positive_i64_id!(
     "HistoryRecordID"
 );
 positive_i64_id!(
+    /// Positive integer retained as unresolved evidence, never as a logical identity.
+    LegacyRecordId,
+    "legacy record id",
+    "LegacyRecordID"
+);
+
+impl From<ResourceId> for LegacyRecordId {
+    fn from(id: ResourceId) -> Self {
+        Self(i64::from(id.0))
+    }
+}
+
+impl From<HistoryRecordId> for LegacyRecordId {
+    fn from(id: HistoryRecordId) -> Self {
+        Self(id.0)
+    }
+}
+positive_i64_id!(
     /// Identifier for a staged restore job.
     RestoreJobId,
     "restore job id",
@@ -329,6 +347,11 @@ macro_rules! typed_id_from_resource_id {
         $(
             impl From<ResourceId> for $name {
                 fn from(value: ResourceId) -> Self {
+                    Self(value.0)
+                }
+            }
+            impl From<$name> for ResourceId {
+                fn from(value: $name) -> Self {
                     Self(value.0)
                 }
             }

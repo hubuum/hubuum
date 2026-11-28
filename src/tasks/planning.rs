@@ -151,10 +151,15 @@ fn preflight_failure_kind(error: &ApiError) -> FailureKind {
         ApiError::Forbidden(_) | ApiError::Unauthorized(_) | ApiError::ReauthenticationRequired => {
             FailureKind::Permission
         }
-        ApiError::Conflict(_)
+        ApiError::HistoryPolicyReview(_)
+        | ApiError::Conflict(_)
+        | ApiError::IdempotencyConflict
+        | ApiError::LegacyTaskRequestUnverifiable
         | ApiError::PreconditionFailed(_, _)
         | ApiError::RevisionConflict(_, _) => FailureKind::Collision,
-        ApiError::NotFound(_) | ApiError::Gone(_) => FailureKind::Resolution,
+        ApiError::NotFound(_) | ApiError::Gone(_) | ApiError::TaskDetailsExpired(_) => {
+            FailureKind::Resolution
+        }
         ApiError::BadRequest(_)
         | ApiError::ValidationError(_)
         | ApiError::NotAcceptable(_)
@@ -162,7 +167,9 @@ fn preflight_failure_kind(error: &ApiError) -> FailureKind {
         | ApiError::PayloadTooLarge(_)
         | ApiError::OperatorMismatch(_)
         | ApiError::InvalidIntegerRange(_) => FailureKind::Validation,
-        ApiError::TaskStopped(_)
+        ApiError::ApiRequestAdmission(_)
+        | ApiError::TaskCapacity(_)
+        | ApiError::TaskStopped(_)
         | ApiError::InternalServerError(_)
         | ApiError::DatabaseError(_)
         | ApiError::NotImplemented(_)

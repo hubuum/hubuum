@@ -44,6 +44,7 @@ fn action_round_trips() {
         Action::Started,
         Action::Validating,
         Action::Running,
+        Action::Waiting,
         Action::Succeeded,
         Action::Failed,
         Action::PartiallySucceeded,
@@ -732,4 +733,19 @@ fn sink_redaction_covers_nested_keys_and_uri_userinfo() {
     assert_eq!(redacted["url"], "https://[redacted]@example.invalid/events");
     assert_eq!(redacted["headers"]["X-API-Key"], "[redacted]");
     assert_eq!(redacted["headers"]["routing_key"], "visible");
+}
+
+#[test]
+fn empty_subscription_filter_matches_ordinary_events() {
+    assert!(EventSubscriptionFilter::default().matches(&envelope()));
+}
+
+#[test]
+fn lifecycle_audit_is_not_implicitly_deliverable() {
+    let event = envelope_builder()
+        .entity_type(EntityType::Lifecycle)
+        .action(Action::Queued)
+        .try_build()
+        .unwrap();
+    assert!(!EventSubscriptionFilter::default().matches(&event));
 }

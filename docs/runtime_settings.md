@@ -22,13 +22,13 @@ settings store. The runtime-managed groups are listed below.
 | `observability` | Log filter, metrics enablement and scrape path | On reconciliation | Literal non-conflicting scrape path |
 | `network` | Forwarded-header trust, proxy networks/hops and client allowlist | Next request | Updating local administrator must retain network access |
 | `query_limits` | Maximum transitive depth | Next query | 1–512 |
-| `tasks` | Polling, lease/heartbeat, recovery, reindex batch and per-user admission limits | Next claim or batch | Heartbeat below lease; reindex batch at most 1,000; worker counts stay fixed |
+| `tasks` | Polling, lease/heartbeat, recovery, reindex batch | Next claim or batch | Heartbeat below lease; reindex batch at most 1,000; worker counts stay fixed |
 | `remote_calls` | Timeout, response bytes and private destinations | Next dispatch | Deployment prohibition on private targets remains authoritative |
 | `tokens` | Default issuance lifetime, expired-token retention and purge policy | Next issuance or purge batch | Deployment maximum token lifetime; legacy cutoffs stay fixed |
 | `login_rate_limit` | Enablement, identity/account/IP/subnet attempts, window and backoff | Next login attempt | Backoff base no greater than maximum |
 | `events` | Fanout/delivery batches and polling, delivery attempts/timeout, retention and archive enablement | Next batch | Transport timeout below deployment lease; archive requires usable deployment path |
 | `exports` | Output retention/cleanup/size, stage/query budgets and template limits | Next export or cleanup pass | Existing expiry timestamps are preserved |
-| `backups` | Active backups per user, output/row limits and retention | Next admission or execution | Existing expiry timestamps are preserved |
+| `backups` | Output/row limits and retention | Next execution | Existing expiry timestamps are preserved |
 | `restores` | Upload limit and staging retention | Next upload | An upload retains its limit; existing expiry timestamps are preserved |
 
 Everything else remains deployment configuration. That includes:
@@ -49,6 +49,14 @@ Treetop connection settings remain deployment configuration. Raw secrets never
 move into runtime settings. An
 LDAP bind password supplied through the runtime API is encrypted before it is
 stored.
+
+Task admission is governed by the shared policy at
+`/api/v1/admin/task-capacity`. The legacy `tasks.imports_per_user`,
+`tasks.exports_per_user`, `tasks.remote_calls_per_user` and
+`backups.max_active_per_user` runtime fields are read-only deployment seeds
+retained for persisted-document compatibility. Discovery marks them read-only;
+edits must use the task-capacity endpoint and its own policy revision. Existing
+runtime assignments cannot replace shared admission or reset its usage.
 
 ### Operational policy updates
 

@@ -1,0 +1,203 @@
+{
+  "contract_version": 1,
+  "implementation_status": "proposal",
+  "change": {
+    "action": "replace_policy",
+    "family": "object",
+    "scope": {
+      "kind": "class",
+      "identity": "00000000-0000-4000-8000-000000000001"
+    },
+    "expected_policy_revision": "7",
+    "binding": {
+      "kind": "expire",
+      "trigger": {
+        "kind": "age",
+        "age_seconds": "3600",
+        "deleted_age_seconds": "3600"
+      },
+      "minimum_age_seconds": "600"
+    },
+    "application": {
+      "kind": "retrospective",
+      "closed_through": "2026-10-30T00:00:00Z"
+    }
+  },
+  "preview": {
+    "status": 200,
+    "headers": {
+      "cache-control": "no-store"
+    },
+    "body": {
+      "preview_id": "00000000-0000-4000-8000-000000000002",
+      "proposal_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "issued_at": "2026-10-30T07:00:00Z",
+      "expires_at": "2026-10-30T07:05:00Z",
+      "expected_policy_revision": "7",
+      "coverage": {
+        "kind": "bounded",
+        "scanned_candidates": "1000",
+        "input_bytes": "1048576",
+        "eligible": {
+          "kind": "lower_bound",
+          "value": "64"
+        },
+        "eligible_logical_bytes": {
+          "kind": "unknown"
+        },
+        "blockers": {
+          "held": "2",
+          "unknown_attribution": "1"
+        }
+      },
+      "limits": {
+        "candidates": "1000",
+        "input_bytes": "16777216",
+        "sample_records": "64",
+        "output_bytes": "262144"
+      },
+      "samples": [
+        {
+          "resource_identity": "00000000-0000-4000-8000-000000000004",
+          "version_identity": "00000000-0000-4000-8000-000000000005",
+          "anchor": {
+            "kind": "closed",
+            "at": "2026-10-29T23:00:00Z"
+          },
+          "current_decision": {
+            "source": {
+              "kind": "policy",
+              "family": "object",
+              "scope": {
+                "kind": "collection",
+                "identity": "00000000-0000-4000-8000-000000000003"
+              },
+              "revision": "6"
+            },
+            "expiry": {
+              "kind": "indefinite"
+            }
+          },
+          "proposed_decision": {
+            "source": {
+              "kind": "proposed_policy"
+            },
+            "expiry": {
+              "kind": "deadline",
+              "at": "2026-10-30T00:00:00Z"
+            },
+            "eligibility": "eligible_subject_to_execution_recheck"
+          }
+        }
+      ],
+      "proposal": {
+        "action": "replace_policy",
+        "family": "object",
+        "scope": {
+          "kind": "class",
+          "identity": "00000000-0000-4000-8000-000000000001"
+        },
+        "expected_policy_revision": "7",
+        "binding": {
+          "kind": "expire",
+          "trigger": {
+            "kind": "age",
+            "age_seconds": "3600",
+            "deleted_age_seconds": "3600"
+          },
+          "minimum_age_seconds": "600"
+        },
+        "application": {
+          "kind": "retrospective",
+          "closed_through": "2026-10-30T00:00:00Z"
+        }
+      },
+      "effective_sources": [
+        {
+          "kind": "policy",
+          "family": "object",
+          "scope": {
+            "kind": "collection",
+            "identity": "00000000-0000-4000-8000-000000000003"
+          },
+          "revision": "6"
+        }
+      ],
+      "effective_sources_complete": false
+    }
+  },
+  "apply_failures": [
+    {
+      "case": "changed_relevant_policy_or_hold",
+      "status": 409,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "error": "Conflict",
+        "message": "The reviewed policy or protection changed; inspect and review a new preview",
+        "reason": "stale_preview"
+      }
+    },
+    {
+      "case": "fixed_preview_lifetime_ended",
+      "status": 409,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "error": "Conflict",
+        "message": "The preview expired; request and review a new preview",
+        "reason": "preview_expired"
+      }
+    },
+    {
+      "case": "changed_scope_action_or_rule",
+      "status": 409,
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "body": {
+        "error": "Conflict",
+        "message": "The requested change does not match the reviewed preview",
+        "reason": "preview_mismatch"
+      }
+    }
+  ],
+  "reader_evolution": {
+    "unknown_optional_field": {
+      "producer_extension": true
+    },
+    "unknown_reason": "future_policy_conflict_reason",
+    "expected_behavior": "retain unknown values, handle HTTP 409 as a conflict, do not automatically reapprove"
+  },
+  "apply_request": {
+    "proposal": {
+      "action": "replace_policy",
+      "family": "object",
+      "scope": {
+        "kind": "class",
+        "identity": "00000000-0000-4000-8000-000000000001"
+      },
+      "expected_policy_revision": "7",
+      "binding": {
+        "kind": "expire",
+        "trigger": {
+          "kind": "age",
+          "age_seconds": "3600",
+          "deleted_age_seconds": "3600"
+        },
+        "minimum_age_seconds": "600"
+      },
+      "application": {
+        "kind": "retrospective",
+        "closed_through": "2026-10-30T00:00:00Z"
+      }
+    },
+    "review": {
+      "preview_id": "00000000-0000-4000-8000-000000000002",
+      "proposal_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  },
+  "fingerprint_is_illustrative": true
+}

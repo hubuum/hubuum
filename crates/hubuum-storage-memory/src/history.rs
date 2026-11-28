@@ -6,7 +6,7 @@ impl HistoryStorage for MemoryStorage {
         &self,
         query: StorageComputedFieldHistoryQuery,
     ) -> Result<Option<StorageHistoricalComputedFields>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         state
             .computed_history
             .iter()
@@ -14,8 +14,15 @@ impl HistoryStorage for MemoryStorage {
             .find(|record| {
                 record.class_id() == query.class_id() && record.is_effective_at(query.at())
             })
-            .cloned()
-            .map(|record| record.select(query).map_err(invalid_contract_value))
+            .map(|record| {
+                state.require_history_as_of(
+                    StorageIdentityHistoryKind::ComputedDefinitions,
+                    record.logical_identity(),
+                    query.at(),
+                    record.valid_from(),
+                )?;
+                record.clone().select(query).map_err(invalid_contract_value)
+            })
             .transpose()
     }
 
@@ -23,7 +30,7 @@ impl HistoryStorage for MemoryStorage {
         &self,
         query: StorageRelationHistoryQuery,
     ) -> Result<StoragePage<StorageRelationHistoryEntry>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         crate::backup::list_relation_history(&state, &query)
     }
 
@@ -31,11 +38,12 @@ impl HistoryStorage for MemoryStorage {
         &self,
         query: StorageHistoryNavigationQuery,
     ) -> Result<StoragePage<StorageHistoryMarker>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let options = query.options();
         let mut entries = state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .filter(|entry| {
                 history_matches_resource(entry, query.resource())
                     && history_scope_allows(query.scope(), entry.value.collection_id())
@@ -90,10 +98,11 @@ impl HistoryStorage for MemoryStorage {
         &self,
         query: StorageHistoryEntryQuery,
     ) -> Result<Option<StorageHistoryEntry>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .find(|entry| {
                 entry.id == query.history_id() && history_matches_resource(entry, query.resource())
             })
@@ -115,18 +124,25 @@ impl HistoryStorage for MemoryStorage {
 
     async fn resolve_history_principal_names(
         &self,
-        principal_ids: Vec<PrincipalId>,
+        principal_ids: Vec<PrincipalIdentity>,
     ) -> Result<Vec<StorageHistoryPrincipalName>, StorageError> {
-        let state = self.state.read().await;
-        Ok(principal_ids
-            .into_iter()
-            .filter_map(|id| {
-                state
-                    .principals
-                    .get(&id.id())
-                    .map(|principal| StorageHistoryPrincipalName::new(id, principal.name()))
-            })
-            .collect())
+        let state = self.state.read().await?;
+        let requested = principal_ids.into_iter().collect::<BTreeSet<_>>();
+        let mut names = Vec::new();
+        for principal in state.principals.values() {
+            let evidence = state
+                .logical_identities
+                .record(StorageIdentityTarget::Principal(principal.id()))?;
+            if let Some(StorageIdentitySubject::Principal {
+                identity: IdentityReference::Known { identity },
+            }) = evidence.subject()
+                && requested.contains(&identity)
+            {
+                names.push(StorageHistoryPrincipalName::new(identity, principal.name()));
+            }
+        }
+        names.sort_by_key(StorageHistoryPrincipalName::identity);
+        Ok(names)
     }
 
     async fn list_collection_history(
@@ -134,10 +150,11 @@ impl HistoryStorage for MemoryStorage {
         query: StorageHistoryListQuery,
     ) -> Result<StoragePage<StorageCollectionHistoryRecord>, StorageError> {
         let (entity_id, options, scope) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut entries = state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .filter(|entry| {
                 entry.value.entity_id() == entity_id.id()
                     && matches!(entry.value, MemoryHistoryValue::Collection(_))
@@ -162,16 +179,36 @@ impl HistoryStorage for MemoryStorage {
         &self,
         query: StorageHistoryAsOfQuery,
     ) -> Result<Option<StorageCollectionHistoryRecord>, StorageError> {
+        let expected_resource = query.expected_resource();
         let (entity_id, at) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let entry = state.history.iter().rev().find(|entry| {
             entry.value.entity_id() == entity_id.id()
                 && matches!(entry.value, MemoryHistoryValue::Collection(_))
                 && entry.valid_from <= at
+                && entry.valid_to.is_none_or(|until| at < until)
         });
+        state.require_history_resource_binding(
+            StorageIdentityHistoryKind::Collection,
+            expected_resource,
+            at,
+            entry,
+        )?;
         let Some(entry) = entry else {
+            state.require_proven_empty_history(
+                StorageIdentityHistoryKind::Collection,
+                entity_id,
+                expected_resource,
+                at,
+            )?;
             return Ok(None);
         };
+        state.require_history_as_of(
+            entry.family(),
+            Some(&entry.logical_identity),
+            at,
+            entry.valid_from,
+        )?;
         if entry.operation == StorageHistoryOperation::Delete {
             return Ok(None);
         }
@@ -190,10 +227,11 @@ impl HistoryStorage for MemoryStorage {
         query: StorageHistoryListQuery,
     ) -> Result<StoragePage<StorageClassHistoryRecord>, StorageError> {
         let (entity_id, options, scope) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut entries = state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .filter(|entry| {
                 entry.value.entity_id() == entity_id.id()
                     && matches!(entry.value, MemoryHistoryValue::Class(_))
@@ -218,16 +256,36 @@ impl HistoryStorage for MemoryStorage {
         &self,
         query: StorageHistoryAsOfQuery,
     ) -> Result<Option<StorageClassHistoryRecord>, StorageError> {
+        let expected_resource = query.expected_resource();
         let (entity_id, at) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let entry = state.history.iter().rev().find(|entry| {
             entry.value.entity_id() == entity_id.id()
                 && matches!(entry.value, MemoryHistoryValue::Class(_))
                 && entry.valid_from <= at
+                && entry.valid_to.is_none_or(|until| at < until)
         });
+        state.require_history_resource_binding(
+            StorageIdentityHistoryKind::Class,
+            expected_resource,
+            at,
+            entry,
+        )?;
         let Some(entry) = entry else {
+            state.require_proven_empty_history(
+                StorageIdentityHistoryKind::Class,
+                entity_id,
+                expected_resource,
+                at,
+            )?;
             return Ok(None);
         };
+        state.require_history_as_of(
+            entry.family(),
+            Some(&entry.logical_identity),
+            at,
+            entry.valid_from,
+        )?;
         if entry.operation == StorageHistoryOperation::Delete {
             return Ok(None);
         }
@@ -246,10 +304,11 @@ impl HistoryStorage for MemoryStorage {
         query: StorageObjectHistoryListQuery,
     ) -> Result<StoragePage<StorageObjectHistoryRecord>, StorageError> {
         let (object_id, class_id, options, scope) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut entries = state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .filter(|entry| match &entry.value {
                 MemoryHistoryValue::Object(record) => {
                     record.id() == object_id
@@ -305,11 +364,14 @@ impl HistoryStorage for MemoryStorage {
                     .collect::<Result<Vec<_>, StorageError>>()
             })
             .transpose()?;
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let limit = options.limit().unwrap_or(usize::MAX);
         let mut selected = BinaryHeap::new();
         let mut total = 0;
         for (index, entry) in state.history.iter().enumerate() {
+            if !state.history_entry_visible(entry) {
+                continue;
+            }
             let MemoryHistoryValue::Object(record) = &entry.value else {
                 continue;
             };
@@ -401,7 +463,9 @@ impl HistoryStorage for MemoryStorage {
                     .collect::<Result<Vec<_>, StorageError>>()
             })
             .transpose()?;
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
+        state.require_population_class_binding(&query)?;
+        state.require_population_gap_authorization(&query)?;
         let limit = options.limit().unwrap_or(usize::MAX);
         let mut selected = BinaryHeap::new();
         let mut total = 0;
@@ -427,6 +491,27 @@ impl HistoryStorage for MemoryStorage {
             if !visible {
                 continue;
             }
+            state
+                .require_history_as_of(
+                    entry.family(),
+                    Some(&entry.logical_identity),
+                    query.at(),
+                    entry.valid_from,
+                )
+                .map_err(|error| {
+                    if error.kind() == StorageErrorKind::NotFound
+                        && self
+                            .current_execution_scope()
+                            .history_read_override()
+                            .is_some()
+                    {
+                        StorageError::unavailable(
+                            "Expired population lacks original authorization evidence",
+                        )
+                    } else {
+                        error
+                    }
+                })?;
             total += 1;
             let key = sorts
                 .iter()
@@ -471,17 +556,40 @@ impl HistoryStorage for MemoryStorage {
         &self,
         query: StorageObjectHistoryAsOfQuery,
     ) -> Result<Option<StorageObjectHistoryRecord>, StorageError> {
+        let expected_resource = query.expected_resource();
         let (object_id, class_id, at) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let entry = state.history.iter().rev().find(|entry| match &entry.value {
             MemoryHistoryValue::Object(record) => {
-                record.id() == object_id && record.class_id() == class_id && entry.valid_from <= at
+                record.id() == object_id
+                    && record.class_id() == class_id
+                    && entry.valid_from <= at
+                    && entry.valid_to.is_none_or(|until| at < until)
             }
             _ => false,
         });
+        state.require_history_resource_binding(
+            StorageIdentityHistoryKind::Object,
+            expected_resource,
+            at,
+            entry,
+        )?;
         let Some(entry) = entry else {
+            state.require_proven_empty_history(
+                StorageIdentityHistoryKind::Object,
+                ResourceId::new(object_id.id())
+                    .map_err(|error| StorageError::backend_failure(error.to_string()))?,
+                expected_resource,
+                at,
+            )?;
             return Ok(None);
         };
+        state.require_history_as_of(
+            entry.family(),
+            Some(&entry.logical_identity),
+            at,
+            entry.valid_from,
+        )?;
         if entry.operation == StorageHistoryOperation::Delete {
             return Ok(None);
         }
@@ -500,10 +608,11 @@ impl HistoryStorage for MemoryStorage {
         query: StorageHistoryListQuery,
     ) -> Result<StoragePage<StorageExportTemplateHistoryRecord>, StorageError> {
         let (entity_id, options, scope) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut entries = state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .filter(|entry| {
                 entry.value.entity_id() == entity_id.id()
                     && matches!(entry.value, MemoryHistoryValue::ExportTemplate(_))
@@ -528,16 +637,36 @@ impl HistoryStorage for MemoryStorage {
         &self,
         query: StorageHistoryAsOfQuery,
     ) -> Result<Option<StorageExportTemplateHistoryRecord>, StorageError> {
+        let expected_resource = query.expected_resource();
         let (entity_id, at) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let entry = state.history.iter().rev().find(|entry| {
             entry.value.entity_id() == entity_id.id()
                 && matches!(entry.value, MemoryHistoryValue::ExportTemplate(_))
                 && entry.valid_from <= at
+                && entry.valid_to.is_none_or(|until| at < until)
         });
+        state.require_history_resource_binding(
+            StorageIdentityHistoryKind::ExportTemplate,
+            expected_resource,
+            at,
+            entry,
+        )?;
         let Some(entry) = entry else {
+            state.require_proven_empty_history(
+                StorageIdentityHistoryKind::ExportTemplate,
+                entity_id,
+                expected_resource,
+                at,
+            )?;
             return Ok(None);
         };
+        state.require_history_as_of(
+            entry.family(),
+            Some(&entry.logical_identity),
+            at,
+            entry.valid_from,
+        )?;
         if entry.operation == StorageHistoryOperation::Delete {
             return Ok(None);
         }
@@ -556,10 +685,11 @@ impl HistoryStorage for MemoryStorage {
         query: StorageHistoryListQuery,
     ) -> Result<StoragePage<StorageRemoteTargetHistoryRecord>, StorageError> {
         let (entity_id, options, scope) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut entries = state
             .history
             .iter()
+            .filter(|entry| state.history_entry_visible(entry))
             .filter(|entry| {
                 entry.value.entity_id() == entity_id.id()
                     && matches!(entry.value, MemoryHistoryValue::RemoteTarget(_))
@@ -584,16 +714,36 @@ impl HistoryStorage for MemoryStorage {
         &self,
         query: StorageHistoryAsOfQuery,
     ) -> Result<Option<StorageRemoteTargetHistoryRecord>, StorageError> {
+        let expected_resource = query.expected_resource();
         let (entity_id, at) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let entry = state.history.iter().rev().find(|entry| {
             entry.value.entity_id() == entity_id.id()
                 && matches!(entry.value, MemoryHistoryValue::RemoteTarget(_))
                 && entry.valid_from <= at
+                && entry.valid_to.is_none_or(|until| at < until)
         });
+        state.require_history_resource_binding(
+            StorageIdentityHistoryKind::RemoteTarget,
+            expected_resource,
+            at,
+            entry,
+        )?;
         let Some(entry) = entry else {
+            state.require_proven_empty_history(
+                StorageIdentityHistoryKind::RemoteTarget,
+                entity_id,
+                expected_resource,
+                at,
+            )?;
             return Ok(None);
         };
+        state.require_history_as_of(
+            entry.family(),
+            Some(&entry.logical_identity),
+            at,
+            entry.valid_from,
+        )?;
         if entry.operation == StorageHistoryOperation::Delete {
             return Ok(None);
         }

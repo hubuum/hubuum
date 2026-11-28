@@ -23,10 +23,14 @@ use crate::storage::StorageBackendKind;
 use crate::tasks::TaskWorkerSettings;
 use environment::{constraints, validate_configuration_bounds};
 
+pub mod artifacts;
 mod client_network;
+mod control_recovery;
+pub use control_recovery::ControlRecoveryOptions;
 mod defaults;
 mod query_observations;
 mod schema_validation;
+mod task_admission;
 use hubuum_storage_core::StorageQueryObservationSettings;
 use query_observations::QueryObservationOptions;
 mod secret_source;
@@ -185,6 +189,12 @@ pub struct AppConfig {
     #[serde(skip)]
     runtime_managed_groups: BTreeSet<StorageRuntimeSettingsGroup>,
 
+    #[command(flatten)]
+    #[serde(default)]
+    pub artifacts: artifacts::ArtifactOptions,
+    #[command(flatten)]
+    #[serde(default)]
+    pub control_recovery: ControlRecoveryOptions,
     #[command(flatten)]
     #[serde(default)]
     pub schema_validation: SchemaValidationOptions,
@@ -686,7 +696,7 @@ pub struct AppConfig {
     )]
     pub backup_output_retention_hours: i64,
 
-    /// Maximum active backup tasks one principal may own.
+    /// Initial shared-policy limit for active backup tasks per principal. Later changes use the administrator task-capacity endpoint.
     #[clap(
         long,
         env = "HUBUUM_BACKUP_MAX_ACTIVE_TASKS_PER_USER",
@@ -722,7 +732,7 @@ pub struct AppConfig {
     )]
     pub restore_max_upload_bytes: usize,
 
-    /// Maximum queued/validating/running import tasks one user may have at once.
+    /// Initial shared-policy limit for outstanding import tasks per principal. Later changes use the administrator task-capacity endpoint.
     #[clap(
         long,
         env = "HUBUUM_IMPORT_MAX_ACTIVE_TASKS_PER_USER",
@@ -730,7 +740,7 @@ pub struct AppConfig {
     )]
     pub import_max_active_tasks_per_user: usize,
 
-    /// Maximum queued/validating/running export tasks one user may have at once.
+    /// Initial shared-policy limit for outstanding export tasks per principal. Later changes use the administrator task-capacity endpoint.
     #[clap(
         long,
         env = "HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER",
@@ -819,7 +829,7 @@ pub struct AppConfig {
     )]
     pub remote_call_allow_private_targets: bool,
 
-    /// Maximum queued/validating/running remote call tasks one user may have at once.
+    /// Initial shared-policy limit for outstanding remote-call tasks per principal. Later changes use the administrator task-capacity endpoint.
     #[clap(
         long,
         env = "HUBUUM_REMOTE_CALL_MAX_ACTIVE_TASKS_PER_USER",
@@ -1407,6 +1417,9 @@ impl AppConfig {
     fn validate(mut self) -> Result<Self, ApiError> {
         self.query_observation_settings = self.query_observations.validate()?;
         self.schema_limits = self.schema_validation.validate()?;
+        self.artifacts
+            .validate(self.export_max_output_bytes, self.backup_max_output_bytes)?;
+        self.control_recovery.paths()?;
         if self.actix_workers == 0 {
             return Err(ApiError::BadRequest(
                 "actix_workers must be greater than 0".to_string(),

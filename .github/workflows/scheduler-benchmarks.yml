@@ -1,0 +1,116 @@
+name: Scheduler acceptance
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Resource profile to measure (five repeats of every workload)
+        type: choice
+        default: both
+        options: [both, local, shared]
+
+concurrency:
+  group: >-
+    scheduler-${{ github.event.pull_request.number || github.ref }}-${{
+      (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+      github.event.label.name != 'ci:scheduler' && github.run_id || 'selected' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build scheduler measurement binaries
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'ci:scheduler') &&
+       ((github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+        github.event.label.name == 'ci:scheduler'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable 2026-10-22
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: scheduler-acceptance
+      - name: Build once for both resource profiles
+        run: |
+          cargo build --locked --release --features embedded-migrations \
+            -p hubuum -p hubuum-scale-benchmark \
+            --bin hubuum-admin --bin hubuum-scale-benchmark
+          {
+            git rev-parse HEAD
+            rustc -Vv
+            cargo -V
+            sha256sum Cargo.lock target/release/hubuum-admin target/release/hubuum-scale-benchmark
+          } > target/scheduler-build.txt
+          tar -C target/release -czf target/scheduler-binaries.tar.gz hubuum-admin hubuum-scale-benchmark
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scheduler-binaries
+          path: |
+            target/scheduler-binaries.tar.gz
+            target/scheduler-build.txt
+          retention-days: 7
+
+  measure:
+    name: Scheduler / ${{ matrix.profile }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJSON(inputs.profile == 'local' && '["local"]' || inputs.profile == 'shared' && '["shared"]' || '["local","shared"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: scheduler-binaries
+          path: target
+      - name: Restore binaries and record runner resources
+        run: |
+          mkdir -p target/release
+          tar -xzf target/scheduler-binaries.tar.gz -C target/release
+          {
+            python3 --version
+            lscpu
+            free -b
+            df -h .
+            lsblk -o NAME,ROTA,SIZE,TYPE
+            docker version
+            docker info --format '{{json .}}'
+          } > target/scheduler-runner.txt
+      - name: Measure every repeat before enforcing budgets
+        env:
+          SCHEDULER_PROFILE: ${{ matrix.profile }}
+        # The sampler reads root-owned Docker processes through /proc.
+        run: >-
+          sudo "$(command -v python3)" -I -S tests/python/run.py integration scheduling-benchmark
+          --profile "$SCHEDULER_PROFILE" --check-budgets
+          --output target/scheduler-report
+      - name: Retain raw measurements, including failed runs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scheduler-${{ matrix.profile }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            target/scheduler-report
+            target/scheduler-build.txt
+            target/scheduler-runner.txt
+          if-no-files-found: error
+          retention-days: 30

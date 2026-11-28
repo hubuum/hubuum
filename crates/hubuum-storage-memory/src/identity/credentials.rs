@@ -7,7 +7,7 @@ impl AuthenticationStorage for MemoryStorage {
         token: TokenId,
         creation: StorageCredentialCreation,
     ) -> Result<(), StorageError> {
-        self.state.write().await.record_creation(token, creation)
+        self.state.write().await?.record_creation(token, creation)
     }
     async fn observe_credential_source(
         &self,
@@ -16,29 +16,29 @@ impl AuthenticationStorage for MemoryStorage {
         policy: CredentialActivityPolicy,
     ) -> Result<(), StorageError> {
         self.state
-            .write()
-            .await
+            .write_authentication()
+            .await?
             .observe_source(token, source, policy)
     }
     async fn credential_activity(
         &self,
         query: StorageActivityQuery,
     ) -> Result<StorageCredentialActivity, StorageError> {
-        self.state.read().await.read_activity(query)
+        self.state.read().await?.read_activity(query)
     }
     async fn purge_credential_sources(
         &self,
         policy: CredentialActivityPolicy,
         limit: usize,
     ) -> Result<usize, StorageError> {
-        Ok(self.state.write().await.purge_sources(policy, limit))
+        Ok(self.state.write().await?.purge_sources(policy, limit))
     }
 
     async fn create_auth_session(
         &self,
         request: StorageSessionCreate,
     ) -> Result<StorageMutationOutcome<StorageSessionIssued>, StorageError> {
-        let mut live = self.state.write().await;
+        let mut live = self.state.write().await?;
         let mut staged = live.clone();
         let result = staged.create_session(request)?;
         *live = staged;
@@ -48,13 +48,13 @@ impl AuthenticationStorage for MemoryStorage {
         &self,
         credential: RefreshCredential,
     ) -> Result<PrincipalId, StorageError> {
-        self.state.read().await.refresh_owner(&credential)
+        self.state.read().await?.refresh_owner(&credential)
     }
     async fn rotate_auth_session(
         &self,
         request: StorageSessionRotate,
     ) -> Result<StorageMutationOutcome<StorageSessionRotation>, StorageError> {
-        let mut live = self.state.write().await;
+        let mut live = self.state.write().await?;
         let mut staged = live.clone();
         let result = staged.rotate_session(request)?;
         *live = staged;
@@ -65,14 +65,14 @@ impl AuthenticationStorage for MemoryStorage {
         target: SessionRevocation,
         context: EventContext,
     ) -> Result<StorageMutationOutcome<usize>, StorageError> {
-        let mut live = self.state.write().await;
+        let mut live = self.state.write().await?;
         let mut staged = live.clone();
         let result = staged.revoke_sessions(target, context)?;
         *live = staged;
         Ok(result)
     }
     async fn purge_auth_sessions(&self, limit: usize) -> Result<usize, StorageError> {
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let purged = state.purge_sessions(limit);
         state.cleanup_credential_activity();
         Ok(purged)
@@ -85,7 +85,7 @@ impl AuthenticationStorage for MemoryStorage {
         let (credentials, migration_target, observed_at, legacy_valid_after) = attempt.into_parts();
         let observation = StorageTokenObservation::try_new(observed_at, legacy_valid_after)
             .map_err(invalid_contract_value)?;
-        let mut state = self.state.write().await;
+        let mut state = self.state.write_authentication().await?;
         let matching = state
             .tokens
             .values()
@@ -186,7 +186,7 @@ impl AuthenticationStorage for MemoryStorage {
         &self,
         principal_id: PrincipalId,
     ) -> Result<StorageAuthenticationIdentity, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let principal = state.principals.get(&principal_id.id()).ok_or_else(|| {
             StorageError::not_found(format!("Principal {} was not found", principal_id.id()))
         })?;
@@ -231,7 +231,7 @@ impl AuthenticationStorage for MemoryStorage {
         let persisted = self
             .state
             .read()
-            .await
+            .await?
             .tokens
             .get(&query.token_id().id())
             .and_then(|record| record.scope.clone());
@@ -252,7 +252,7 @@ impl AuthenticationStorage for MemoryStorage {
 #[async_trait]
 impl LocalIdentityCredentialStorage for MemoryStorage {
     async fn is_default_admin_bootstrap_required(&self) -> Result<bool, StorageError> {
-        Ok(self.state.read().await.users.is_empty())
+        Ok(self.state.read().await?.users.is_empty())
     }
 
     async fn bootstrap_default_admin(
@@ -267,7 +267,7 @@ impl LocalIdentityCredentialStorage for MemoryStorage {
         request: StorageLocalPasswordReset,
     ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         let (name, password_hash, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let user_id = state
             .users
             .iter()
@@ -307,7 +307,7 @@ impl LocalIdentityCredentialStorage for MemoryStorage {
             .get(&user_id)
             .cloned()
             .ok_or_else(|| StorageError::internal("password reset principal is missing"))?;
-        state.principals.insert(
+        state.store_principal(
             user_id,
             advanced_principal(
                 &principal,
@@ -340,7 +340,7 @@ impl TokenStorage for MemoryStorage {
         &self,
         request: StorageCredentialApprovalCreate,
     ) -> Result<StorageMutationOutcome<StorageCredentialApprovalMetadata>, StorageError> {
-        let mut live = self.state.write().await;
+        let mut live = self.state.write().await?;
         let mut staged = live.clone();
         let result = staged.create_credential_approval(request)?;
         *live = staged;
@@ -352,7 +352,7 @@ impl TokenStorage for MemoryStorage {
     ) -> Result<StorageCredentialApprovalMetadata, StorageError> {
         self.state
             .read()
-            .await
+            .await?
             .credential_approvals
             .metadata(id)
             .cloned()
@@ -364,7 +364,7 @@ impl TokenStorage for MemoryStorage {
         query: StorageTokenListQuery,
     ) -> Result<StoragePage<StorageTokenMetadata>, StorageError> {
         let (principal_id, options, list_state, observation) = query.into_parts();
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let rows = state
             .tokens
             .values()
@@ -391,7 +391,7 @@ impl TokenStorage for MemoryStorage {
             latest_expiry: Option<DateTime<Utc>>,
         }
 
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let mut usage = BTreeMap::<Option<StorageTokenHashKeyId>, Usage>::new();
         for token in state.tokens.values() {
             let metadata = token.metadata(observation)?;
@@ -450,7 +450,7 @@ impl TokenStorage for MemoryStorage {
         &self,
         request: StorageTokenCreate,
     ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {
-        let mut live = self.state.write().await;
+        let mut live = self.state.write().await?;
         let mut staged = live.clone();
         let result = staged.issue_token(request)?;
         *live = staged;
@@ -463,7 +463,7 @@ impl TokenStorage for MemoryStorage {
     ) -> Result<StorageMutationOutcome<StorageTokenMetadata>, StorageError> {
         let claim = request.take_credential_claim();
         let (source_id, principal_id, digest, expires_at, policy, context) = request.into_parts();
-        let mut live = self.state.write().await;
+        let mut live = self.state.write().await?;
         let mut staged = live.clone();
         let approval_audit = staged.consume_credential_claim(
             claim.as_ref(),
@@ -513,7 +513,7 @@ impl TokenStorage for MemoryStorage {
         token_id: TokenId,
         observation: StorageTokenObservation,
     ) -> Result<StorageTokenMetadata, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let token = state.tokens.get(&token_id.id()).ok_or_else(|| {
             StorageError::not_found(format!("Token {} was not found", token_id.id()))
         })?;
@@ -532,7 +532,7 @@ impl TokenStorage for MemoryStorage {
         token_ids: Vec<TokenId>,
         observation: StorageTokenObservation,
     ) -> Result<Vec<StorageTokenMetadata>, StorageError> {
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         token_ids
             .into_iter()
             .map(|id| {
@@ -552,7 +552,7 @@ impl TokenStorage for MemoryStorage {
         request: StorageTokenRevoke,
     ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         let (token_id, principal_id, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let token = state.tokens.get_mut(&token_id.id()).ok_or_else(|| {
             StorageError::not_found(format!("Token {} was not found", token_id.id()))
         })?;
@@ -597,7 +597,7 @@ impl TokenStorage for MemoryStorage {
         let token_id = self
             .state
             .read()
-            .await
+            .await?
             .tokens
             .values()
             .find(|token| {
@@ -613,7 +613,7 @@ impl TokenStorage for MemoryStorage {
         let owner = self
             .state
             .read()
-            .await
+            .await?
             .tokens
             .get(&token_id.id())
             .expect("token selected by id exists")
@@ -627,7 +627,7 @@ impl TokenStorage for MemoryStorage {
         request: StoragePrincipalTokensRevoke,
     ) -> Result<StorageMutationOutcome<usize>, StorageError> {
         let (principal_id, context) = request.into_parts();
-        let mut state = self.state.write().await;
+        let mut state = self.state.write().await?;
         let now = Utc::now();
         let mut revoked = Vec::new();
         state.invalidate_principal_sessions(principal_id.id());

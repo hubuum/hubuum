@@ -108,7 +108,7 @@ impl MemoryStorage {
             .map_err(invalid_contract_value)?;
         self.state
             .write()
-            .await
+            .await?
             .class_relations
             .insert(ClassRelationId::from(updated.metadata().id()).id(), updated);
         Ok(Some(revision))
@@ -136,7 +136,7 @@ impl MemoryStorage {
             )
             .await?;
         let (from_object_id, to_object_id) = ordered_ids(from_object_id, to_object_id);
-        let state = self.state.read().await;
+        let state = self.state.read().await?;
         let from = state
             .objects
             .get(&from_object_id.id())
@@ -239,7 +239,7 @@ impl MemoryStorage {
             current.class_relation_id(),
         )
         .map_err(invalid_contract_value)?;
-        self.state.write().await.object_relations.insert(
+        self.state.write().await?.object_relations.insert(
             ObjectRelationId::from(updated.metadata().id()).id(),
             updated,
         );

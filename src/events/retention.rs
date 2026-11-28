@@ -19,7 +19,7 @@ use crate::config::{
 use crate::errors::ApiError;
 use crate::events::EventRetentionSettings;
 use crate::lifecycle::{ShutdownSignal, spawn_background_worker};
-use crate::restores::MaintenanceActivityGuard;
+use crate::restores::{MaintenanceActivityGuard, with_application_work};
 use crate::storage::StorageContext;
 use crate::storage::{
     EventArchiveSink, StorageError, StorageEventRetentionBatch, StorageEventRetentionSummary,
@@ -57,14 +57,16 @@ impl EventArchiveSink for FileEventArchiveSink<'_> {
         };
         let path = path.to_path_buf();
         let batch = batch.clone();
-        tokio::task::spawn_blocking(move || archive_event_batch(&path, &batch))
-            .await
-            .map_err(|error| {
-                StorageError::internal(format!("Event archive task failed to complete: {error}"))
-            })?
-            .map_err(|error| {
-                StorageError::internal(format!("Event archive output failed: {error}"))
-            })
+        let activity = MaintenanceActivityGuard::begin();
+        tokio::task::spawn_blocking(move || {
+            let _activity = activity;
+            archive_event_batch(&path, &batch)
+        })
+        .await
+        .map_err(|error| {
+            StorageError::internal(format!("Event archive task failed to complete: {error}"))
+        })?
+        .map_err(|error| StorageError::internal(format!("Event archive output failed: {error}")))
     }
 }
 
@@ -107,15 +109,17 @@ pub async fn process_event_retention_batch(
     settings: EventRetentionSettings,
     archive_path: Option<&Path>,
 ) -> Result<StorageEventRetentionSummary, ApiError> {
-    let _activity = MaintenanceActivityGuard::begin();
     let storage = storage_handle(pool);
-    execute_event_retention_batch(
-        &storage,
-        settings,
-        &FileEventArchiveSink { path: archive_path },
-    )
+    with_application_work(&storage, async {
+        execute_event_retention_batch(
+            &storage,
+            settings,
+            &FileEventArchiveSink { path: archive_path },
+        )
+        .await
+        .map_err(ApiError::from)
+    })
     .await
-    .map_err(Into::into)
 }
 
 fn retention_worker_should_continue(

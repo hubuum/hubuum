@@ -193,6 +193,14 @@ fn descriptor(
         for (name, value) in defaults.as_object().expect("policy object") {
             schema["properties"][name]["default"] = value.clone();
         }
+        for field in crate::config::runtime::task_admission_seed_fields(group.into()) {
+            let property = &mut schema["properties"][*field];
+            property["readOnly"] = json!(true);
+            property["const"] = defaults[*field].clone();
+            property["description"] = json!(
+                "Deployment seed retained for compatibility. Manage authoritative shared admission through /api/v1/admin/task-capacity."
+            );
+        }
         match group {
             RuntimeSettingsGroup::Tokens => {
                 schema["properties"]["lifetime_hours"]["maximum"] =
