@@ -527,3 +527,77 @@ async fn native_publication_claim_rollback_keeps_child_pin_and_record_atomic(
     );
     assert_eq!(outcome.unwrap(), (true, true));
 }
+
+#[tokio::test]
+async fn rolling_back_pin_reclamation_restores_the_query_and_its_original_obligation() {
+    let admin = if database_role_tests_enabled() {
+        integration_test_migration_pool(1)
+    } else {
+        integration_test_pool(1)
+    };
+    let capture = Uuid::new_v4();
+    let resource = Uuid::new_v4();
+    let principal = Uuid::new_v4();
+    let material = serde_json::json!({
+        "id": capture,
+        "principal": principal,
+        "reserved_read_bytes": 0,
+        "archive": {
+            "identity": {"resource": resource, "version": Uuid::new_v4()},
+            "location": {
+                "identity": {"artifact": Uuid::new_v4(), "attempt": Uuid::new_v4(),
+                    "destination": Uuid::new_v4(), "version": Uuid::new_v4()},
+                "manifest_digest": (0..32).collect::<Vec<_>>(),
+            },
+        },
+    });
+    let observed = crate::with_connection(&admin, async |connection| {
+        connection.batch_execute("BEGIN").await?;
+        let result = async {
+            if database_role_tests_enabled() {
+                sql_query("SELECT set_config('role', $1, true)")
+                    .bind::<Text, _>(integration_test_database_roles().owner().as_str())
+                    .execute(connection)
+                    .await?;
+            }
+            sql_query(
+                "INSERT INTO hubuum_control.history_archive_captures(id,principal,expires_at,material,bytes)
+                 VALUES($1,$2,clock_timestamp(),$3,octet_length($3::text))",
+            )
+            .bind::<SqlUuid, _>(capture)
+            .bind::<SqlUuid, _>(principal)
+            .bind::<Jsonb, _>(&material)
+            .execute(connection)
+            .await?;
+            connection.batch_execute("SAVEPOINT reclaim").await?;
+            sql_query("DELETE FROM hubuum_control.history_archive_captures WHERE id=$1")
+                .bind::<SqlUuid, _>(capture)
+                .execute(connection)
+                .await?;
+            let journaled = sql_query(
+                "SELECT EXISTS(SELECT 1 FROM hubuum_control.history_archive_reclaimed_pins
+                               WHERE resource=$1) AS allowed",
+            )
+            .bind::<SqlUuid, _>(resource)
+            .get_result::<Allowed>(connection)
+            .await?;
+            connection.batch_execute("ROLLBACK TO SAVEPOINT reclaim").await?;
+            let restored = sql_query(
+                "SELECT EXISTS(SELECT 1 FROM hubuum_control.history_archive_captures WHERE id=$1)
+                    AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_archive_reclaimed_pins
+                                   WHERE resource=$2) AS allowed",
+            )
+            .bind::<SqlUuid, _>(capture)
+            .bind::<SqlUuid, _>(resource)
+            .get_result::<Allowed>(connection)
+            .await?;
+            Ok::<_, PostgresStorageError>((journaled.allowed, restored.allowed))
+        }
+        .await;
+        connection.batch_execute("ROLLBACK").await?;
+        result
+    })
+    .await
+    .unwrap();
+    assert_eq!(observed, (true, true));
+}
