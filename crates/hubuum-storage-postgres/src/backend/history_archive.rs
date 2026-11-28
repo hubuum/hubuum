@@ -1,6 +1,5 @@
 //! Short native catalog/capture transactions; external segment I/O is service-owned.
 mod cleanup;
-mod pins;
 use super::*;
 use crate::PostgresConnection;
 use chrono::{DateTime, Utc};
@@ -66,6 +65,8 @@ macro_rules! fenced {
             .bind::<BigInt, _>($permit.fence().revision())
     };
 }
+mod pins;
+
 fn decode<T: DeserializeOwned>(encoded: &str) -> Result<T, PostgresStorageError> {
     serde_json::from_str(encoded)
         .map_err(|e| PostgresStorageError::invalid_persisted_value("history archive", e))
@@ -259,11 +260,11 @@ impl PostgresStorage {
 }
 #[async_trait]
 impl HistoryArchiveStorage for PostgresStorage {
-    async fn history_archive_pinned_copies(
+    async fn history_archive_copy_history(
         &self,
         target: StorageRecordIdentity,
         fence: ApplicationFence,
-    ) -> Result<HistoryArchivePinnedCopies, StorageError> {
+    ) -> Result<HistoryArchiveCopyHistory, StorageError> {
         self.runtime()
             .with_control_connection(async |connection| {
                 pins::read_on(connection, target, fence).await
@@ -341,7 +342,7 @@ impl HistoryArchiveStorage for PostgresStorage {
             .identity()
             .resource();
             let current=catalog_on(connection,resource,true,permit.application()).await?;
-            let next=current.publish(expected,descriptors.clone())?;
+            let publication=current.publication(expected,descriptors.clone())?;
             let mut scanned=history_archive_encoded_bytes(&descriptors,HISTORY_ARCHIVE_BATCH_BYTES)?.len();
             for descriptor in &descriptors {
                 let selection=HistoryArchiveSelection::new(StorageBackupHistorySection::CollectionHistory,resource,HistoryArchivePoint::Exact{version:descriptor.identity().version()});
@@ -352,9 +353,12 @@ impl HistoryArchiveStorage for PostgresStorage {
                 if !descriptor.matches_row(&hot)? { return Err(PostgresStorageError::conflict("Catalog content differs from retained primary version")); }
             }
             let saved=fenced!(sql_query("SELECT public.hubuum_history_archive_catalog_publish($1,$2,$3,$4,$5,$6,$7) AS allowed")
-                .bind::<SqlUuid,_>(Uuid::from_bytes(*resource.as_bytes())).bind::<BigInt,_>(expected.value()).bind::<Jsonb,_>(json(&next,HISTORY_ARCHIVE_CATALOG_BYTES)?),permit.application()).get_result::<Allowed>(connection).await?;
+                .bind::<SqlUuid,_>(Uuid::from_bytes(*resource.as_bytes())).bind::<BigInt,_>(expected.value()).bind::<Jsonb,_>(json(publication.catalog(),HISTORY_ARCHIVE_CATALOG_BYTES)?),permit.application()).get_result::<Allowed>(connection).await?;
             if !saved.allowed { return Err(PostgresStorageError::conflict("Catalog generation changed")); }
-            Ok::<_,PostgresStorageError>(next)
+            if expected.value() != 0 {
+                pins::record_displacements(connection, &publication, permit.application()).await?;
+            }
+            Ok::<_,PostgresStorageError>(publication.into_catalog())
         }).await.map_err(StorageError::from)
     }
     async fn capture_history_archive(
