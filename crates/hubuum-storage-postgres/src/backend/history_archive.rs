@@ -2,7 +2,6 @@
 #[cfg(feature = "integration-test-support")]
 pub(crate) mod allocation;
 mod cleanup;
-#[cfg(feature = "integration-test-support")]
 mod packed;
 use super::*;
 use crate::PostgresConnection;
@@ -23,11 +22,6 @@ struct ObservedMaterial {
     material: Option<String>,
     #[diesel(sql_type=Timestamptz)]
     observed_at: DateTime<Utc>,
-}
-#[derive(QueryableByName)]
-struct Material {
-    #[diesel(sql_type=Nullable<Text>)]
-    material: Option<String>,
 }
 #[derive(QueryableByName)]
 struct Allowed {
@@ -79,34 +73,7 @@ fn json(value: &impl serde::Serialize, max: usize) -> Result<Value, PostgresStor
         PostgresStorageError::invalid_persisted_value("history archive serialization", e)
     })
 }
-async fn catalog_on(
-    connection: &mut PostgresConnection,
-    resource: ResourceIdentity,
-    locked: bool,
-    permit: &StorageExecutionPermit,
-) -> Result<HistoryArchiveCatalog, PostgresStorageError> {
-    let row = fenced!(
-        sql_query(
-            "SELECT public.hubuum_history_archive_catalog_read($1,$2,$3,$4,$5,$6)::text AS material"
-        )
-        .bind::<SqlUuid, _>(Uuid::from_bytes(*resource.as_bytes()))
-        .bind::<Bool, _>(locked),
-        permit
-    )
-    .get_result::<Material>(connection)
-    .await?;
-    let catalog = row
-        .material
-        .as_deref()
-        .map(decode)
-        .transpose()?
-        .unwrap_or_else(|| HistoryArchiveCatalog::empty(resource));
-    catalog.validate()?;
-    if catalog.resource() != resource {
-        return Err(PostgresStorageError::database("Catalog resource mismatch"));
-    }
-    Ok(catalog)
-}
+mod catalog;
 async fn hot_on(
     connection: &mut PostgresConnection,
     selection: &HistoryArchiveSelection,
@@ -311,7 +278,7 @@ impl HistoryArchiveStorage for PostgresStorage {
         self.require_archive_owner(permit)?;
         self.runtime()
             .with_history_archive_connection(permit, async |connection| {
-                catalog_on(connection, resource, false, permit.application()).await
+                catalog::load(connection, resource, false, permit.application()).await
             })
             .await
             .map_err(StorageError::from)
@@ -323,29 +290,52 @@ impl HistoryArchiveStorage for PostgresStorage {
         permit: &HistoryArchiveExecutionPermit,
     ) -> Result<HistoryArchiveCatalog, StorageError> {
         self.require_archive_owner(permit)?;
-        self.runtime().with_history_archive_transaction(permit, async move |connection| {
-        let resource = descriptors
-            .as_slice()
-            .first()
-            .ok_or_else(|| StorageError::invalid_input("Empty archive publication"))?
-            .identity()
-            .resource();
-            let current=catalog_on(connection,resource,true,permit.application()).await?;
-            let next=current.publish(expected,descriptors.clone())?;
-            let mut scanned=history_archive_encoded_bytes(&descriptors,HISTORY_ARCHIVE_BATCH_BYTES)?.len();
-            for descriptor in &descriptors {
-                let selection=HistoryArchiveSelection::new(StorageBackupHistorySection::CollectionHistory,resource,HistoryArchivePoint::Exact{version:descriptor.identity().version()});
-                let input=hot_on(connection,&selection).await?;
-                let HistoryArchiveInput::Available(hot)=input else { return Err(PostgresStorageError::conflict("Publication requires the exact retained primary version")); };
-                scanned+=history_archive_encoded_bytes(&hot,HISTORY_ARCHIVE_ROW_BYTES)?.len();
-                if scanned>HISTORY_ARCHIVE_BATCH_BYTES { return Err(StorageError::input_too_large("Publication input exceeds batch budget").into()); }
-                if !descriptor.matches_row(&hot)? { return Err(PostgresStorageError::conflict("Catalog content differs from retained primary version")); }
-            }
-            let saved=fenced!(sql_query("SELECT public.hubuum_history_archive_catalog_publish($1,$2,$3,$4,$5,$6,$7) AS allowed")
-                .bind::<SqlUuid,_>(Uuid::from_bytes(*resource.as_bytes())).bind::<BigInt,_>(expected.value()).bind::<Jsonb,_>(json(&next,HISTORY_ARCHIVE_CATALOG_BYTES)?),permit.application()).get_result::<Allowed>(connection).await?;
-            if !saved.allowed { return Err(PostgresStorageError::conflict("Catalog generation changed")); }
-            Ok::<_,PostgresStorageError>(next)
-        }).await.map_err(StorageError::from)
+        self.runtime()
+            .with_history_archive_transaction(permit, async move |connection| {
+                let resource = descriptors
+                    .as_slice()
+                    .first()
+                    .ok_or_else(|| StorageError::invalid_input("Empty archive publication"))?
+                    .identity()
+                    .resource();
+                let current =
+                    catalog::load(connection, resource, true, permit.application()).await?;
+                let next = current.publish(expected, descriptors.clone())?;
+                let mut scanned =
+                    history_archive_encoded_bytes(&descriptors, HISTORY_ARCHIVE_BATCH_BYTES)?.len();
+                for descriptor in &descriptors {
+                    let selection = HistoryArchiveSelection::new(
+                        StorageBackupHistorySection::CollectionHistory,
+                        resource,
+                        HistoryArchivePoint::Exact {
+                            version: descriptor.identity().version(),
+                        },
+                    );
+                    let input = hot_on(connection, &selection).await?;
+                    let HistoryArchiveInput::Available(hot) = input else {
+                        return Err(PostgresStorageError::conflict(
+                            "Publication requires the exact retained primary version",
+                        ));
+                    };
+                    scanned +=
+                        history_archive_encoded_bytes(&hot, HISTORY_ARCHIVE_ROW_BYTES)?.len();
+                    if scanned > HISTORY_ARCHIVE_BATCH_BYTES {
+                        return Err(StorageError::input_too_large(
+                            "Publication input exceeds batch budget",
+                        )
+                        .into());
+                    }
+                    if !descriptor.matches_row(&hot)? {
+                        return Err(PostgresStorageError::conflict(
+                            "Catalog content differs from retained primary version",
+                        ));
+                    }
+                }
+                catalog::store(connection, &next, expected, permit.application()).await?;
+                Ok::<_, PostgresStorageError>(next)
+            })
+            .await
+            .map_err(StorageError::from)
     }
     async fn capture_history_archive(
         &self,
@@ -356,7 +346,7 @@ impl HistoryArchiveStorage for PostgresStorage {
         let (capture, saved) = self
             .runtime()
             .with_history_archive_transaction(permit, async move |connection| {
-                let catalog = catalog_on(
+                let catalog = catalog::load(
                     connection,
                     request.selection().resource(),
                     true,

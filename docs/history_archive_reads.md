@@ -35,6 +35,27 @@ migration history to activate expiry. Rollback conservatively refuses any of the
 lifecycle control, expiry-membership or publication tables, even when empty, as
 well as retained catalog records or query pins.
 
+## PostgreSQL catalog upgrade
+
+Stop older API, worker and recovery processes and take a database backup.
+Apply `2026-11-27-000001_packed_history_catalogs` as the migrator, reconcile
+runtime grants, and deploy matching readers and publishers. Existing JSONB
+catalogs remain readable. A successful publication normally converts that
+resource's catalog to the packed representation. Catalogs above the packed
+row ceiling use the bounded JSONB representation. Both go through the same
+owner and generation checks.
+
+A packed row contains the resource and generation, version count, compressed
+metadata, and the complete UUID and SHA-256 commitment of each version.
+The database checks that the envelope matches the row and that its declared
+length covers every commitment. The reader reconstructs and validates the full
+logical catalog. Query captures keep their existing format.
+
+An older reader reports an upgrade error when it encounters a packed row.
+The down migration refuses to proceed while any packed row exists. Roll
+forward, or follow the documented [physical recovery procedure](deletion_recovery.md)
+using the pre-upgrade backup, matching binaries and independent authority.
+
 ## Catalog and captured inputs
 
 A per-resource catalog persists its generation and explicit

@@ -261,10 +261,15 @@ async fn rejected_admission_commits_cleanup_before_the_next_attempt() {
                 .bind::<Text, _>(integration_test_database_roles().owner().as_str())
                 .execute(connection).await?;
         }
+        #[derive(QueryableByName)]
+        struct InsertedIdentity {
+            #[diesel(sql_type = Text)]
+            material: String,
+        }
         let material = sql_query("INSERT INTO public.collections(name,description,parent_collection_id) SELECT $1,$2,id FROM public.collections WHERE parent_collection_id IS NULL RETURNING logical_identity::text AS material")
             .bind::<Text, _>(&name).bind::<Text, _>("x".repeat(24 * 1024))
-            .get_result::<Material>(connection).await?;
-        let evidence: StorageIdentityEvidence = decode(material.material.as_deref().unwrap())?;
+            .get_result::<InsertedIdentity>(connection).await?;
+        let evidence: StorageIdentityEvidence = decode(&material.material)?;
         let identity = evidence.subject().and_then(StorageIdentitySubject::record_identity).unwrap();
         // Exercise the real 1 GiB limit using charged metadata fixtures, without
         // allocating a GiB of irrelevant payloads. Table/counter charges agree.
