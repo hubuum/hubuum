@@ -142,9 +142,11 @@ Erasure review can look up the immutable version of an artifact that a catalog
 previously named, even when no query ever captured it. Publication records the
 former location and manifest digest with the catalog generation change.
 Replaying a location or rejecting a stale publication adds no evidence. The
-operator lookup also includes current query pins and references retained when
-queries were reclaimed. Inspect the current catalog separately for its active
-location. Discovery alone does not establish physical retirement.
+operator lookup returns the current catalog generation and the exact version’s
+active location, together with query pins and references retained after query
+reclamation or catalog replacement. A single snapshot covers all of these reads.
+A relocation appears either before or after its commit, with the corresponding
+set of immutable copies. Physical retirement requires independent evidence.
 
 Stop API and worker processes, back up PostgreSQL, apply the catalog-displacement
 migration with `hubuum-admin --migrate`, reconcile runtime grants, and start
