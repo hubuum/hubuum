@@ -238,6 +238,12 @@ The original v2 measurements above count encoded manifests and exclude other
 provider allocations. The current diagnostic also copies the migrated
 PostgreSQL destination, attempt and chunk tables into the temporary schema.
 It inserts the published manifests and the verified bytes of each block.
+The current diagnostic includes the table, TOAST and index allocation for
+the primary description observations in both online metadata totals. It
+populates the same physical layout from the fixture's source descriptions.
+The 256-byte and 64 KiB descriptions in this workload keep that table empty,
+so its fixed allocation still contributes to P1.
+
 It counts the physical destination and attempt relations, including manifests
 and indexes. For the chunk relation it subtracts the physical content column
 sizes from the full table, TOAST and index allocation. The difference includes
@@ -471,16 +477,47 @@ For the low-compression description, p95 exact reads exceeded the P2 allowance
 by 2,080,212 bytes and as-of reads exceeded it by 155,092 bytes. PostgreSQL
 reply traffic stayed within both allowances. The runtime executed 421 to 757
 top-level statements per lookup. All 40 measured lookups recorded zero
-temporary blocks read or written. The complete cold-read budget remains open
-for both low-compression lookups.
+temporary blocks read or written.
+
+### Large description observations in PostgreSQL
+
+At `974928f9`, PostgreSQL served the stored digest and JSON-encoded length
+for eligible primary descriptions. The reader still verified the archived
+payload before delivery. On the same two-CPU, 2 GiB PostgreSQL 18.7 profile,
+one warm-up and five fresh split-role databases each returned the expected
+revision in all eight complete lookups. All 40 measured lookups met their
+shared-buffer read and PostgreSQL reply allowances.
+
+| Low-compression 3 MiB lookup | Earlier read p95 (bytes) | Read p95 with observations (bytes) | Reply p95 (bytes) | P2 allowance (bytes) |
+| --- | ---: | ---: | ---: | ---: |
+| Exact | 7,323,648 | 4,071,424 | 3,436,400 | 5,243,436 |
+| As-of | 7,495,680 | 4,227,072 | 3,436,282 | 7,340,588 |
+
+The separate allocation diagnostic measured the packed catalog, the embedded
+segment index, the PostgreSQL artifact metadata and the new description table
+and indexes. The five measured fixtures follow one warm-up. P1 uses the framed
+record size as its denominator.
+
+| Versions | Packed online metadata median | Packed online metadata p95 | P1 allowance (bytes) | Description table and indexes | Runs over allowance |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 10,000 | 1,143,544 | 1,143,845 | 1,834,346 | 16,384 | 0/5 |
+| 100,000 | 8,809,208 | 8,818,669 | 8,916,091 | 16,384 | 0/5 |
+
+The 100,000-version workload left 97,422 bytes of headroom at p95. Its sparse
+description table occupied 16,384 bytes including indexes. To measure how that
+cost changes when more descriptions qualify, a separate PostgreSQL 18.7 fixture
+inserted one digest and encoded length under distinct history IDs into a
+temporary copy of the table and indexes. After `ANALYZE`,
+`pg_total_relation_size` returned 1,048,576 bytes for 10,000 observations and
+9,953,280 bytes for 100,000. These figures cover the description table and its
+indexes alone.
 
 ## Remaining acceptance
 
 Project #3 tracks the remaining #514 work on `project/workload-lifecycle`.
-Production qualification still needs worker RSS on constrained deployments,
-complete online catalog/index allocation at 10,000 and 100,000 versions,
-end-to-end cold reads within P2, and subset-rewrite measurements. See the
-[lifecycle budgets](lifecycle_budgets.md) for the profiles and pass rules.
-The fixture holds artifact bytes in memory. Durable storage and reader
-compatibility across future format versions require separate evidence before
-production deployment or primary-copy retirement.
+The collection fixtures above cover packed metadata allocation and complete
+exact and as-of reads. The deployment qualification still needs worker RSS
+under concurrent load, catalog and read costs for other supported history
+families and their dependencies, and subset rewrites on durable storage.
+Primary-copy retirement also requires fenced publication and recovery evidence.
+See the [lifecycle budgets](lifecycle_budgets.md) for the workload and pass rules.

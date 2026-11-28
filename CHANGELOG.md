@@ -294,6 +294,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- PostgreSQL retains the digest and JSON-encoded length of 1–4 MiB collection
+  history descriptions for archive verification. Apply the migration with
+  history writers stopped to backfill existing rows before starting updated
+  readers. Logical restore rebuilds the values from the restored history.
+
 - **Breaking for older PostgreSQL archive readers.** New publications store
   compact per-resource catalogs with complete version UUIDs and payload digests.
   Stop old API, worker and recovery binaries, back up the database, apply

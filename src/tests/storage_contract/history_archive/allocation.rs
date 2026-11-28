@@ -33,6 +33,7 @@ struct Publication {
     catalog: HistoryArchiveCatalog,
     manifest: ArtifactManifest,
     blocks: Vec<Vec<u8>>,
+    descriptions: Vec<String>,
     record_bytes: u64,
     index_bytes: u64,
 }
@@ -121,11 +122,16 @@ impl Publication {
                 .unwrap()
             })
             .collect();
+        let descriptions = rows
+            .iter()
+            .map(|row| row.collection().description().to_owned())
+            .collect();
         let empty = HistoryArchiveCatalog::empty(resource);
         Self {
             catalog: empty.publish(empty.generation(), descriptors).unwrap(),
             manifest,
             blocks,
+            descriptions,
             record_bytes,
             index_bytes: segment.index_bytes() as u64,
         }
@@ -151,12 +157,13 @@ async fn postgres_archive_catalog_allocation(#[case] versions: usize) {
                 publication.catalog,
                 publication.manifest,
                 publication.blocks,
+                publication.descriptions,
             )
         });
     let (native, packed, provider) = measure_archive_catalog_allocation(publications, versions)
         .await
         .unwrap();
-    let metadata = native.total_bytes() + retained.index_bytes + retained.manifest_bytes;
+    let metadata = native.online_bytes() + retained.index_bytes + retained.manifest_bytes;
     println!(
         "ARCHIVE_CATALOG_ALLOCATION {}",
         json!({
@@ -165,11 +172,11 @@ async fn postgres_archive_catalog_allocation(#[case] versions: usize) {
             "native_catalog_bytes": native.total_bytes(),
             "packed_catalog": packed,
             "packed_catalog_bytes": packed.total_bytes(),
-            "packed_metadata_lower_bound_bytes": packed.total_bytes() + retained.index_bytes + retained.manifest_bytes,
+            "packed_metadata_lower_bound_bytes": packed.online_bytes() + retained.index_bytes + retained.manifest_bytes,
             "postgres_artifacts": provider,
             "postgres_artifact_metadata_bytes": provider.metadata_bytes(),
-            "packed_metadata_including_postgres_artifacts": packed.total_bytes() + retained.index_bytes + provider.metadata_bytes(),
-            "legacy_metadata_including_postgres_artifacts": native.total_bytes() + retained.index_bytes + provider.metadata_bytes(),
+            "packed_metadata_including_postgres_artifacts": packed.online_bytes() + retained.index_bytes + provider.metadata_bytes(),
+            "legacy_metadata_including_postgres_artifacts": native.online_bytes() + retained.index_bytes + provider.metadata_bytes(),
             "framed_record_bytes": retained.record_bytes,
             "segment_bytes_including_index": retained.segment_bytes,
             "embedded_index_bytes": retained.index_bytes,

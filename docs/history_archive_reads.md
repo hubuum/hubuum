@@ -93,6 +93,19 @@ of the primary from one statement snapshot. Admission charges the original
 encoded row size. Changed data fails verification. The verified archive frame
 still has to match the original full-payload SHA-256 digest before delivery.
 
+Apply `2026-11-28-000002_collection_history_description_observations` before
+starting the updated PostgreSQL reader. The migration scans collection history
+and derives a SHA-256 digest and JSON-encoded byte count for descriptions from
+1 through 4 MiB. The updater selects an offline migration. Stop history writers,
+back up the database, allow time for the scan and backfill, and reconcile role
+grants before restarting the service. Runtime logins have read access under the existing
+history-table grant policy. PostgreSQL updates the facts in the source
+transaction and removes them when the source row is deleted or its description
+leaves that range. A restored history rebuilds them from the restored rows.
+If a matching observation is missing, admission computes both values from
+the primary. For rollback, stop the updated readers, revert the migration,
+then restart readers that compute the values directly.
+
 Upgrade catalog, query-pin and recovery readers before publishing large
 descriptions with the added field. Old descriptors take the full-primary path
 without a catalog rewrite. An older reader rejects a descriptor with the new
