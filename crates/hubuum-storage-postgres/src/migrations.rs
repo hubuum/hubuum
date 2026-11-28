@@ -28,6 +28,7 @@ const OFFLINE_MIGRATIONS: &[&str] = &[
     "20261110000001",
     "20261119000002",
     "20261127000001",
+    "20261128000003",
 ];
 
 /// Whether pending migrations permit the previous API to remain online.

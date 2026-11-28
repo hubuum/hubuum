@@ -9,6 +9,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **Breaking storage SDK 0.20 change.** Complete adapters must implement
+  `history_archive_copy_history` for privileged erasure review. This replaces
+  the unreleased `history_archive_pinned_copies`. Query reclamation and catalog
+  replacement preserve the immutable location of each former copy, including
+  copies never held by queries. Stop API and worker processes, back up the
+  database, apply the archive migrations, reconcile grants and start matching
+  writers. Roll forward once displaced locations are recorded. The migrations
+  cannot reconstruct locations lost before installation.
+
 - Offline recovery can reconcile an interrupted filesystem archive publication
   against its original private root and committed v2 intent, including a crash
   while reserving IDs before staging begins. Signed reapplication

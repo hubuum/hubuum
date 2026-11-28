@@ -287,6 +287,12 @@ Complete adapters must implement `register_history_runtime`, `capture_history_li
 `scan_history_lifecycle`, `observe_history_size`, `admit_history_expiry`,
 `commit_history_lifecycle` and `recover_history_lifecycle`. Capture returns the
 adapter clock with application incarnation and history/deletion revision fences.
+The unreleased 0.20 archive contract requires `history_archive_copy_history`.
+Upgrade complete adapters to return the fenced set of immutable locations from
+current and reclaimed captures and prior catalog generations for one resource/version
+pair under operator database authority. Publish catalog replacements using
+`HistoryArchiveCatalogUpdate` and retain its displaced references atomically.
+
 The unreleased 0.20 archive contract also requires `load_history_archive_cleanup`
 and `settle_history_archive_cleanup`. Upgrade every complete adapter to compare
 the provider receipt with the original claim and atomically retire its ownership

@@ -74,6 +74,7 @@ fn json(value: &impl serde::Serialize, max: usize) -> Result<Value, PostgresStor
     })
 }
 mod catalog;
+mod pins;
 async fn hot_on(
     connection: &mut PostgresConnection,
     selection: &HistoryArchiveSelection,
@@ -229,6 +230,19 @@ impl PostgresStorage {
 }
 #[async_trait]
 impl HistoryArchiveStorage for PostgresStorage {
+    async fn history_archive_copy_history(
+        &self,
+        target: StorageRecordIdentity,
+        fence: ApplicationFence,
+    ) -> Result<HistoryArchiveCopyHistory, StorageError> {
+        self.runtime()
+            .with_control_connection(async |connection| {
+                pins::read_on(connection, target, fence).await
+            })
+            .await
+            .map_err(StorageError::from)
+    }
+
     async fn load_history_archive_cleanup(
         &self,
         request: &HistoryArchiveCleanupRequest,
@@ -300,7 +314,7 @@ impl HistoryArchiveStorage for PostgresStorage {
                     .resource();
                 let current =
                     catalog::load(connection, resource, true, permit.application()).await?;
-                let next = current.publish(expected, descriptors.clone())?;
+                let publication = current.publication(expected, descriptors.clone())?;
                 let mut scanned =
                     history_archive_encoded_bytes(&descriptors, HISTORY_ARCHIVE_BATCH_BYTES)?.len();
                 for descriptor in &descriptors {
@@ -331,8 +345,11 @@ impl HistoryArchiveStorage for PostgresStorage {
                         ));
                     }
                 }
-                catalog::store(connection, &next, expected, permit.application()).await?;
-                Ok::<_, PostgresStorageError>(next)
+                catalog::store(connection, publication.catalog(), expected, permit.application()).await?;
+                if expected.value() != 0 {
+                    pins::record_displacements(connection, &publication, permit.application()).await?;
+                }
+                Ok::<_, PostgresStorageError>(publication.into_catalog())
             })
             .await
             .map_err(StorageError::from)

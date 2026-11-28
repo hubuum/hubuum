@@ -89,7 +89,7 @@ impl Destination {
 }
 
 /// Logical artifact, attempt and physical location are intentionally distinct.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactIdentity {
     artifact: ArtifactId,

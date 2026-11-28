@@ -159,6 +159,22 @@ errors do not establish authorized coverage. Error display/debug and transport
 serialization omit these facts. This does not establish a publication fence or
 activate the service alongside retained online expiry.
 
+## Preserving superseded archive locations
+
+Erasure review can look up the immutable version of an artifact that a catalog
+previously named, even when no query ever captured it. Publication records the
+former location and manifest digest with the catalog generation change.
+Replaying a location or rejecting a stale publication adds no evidence. The
+operator lookup also includes current query pins and references retained when
+queries were reclaimed. Inspect the current catalog separately for its active
+location. Discovery alone does not establish physical retirement.
+
+Stop API and worker processes, back up PostgreSQL, apply the catalog-displacement
+migration with `hubuum-admin --migrate`, reconcile runtime grants, and start
+matching writers. PostgreSQL rejects an unaccounted replacement at commit.
+After the first displaced location is recorded, use roll-forward recovery.
+Earlier catalog replacements cannot be recovered from this migration.
+
 ## Synchronizing runtime migrations
 
 Apply `2026-11-11-000001_archive_runtime_compatibility` after bringing the runtime

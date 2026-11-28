@@ -146,6 +146,13 @@
       "reason": "Existing catalog rows remain readable. Once upgraded publishers write a packed row, older archive readers cannot interpret its version commitments. A legacy reader explicitly fails on that row and a legacy writer cannot overwrite it. New publication uses the existing owner, advisory lock and catalog-generation fences.",
       "upgrade_action": "Stop older API, worker and recovery processes, take a PostgreSQL backup, apply the migration and reconcile role grants, then start matching binaries. Roll forward or restore the pre-upgrade database and matching independent recovery state once packed catalogs exist. See docs/history_archive_reads.md.",
       "drop_constraints": {}
+    },
+    {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-28-000003_archive_catalog_displacements/up.sql",
+      "sha256": "3e215be157480b25f0018837e504ff3c24c23bd9e64484e48712e81737f9b522",
+      "reason": "Catalog replacements must record displaced immutable locations in the same transaction. Earlier writers cannot provide that evidence.",
+      "upgrade_action": "Stop API and worker processes, back up the database, run hubuum-admin --migrate, reconcile runtime grants and start matching writers. Roll forward after the first displaced location. See docs/history_archive_reads.md.",
+      "drop_constraints": {}
     }
   ]
 }
