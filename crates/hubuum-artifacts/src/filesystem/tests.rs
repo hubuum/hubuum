@@ -1620,3 +1620,165 @@ async fn cleanup_receipt_waits_for_the_last_bounded_batch() {
             .exists()
     );
 }
+
+#[tokio::test]
+async fn registered_archive_reader_rejects_an_unknown_destination() {
+    let fixture = Fixture::new().await;
+    let root = fixture.root.path().canonicalize().unwrap();
+    assert!(matches!(
+        FilesystemArtifactStore::open_registered_destination(root, DestinationId::generate()).await,
+        Err(ArtifactError::NotFound)
+    ));
+}
+
+#[tokio::test]
+async fn registered_archive_reader_does_not_initialize_an_empty_root() {
+    let root = tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir()
+        .unwrap();
+    let path = root.path().canonicalize().unwrap();
+    assert!(
+        FilesystemArtifactStore::open_registered_destination(&path, DestinationId::generate())
+            .await
+            .is_err()
+    );
+    assert_eq!(path.read_dir().unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn registered_archive_reader_does_not_recreate_a_lost_lock() {
+    let fixture = Fixture::new().await;
+    let path = fixture.root.path().canonicalize().unwrap();
+    let store =
+        FilesystemArtifactStore::open_registered_destination(&path, fixture.destination.id())
+            .await
+            .unwrap();
+    let lock = path.join("lock");
+    std::fs::remove_file(&lock).unwrap();
+    assert!(store.manifest(&fixture.identity()).await.is_err());
+    assert!(!lock.exists());
+}
+
+#[tokio::test]
+async fn cancel_unstarted_fences_delayed_create_after_reopen() {
+    let fixture = Fixture::new().await;
+    let intent = fixture
+        .store
+        .bind_intent(owned_intent(fixture.identity(), 1))
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture.store.resolve_owned(&intent).await.unwrap(),
+        OwnedArtifactResolution::Pending
+    ));
+    let receipt = fixture
+        .store
+        .cancel_owned_step(&intent)
+        .await
+        .unwrap()
+        .unwrap();
+    let reopened = fixture.reopen().await;
+    let OwnedArtifactAdmission::ResumedSameOwner {
+        artifact,
+        phase: OwnedArtifactPhase::Fenced,
+    } = reopened.create_owned(&intent).await.unwrap()
+    else {
+        panic!("delayed create must encounter the committed fence");
+    };
+    assert!(reopened.append_owned(&artifact, 0, b"abcd").await.is_err());
+    let recovered = reopened.discard_owned_step(&intent).await.unwrap().unwrap();
+    assert_eq!(receipt.encoded_intent(), recovered.encoded_intent());
+    assert_eq!(recovered.encoded_intent(), intent.encode().unwrap());
+}
+
+#[rstest]
+#[tokio::test]
+async fn cancel_unstarted_resumes_after_each_interrupted_sync(
+    #[values(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)] fail_after: isize,
+) {
+    let fixture = Fixture::new().await;
+    let intent = fixture
+        .store
+        .bind_intent(owned_intent(fixture.identity(), 1))
+        .await
+        .unwrap();
+    fixture.store.fail_sync.store(fail_after, Ordering::SeqCst);
+    assert!(fixture.store.cancel_owned_step(&intent).await.is_err());
+    let reopened = fixture.reopen().await;
+    let proof = reopened.cancel_owned_step(&intent).await.unwrap().unwrap();
+    assert_eq!(proof.encoded_intent(), intent.encode().unwrap());
+    assert!(matches!(
+        reopened.resolve_owned(&intent).await.unwrap(),
+        OwnedArtifactResolution::Established {
+            phase: OwnedArtifactPhase::Fenced,
+            ..
+        }
+    ));
+}
+
+#[rstest]
+#[case::state_write("pending")]
+#[case::payload("00000000.block")]
+#[case::foreign_cancellation("cancel-foreign")]
+#[case::attempt_index("attempts")]
+#[case::version_index("versions")]
+#[tokio::test]
+async fn cancel_unstarted_preserves_unexplained_evidence(#[case] evidence: &str) {
+    let fixture = Fixture::new().await;
+    let intent = fixture
+        .store
+        .bind_intent(owned_intent(fixture.identity(), 1))
+        .await
+        .unwrap();
+    let identity = intent.identity();
+    let path = if matches!(evidence, "attempts" | "versions") {
+        let bytes = if evidence == "attempts" {
+            identity.attempt().as_bytes().to_owned()
+        } else {
+            identity.version().as_bytes().to_owned()
+        };
+        fixture.root.path().join(evidence).join(key(&bytes))
+    } else {
+        let directory = fixture.directory(identity);
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        directory.join(evidence)
+    };
+    let bytes = encode(identity).unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(fixture.store.cancel_owned_step(&intent).await.is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert!(!fixture.directory(identity).join("state").exists());
+}
+
+#[tokio::test]
+async fn cancel_unstarted_partial_marker_excludes_create_and_reaping() {
+    let fixture = Fixture::new().await;
+    let intent = fixture
+        .store
+        .bind_intent(owned_intent(fixture.identity(), 1))
+        .await
+        .unwrap();
+    fixture.store.fail_sync.store(2, Ordering::SeqCst);
+    assert!(fixture.store.cancel_owned_step(&intent).await.is_err());
+    let (binding, _) = fixture.store.filesystem_binding(&intent, false).unwrap();
+    let scratch = fixture
+        .directory(intent.identity())
+        .join(format!("cancel-{}", key(&binding.cleanup_commitment)));
+    let mut partial = std::fs::read(&scratch).unwrap();
+    partial.truncate(partial.len() / 2);
+    std::fs::write(&scratch, &partial).unwrap();
+    let reopened = fixture.reopen().await;
+    assert!(reopened.create_owned(&intent).await.is_err());
+    assert!(
+        reopened
+            .stage(intent.identity(), intent.limits())
+            .await
+            .is_err()
+    );
+    reopened.cleanup().await.unwrap();
+    assert_eq!(std::fs::read(&scratch).unwrap(), partial);
+    assert!(reopened.cancel_owned_step(&intent).await.unwrap().is_some());
+}

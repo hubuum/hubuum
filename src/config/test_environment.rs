@@ -100,6 +100,19 @@ pub(super) fn get_config_from_env() -> Result<AppConfig, ApiError> {
         schema_validation: SchemaValidationOptions::from_environment()?,
         query_observations: QueryObservationOptions::from_environment()?,
         artifacts: artifacts::ArtifactOptions::from_environment()?,
+        history_archive_filesystem: match env::var("HUBUUM_HISTORY_ARCHIVE_FILESYSTEM") {
+            Ok(value) => Some(
+                value
+                    .parse()
+                    .map_err(|error: &str| ApiError::BadRequest(error.into()))?,
+            ),
+            Err(env::VarError::NotPresent) => None,
+            Err(_) => {
+                return Err(ApiError::BadRequest(
+                    "Archive destination must be valid UTF-8".into(),
+                ));
+            }
+        },
         query_observation_settings: StorageQueryObservationSettings::default(),
         schema_limits: JsonSchemaLimits::default(),
         secrets: SecretSourceOptions::from_environment()

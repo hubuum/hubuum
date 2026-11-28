@@ -1,7 +1,9 @@
 //! Inactive public-path, collection-only query service. A caller must already
 //! own a registered Legacy runtime; this module never advertises online expiry.
 use chrono::{DateTime, Utc};
-use hubuum_artifacts::ArtifactError;
+use std::sync::Arc;
+
+use hubuum_artifacts::{ArtifactError, ArtifactStore};
 use hubuum_budget::ByteLimit;
 use hubuum_domain::{CollectionId, PrincipalIdentity, ResourceId, ResourceIdentity};
 use hubuum_storage_core::{
@@ -74,6 +76,7 @@ pub struct HistoryArchiveQuery {
     permit: HistoryArchiveExecutionPermit,
     owner: HistoryArchiveExecutionOwner,
     storage: StorageHandle,
+    archive_reader: Option<Arc<dyn ArtifactStore>>,
 }
 
 async fn principal<S: AuthzSubject + ?Sized>(
@@ -273,6 +276,10 @@ impl HistoryArchiveQuery {
                     permit: permit.clone(),
                     owner,
                     storage: storage.clone(),
+                    archive_reader: capture.archive().map(|descriptor| {
+                        context
+                            .history_archive_store(descriptor.location().identity().destination())
+                    }),
                 };
                 // Configured authorization may outlive the original runtime or
                 // application fence. Never admit a handle using stale authority.
@@ -392,7 +399,9 @@ impl HistoryArchiveQuery {
                     Err(error) => return Err(error.into()),
                 };
                 let descriptor = capture.archive().expect("captured pin");
-                let store = self.storage.artifact_store();
+                let store = self.archive_reader.as_ref().ok_or_else(|| {
+                    ApiError::ServiceUnavailable("Captured archive destination unavailable".into())
+                })?;
                 let mut budget = ByteLimit::new(ATTEMPT_BYTES).start();
                 let read = async {
                     let segment = RetainedHistorySegment::open(

@@ -46,6 +46,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Administrator configuration reports `artifacts.cold_retrieval` as `disabled`.
   Startup rejects attempts to select an AWS cold retrieval profile through
   `HUBUUM_ARCHIVE_COLD_RETRIEVAL` or `--archive-cold-retrieval`.
+
+- Offline recovery can release a filesystem archive claim when the producer
+  stopped before its first provider create. The original registered destination
+  records a durable cancellation that also fences late retries.
+  **Breaking recovery compatibility during an interrupted cancellation.**
+  Finish the cancellation with the upgraded recovery binary before restarting
+  older writers.
+
+- The internal collection history service can read exact versions and as-of
+  snapshots from a registered Unix filesystem archive. Set
+  `HUBUUM_HISTORY_ARCHIVE_FILESYSTEM` to its destination UUID and private
+  directory, joined by `=`. Only published copies are readable.
+
 - Offline recovery can reconcile an interrupted filesystem archive publication
   against its original private root and committed v2 intent, including a crash
   while reserving IDs before staging begins. Signed reapplication
