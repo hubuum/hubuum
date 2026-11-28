@@ -6,6 +6,8 @@
 
 use hubuum_auth_core::AuthenticatedExternalUser;
 use hubuum_domain::EventSinkId;
+#[cfg(test)]
+use reqwest::Url;
 use std::sync::OnceLock;
 use tracing::Dispatch;
 use tracing_subscriber::layer::SubscriberExt;
@@ -699,6 +701,28 @@ pub fn archive_test_migration_database_url() -> String {
 pub fn archive_test_runtime_database_url() -> String {
     std::env::var("HUBUUM_ARCHIVE_TEST_DATABASE_URL")
         .expect("The test runner must provide isolated archive fixture storage")
+}
+
+/// Administrative observer for the runner's isolated archive database. Preserve
+/// the runtime URL's target and TLS options while selecting the fixture login.
+#[cfg(test)]
+pub(crate) fn archive_test_observer_url(runtime_url: &Url) -> Url {
+    let login = std::env::var("HUBUUM_TEST_DB_USER").unwrap_or_else(|_| "postgres".into());
+    assert_ne!(
+        runtime_url.username(),
+        login,
+        "use split roles for the page diagnostic"
+    );
+    let password = std::env::var("HUBUUM_TEST_DB_PASSWORD")
+        .expect("the test runner must supply the database fixture credentials");
+    let mut observer = runtime_url.clone();
+    observer
+        .set_username(&login)
+        .expect("database URL must support a login");
+    observer
+        .set_password(Some(&password))
+        .expect("database URL must support a password");
+    observer
 }
 
 /// Recovery authority for subprocess tests that advance the application generation.

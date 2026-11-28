@@ -412,8 +412,67 @@ and [relation eviction](https://www.postgresql.org/docs/18/pgbuffercache.html).
 
 Exact admission of the low-compression description read 3,325,952 bytes into
 shared buffers. The operating system could serve those reads from its own cache.
-Temporary block reads and writes were zero. Full-service page costs, including
-artifact and dependency reads, and the deployment workload remain open.
+Temporary block reads and writes were zero. The next measurement includes the
+rest of the authorized lookup.
+
+### Measuring the complete service lookup
+
+The ignored `postgres_archive_service_cold_page_traffic` diagnostic runs the
+same six authorized service lookups as the wire diagnostic. Two additional
+lookups read a 3 MiB description made from the MD5 sequence used in the
+single-statement measurement above. All four shapes belong to the same
+100-revision collection. Before each lookup the diagnostic evicts the
+disposable archive database's application and control tables, their indexes,
+and their TOAST data and indexes. It then measures
+PostgreSQL shared-buffer hits and reads, temporary block traffic and wire bytes
+from admission through final authorized access.
+
+Use a dedicated PostgreSQL 18 instance with `pg_stat_statements` in
+`shared_preload_libraries`. Enable `pg_stat_statements.track_planning` to
+include planning work and make the PostgreSQL contrib extensions available.
+After the split-role migrations finish, the diagnostic installs
+`pg_stat_statements` and `pg_buffercache` in the isolated archive database using
+the test runner's administrative login.
+
+Point the repository test environment at that instance and run the split-role
+fixture.
+
+```bash
+source .env
+./run_tests.sh --lib postgres_archive_service_cold_page_traffic -- --ignored --nocapture
+```
+
+`ARCHIVE_SERVICE_PAGES` reports top-level statement counter deltas for the
+runtime login in the archive fixture database. The observer uses the runner's
+administrative login. A skipped eviction, statement-counter reset or eviction
+of a statement entry invalidates the sample. Each PostgreSQL shared-buffer
+read may be served from the operating system's file cache. The accompanying
+`ARCHIVE_SERVICE_WIRE` output records protocol traffic and the charged
+artifact bytes. [PostgreSQL statement counters](https://www.postgresql.org/docs/18/pgstatstatements.html)
+
+On PostgreSQL 18.7 with two CPUs and 2 GiB of memory, one warm-up and five
+fresh split-role fixtures each returned the expected revision for all eight lookups. The table
+gives the nearest-rank p95 across the five measured fixtures. Each allowance
+uses the serialized result size. The last column counts fixtures in which
+PostgreSQL shared-buffer read bytes exceeded that allowance.
+
+| Description | Lookup | Shared read bytes p95 | PostgreSQL reply bytes p95 | P2 allowance (bytes) | Reads over allowance |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 256 B | Exact | 794,624 | 260,835 | 1,055,064 | 0/5 |
+| 256 B | As-of | 753,664 | 259,053 | 2,110,128 | 0/5 |
+| 64 KiB | Exact | 819,200 | 390,600 | 1,577,320 | 0/5 |
+| 64 KiB | As-of | 966,656 | 390,465 | 3,154,640 | 0/5 |
+| 3 MiB repeated | Exact | 851,968 | 3,418,797 | 5,243,437 | 0/5 |
+| 3 MiB repeated | As-of | 999,424 | 3,418,685 | 7,340,589 | 0/5 |
+| 3 MiB low compression | Exact | 7,323,648 | 3,436,304 | 5,243,436 | 5/5 |
+| 3 MiB low compression | As-of | 7,495,680 | 3,436,168 | 7,340,588 | 5/5 |
+
+For the low-compression description, p95 exact reads exceeded the P2 allowance
+by 2,080,212 bytes and as-of reads exceeded it by 155,092 bytes. PostgreSQL
+reply traffic stayed within both allowances. The runtime executed 421 to 757
+top-level statements per lookup. All 40 measured lookups recorded zero
+temporary blocks read or written. The complete cold-read budget remains open
+for both low-compression lookups.
 
 ## Remaining acceptance
 

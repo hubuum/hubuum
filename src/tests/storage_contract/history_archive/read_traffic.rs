@@ -1,4 +1,7 @@
 //! Local P2 diagnostic for the application service with a PostgreSQL artifact store.
+mod pages;
+
+use self::pages::PageProbe;
 use super::{TestContext, with_isolated_archive_backend};
 use crate::events::EventContext;
 use crate::permissions::{AppContext, LocalPermissionBackend};
@@ -87,7 +90,10 @@ impl WireTraffic {
 
 const REVISIONS: usize = 100;
 
-async fn publish_collection_segment(ctx: &TestContext) -> Vec<HistoryArchiveRow> {
+async fn publish_collection_segment(
+    ctx: &TestContext,
+    low_compression: Option<&str>,
+) -> Vec<HistoryArchiveRow> {
     let mut rows = Vec::with_capacity(REVISIONS);
     for revision in 0..=REVISIONS {
         let current = ctx
@@ -99,7 +105,10 @@ async fn publish_collection_segment(ctx: &TestContext) -> Vec<HistoryArchiveRow>
             99 => 3 * 1024 * 1024,
             _ => 256,
         };
-        let description = format!("{revision:04}{}", "x".repeat(size - 4));
+        let description = match (revision, low_compression) {
+            (97, Some(text)) => text.to_owned(),
+            _ => format!("{revision:04}{}", "x".repeat(size - 4)),
+        };
         ctx.storage
             .collection_store()
             .update_collection(
@@ -180,6 +189,16 @@ async fn publish_collection_segment(ctx: &TestContext) -> Vec<HistoryArchiveRow>
 #[actix_web::test]
 #[ignore = "P2 PostgreSQL archive service wire-traffic diagnostic"]
 async fn postgres_archive_service_wire_traffic() {
+    measure_service_traffic(None).await;
+}
+
+#[actix_web::test]
+#[ignore = "P2 cold-buffer service diagnostic on an isolated PostgreSQL 18 database"]
+async fn postgres_archive_service_cold_page_traffic() {
+    measure_service_traffic(Some(PageProbe::new().await)).await;
+}
+
+async fn measure_service_traffic(pages: Option<PageProbe>) {
     let traffic = Arc::new(WireTraffic::default());
     let mut runtime_url = Url::parse(&archive_test_runtime_database_url()).unwrap();
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -213,12 +232,20 @@ async fn postgres_archive_service_wire_traffic() {
                 bound.clone(),
                 Arc::new(LocalPermissionBackend::new(bound, "admin".into())),
             );
-            let rows = publish_collection_segment(ctx).await;
-            for (shape, expected) in [
+            let low_compression = match &pages {
+                Some(probe) => Some(probe.low_compression_description().await),
+                None => None,
+            };
+            let rows = publish_collection_segment(ctx, low_compression.as_deref()).await;
+            let mut shapes = vec![
                 ("256B", &rows[0]),
                 ("64KiB", &rows[98]),
                 ("3MiB", &rows[99]),
-            ] {
+            ];
+            if low_compression.is_some() {
+                shapes.push(("3MiB_low_compression", &rows[97]));
+            }
+            for (shape, expected) in shapes {
                 for (kind, point, factor, slack) in [
                     (
                         "exact",
@@ -237,6 +264,10 @@ async fn postgres_archive_service_wire_traffic() {
                         2 * 1024 * 1024,
                     ),
                 ] {
+                    let pages_before = match &pages {
+                        Some(probe) => Some(probe.start_cold().await),
+                        None => None,
+                    };
                     let start = traffic.observed();
                     let query = ctx.query(point).await;
                     let captured = traffic.observed();
@@ -255,6 +286,14 @@ async fn postgres_archive_service_wire_traffic() {
                     assert!(view.charged_read_bytes() > 0);
                     let result_bytes = serde_json::to_vec(expected.payload()).unwrap().len() as u64;
                     let allowance = (result_bytes * factor + slack).min(result_bytes + 2 * slack);
+                    if let (Some(probe), Some(before)) = (&pages, pages_before) {
+                        let delta = probe.finish(before).await;
+                        println!(
+                            "ARCHIVE_SERVICE_PAGES {}",
+                            json!({"shape":shape, "lookup":kind, "payload_bytes":result_bytes,
+                                "p2_allowance_bytes":allowance, "postgres":delta})
+                        );
+                    }
                     println!(
                         "ARCHIVE_SERVICE_WIRE {}",
                         json!({
