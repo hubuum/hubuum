@@ -619,14 +619,18 @@ async fn pin_observation_finds_prior_locations_across_principals() {
             .await
             .unwrap();
         }
-        ctx.publish(ctx.descriptor(&row, false, vec![]).await).await;
+        let current = ctx.descriptor(&row, false, vec![]).await;
+        let catalog = ctx.publish(current.clone()).await;
         let pins = pin_operator(ctx)
             .history_archive_copy_history(row.identity(), ctx.permit.fence())
             .await
             .unwrap();
         assert_eq!(pins.target(), row.identity());
         assert_eq!(pins.fence(), ctx.permit.fence());
-        assert_eq!(pins.locations().len(), 2);
+        assert_eq!(pins.catalog_generation(), catalog.generation());
+        assert_eq!(pins.current_location(), Some(current.location()));
+        assert_eq!(pins.locations().len(), 3);
+        assert!(pins.locations().contains(current.location()));
         assert!(pins.locations().contains(first.location()));
         assert!(pins.locations().contains(second.location()));
     })
@@ -648,17 +652,61 @@ async fn copy_history_accounts_for_an_uncaptured_catalog_replacement(#[case] rel
         } else {
             original.clone()
         };
-        ctx.publish(replacement).await;
+        let catalog = ctx.publish(replacement.clone()).await;
         let history = pin_operator(ctx)
             .history_archive_copy_history(row.identity(), ctx.permit.fence())
             .await
             .unwrap();
-        let expected = if relocate {
-            std::slice::from_ref(original.location())
-        } else {
-            &[]
+        assert_eq!(history.catalog_generation(), catalog.generation());
+        assert_eq!(history.current_location(), Some(replacement.location()));
+        assert!(history.locations().contains(original.location()));
+        assert!(history.locations().contains(replacement.location()));
+        assert_eq!(history.locations().len(), if relocate { 2 } else { 1 });
+    })
+    .await;
+}
+
+#[cfg(feature = "integration-test-support")]
+#[actix_web::test]
+async fn observed_archive_copy_set_matches_its_catalog_generation_during_publication() {
+    with_overflow_backend(async |ctx| {
+        let row = ctx.closed().await;
+        let mut descriptors = Vec::new();
+        for _ in 0..4 {
+            descriptors.push(ctx.descriptor(&row, false, vec![]).await);
+        }
+        let operator = pin_operator(ctx);
+        let observe = async || {
+            let observed = operator
+                .history_archive_copy_history(row.identity(), ctx.permit.fence())
+                .await
+                .unwrap();
+            let generation = usize::try_from(observed.catalog_generation().value()).unwrap();
+            let committed = &descriptors[..generation];
+            assert_eq!(
+                observed.current_location(),
+                committed.last().map(HistoryArchiveDescriptor::location)
+            );
+            assert_eq!(observed.locations().len(), committed.len());
+            for descriptor in committed {
+                assert!(observed.locations().contains(descriptor.location()));
+            }
+            generation
         };
-        assert_eq!(history.locations(), expected);
+        assert_eq!(observe().await, 0);
+        let publish = async {
+            for descriptor in &descriptors {
+                ctx.publish(descriptor.clone()).await;
+            }
+        };
+        let read = async {
+            for _ in 0..descriptors.len() * 2 {
+                observe().await;
+                tokio::task::yield_now().await;
+            }
+        };
+        tokio::join!(publish, read);
+        assert_eq!(observe().await, descriptors.len());
     })
     .await;
 }
@@ -795,7 +843,7 @@ async fn application_role_cannot_read_private_archive_pin_locations() {
 async fn archive_pin_observation_matches_both_identities(#[case] another_resource: bool) {
     with_overflow_backend(async |ctx| {
         let row = ctx.closed().await;
-        ctx.publish(ctx.descriptor(&row, false, vec![]).await).await;
+        let catalog = ctx.publish(ctx.descriptor(&row, false, vec![]).await).await;
         ctx.capture(HistoryArchivePoint::Exact {
             version: row.identity().version(),
         })
@@ -809,6 +857,13 @@ async fn archive_pin_observation_matches_both_identities(#[case] another_resourc
             .history_archive_copy_history(target, ctx.permit.fence())
             .await
             .unwrap();
+        let generation = if another_resource {
+            HistoryArchiveCatalogGeneration::default()
+        } else {
+            catalog.generation()
+        };
+        assert_eq!(pins.catalog_generation(), generation);
+        assert!(pins.current_location().is_none());
         assert!(pins.locations().is_empty());
     })
     .await;

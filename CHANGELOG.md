@@ -18,7 +18,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   the unreleased `history_archive_pinned_copies` method and metric label.
   Update draft-branch dashboards to the new label. Query reclamation and catalog
   replacement preserve the immutable location of each former copy, including
-  copies never held by queries. Stop API and worker processes, back up the
+  copies never held by queries. Pass the resource catalog from the same snapshot
+  to the copy-history constructors. Operators receive the current generation and
+  location together with all distinct recorded locations. Stop API and worker processes, back up the
   database, apply the archive migrations, reconcile grants and start matching
   writers. Roll forward once displaced locations are recorded. The migrations
   cannot reconstruct locations lost before installation.

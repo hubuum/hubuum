@@ -254,7 +254,13 @@ impl HistoryArchiveStorage for MemoryStorage {
             .into_iter()
             .flatten()
             .cloned();
-        HistoryArchiveCopyHistory::from_sources(target, fence, pins, reclaimed)
+        let empty = HistoryArchiveCatalog::empty(target.resource());
+        let catalog = state
+            .history_archive
+            .catalogs
+            .get(&target.resource())
+            .unwrap_or(&empty);
+        HistoryArchiveCopyHistory::from_sources(target, fence, catalog, pins, reclaimed)
     }
 
     async fn load_history_archive_cleanup(

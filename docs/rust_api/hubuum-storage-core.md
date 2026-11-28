@@ -290,7 +290,9 @@ adapter clock with application incarnation and history/deletion revision fences.
 The unreleased 0.20 archive contract requires `history_archive_copy_history`.
 Upgrade complete adapters to return the fenced set of immutable locations from
 current and reclaimed captures and prior catalog generations for one resource/version
-pair under operator database authority. Publish catalog replacements using
+pair under operator database authority. Pass the resource catalog from the same
+snapshot to both copy-history constructors. The observation exposes its generation,
+the active location and the bounded union of physical references. Publish catalog replacements using
 `HistoryArchiveCatalogUpdate` and retain its displaced references atomically.
 
 The unreleased 0.20 archive contract also requires `load_history_archive_cleanup`
