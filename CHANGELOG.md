@@ -23,7 +23,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **Breaking deployment change.** Template rendering requires working host
   isolation. Enable seccomp in Linux deployments, allow the worker to install
   its macOS sandbox, or provision AppContainer access to the Windows worker
-  executable as described in the template worker guide.
+  executable and a writable local profile for the service account as described
+  in the template worker guide.
 
 ### Fixed
 

@@ -1,6 +1,7 @@
 mod token;
 
 use std::error::Error;
+use std::fs::File;
 use std::io::{self, PipeReader, Read};
 use std::os::windows::io::OwnedHandle;
 use std::path::Path;
@@ -43,11 +44,18 @@ pub(crate) fn enter() -> Result<Worker, Box<dyn Error>> {
         token::verify_package_opt_out()?;
         return Ok(Worker::Render);
     }
-    if std::env::var_os("LOCALAPPDATA").is_none() {
-        return Err(
-            "Windows AppContainer startup requires LOCALAPPDATA for the service account".into(),
-        );
-    }
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .ok_or("Windows AppContainer startup requires LOCALAPPDATA for the service account")?;
+    // Concurrent brokers can reach CreateAppContainerProfile before the first
+    // creation completes. Coordinate profile and executable ACL setup across
+    // processes using the same service account, including across API replicas.
+    let startup_lock = File::options()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(Path::new(&local_app_data).join("Hubuum.TemplateWorker.lock"))?;
+    startup_lock.lock()?;
     let profile = AppContainerProfile::ensure(
         PROFILE,
         "Hubuum template worker",
@@ -83,6 +91,7 @@ pub(crate) fn enter() -> Result<Worker, Box<dyn Error>> {
         }
         result => result?,
     };
+    drop(startup_lock);
     // Only forward bytes once the OS has placed the child into the kill-on-close
     // job. Cancelling the broker also ends the rendering process.
     let mut input = child.stdin.take().ok_or("missing isolated input pipe")?;

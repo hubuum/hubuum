@@ -26,10 +26,12 @@ anonymous memory allocation. macOS uses a deny-by-default Seatbelt profile
 after the dynamic loader finishes. A host policy that prevents installation of
 the worker profile also prevents rendering.
 
-On Windows the service account needs a local profile and the `LOCALAPPDATA`
-environment variable so Windows can find its AppContainer profile. The broker
-and worker receive an allowlist of Windows profile and system directories. The
-executable search path is limited to System32. The worker starts a
+On Windows the service account needs a local profile and a writable
+`LOCALAPPDATA` directory. Brokers lock `Hubuum.TemplateWorker.lock` in that
+directory while setting up the shared AppContainer profile and starting a
+child. They release the lock before forwarding the render request.
+The broker and worker receive an allowlist of Windows profile and system
+directories. The executable search path is limited to System32. The worker starts a
 capability-free, less-privileged AppContainer
 named `Hubuum.TemplateWorker`. The broker pipes input to the isolated child
 under a kill-on-close job. Windows may grant access to resources explicitly
