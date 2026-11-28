@@ -6,7 +6,8 @@ use crate::services::archive::{
     HistoryArchiveAdmission, HistoryArchiveQuery, HistoryArchiveRequest,
 };
 use crate::services::history::segments::{
-    HistorySegment, RetainedHistorySegment, SegmentRecord, SegmentScope, VersionInterval,
+    HistorySegment, RetainedHistorySegment, SegmentRecord, SegmentRewriteSelection, SegmentScope,
+    VersionInterval,
 };
 use crate::storage::storage_handle;
 use chrono::{Duration as TimeDelta, Utc};
@@ -583,6 +584,65 @@ async fn catalog_replacement_keeps_admitted_location_and_generation() {
                 .unwrap();
             assert_eq!(view.generation(), first.generation());
             assert_eq!(view.row(), Some(&row));
+        })
+        .await;
+    }
+}
+
+#[actix_web::test]
+async fn rewrite_verifies_the_pinned_copy_and_the_relocated_catalog_copy() {
+    let _permit = postgres_permit().await;
+    for backend in available_backends() {
+        TestContext::run(backend, async |ctx| {
+            let row = ctx.closed().await;
+            ctx.publish(ctx.descriptor(&row, false, vec![]).await).await;
+            let pin = ctx
+                .capture(HistoryArchivePoint::Exact {
+                    version: row.identity().version(),
+                })
+                .await;
+            let current = ctx.publish(ctx.descriptor(&row, false, vec![]).await).await;
+            ctx.with_archive(async {
+                let pin = ctx
+                    .storage
+                    .history_archive_capture(pin.id(), ctx.principal, &ctx.archive_permit)
+                    .await
+                    .unwrap()
+                    .expect("original query pin");
+                let prior = pin.archive().unwrap().location();
+                let active = current.versions()[0].location();
+                assert_ne!(prior, active);
+                let store = ctx.storage.artifact_store();
+                let mut budget = ByteLimit::new(1024 * 1024).start();
+                let old = RetainedHistorySegment::open(store.as_ref(), prior, &mut budget)
+                    .await
+                    .unwrap();
+                let new = RetainedHistorySegment::open(store.as_ref(), active, &mut budget)
+                    .await
+                    .unwrap();
+                let selected = [row.identity()];
+                let batch = SegmentRewriteSelection::new(selected).unwrap();
+                let admitted = batch
+                    .start_admission()
+                    .include(&old, selected)
+                    .unwrap()
+                    .include(&new, selected)
+                    .unwrap()
+                    .finish()
+                    .unwrap();
+                for (segment, expected) in [(&old, prior), (&new, active)] {
+                    let evidence = segment
+                        .verify_fully_selected(
+                            store.as_ref(),
+                            admitted.for_source(segment).unwrap(),
+                            &mut budget,
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(evidence.source(), expected);
+                }
+            })
+            .await;
         })
         .await;
     }

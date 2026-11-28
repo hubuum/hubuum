@@ -130,8 +130,11 @@ constrained profiles, complete pipeline amplification and subset-rewrite costs
 remain unqualified. No cold-provider or source-retirement acceptance is claimed.
 
 A published mixed segment can stage a fresh replacement from exact resource and
-version UUIDs. A batch contains at most 1,000 members. Each source rewrite
-accepts up to 16 MiB of selected frames. The worker authenticates and decodes
+version UUIDs. Before staging, the batch admits up to 1,000 selected frames
+and 16 MiB across all supplied sources. A resource version present at two
+immutable destinations consumes two frame slots and the bytes of both copies.
+The coordinator requires coverage of every selected resource version and
+accepts each published source once. The worker authenticates and decodes
 every frame, including selected frames. Surviving frames retain their original
 bytes. An absent version, a
 survivor depending on a selected version, corruption or a depleted read budget

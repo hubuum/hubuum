@@ -60,11 +60,11 @@ async fn selected_frame_budget_is_shared_across_published_sources(
 
 #[rstest]
 #[case::missing(0)]
-#[case::repeated_version(1)]
+#[case::missing_despite_multiple_copies(1)]
 #[case::repeated_source(2)]
 #[case::wrong_source(3)]
 #[tokio::test]
-async fn admission_requires_each_selected_version_in_one_source(#[case] problem: u8) {
+async fn admission_requires_coverage_and_distinct_sources(#[case] problem: u8) {
     let scope = scope();
     let first = record(scope.clone(), ResourceIdentity::generate(), 1, 2);
     let second = record(scope, ResourceIdentity::generate(), 1, 2);
@@ -112,4 +112,106 @@ async fn a_projected_selection_is_bound_to_its_published_source() {
         Err(ArtifactError::Conflict(_))
     ));
     assert_eq!(budget.used(), 0);
+}
+
+#[tokio::test]
+async fn each_published_copy_of_a_selected_version_can_be_verified() {
+    let scope = scope();
+    let target = record(scope.clone(), ResourceIdentity::generate(), 1, 2);
+    let survivor = record(scope, ResourceIdentity::generate(), 1, 2);
+    let selected = identity(&target);
+    let (first_store, first) = published_source(vec![target.clone()]).await;
+    let (other_store, other) = published_source(vec![target.clone(), survivor.clone()]).await;
+    let batch = SegmentRewriteSelection::new([selected]).unwrap();
+    let admitted = batch
+        .start_admission()
+        .include(&first, [selected])
+        .unwrap()
+        .include(&other, [selected])
+        .unwrap()
+        .finish()
+        .unwrap();
+    let whole = first
+        .verify_fully_selected(
+            &first_store,
+            admitted.for_source(&first).unwrap(),
+            &mut ByteLimit::new(SEGMENT_BYTES).start(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(whole.source().identity(), first.manifest.identity());
+    let mut budget = ByteLimit::new(2 * SEGMENT_BYTES).start();
+    let replacement = other
+        .rewrite_into(
+            &other_store,
+            &other_store,
+            ArtifactIdentity::new(other.manifest.identity().destination()),
+            admitted.for_source(&other).unwrap(),
+            &mut budget,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        replacement
+            .segment()
+            .exact(
+                &other_store,
+                selected.resource(),
+                selected.version(),
+                &mut budget
+            )
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        replacement
+            .segment()
+            .exact(
+                &other_store,
+                survivor.interval.resource(),
+                survivor.interval.version(),
+                &mut budget
+            )
+            .await
+            .unwrap(),
+        Some(survivor)
+    );
+}
+
+#[rstest]
+#[case::exact_row_limit(500, 500, 0, true)]
+#[case::one_extra_physical_row(501, 500, 0, false)]
+#[case::repeated_bytes_within_limit(3, 3, 1_000_000, true)]
+#[case::repeated_bytes_above_limit(3, 3, 3_000_000, false)]
+#[tokio::test]
+async fn each_selected_copy_consumes_the_shared_input_allowance(
+    #[case] first_count: usize,
+    #[case] other_count: usize,
+    #[case] payload: usize,
+    #[case] fits: bool,
+) {
+    let scope = scope();
+    let rows: Vec<_> = (0..first_count)
+        .map(|_| {
+            let mut row = record(scope.clone(), ResourceIdentity::generate(), 1, 2);
+            row.payload = json!("r".repeat(payload));
+            row
+        })
+        .collect();
+    let selected: Vec<_> = rows.iter().map(identity).collect();
+    let (_, other) = published_source(rows[..other_count].to_vec()).await;
+    let (_, first) = published_source(rows).await;
+    let batch = SegmentRewriteSelection::new(selected.iter().copied()).unwrap();
+    let outcome = batch
+        .start_admission()
+        .include(&first, selected.iter().copied())
+        .unwrap()
+        .include(&other, selected[..other_count].iter().copied())
+        .and_then(RewriteSourceAdmission::finish);
+    if fits {
+        assert!(outcome.is_ok());
+    } else {
+        assert!(matches!(outcome, Err(ArtifactError::Limit(_))));
+    }
 }

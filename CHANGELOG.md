@@ -286,9 +286,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Upgrade every archive reader and recovery tool before publishing v3 segments.
   Readers continue to open the JSON v1 and fixed-width v2 formats.
 
-- Experimental archive rewrites check the 16 MiB selected-input limit across
-  all touched segments before staging a replacement. Each selected version
-  must occur in exactly one source assignment.
+- Experimental archive erasure can verify the same selected resource version
+  in several published segments. Each physical copy counts toward one shared
+  limit of 1,000 selected frames and 16 MiB before staging a replacement.
 
 - Opening a retained history segment now reuses verified header and footer
   blocks while loading the index. Each new open and each subsequent record

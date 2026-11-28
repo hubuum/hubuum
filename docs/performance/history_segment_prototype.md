@@ -365,9 +365,11 @@ Fencing prevents subsequent publication. Physical cleanup requires separate evid
 For a batch spanning several segments, the coordinator supplies the exact batch
 of up to 1,000 resource/version pairs and identifies the members expected in
 each source. Before staging any replacement, the coordinator totals the selected
-frame lengths from the published indexes. All touched sources share one 16 MiB
-limit. A missing member, duplicate assignment or repeated source also rejects
-the batch. Each admitted projection binds its source manifest digest. The
+frame lengths from the published indexes. All touched sources share a limit of
+1,000 physical frames and 16 MiB. Each copy of a selected resource version in
+a distinct published segment counts against both limits. A missing member,
+a repeated source, or a repeated assignment within one source rejects the
+batch. Each admitted projection binds its source manifest digest. The
 subsequent frame scan checks the full resource and version identities.
 
 A rewrite scans the surviving frames for dependencies on any

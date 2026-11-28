@@ -551,3 +551,55 @@ async fn an_existing_single_source_intent_keeps_its_original_commitment() {
         <[u8; 32]>::from(original.finalize())
     );
 }
+
+#[tokio::test]
+async fn reopened_filesystem_verifies_each_destination_of_identical_segment_bytes() {
+    let fixture = Fixture::new().await;
+    let targets = [identity(&fixture.target), identity(&fixture.survivor)];
+    let copy = {
+        let store = FilesystemArtifactStore::open_existing(&fixture.root)
+            .await
+            .unwrap();
+        let destination = Destination::new(DestinationId::generate(), "mirror").unwrap();
+        store.register_destination(&destination).await.unwrap();
+        let segment = HistorySegment::stage(
+            &store,
+            ArtifactIdentity::new(destination.id()),
+            fixture.target.scope.clone(),
+            [fixture.target.clone(), fixture.survivor.clone()],
+        )
+        .await
+        .unwrap();
+        store.publish(segment.proof()).await.unwrap()
+    };
+    let store = FilesystemArtifactStore::open_existing(&fixture.root)
+        .await
+        .unwrap();
+    let mut budget = ByteLimit::new(2 * SEGMENT_BYTES).start();
+    let first = RetainedHistorySegment::open(&store, &fixture.source, &mut budget)
+        .await
+        .unwrap();
+    let mirror = RetainedHistorySegment::open(&store, &copy, &mut budget)
+        .await
+        .unwrap();
+    assert_eq!(
+        first.manifest.stream_digest(),
+        mirror.manifest.stream_digest()
+    );
+    let batch = SegmentRewriteSelection::new(targets).unwrap();
+    let sources = batch
+        .start_admission()
+        .include(&first, targets)
+        .unwrap()
+        .include(&mirror, targets)
+        .unwrap()
+        .finish()
+        .unwrap();
+    for (source, reference) in [(&first, &fixture.source), (&mirror, &copy)] {
+        let proof = source
+            .verify_fully_selected(&store, sources.for_source(source).unwrap(), &mut budget)
+            .await
+            .unwrap();
+        assert_eq!(proof.source(), reference);
+    }
+}

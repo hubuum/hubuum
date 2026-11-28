@@ -1,5 +1,5 @@
 //! Stage a replacement for a mixed segment. The published source stays intact.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, btree_map};
 use std::sync::Arc;
 
 use hubuum_artifacts::{
@@ -57,7 +57,8 @@ impl SegmentRewriteSelection {
     pub fn start_admission(&self) -> RewriteSourceAdmission<'_> {
         RewriteSourceAdmission {
             batch: self,
-            unassigned: self.members.keys().copied().collect(),
+            unseen: self.members.keys().copied().collect(),
+            remaining_frames: HistoryExpiryManifest::MAX_MEMBERS,
             bytes: selected_frame_budget(),
             projections: BTreeMap::new(),
         }
@@ -140,10 +141,12 @@ fn selected_frame_budget() -> ByteBudget {
     ByteLimit::new(HistoryExpiryInputBytes::MAX_BATCH_BYTES as usize).start()
 }
 
-/// No output can be obtained until every claimed version is accounted for.
+/// All selected identities must occur in the supplied sources. Each physical
+/// frame consumes row and byte capacity, including copies of the same version.
 pub struct RewriteSourceAdmission<'a> {
     batch: &'a SegmentRewriteSelection,
-    unassigned: BTreeSet<VersionIdentity>,
+    unseen: BTreeSet<VersionIdentity>,
+    remaining_frames: usize,
     bytes: ByteBudget,
     projections: BTreeMap<[u8; 32], SegmentRewriteSelection>,
 }
@@ -157,26 +160,29 @@ impl RewriteSourceAdmission<'_> {
         members: impl IntoIterator<Item = StorageRecordIdentity>,
     ) -> ArtifactResult<Self> {
         let mut projection = self.batch.for_source(members)?;
-        for version in &projection.source_versions {
-            if !self.unassigned.remove(version) {
-                return Err(ArtifactError::Conflict(
-                    "Selected history assigned to more than one rewrite source".into(),
-                ));
-            }
-        }
-        projection.charge_source_entries(source, &mut self.bytes)?;
         let digest = source.manifest.manifest_digest();
-        projection.source_digest = Some(digest);
-        if self.projections.insert(digest, projection).is_some() {
+        let btree_map::Entry::Vacant(slot) = self.projections.entry(digest) else {
             return Err(ArtifactError::Invalid(
                 "Repeated history rewrite source".into(),
             ));
+        };
+        self.remaining_frames = self
+            .remaining_frames
+            .checked_sub(projection.source_versions.len())
+            .ok_or_else(|| {
+                ArtifactError::Limit("Too many selected physical history frames".into())
+            })?;
+        projection.charge_source_entries(source, &mut self.bytes)?;
+        for version in &projection.source_versions {
+            self.unseen.remove(version);
         }
+        projection.source_digest = Some(digest);
+        slot.insert(projection);
         Ok(self)
     }
 
     pub fn finish(self) -> ArtifactResult<AdmittedRewriteSources> {
-        if !self.unassigned.is_empty() {
+        if !self.unseen.is_empty() {
             return Err(ArtifactError::Conflict(
                 "Rewrite sources do not cover the entire selected batch".into(),
             ));
