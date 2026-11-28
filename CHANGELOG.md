@@ -515,6 +515,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- PostgreSQL now decodes each retained expiry decision once when reconciling
+  history exclusions. Admission and restore check the original version, intent
+  and interval before adding missing exclusions.
+
 - History recovery rejects missing policy revisions and expiry selections or
   size-pressure observations that cite a policy before it could have existed.
   Policy previews also reject false coverage, repeated versions, and eligibility

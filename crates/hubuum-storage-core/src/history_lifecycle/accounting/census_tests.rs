@@ -334,14 +334,14 @@ fn incomplete_or_ambiguous_census_fails_closed(#[case] mode: &str) {
 #[case(true)]
 fn complete_row_limit_is_inclusive_and_the_next_row_invalidates_the_census(#[case] overflow: bool) {
     let (snapshot, policy) = fixture(StorageIdentityHistoryKind::Object);
+    // Generate the fixture's random identities before starting the timed fold.
+    let candidates: Vec<_> = (0..HistorySizeCensus::MAX_ROWS)
+        .map(|_| row(policy.key().family(), None))
+        .collect();
     let mut census = HistorySizeCensus::new(snapshot, &policy).unwrap();
-    for _ in 0..HistorySizeCensus::MAX_ROWS {
+    for candidate in candidates {
         census
-            .observe(
-                Some(&row(policy.key().family(), None)),
-                HistoryLogicalBytes::new(1).unwrap(),
-                1,
-            )
+            .observe(Some(&candidate), HistoryLogicalBytes::new(1).unwrap(), 1)
             .unwrap();
     }
     if overflow {

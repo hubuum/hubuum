@@ -125,7 +125,9 @@ for policy_storage_input in crates/hubuum-storage-postgres/tests/history_lifecyc
   crates/hubuum-storage-memory/src/history_lifecycle/expiry/progress_tests.rs \
   crates/hubuum-storage-postgres/src/runtime/history_publication.rs \
   crates/hubuum-storage-postgres/migrations/2026-11-19-000002_history_lifecycle/up.sql \
-  crates/hubuum-storage-postgres/migrations/2026-11-19-000002_history_lifecycle/down.sql; do
+  crates/hubuum-storage-postgres/migrations/2026-11-19-000002_history_lifecycle/down.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-27-000002_history_expiry_projection/up.sql \
+  crates/hubuum-storage-postgres/migrations/2026-11-27-000002_history_expiry_projection/down.sql; do
   policy_storage_output="$(bash "$classifier" "$policy_storage_input")"
   assert_flag "$policy_storage_output" code true
   assert_flag "$policy_storage_output" rust true
