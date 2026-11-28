@@ -54,7 +54,7 @@ pub(crate) fn enter() -> Result<Worker, Box<dyn Error>> {
     let options = LaunchOptions {
         exe: std::env::current_exe()?,
         cwd: Some(Path::new(&system_root).join("System32")),
-        env: Some(vec![("SystemRoot".into(), system_root)]),
+        env: Some(hubuum_templates::windows_worker_environment()),
         stdio: StdioConfig::Pipe,
         join_job: Some(JobLimits {
             kill_on_job_close: true,

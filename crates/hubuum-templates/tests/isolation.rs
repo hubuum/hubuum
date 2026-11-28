@@ -76,11 +76,8 @@ async fn packaged_worker_renders_with_the_service_environment() {
     command.env_clear().kill_on_drop(true);
     #[cfg(windows)]
     {
-        for name in ["SystemRoot", "LOCALAPPDATA"] {
-            command.env(name, std::env::var_os(name).unwrap());
-        }
-        // Preserve the original CreateProcessW HRESULT in the test log. The
-        // broker constructs a separate, SystemRoot-only rendering environment.
+        command.envs(hubuum_templates::windows_worker_environment());
+        // Preserve the original CreateProcessW HRESULT in the test log.
         command.env("RAPPCT_DEBUG_LAUNCH", "1");
     }
     let mut child = command
