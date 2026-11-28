@@ -248,6 +248,14 @@ async fn waiting_response_exposes_the_status_without_checkpoint_contents() {
         let record = crate::services::tasks::task_from_storage(wait.task().clone()).unwrap();
         let response = serde_json::to_value(record.to_response().unwrap()).unwrap();
         assert_eq!(response["status"], "waiting");
+        assert_eq!(
+            response["progress"]["observation"],
+            serde_json::json!({
+                "phase": "waiting",
+                "wait_reason": "awaiting_resume",
+                "updated_at": record.updated_at.and_utc(),
+            })
+        );
         assert!(!response.to_string().contains("private checkpoint"));
         assert!(!format!("{record:?}").contains("private checkpoint"));
         fixture.cleanup().await;

@@ -79,15 +79,15 @@ Fallback does not make an unsupported kind executable. `ordinary_position` is a
 position in the scheduler's weighted rotation, not a task's queue position.
 Counters describe successful starts, not completed work or CPU consumption.
 
-These diagnostics do not change the existing [task response](task_api.md), invent
-per-task wait reasons, or promise queue position or ETA. A queued task remains
-inspectable by its authorized durable reference. Ending a client's local wait
-neither cancels that task nor changes its execution deadline or output lifetime.
+Callers can inspect a queued task through its durable reference. The task's
+progress observation reports `awaiting_claim` until a worker claims it.
+Ending a client's local wait leaves the task, its deadline and its output
+lifetime intact. See the [task progress fields](task_api.md#progress).
 
 This is the applicable #545 contract review for #507. Backend scheduling contracts
 cover fallback/unsupported-kind behavior; the administrator endpoint tests cover
-policy projection and denial to ordinary users. Broader phase/progress models,
-consumer helpers and provider-wait contracts remain separate #545/#516 work.
+policy projection and denial to ordinary users. Consumer helpers and
+provider-specific wait reasons remain part of #545 and #516.
 
 ## Configuration and upgrade
 

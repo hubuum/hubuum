@@ -234,16 +234,49 @@ Example:
 
 ### Progress
 
-`progress` is generic and item-count oriented:
+`progress` reports item counts and the activity recorded for the task.
 
 ```json
 {
   "total_items": 10,
   "processed_items": 7,
   "success_items": 6,
-  "failed_items": 1
+  "failed_items": 1,
+  "observation": {
+    "updated_at": "2026-11-27T12:10:00Z",
+    "phase": "waiting",
+    "wait_reason": "awaiting_resume"
+  }
 }
 ```
+
+The four counters measure logical items. A positive `total_items` can be used
+as a denominator when it covers the reported items. Zero can mean that the
+producer supplied no total, including when the task has processed items.
+Waiting and resuming preserve the counters. They do not measure the physical
+work of retries or provide a phase-specific percentage.
+
+| Recorded state | `observation.phase` | `observation.wait_reason` |
+| --- | --- | --- |
+| Queued, including after a wake-up | `waiting` | `awaiting_claim` |
+| Waiting with a durable checkpoint | `waiting` | `awaiting_resume` |
+| Validating | `validating` | Omitted |
+| Running | `processing` | Omitted |
+| Validating or running with recorded cancellation intent | `cancellation_pending` | Omitted |
+| Any terminal status | `finished` | Omitted |
+
+`updated_at` is the UTC timestamp of the task row's last persisted update.
+Polling the same row preserves that time. An update can include a lease renewal.
+An authorized caller may request cancellation while a task is nonterminal.
+`cancel_requested_at` records durable intent and `terminal_reason` reports a
+terminal stop. Each cancellation request checks the caller's current permissions.
+The task's execution deadline, the client's local wait timeout and a ready
+result's expiration are independent. Stopping a local wait leaves the task active.
+
+Clients reading older servers can use the existing status and counters when
+`observation` is absent. If a future phase or reason is unfamiliar, display
+the task status and follow its original task link. Queue position, provider
+readiness and retry timing cannot be inferred from these phases.
 
 ### Links
 
@@ -333,7 +366,7 @@ Sorting:
 Filters:
 
 - `kind` (optional, comma-separated): `import`, `export`, `backup`, `reindex`, `remote_call`, `schema_validation`
-- `status` (optional, comma-separated): `queued`, `validating`, `running`, `succeeded`, `failed`, `partially_succeeded`, `cancelled`
+- `status` (optional, comma-separated): `queued`, `validating`, `running`, `waiting`, `succeeded`, `failed`, `partially_succeeded`, `cancelled`
 - `submitted_by` (optional): admin-only filter by user ID; non-admin callers are always restricted to their own tasks regardless of this parameter
 - `terminal`: `true` selects succeeded, failed, partially succeeded, or cancelled;
   `false` selects queued, validating, or running. Explicit statuses must agree.

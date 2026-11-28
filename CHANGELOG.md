@@ -39,6 +39,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   SHA-256 `Content-Digest`. Clients can verify the downloaded bytes before using
   a file. Existing backup digest headers remain available.
 
+- Task responses include a timestamped progress observation. Clients can
+  distinguish waiting for a worker from waiting for a durable continuation and
+  see when an active task has a pending cancellation.
 - Offline recovery can reconcile an interrupted filesystem archive publication
   against its original private root and committed v2 intent, including a crash
   while reserving IDs before staging begins. Signed reapplication

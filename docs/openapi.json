@@ -46358,6 +46358,85 @@
           }
         }
       },
+      "TaskActivity": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "wait_reason",
+              "phase"
+            ],
+            "properties": {
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "waiting"
+                ]
+              },
+              "wait_reason": {
+                "$ref": "#/components/schemas/TaskWaitReason"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "phase"
+            ],
+            "properties": {
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "validating"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "phase"
+            ],
+            "properties": {
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "processing"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A stop was requested and the task still holds an active status.",
+            "required": [
+              "phase"
+            ],
+            "properties": {
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "cancellation_pending"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "phase"
+            ],
+            "properties": {
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "finished"
+                ]
+              }
+            }
+          }
+        ]
+      },
       "TaskAdmissionPolicy": {
         "type": "object",
         "description": "Complete deployment policy. No member binds an integer database identity.\nTask owners and collection membership are captured separately at admission.",
@@ -46924,6 +47003,17 @@
             "type": "integer",
             "format": "int32"
           },
+          "observation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TaskProgressObservation",
+                "description": "Present on current servers. Older task responses contain only the item counters."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "processed_items": {
             "type": "integer",
             "format": "int32"
@@ -46937,6 +47027,26 @@
             "format": "int32"
           }
         }
+      },
+      "TaskProgressObservation": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TaskActivity"
+          },
+          {
+            "type": "object",
+            "required": [
+              "updated_at"
+            ],
+            "properties": {
+              "updated_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "UTC time of the most recent persisted task-row update."
+              }
+            }
+          }
+        ]
       },
       "TaskQueueStateResponse": {
         "type": "object",
@@ -47348,6 +47458,13 @@
           "failed",
           "partially_succeeded",
           "cancelled"
+        ]
+      },
+      "TaskWaitReason": {
+        "type": "string",
+        "enum": [
+          "awaiting_claim",
+          "awaiting_resume"
         ]
       },
       "TestOperation": {
