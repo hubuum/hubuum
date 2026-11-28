@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::artifacts::ArtifactReference;
 use serde_json::json;
 
 #[derive(Clone, Default)]
@@ -7,6 +8,7 @@ pub(super) struct MemoryHistoryArchive {
     pub(super) claims: BTreeMap<Uuid, HistoryArchivePublicationRequest>,
     pub(super) publication_claim_bytes: usize,
     captures: BTreeMap<Uuid, HistoryArchiveCapture>,
+    historical: BTreeMap<(ResourceIdentity, VersionIdentity), BTreeSet<ArtifactReference>>,
     staging_bytes: usize,
     capture_reservations: BTreeMap<Uuid, usize>,
 }
@@ -227,6 +229,40 @@ fn cleanup_claim(
 
 #[async_trait]
 impl HistoryArchiveStorage for MemoryStorage {
+    async fn history_archive_copy_history(
+        &self,
+        target: StorageRecordIdentity,
+        fence: ApplicationFence,
+    ) -> Result<HistoryArchiveCopyHistory, StorageError> {
+        let state = self.state.read_control().await;
+        if state.application_control.fence() != fence {
+            return Err(StorageError::conflict(
+                "Archive pin observation fence changed",
+            ));
+        }
+        let pins = state
+            .history_archive
+            .captures
+            .values()
+            .filter_map(HistoryArchiveCapture::archive)
+            .filter(|descriptor| descriptor.identity() == target)
+            .map(|descriptor| descriptor.location().clone());
+        let reclaimed = state
+            .history_archive
+            .historical
+            .get(&(target.resource(), target.version()))
+            .into_iter()
+            .flatten()
+            .cloned();
+        let empty = HistoryArchiveCatalog::empty(target.resource());
+        let catalog = state
+            .history_archive
+            .catalogs
+            .get(&target.resource())
+            .unwrap_or(&empty);
+        HistoryArchiveCopyHistory::from_sources(target, fence, catalog, pins, reclaimed)
+    }
+
     async fn load_history_archive_cleanup(
         &self,
         request: &HistoryArchiveCleanupRequest,
@@ -345,7 +381,7 @@ impl HistoryArchiveStorage for MemoryStorage {
             .get(&resource)
             .cloned()
             .unwrap_or_else(|| HistoryArchiveCatalog::empty(resource));
-        let next = current.publish(expected, descriptors.clone())?;
+        let publication = current.publication(expected, descriptors.clone())?;
         let mut examined = 0;
         let mut bytes =
             history_archive_encoded_bytes(&descriptors, HISTORY_ARCHIVE_BATCH_BYTES)?.len();
@@ -382,6 +418,15 @@ impl HistoryArchiveStorage for MemoryStorage {
                 ));
             }
         }
+        for (version, location) in publication.displaced() {
+            state
+                .history_archive
+                .historical
+                .entry((resource, *version))
+                .or_default()
+                .insert(location.clone());
+        }
+        let next = publication.into_catalog();
         state
             .history_archive
             .catalogs
@@ -424,6 +469,15 @@ impl HistoryArchiveStorage for MemoryStorage {
             .collect();
         for id in expired {
             if let Some(old) = state.history_archive.captures.remove(&id) {
+                if let Some(descriptor) = old.archive() {
+                    let identity = descriptor.identity();
+                    state
+                        .history_archive
+                        .historical
+                        .entry((identity.resource(), identity.version()))
+                        .or_default()
+                        .insert(descriptor.location().clone());
+                }
                 state.history_archive.staging_bytes -= state
                     .history_archive
                     .capture_reservations

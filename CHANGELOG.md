@@ -22,6 +22,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   later checks. **Breaking persisted archive pin format.** Upgrade processes
   that reopen query pins before admitting reads that write `verified_primary_v1`.
   Updated readers also accept existing full-row pins.
+
+- **Breaking storage SDK 0.20 change.** Complete adapters must implement
+  `history_archive_copy_history` for privileged erasure review. This replaces
+  the unreleased `history_archive_pinned_copies` method and metric label.
+  Update draft-branch dashboards to the new label. Query reclamation and catalog
+  replacement preserve the immutable location of each former copy, including
+  copies never held by queries. Pass the resource catalog from the same snapshot
+  to the copy-history constructors. Operators receive the current generation and
+  location together with all distinct recorded locations. Stop API and worker processes, back up the
+  database, apply the archive migrations, reconcile grants and start matching
+  writers. Roll forward once displaced locations are recorded. The migrations
+  cannot reconstruct locations lost before installation.
+
 - Offline recovery can reconcile an interrupted filesystem archive publication
   against its original private root and committed v2 intent, including a crash
   while reserving IDs before staging begins. Signed reapplication

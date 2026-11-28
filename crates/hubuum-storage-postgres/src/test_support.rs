@@ -1574,6 +1574,11 @@ pub async fn delete_isolated_history_archive_captures(
             .bind::<Text, _>(runtime.to_string())
             .bind::<Text, _>(uuid::Uuid::from_bytes(*resource.as_bytes()).to_string())
             .execute(connection).await?;
+        // Each isolated fixture creates its own resource. Reclaiming its query
+        // rows also retained their physical references in the operator journal.
+        diesel::sql_query("DELETE FROM hubuum_control.history_archive_reclaimed_pins WHERE resource=$1")
+            .bind::<diesel::sql_types::Uuid, _>(uuid::Uuid::from_bytes(*resource.as_bytes()))
+            .execute(connection).await?;
         Ok::<_, PostgresStorageError>(())
     }).await
 }

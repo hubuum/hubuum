@@ -25,6 +25,27 @@ intervals and read epochs through typed error evidence and restore remapping.
 Preserve both archive-budget and lifecycle-gap evidence through adapter errors;
 API request rejection reasons keep their existing priority.
 
+**Breaking archive copy history lookup.** Implement `history_archive_copy_history`
+under operator database authority. This replaces the unreleased
+`history_archive_pinned_copies` method and returns `HistoryArchiveCopyHistory`.
+Update any dashboards using the draft operation label to `history_archive_copy_history`.
+Observe the exact resource, version and application fence together. Include
+retained query captures across principals, and keep their immutable references
+when reclaiming them. Record each former catalog location in the same transaction
+as the replacement, including copies never captured by a query. Complete adapters
+can use `HistoryArchiveCatalog::publication` to derive the next generation and
+its displaced locations from the same validated input. A failed publication must
+roll back its evidence. A repeat of the same location adds no obligation.
+
+Return each immutable location once and reject conflicting manifests. Lookups
+allow up to 1,024 capture references, 1,024 historical references and 1,024
+distinct physical locations in total, including the current location. Pass the
+resource catalog from the same read snapshot to the observation constructor.
+Return its generation even when the selected version has no catalog entry.
+For an absent resource catalog, pass an empty catalog for that resource. Read
+backups and unpublished artifacts from their own inventories. Recorded history
+begins when the relevant migration is installed.
+
 **Breaking archive recovery capability.** Complete adapters must implement
 `load_history_archive_cleanup` and `settle_history_archive_cleanup` under
 offline control authority. Load the original, uniquely pinned claim under the

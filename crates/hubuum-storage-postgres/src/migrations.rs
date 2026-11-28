@@ -28,6 +28,7 @@ const OFFLINE_MIGRATIONS: &[&str] = &[
     "20261110000001",
     "20261119000002",
     "20261127000001",
+    "20261128000003",
     "20261128000005",
 ];
 
@@ -106,12 +107,17 @@ pub fn inspect_migration_mode(
     } else {
         Vec::new()
     };
-    let known = <EmbeddedMigrations as MigrationSource<Pg>>::migrations(&MIGRATIONS)
-        .map_err(|error| PostgresStorageError::database(error.to_string()))?
+    let known = embedded_migration_versions()?;
+    migration_mode_for_versions(&applied, &known).map_err(StorageError::from)
+}
+
+fn embedded_migration_versions() -> Result<Vec<String>, PostgresStorageError> {
+    let migrations = <EmbeddedMigrations as MigrationSource<Pg>>::migrations(&MIGRATIONS)
+        .map_err(|error| PostgresStorageError::database(error.to_string()))?;
+    Ok(migrations
         .into_iter()
         .map(|migration| migration.name().version().to_string())
-        .collect::<Vec<_>>();
-    migration_mode_for_versions(&applied, &known).map_err(StorageError::from)
+        .collect())
 }
 
 fn migration_mode_for_versions(
@@ -313,10 +319,9 @@ fn run_embedded_migrations_with_roles(
 
 #[cfg(test)]
 mod tests {
-    use super::{MIGRATIONS, MigrationMode, OFFLINE_MIGRATIONS, migration_mode_for_versions};
-    use diesel::migration::MigrationSource;
-    use diesel::pg::Pg;
-    use diesel_migrations::EmbeddedMigrations;
+    use super::{
+        MigrationMode, OFFLINE_MIGRATIONS, embedded_migration_versions, migration_mode_for_versions,
+    };
     use rstest::rstest;
 
     #[rstest]
@@ -335,46 +340,27 @@ mod tests {
     #[case::before_waiting(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008"], MigrationMode::Offline)]
     #[case::before_runtime_policies(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008", "20261101000001"], MigrationMode::Offline)]
     #[case::before_history_lifecycle(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008", "20261101000001", "20261103000002", "20261103000004", "20261106000001", "20261110000001", "20261111000001", "20261119000001"], MigrationMode::Offline)]
+    #[case::before_archive_catalog_displacements(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008", "20261101000001", "20261103000002", "20261103000004", "20261106000001", "20261110000001", "20261111000001", "20261119000001", "20261119000002"], MigrationMode::Offline)]
     #[case::before_packed_history_catalogs(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008", "20261101000001", "20261103000002", "20261103000004", "20261106000001", "20261110000001", "20261111000001", "20261119000001", "20261119000002"], MigrationMode::Offline)]
     #[case::before_description_observations(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008", "20261101000001", "20261103000002", "20261103000004", "20261106000001", "20261110000001", "20261111000001", "20261119000001", "20261119000002", "20261127000001"], MigrationMode::Offline)]
-    #[case::current(vec!["20260919000001", "20261001000001", "20261005000001", "20261021000001", "20261021000002", "20261027000001", "20261027000003", "20261029000001", "20261029000002", "20261029000003", "20261029000004", "20261029000005", "20261029000006", "20261030000001", "20261031000001", "20261031000008", "20261101000001", "20261103000002", "20261103000004", "20261106000001", "20261110000001", "20261111000001", "20261119000001", "20261119000002", "20261127000001", "20261128000005"], MigrationMode::Rolling)]
     fn pending_offline_migrations_determine_mode(
         #[case] applied: Vec<&str>,
         #[case] expected: MigrationMode,
     ) {
         let applied = applied.into_iter().map(str::to_owned).collect::<Vec<_>>();
-        let known = [
-            "20260919000001",
-            "20261001000001",
-            "20261005000001",
-            "20261021000001",
-            "20261021000002",
-            "20261027000001",
-            "20261027000003",
-            "20261029000001",
-            "20261029000002",
-            "20261029000003",
-            "20261029000004",
-            "20261029000005",
-            "20261029000006",
-            "20261030000001",
-            "20261031000001",
-            "20261031000008",
-            "20261101000001",
-            "20261103000002",
-            "20261103000004",
-            "20261106000001",
-            "20261110000001",
-            "20261111000001",
-            "20261119000001",
-            "20261119000002",
-            "20261127000001",
-            "20261128000005",
-        ]
-        .map(str::to_owned);
+        let known = embedded_migration_versions().unwrap();
         assert_eq!(
             migration_mode_for_versions(&applied, &known).unwrap(),
             expected
+        );
+    }
+
+    #[test]
+    fn fully_migrated_database_allows_a_rolling_restart() {
+        let known = embedded_migration_versions().unwrap();
+        assert_eq!(
+            migration_mode_for_versions(&known, &known).unwrap(),
+            MigrationMode::Rolling
         );
     }
 
@@ -387,12 +373,7 @@ mod tests {
 
     #[test]
     fn each_embedded_migration_has_its_own_diesel_version() {
-        let migrations =
-            <EmbeddedMigrations as MigrationSource<Pg>>::migrations(&MIGRATIONS).unwrap();
-        let mut versions: Vec<_> = migrations
-            .iter()
-            .map(|migration| migration.name().version())
-            .collect();
+        let mut versions = embedded_migration_versions().unwrap();
         versions.sort_unstable();
         for pair in versions.windows(2) {
             assert_ne!(

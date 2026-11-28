@@ -148,6 +148,13 @@
       "drop_constraints": {}
     },
     {
+      "migration": "crates/hubuum-storage-postgres/migrations/2026-11-28-000003_archive_catalog_displacements/up.sql",
+      "sha256": "3e215be157480b25f0018837e504ff3c24c23bd9e64484e48712e81737f9b522",
+      "reason": "Catalog replacements must record displaced immutable locations in the same transaction. Earlier writers cannot provide that evidence.",
+      "upgrade_action": "Stop API and worker processes, back up the database, run hubuum-admin --migrate, reconcile runtime grants and start matching writers. Roll forward after the first displaced location. See docs/history_archive_reads.md.",
+      "drop_constraints": {}
+    },
+    {
       "migration": "crates/hubuum-storage-postgres/migrations/2026-11-28-000005_collection_history_description_observations/up.sql",
       "sha256": "9a5f4c626a924a43795b19b4f81c47514b4ada3dbe8475b76be048ea84c901d9",
       "reason": "Installing the history triggers and backfilling existing large descriptions holds a write-conflicting lock on collection history until the transaction commits. Updated archive readers require the new relation.",
