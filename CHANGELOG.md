@@ -12,8 +12,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - PostgreSQL computed-field rebuild and read-repair workers now read only the
   task settings row when selecting the size of each batch.
 
-### Security
-
 - **Breaking change:** Review credentialed URLs before upgrading. Replace dynamic
   query names and template control blocks with literal parameter names and value
   expressions. Credential-bearing remote targets now bind the rendered request to the
@@ -25,6 +23,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   (default: the container bridge subnet) and disables the per-IP and
   per-subnet login scopes that would otherwise turn a shared proxy address
   into a deployment-wide lockout.
+
+### Security
 
 - Remove the unused Actix Web cookie feature and its dependency on
   `cookie` 0.16.2 (RUSTSEC-2026-0594).
