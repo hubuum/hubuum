@@ -1,5 +1,6 @@
 use super::*;
 use crate::errors::ApiError;
+use crate::services::archive::ClaimedFilesystemHistory;
 use crate::services::deletion_recovery::{
     RuntimeRecoveryLifetime, reapply, recover, recover_with_archive_cleanup,
     require_runtime_permit,
@@ -28,20 +29,46 @@ use uuid::Uuid;
 #[tokio::test]
 #[ignore = "subprocess for a committed archive claim interrupted during file staging"]
 async fn archive_producer() {
+    run_archive_producer(false).await;
+}
+
+#[tokio::test]
+#[ignore = "subprocess for an archive claim interrupted after independent readback"]
+async fn sealed_archive_producer() {
+    run_archive_producer(true).await;
+}
+
+async fn run_archive_producer(sealed: bool) {
     let root = std::env::current_dir().unwrap();
     let storage =
         StorageHandle::postgres(postgres_test_pool(&claim_test_runtime_database_url(), 4));
-    let (id, _lifetime) = stage_archive(storage, &root, true).await;
+    let (id, _lifetime) = if sealed {
+        let source = archive_source(storage, &root).await;
+        let attempt = source.reserve().await;
+        let result = attempt.seal(&source.store).await.unwrap();
+        assert_eq!(
+            result.claim().manifest().location(),
+            result.artifact().manifest().identity()
+        );
+        (source.permit.producer().parent().id(), source.lifetime)
+    } else {
+        stage_archive(storage, &root, true).await
+    };
     fs::write(root.join("staged.tmp"), id.as_bytes()).unwrap();
     fs::rename(root.join("staged.tmp"), root.join("staged")).unwrap();
     std::future::pending::<()>().await;
 }
 
-async fn stage_archive(
+struct ArchiveSource {
     storage: StorageHandle,
-    root: &Path,
-    bound: bool,
-) -> (Uuid, RuntimeRecoveryLifetime) {
+    lifetime: RuntimeRecoveryLifetime,
+    permit: HistoryArchiveExecutionPermit,
+    capture: HistoryArchiveCapture,
+    store: FilesystemArtifactStore,
+    location: ArtifactIdentity,
+}
+
+async fn archive_source(storage: StorageHandle, root: &Path) -> ArchiveSource {
     let options = serde_json::from_value(json!({
         "directory": root.join("repository"),
         "key": root.join("key"),
@@ -113,15 +140,37 @@ async fn stage_archive(
     let store = FilesystemArtifactStore::open(root.join("provider"))
         .await
         .unwrap();
-    let destination = Destination::new(DestinationId::generate(), "claim-crash").unwrap();
+    let destination = Destination::new(DestinationId::generate(), prefix("claim-crash")).unwrap();
     store.register_destination(&destination).await.unwrap();
-    let manifest = HistoryArchivePublicationManifest::from_capture(
-        &capture,
+    ArchiveSource {
+        storage,
+        lifetime: isolation,
+        permit: permit.clone(),
+        capture,
+        store,
+        location: ArtifactIdentity::new(destination.id()),
+    }
+}
+
+async fn stage_archive(
+    storage: StorageHandle,
+    root: &Path,
+    bound: bool,
+) -> (Uuid, RuntimeRecoveryLifetime) {
+    let source = archive_source(storage, root).await;
+    let ArchiveSource {
+        storage,
+        lifetime: isolation,
         permit,
-        ArtifactIdentity::new(destination.id()),
-        Utc::now(),
-    )
-    .unwrap();
+        capture,
+        store,
+        location,
+    } = source;
+    let permit = &permit;
+    let scope = permit.execution_scope();
+    let manifest =
+        HistoryArchivePublicationManifest::from_capture(&capture, permit, location, Utc::now())
+            .unwrap();
     let limits = ArtifactLimits::builder()
         .artifact_bytes(HISTORY_ARCHIVE_PUBLICATION_BYTES)
         .build()
@@ -164,6 +213,20 @@ async fn stage_archive(
     (permit.producer().parent().id(), isolation)
 }
 
+impl ArchiveSource {
+    async fn reserve(&self) -> ClaimedFilesystemHistory {
+        ClaimedFilesystemHistory::reserve(
+            &self.storage,
+            &self.store,
+            &self.capture,
+            &self.permit,
+            self.location.clone(),
+        )
+        .await
+        .unwrap()
+    }
+}
+
 // Read the exact protected claim and pin through the migration login. The
 // recovery observation must not depend on the killed producer's in-memory intent.
 async fn retained_claim(pool: &PostgresPool, id: Uuid) -> (ArtifactCreationIntent, Uuid) {
@@ -188,14 +251,14 @@ async fn retained_claim(pool: &PostgresPool, id: Uuid) -> (ArtifactCreationInten
     )
 }
 
-async fn interrupted_claim(root: &Path) -> Uuid {
+async fn interrupted_claim(root: &Path, sealed: bool) -> Uuid {
+    let test = if sealed {
+        "tests::storage_contract::history_archive::claim_crash::sealed_archive_producer"
+    } else {
+        "tests::storage_contract::history_archive::claim_crash::archive_producer"
+    };
     let mut producer = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "tests::storage_contract::history_archive::claim_crash::archive_producer",
-            "--ignored",
-            "--nocapture",
-        ])
+        .args(["--exact", test, "--ignored", "--nocapture"])
         .current_dir(root)
         .kill_on_drop(true)
         .spawn()
@@ -218,6 +281,7 @@ async fn interrupted_claim(root: &Path) -> Uuid {
     .expect("archive producer did not finish staging");
     producer.kill().await.unwrap();
     producer.wait().await.unwrap();
+    fs::remove_file(root.join("staged")).unwrap();
     id
 }
 
@@ -258,21 +322,40 @@ async fn interrupted_filesystem_publication_requires_exact_cleanup_before_releas
     let provider = fixture.root.join("provider");
     fs::DirBuilder::new().mode(0o700).create(&provider).unwrap();
     let provider = provider.canonicalize().unwrap();
-    let id = interrupted_claim(&fixture.root).await;
+    // Keep the same independent repository through both recoveries. Its
+    // authority advances after each release and must never be reinitialized.
+    for sealed in [false, true] {
+        recover_interrupted_claim(&fixture, &admin, &provider, sealed).await;
+    }
+}
+
+async fn recover_interrupted_claim(
+    fixture: &Fixture,
+    admin: &PostgresPool,
+    provider: &Path,
+    sealed: bool,
+) {
+    let id = interrupted_claim(&fixture.root, sealed).await;
     after_repository_release(|| recover(&fixture.storage, &fixture.directory, &fixture.key))
         .await
         .unwrap();
-    assert_claim_blocks_release(&fixture).await;
+    assert_claim_blocks_release(fixture).await;
 
-    let (intent, capture) = retained_claim(&admin, id).await;
-    let store = FilesystemArtifactStore::open(&provider).await.unwrap();
-    let OwnedArtifactResolution::Established {
-        artifact,
-        phase: OwnedArtifactPhase::Staging,
-    } = store.resolve_owned(&intent).await.unwrap()
+    let (intent, capture) = retained_claim(admin, id).await;
+    let store = FilesystemArtifactStore::open(provider).await.unwrap();
+    let OwnedArtifactResolution::Established { artifact, phase } =
+        store.resolve_owned(&intent).await.unwrap()
     else {
-        panic!("interrupted attempt must still be staged");
+        panic!("interrupted attempt must still have an owner");
     };
+    assert_eq!(
+        phase,
+        if sealed {
+            OwnedArtifactPhase::Sealed
+        } else {
+            OwnedArtifactPhase::Staging
+        }
+    );
     store.abort_owned(&artifact).await.unwrap();
     assert!(matches!(
         store.resolve_owned(&intent).await.unwrap(),
@@ -281,21 +364,21 @@ async fn interrupted_filesystem_publication_requires_exact_cleanup_before_releas
             ..
         }
     ));
-    assert_claim_blocks_release(&fixture).await;
-    assert_eq!(retained_claim(&admin, id).await, (intent.clone(), capture));
+    assert_claim_blocks_release(fixture).await;
+    assert_eq!(retained_claim(admin, id).await, (intent.clone(), capture));
 
     // Simulate a lost acknowledgement after physical removal. A fresh provider
     // session can issue the same receipt, but only the control transaction can
     // retire the original native claim and unpin its capture.
     let receipt = store.discard_owned_step(&intent).await.unwrap().unwrap();
     assert_eq!(receipt.encoded_intent(), intent.encode().unwrap());
-    assert_claim_blocks_release(&fixture).await;
+    assert_claim_blocks_release(fixture).await;
     after_repository_release(|| {
         recover_with_archive_cleanup(
             &fixture.storage,
             &fixture.directory,
             &fixture.key,
-            Some((id, &provider)),
+            Some((id, provider)),
         )
     })
     .await
@@ -309,7 +392,7 @@ async fn interrupted_filesystem_publication_requires_exact_cleanup_before_releas
         #[diesel(sql_type = sql_types::Bool)]
         complete: bool,
     }
-    let released = with_connection(&admin, async |connection| {
+    let released = with_connection(admin, async |connection| {
         sql_query("SELECT EXISTS(SELECT 1 FROM hubuum_control.history_archive_captures WHERE id=$2 AND NOT publication_claimed)
             AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_archive_publication_claims WHERE publication_id=$1)
             AND NOT EXISTS(SELECT 1 FROM hubuum_control.history_publication_producers WHERE publication_id=$1)
@@ -421,4 +504,220 @@ async fn rotated_recovery_fence_rejects_verified_cleanup_settlement() {
         .await
         .unwrap();
     assert_eq!(retained.encoded_intent(), receipt.encoded_intent());
+}
+
+async fn memory_source() -> (Fixture, ArchiveSource) {
+    let fixture = Fixture::with_storage(StorageHandle::memory()).await;
+    let root = fixture.root.canonicalize().unwrap();
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(root.join("provider"))
+        .unwrap();
+    let source = archive_source(fixture.storage.clone(), &root).await;
+    (fixture, source)
+}
+
+#[rstest]
+#[case::fresh(false)]
+#[case::already_sealed(true)]
+#[tokio::test]
+async fn claimed_segment_reads_back_original_row_from_its_sealed_destination(#[case] reopen: bool) {
+    let (fixture, source) = memory_source().await;
+    let attempt = source.reserve().await;
+    if reopen {
+        attempt.seal(&source.store).await.unwrap();
+    }
+    let store = FilesystemArtifactStore::open_existing(
+        fixture.root.join("provider").canonicalize().unwrap(),
+    )
+    .await
+    .unwrap();
+    let result = attempt.seal(&store).await.unwrap();
+    let reference = result.artifact().reference();
+    let original = source.capture.hot().unwrap();
+    let mut budget = ByteLimit::new(HISTORY_ARCHIVE_PUBLICATION_BYTES as usize).start();
+    let segment = HistorySegment::open_verified(&store, result.artifact().clone(), &mut budget)
+        .await
+        .unwrap();
+    assert_eq!(segment.record_count(), 1);
+    let record = segment
+        .exact(
+            &store,
+            original.identity().resource(),
+            original.identity().version(),
+            &mut budget,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.payload(), original.payload());
+    assert_eq!(record.interval().valid_from(), original.valid_from());
+    assert_eq!(Some(record.interval().valid_to()), original.valid_to());
+    assert!(store.published_manifest(&reference).await.is_err());
+}
+
+async fn other_segment(source: &ArchiveSource) -> HistorySegment {
+    let row = source.capture.hot().unwrap();
+    let identity = row.identity();
+    let scope = SegmentScope::new(source.capture.selection().family(), identity.resource());
+    let record = SegmentRecord::new(
+        scope.clone(),
+        VersionInterval::new(
+            identity.resource(),
+            identity.version(),
+            row.valid_from(),
+            row.valid_to().unwrap(),
+        )
+        .unwrap(),
+        row.payload().clone(),
+    );
+    let other = ArtifactIdentity::new(source.location.destination());
+    HistorySegment::stage(&source.store, other, scope, [record])
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn claimed_segment_replays_an_identical_unsealed_block() {
+    let (_fixture, source) = memory_source().await;
+    let attempt = source.reserve().await;
+    let intent =
+        ArtifactCreationIntent::decode(attempt.claim().request().intent().encoded()).unwrap();
+    let OwnedArtifactAdmission::Created(receipt) =
+        source.store.create_owned(&intent).await.unwrap()
+    else {
+        panic!("fresh claim");
+    };
+    let expected = other_segment(&source).await;
+    let other = expected.proof().manifest().identity();
+    let first_block = source.store.block(other, 0).await.unwrap().unwrap();
+    source
+        .store
+        .append_owned(&receipt, 0, &first_block)
+        .await
+        .unwrap();
+    let result = attempt.seal(&source.store).await.unwrap();
+    assert_eq!(
+        result.artifact().manifest().stream_digest(),
+        expected.proof().manifest().stream_digest()
+    );
+}
+
+#[tokio::test]
+async fn claimed_segment_rejects_substituted_sealed_bytes() {
+    let (_fixture, source) = memory_source().await;
+    let attempt = source.reserve().await;
+    let intent =
+        ArtifactCreationIntent::decode(attempt.claim().request().intent().encoded()).unwrap();
+    let OwnedArtifactAdmission::Created(receipt) =
+        source.store.create_owned(&intent).await.unwrap()
+    else {
+        panic!("fresh claim");
+    };
+    let session = receipt.session(&source.store);
+    let mut writer = ArtifactWriter::new(&session, intent.identity().clone(), intent.limits())
+        .await
+        .unwrap();
+    writer
+        .write(b"valid artifact with substituted content")
+        .await
+        .unwrap();
+    writer.seal().await.unwrap();
+    assert!(matches!(
+        attempt.seal(&source.store).await,
+        Err(ApiError::InternalServerError(_))
+    ));
+    assert!(matches!(
+        source.store.resolve_owned(&intent).await.unwrap(),
+        OwnedArtifactResolution::Established {
+            phase: OwnedArtifactPhase::Sealed,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn claimed_segment_refuses_a_different_store_before_creating_bytes() {
+    let (fixture, source) = memory_source().await;
+    let attempt = source.reserve().await;
+    let path = fixture
+        .root
+        .canonicalize()
+        .unwrap()
+        .join("different-provider");
+    fs::DirBuilder::new().mode(0o700).create(&path).unwrap();
+    let other = FilesystemArtifactStore::open(path).await.unwrap();
+    other
+        .register_destination(&Destination::new(source.location.destination(), "other").unwrap())
+        .await
+        .unwrap();
+    let intent =
+        ArtifactCreationIntent::decode(attempt.claim().request().intent().encoded()).unwrap();
+    let local = ArtifactCreationIntent::new(
+        intent.identity().clone(),
+        intent.limits(),
+        *intent.operation(),
+        *intent.incarnation(),
+        *intent.request_commitment(),
+    )
+    .unwrap();
+    let local = other.bind_intent(local).await.unwrap();
+    assert!(attempt.seal(&other).await.is_err());
+    assert!(matches!(
+        other.resolve_owned(&local).await.unwrap(),
+        OwnedArtifactResolution::Pending
+    ));
+}
+
+#[tokio::test]
+async fn claimed_segment_rechecks_catalog_generation_before_creating_an_attempt() {
+    let (_fixture, source) = memory_source().await;
+    let attempt = source.reserve().await;
+    let replacement = other_segment(&source).await;
+    let reference = source.store.publish(replacement.proof()).await.unwrap();
+    let descriptor = HistoryArchiveDescriptor::new(
+        source.capture.hot().unwrap(),
+        vec![],
+        replacement.format_version(),
+        reference,
+    )
+    .unwrap();
+    source
+        .storage
+        .run_in_scope(
+            source.permit.execution_scope().clone(),
+            source.storage.publish_history_archive(
+                source.capture.generation(),
+                vec![descriptor],
+                &source.permit,
+            ),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        attempt.seal(&source.store).await,
+        Err(ApiError::Conflict(_))
+    ));
+    let intent =
+        ArtifactCreationIntent::decode(attempt.claim().request().intent().encoded()).unwrap();
+    assert!(matches!(
+        source.store.resolve_owned(&intent).await.unwrap(),
+        OwnedArtifactResolution::Pending
+    ));
+}
+
+#[tokio::test]
+async fn unknown_filesystem_destination_preserves_the_unclaimed_producer() {
+    let (_fixture, source) = memory_source().await;
+    let unknown = ArtifactIdentity::new(DestinationId::generate());
+    let result = ClaimedFilesystemHistory::reserve(
+        &source.storage,
+        &source.store,
+        &source.capture,
+        &source.permit,
+        unknown,
+    )
+    .await;
+    assert!(matches!(result, Err(ApiError::NotFound(_))));
+    source.reserve().await;
 }
