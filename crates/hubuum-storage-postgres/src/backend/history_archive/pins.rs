@@ -7,6 +7,8 @@ use hubuum_storage_core::artifacts::ArtifactReference;
 struct Pins {
     #[diesel(sql_type=Jsonb)]
     locations: Value,
+    #[diesel(sql_type=Jsonb)]
+    reclaimed: Value,
 }
 
 pub(super) async fn read_on(
@@ -23,8 +25,18 @@ pub(super) async fn read_on(
                        FROM hubuum_control.history_archive_captures
                        WHERE material #>> '{archive,identity,resource}' = $1
                          AND material #>> '{archive,identity,version}' = $2
-                       LIMIT $5)
-         SELECT COALESCE((SELECT jsonb_agg(location) FROM pins),'[]'::jsonb) AS locations
+                       LIMIT $5),
+              reclaimed AS (
+                  SELECT artifact, attempt, destination, object_version, manifest_digest
+                  FROM hubuum_control.history_archive_reclaimed_pins
+                  WHERE resource=CAST($1::text AS uuid) AND version=CAST($2::text AS uuid) LIMIT $5
+              )
+         SELECT COALESCE((SELECT jsonb_agg(location) FROM pins),'[]'::jsonb) AS locations,
+                COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                    'identity', jsonb_build_object('artifact',artifact,'attempt',attempt,
+                        'destination',destination,'version',object_version),
+                    'manifest_digest', ARRAY(SELECT get_byte(manifest_digest,i) FROM generate_series(0,31) i)
+                )) FROM reclaimed),'[]'::jsonb) AS reclaimed
          FROM image WHERE control->>'incarnation'=$3 AND (control->>'revision')::bigint=$4",
     )
     .bind::<Text, _>(Uuid::from_bytes(*target.resource().as_bytes()).to_string())
@@ -35,11 +47,15 @@ pub(super) async fn read_on(
     .get_result::<Pins>(connection)
     .await.optional()?
     .ok_or_else(|| PostgresStorageError::conflict("Archive pin observation fence changed"))?;
-    let locations: Vec<ArtifactReference> =
-        serde_json::from_value(row.locations).map_err(|error| {
+    let locations = |value| {
+        serde_json::from_value::<Vec<ArtifactReference>>(value).map_err(|error| {
             PostgresStorageError::invalid_persisted_value("archive pin location", error)
-        })?;
-    Ok(HistoryArchivePinnedCopies::from_locations(
-        target, fence, locations,
+        })
+    };
+    Ok(HistoryArchivePinnedCopies::from_capture_sources(
+        target,
+        fence,
+        locations(row.locations)?,
+        locations(row.reclaimed)?,
     )?)
 }

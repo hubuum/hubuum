@@ -1,4 +1,5 @@
 use super::*;
+use hubuum_storage_core::artifacts::ArtifactReference;
 use serde_json::json;
 
 #[derive(Clone, Default)]
@@ -7,6 +8,7 @@ pub(super) struct MemoryHistoryArchive {
     pub(super) claims: BTreeMap<Uuid, HistoryArchivePublicationRequest>,
     pub(super) publication_claim_bytes: usize,
     captures: BTreeMap<Uuid, HistoryArchiveCapture>,
+    reclaimed: BTreeMap<(ResourceIdentity, VersionIdentity), BTreeSet<ArtifactReference>>,
     staging_bytes: usize,
     capture_reservations: BTreeMap<Uuid, usize>,
 }
@@ -245,7 +247,14 @@ impl HistoryArchiveStorage for MemoryStorage {
             .filter_map(HistoryArchiveCapture::archive)
             .filter(|descriptor| descriptor.identity() == target)
             .map(|descriptor| descriptor.location().clone());
-        HistoryArchivePinnedCopies::from_locations(target, fence, pins)
+        let reclaimed = state
+            .history_archive
+            .reclaimed
+            .get(&(target.resource(), target.version()))
+            .into_iter()
+            .flatten()
+            .cloned();
+        HistoryArchivePinnedCopies::from_capture_sources(target, fence, pins, reclaimed)
     }
 
     async fn load_history_archive_cleanup(
@@ -445,6 +454,15 @@ impl HistoryArchiveStorage for MemoryStorage {
             .collect();
         for id in expired {
             if let Some(old) = state.history_archive.captures.remove(&id) {
+                if let Some(descriptor) = old.archive() {
+                    let identity = descriptor.identity();
+                    state
+                        .history_archive
+                        .reclaimed
+                        .entry((identity.resource(), identity.version()))
+                        .or_default()
+                        .insert(descriptor.location().clone());
+                }
                 state.history_archive.staging_bytes -= state
                     .history_archive
                     .capture_reservations
