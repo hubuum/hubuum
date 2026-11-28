@@ -161,9 +161,37 @@ actual source accounting. Unsupported or unknown-cost shapes must fail or use an
 explicit finite conservative bound in the remaining implementation. Physical
 retries remain chargeable. Partial work must never become a complete empty result.
 
-Live replica/disconnect/crash tests, large-row and exact-boundary resource tests,
-logical-restore charge tests, consumer contract qualification and the coordinated
-full suite/container checks remain required before closing #521.
+### Packaged replica and recovery test
+
+Run the shared-capacity check against a built server image.
+
+```bash
+python3 -I -S tests/python/run.py integration api-admission --image hubuum-server:verify
+```
+
+The fixture starts two API replicas on a private PostgreSQL database and gives
+one principal the only slot. A database transaction holds the first replica's
+history read while the other replica serves readiness and an ordinary collection
+read. History requests on the second replica receive the per-principal or
+deployment rejection according to their authenticated owner. Releasing the
+transaction lets the original read finish and the second replica reuse the slot.
+The fixture also disconnects a client during an admitted read and checks that
+the slot becomes available after the database work drains.
+
+In a separate read the fixture stops the owning process abruptly. Its charge
+survives on the second replica. The fixture stops that replica, applies the
+documented operator settlement, and verifies the retained attempt count and a
+successful read from a restarted replica.
+
+The fixture takes a history-inclusive backup before changing the policy. After
+the crash drill it stops the last replica and restores that older backup into
+the same disposable database using the packaged administrator. It checks that
+the application incarnation changed and both cumulative charges survived. A
+fresh login reads the retained policy revision and original history. That read
+adds one attempt and the duration from the retained policy.
+
+Large-row and exact-boundary resource tests, consumer contract qualification
+and final integration checks remain open for #521.
 
 ## Upgrade
 

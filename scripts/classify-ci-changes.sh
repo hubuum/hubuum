@@ -135,6 +135,7 @@ for path in "$@"; do
       container=true
       ;;
     test-corpora/* | tests/python/integration/corpus.py | tests/python/unit/tooling/test_corpus.py | \
+      tests/python/integration/api_admission.py | \
       docs/assets/atlas/* | docs/getting-started/example-dataset.md | \
       tests/python/integration/atlas.py | tests/python/unit/tooling/test_atlas.py)
       code=true

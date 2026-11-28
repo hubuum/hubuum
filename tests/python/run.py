@@ -31,6 +31,7 @@ INTEGRATION = {
     "scheduling-benchmark": "integration.scheduling_benchmark",
     "schema-budget": "integration.schema_budget",
     "artifact-pipeline": "integration.artifact_pipeline",
+    "api-admission": "integration.api_admission",
     "s3-artifacts": "integration.s3_artifacts",
     "rust-tests": "integration.rust_tests",
     "history-expiry": "integration.history_expiry",
