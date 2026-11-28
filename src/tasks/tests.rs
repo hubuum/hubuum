@@ -399,6 +399,24 @@ fn test_request_hash_is_stable_for_reordered_json_objects() {
     );
 }
 
+#[rstest]
+#[case::nested_and_escaped(
+    r#"{"z":18446744073709551617,"a":[true,"line\n🫐",{"y":1,"x":2}]}"#,
+    "f3a705dc6c3f0d178d19b6ae8bd346c9df4f54673059768eb16edc1be82a669e"
+)]
+#[case::decimal(
+    r#"{"b":1.2300,"a":[false,null]}"#,
+    "87691c5d9d60a92c51762ec8a60a3c70dae8edc1af50b917383ef3f18b4aca27"
+)]
+#[case::reordered_array(
+    r#"{"b":1.2300,"a":[null,false]}"#,
+    "08879a9479bf9040f3dfdbc552b789b7dd8252e03704594962a07d279bb383ab"
+)]
+fn task_request_hash_matches_persisted_digest(#[case] raw: &str, #[case] expected: &str) {
+    let input = serde_json::from_str(raw).unwrap();
+    assert_eq!(request_hash(&input).unwrap(), expected);
+}
+
 #[test]
 fn test_sanitize_error_for_storage_masks_database_details() {
     let sanitized = sanitize_error_for_storage(&ApiError::DatabaseError(

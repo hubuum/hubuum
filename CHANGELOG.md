@@ -325,6 +325,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   deploy matching binaries. Existing JSONB catalogs remain readable. Downgrade
   requires a pre-upgrade backup once packed rows exist.
 
+- Task submissions use less temporary memory when hashing large JSON requests.
+  Existing idempotency keys and stored request hashes continue to work.
+
 - **Breaking for older experimental archive readers.** New history segments use
   64 KiB blocks and a v3 index. Only the fixed-width index is compressed.
   Upgrade every archive reader and recovery tool before publishing v3 segments.

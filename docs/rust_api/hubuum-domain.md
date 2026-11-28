@@ -49,6 +49,10 @@ application and the portable storage-JSON envelope use crate-owned error
 classifications. This keeps patch behavior identical across storage backends
 without exposing PostgreSQL JSONB rules or an adapter error to callers.
 
+`canonical_json_sha256` hashes JSON for task requests and materialized data.
+It sorts object keys while preserving array order, JSON string escaping and
+number tokens. The digest uses lowercase hexadecimal SHA-256.
+
 ## Ownership and Verification
 
 Hubuum maintainers own the crate. Ordinary workspace tests and storage
