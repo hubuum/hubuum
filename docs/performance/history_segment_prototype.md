@@ -477,8 +477,31 @@ For the low-compression description, p95 exact reads exceeded the P2 allowance
 by 2,080,212 bytes and as-of reads exceeded it by 155,092 bytes. PostgreSQL
 reply traffic stayed within both allowances. The runtime executed 421 to 757
 top-level statements per lookup. All 40 measured lookups recorded zero
-temporary blocks read or written. The complete cold-read budget remains open
-for both low-compression lookups.
+temporary blocks read or written. Both low-compression lookups exceeded the budget on this baseline.
+
+### Large description observations in PostgreSQL
+
+At `974928f9`, PostgreSQL served the stored digest and JSON-encoded length
+for eligible primary descriptions. The reader still verified the archived
+payload before delivery. On the same two-CPU, 2 GiB PostgreSQL 18.7 profile,
+one warm-up and five fresh split-role databases each returned the expected
+revision in all eight complete lookups. Across 40 measured lookups,
+0 exceeded the shared-buffer read allowance.
+
+| Low-compression 3 MiB lookup | Earlier read p95 (bytes) | Read p95 with observations (bytes) | Reply p95 (bytes) | P2 allowance (bytes) |
+| --- | ---: | ---: | ---: | ---: |
+| Exact | 7,323,648 | 4,071,424 | 3,436,400 | 5,243,436 |
+| As-of | 7,495,680 | 4,227,072 | 3,436,282 | 7,340,588 |
+
+The separate allocation diagnostic measured the packed catalog, the embedded
+segment index, the PostgreSQL artifact metadata and the new description table
+and indexes. The five measured fixtures follow one warm-up. P1 uses the framed
+record size as its denominator.
+
+| Versions | Packed online metadata median | Packed online metadata p95 | P1 allowance (bytes) | Description table and indexes | Runs over allowance |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 10,000 | 1,143,544 | 1,143,845 | 1,834,346 | 16,384 | 0/5 |
+| 100,000 | 8,809,208 | 8,818,669 | 8,916,091 | 16,384 | 0/5 |
 
 ## Remaining acceptance
 
