@@ -64,3 +64,52 @@ async fn data_processing_is_bounded_by_fuel(#[case] source: &str, #[case] contex
 
     assert!(error.to_string().contains("fuel"), "{error}");
 }
+
+#[tokio::test]
+async fn packaged_worker_renders_with_the_service_environment() {
+    use std::process::Stdio;
+    use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::Command;
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_hubuum-template-worker"));
+    command.env_clear().kill_on_drop(true);
+    #[cfg(windows)]
+    command.env("SystemRoot", std::env::var_os("SystemRoot").unwrap());
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let request = json!({
+        "operation": "Render",
+        "max_output_bytes": 4096,
+        "context": {"name": "Hubuum"},
+        "templates": [{
+            "source": "Hello {{ name }}", "name": "greeting", "sources": [],
+            "limits": {"recursion_limit": 16, "fuel": 10000, "max_output_bytes": 4096},
+            "auto_escape": "None", "keep_trailing_newline": false,
+            "missing_data": "Strict", "max_output_bytes": 4096
+        }]
+    });
+    let sent = child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&request).unwrap())
+        .await;
+    let output = tokio::time::timeout(Duration::from_secs(30), child.wait_with_output())
+        .await
+        .expect("worker timed out")
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "worker {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    sent.unwrap();
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["Ok"][0]["output"], "Hello Hubuum");
+}

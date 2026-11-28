@@ -1,5 +1,6 @@
 use std::error::Error;
-use std::io;
+use std::io::{self, PipeReader};
+use std::os::windows::io::OwnedHandle;
 use std::path::Path;
 
 use rappct::acl::{AccessMask, ResourcePath, grant_to_package};
@@ -35,7 +36,11 @@ pub(crate) fn enter() -> Result<Worker, Box<dyn Error>> {
         }
         return Err("unexpected template worker AppContainer token".into());
     }
-    let profile = AppContainerProfile::ensure(PROFILE, "Hubuum template worker", None)?;
+    let profile = AppContainerProfile::ensure(
+        PROFILE,
+        "Hubuum template worker",
+        Some("Isolated Hubuum template rendering"),
+    )?;
     let security = SecurityCapabilitiesBuilder::new(&profile.sid)
         .lpac(true)
         .build()?;
@@ -69,12 +74,16 @@ pub(crate) fn enter() -> Result<Worker, Box<dyn Error>> {
     // Only forward bytes once the OS has placed the child into the kill-on-close
     // job. Cancelling the broker also ends the rendering process.
     let mut input = child.stdin.take().ok_or("missing isolated input pipe")?;
-    io::copy(&mut io::stdin().lock(), &mut input)?;
+    let sent = io::copy(&mut io::stdin().lock(), &mut input);
     drop(input);
-    let mut output = child.stdout.take().ok_or("missing isolated output pipe")?;
-    io::copy(&mut output, &mut io::stdout().lock())?;
-    if child.wait(None)? != 0 {
-        return Err("isolated template worker failed".into());
+    let output = child.stdout.take().ok_or("missing isolated output pipe")?;
+    let mut output = PipeReader::from(OwnedHandle::from(output));
+    let received = io::copy(&mut output, &mut io::stdout().lock());
+    let status = child.wait(None)?;
+    if status != 0 {
+        return Err(format!("isolated template worker exited with status 0x{status:08x}").into());
     }
+    sent?;
+    received?;
     Ok(Worker::BrokerFinished)
 }

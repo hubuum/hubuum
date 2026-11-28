@@ -1040,6 +1040,10 @@ jobs:
           save-if: ${{ github.event_name != 'pull_request' }}
           shared-key: ${{ matrix.platform.target }}-${{ matrix.toolchain }}-ci-test-release
       
+      - name: Verify Windows template worker startup
+        if: contains(matrix.platform.os, 'windows')
+        run: cargo test --locked --release --target ${{ matrix.platform.target }} -p hubuum-templates --test isolation packaged_worker_renders_with_the_service_environment
+
       - name: Install Linux dependencies
         if: contains(matrix.platform.os, 'ubuntu')
         run: |

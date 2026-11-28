@@ -89,8 +89,8 @@ fn main() {
         #[cfg(windows)]
         Ok(sandbox::Worker::BrokerFinished) => return,
         Err(error) => {
-            eprintln!("Could not isolate template worker: {error}");
-            std::process::exit(1);
+            eprintln!("Could not isolate template worker: {error:?}");
+            std::process::exit(71);
         }
     }
     if hubuum_templates::serve_template_worker(|| PEAK.load(Ordering::Relaxed)).is_err() {
