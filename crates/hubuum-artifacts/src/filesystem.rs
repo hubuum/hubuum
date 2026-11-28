@@ -768,11 +768,30 @@ impl FilesystemArtifactStore {
         &self,
         intent: ArtifactCreationIntent,
     ) -> ArtifactResult<ArtifactCreationIntent> {
+        self.run(move |store| store.bind_local_intent(intent)).await
+    }
+
+    /// Bind a producer claim only after its immutable destination is registered.
+    pub async fn bind_registered_intent(
+        &self,
+        intent: ArtifactCreationIntent,
+    ) -> ArtifactResult<ArtifactCreationIntent> {
         self.run(move |store| {
-            let (scope, _) = store.filesystem_binding(&intent, true)?;
-            Ok(intent.bind_filesystem(scope)?)
+            if !store
+                .destinations()?
+                .iter()
+                .any(|(id, _)| *id == intent.identity().destination())
+            {
+                return Err(ArtifactError::NotFound.into());
+            }
+            store.bind_local_intent(intent)
         })
         .await
+    }
+
+    fn bind_local_intent(&self, intent: ArtifactCreationIntent) -> Result<ArtifactCreationIntent> {
+        let (scope, _) = self.filesystem_binding(&intent, true)?;
+        Ok(intent.bind_filesystem(scope)?)
     }
 
     fn check_binding(&self, intent: &ArtifactCreationIntent) -> Result<()> {
