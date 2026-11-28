@@ -40,6 +40,7 @@ pub struct HistoryArchiveCleanupClaim {
     manifest: HistoryArchivePublicationManifest,
     encoded_intent: Vec<u8>,
     ownership: [Uuid; 2],
+    verified_manifest_digest: Option<[u8; 32]>,
 }
 impl HistoryArchiveCleanupClaim {
     /// Complete adapter boundary. The transaction must check process isolation,
@@ -50,6 +51,7 @@ impl HistoryArchiveCleanupClaim {
         capture: &HistoryArchiveCapture,
         encoded_intent: Vec<u8>,
         ownership: [Uuid; 2],
+        verified_manifest_digest: Option<[u8; 32]>,
     ) -> Result<Self, StorageError> {
         if request.publication != manifest.publication_id()
             || request.fence.incarnation() == manifest.original_history().incarnation()
@@ -69,6 +71,7 @@ impl HistoryArchiveCleanupClaim {
             manifest,
             encoded_intent,
             ownership,
+            verified_manifest_digest,
         })
     }
     pub(crate) fn matches_ownership(&self, tokens: [Uuid; 2]) -> bool {
@@ -79,6 +82,12 @@ impl HistoryArchiveCleanupClaim {
     }
     pub fn manifest(&self) -> &HistoryArchivePublicationManifest {
         &self.manifest
+    }
+    /// Expected output retained before physical promotion. The provider phase
+    /// and the catalog must be checked independently during reconciliation.
+    pub fn verified_reference(&self) -> Option<ArtifactReference> {
+        self.verified_manifest_digest
+            .map(|digest| ArtifactReference::from_catalog(self.manifest.location().clone(), digest))
     }
     pub fn encoded_intent(&self) -> &[u8] {
         &self.encoded_intent

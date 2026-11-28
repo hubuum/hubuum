@@ -210,7 +210,9 @@ impl ClaimedFilesystemHistory {
                         "History artifact is no longer sealed".into(),
                     ));
                 }
-                self.original_capture().await?;
+                self.storage
+                    .checkpoint_verified_history_archive(self.claim.verified_checkpoint(&artifact)?)
+                    .await?;
                 Ok(SealedFilesystemHistory {
                     claim: &self.claim,
                     artifact,

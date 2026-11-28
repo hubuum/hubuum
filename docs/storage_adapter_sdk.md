@@ -1300,6 +1300,16 @@ production I/O and transport publication. The 256 global/64 per-runtime publicat
 child per publication bound metadata cardinality; H4, aggregate bytes, task/FD
 limits, retained-orphan accounting and liveness remain separate evidence gates.
 
+Complete adapters implement `checkpoint_verified_history_archive` after the
+producer has read back its sealed output. Atomically check original ownership,
+pinned capture, deadline, and current catalog generation. Persist the first
+manifest digest and accept an identical retry under the same checks. Load
+this optional digest alongside the immutable destination in isolated recovery.
+PostgreSQL uses a fresh statement snapshot after the resource lock. A runtime
+configured for repeatable read or serializable isolation rejects this write.
+Apply the migration and reconcile runtime function grants before deployment.
+Reconcile all checkpointed claims before rolling back the migration.
+
 The archive execution admission returns a coupled affine parent/producer owner
 and private, non-serializable execution permit only after both slots commit.
 Adapters must preserve original effective application, API, task/deadline, budget,
