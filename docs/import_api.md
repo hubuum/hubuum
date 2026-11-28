@@ -32,6 +32,15 @@ Authentication:
 - Collection-scoped items are planned against the principal's live collection
   permissions. Scoped tokens are supported, and their permission and resource
   boundaries are persisted with the task.
+- Natural-key lookups require `ReadCollection` for named collections and path
+  components and `ReadClass` for existing classes. Missing and unreadable
+  selectors have the same diagnostic. Ambiguity counts only readable matches.
+  Grant the read actions and include the required parent collections in the
+  submitting token's scope before upgrading name-based imports.
+- When a restricted caller previews a proposed class, Hubuum validates the
+  class and its dependencies under a temporary database name. The real write
+  enforces uniqueness of the submitted name. This keeps private class names
+  out of dry-run diagnostics.
 - Overwriting an existing class or object checks `UpdateClass` or `UpdateObject`
   on that resource's identity and current attributes. External policy and token
   resource boundaries apply to the resolved target; permission for a collection

@@ -83,7 +83,23 @@ async fn relation_timestamp_overwrite_requires_update_permission(
         TimestampRelationKind::Class => ResourceKind::ClassRelation,
         TimestampRelationKind::Object => ResourceKind::ObjectRelation,
     };
-    for fixture in &fixtures {
+    for (fixture, class) in fixtures.iter().zip(&classes) {
+        for (action, resource_kind, id) in [
+            (
+                Permissions::ReadCollection,
+                ResourceKind::Collection,
+                fixture.collection.id,
+            ),
+            (Permissions::ReadClass, ResourceKind::Class, class.id),
+        ] {
+            permission_backend.add_rule(MockAllowRule {
+                group_id: policy_group.id,
+                action,
+                resource_kind,
+                resource_id: Some(id),
+                attrs: ResourceFields::default(),
+            });
+        }
         permission_backend.add_prospective_rule(MockAllowRule {
             group_id: policy_group.id,
             action: granted_permission,

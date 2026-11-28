@@ -467,7 +467,8 @@ pub(super) async fn plan_import_with_admin_status<C: AuthorizationContext>(
     if planner.outcome.aborted {
         return planner.outcome;
     }
-    if let Err(message) = preload_existing_classes(backend, &mut planner.state, request).await {
+    if let Err(message) = preload_existing_classes(backend, user, &mut planner.state, request).await
+    {
         planner.lookup_failed("class", message);
         return planner.outcome;
     }
@@ -475,7 +476,8 @@ pub(super) async fn plan_import_with_admin_status<C: AuthorizationContext>(
     if planner.outcome.aborted {
         return planner.outcome;
     }
-    if let Err(message) = preload_existing_objects(backend, &mut planner.state, request).await {
+    if let Err(message) = preload_existing_objects(backend, user, &mut planner.state, request).await
+    {
         planner.lookup_failed("object", message);
         return planner.outcome;
     }
@@ -498,14 +500,26 @@ pub(super) async fn plan_import_with_admin_status<C: AuthorizationContext>(
         return planner.outcome;
     }
     let PlanningOutcome {
-        planned_items,
+        mut planned_items,
         mut failures,
         aborted,
     } = planner.outcome;
     let mode = planner.mode;
     let pool = backend;
     if request.dry_run() {
-        match preflight_dry_run(pool, &mode, planned_items).await {
+        let preview = if planner.state.authorization.is_scoped()
+            || !planner
+                .state
+                .authorization
+                .is_admin(backend, user)
+                .await
+                .unwrap_or(false)
+        {
+            selectors::PreviewClassNames::for_creates(&planned_items, &planner.state)
+        } else {
+            selectors::PreviewClassNames::default()
+        };
+        match preflight_dry_run(pool, &mode, planned_items, &planner.state, &preview).await {
             Ok(mut preflight) => {
                 preflight.aborted |= aborted;
                 preflight.failures.splice(0..0, failures);
@@ -526,6 +540,15 @@ pub(super) async fn plan_import_with_admin_status<C: AuthorizationContext>(
         }
     }
 
+    for item in &mut planned_items {
+        if let Some(operation) = &mut item.execution {
+            selectors::bind(
+                operation,
+                &planner.state,
+                &selectors::PreviewClassNames::default(),
+            );
+        }
+    }
     PlanningOutcome {
         planned_items,
         failures,

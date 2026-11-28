@@ -25,6 +25,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Best-effort imports can resolve a parent collection by name after an
   earlier item failed to find it and a later item planned its creation.
 
+- **Breaking permission change.** Import planning now requires read access to
+  collection and class selectors. Grant the read actions and parent collection
+  scopes required by existing imports before upgrading.
+
 - Imports on the experimental memory backend preserve concurrent writes.
   Restoring an import that used the last available result ID preserves its
   receipts and prevents a later import from reusing that ID.
