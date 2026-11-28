@@ -14,6 +14,7 @@ pub struct RunningConfig {
     pub artifacts: super::artifacts::ArtifactOptions,
     /// Runtime startup requires independently retained control evidence.
     pub control_recovery_required: bool,
+    pub history_archive_filesystem_configured: bool,
     pub schema_validation: SchemaValidationConfig,
     pub query_observations: QueryObservationConfig,
     pub server: ServerConfig,
@@ -432,6 +433,7 @@ impl RunningConfig {
                 runtime_role: config.database_runtime_role.clone(),
             },
             control_recovery_required: config.control_recovery.configured(),
+            history_archive_filesystem_configured: config.history_archive_filesystem.is_some(),
             task_capacity: None,
             tasks: TaskConfig {
                 workers: config.task_workers,

@@ -9,6 +9,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- The internal collection history service can read exact versions and as-of
+  snapshots from a registered Unix filesystem archive. Set
+  `HUBUUM_HISTORY_ARCHIVE_FILESYSTEM` to its destination UUID and private
+  directory, joined by `=`. Only published copies are readable.
+
 - Offline recovery can reconcile an interrupted filesystem archive publication
   against its original private root and committed v2 intent, including a crash
   while reserving IDs before staging begins. Signed reapplication

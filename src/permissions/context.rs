@@ -2,7 +2,10 @@ use std::sync::{Arc, RwLock};
 
 use actix_web::{FromRequest, HttpMessage, HttpRequest, dev::Payload, web::Data};
 use futures_util::future::{Ready, ready};
+use hubuum_artifacts::{ArtifactStore, DestinationId};
 use hubuum_domain::ResourceRevision;
+
+use crate::config::artifacts::HistoryArchiveFilesystem;
 
 use crate::config::{ControlRecoveryOptions, PermissionBackendKind};
 use crate::errors::ApiError;
@@ -300,6 +303,7 @@ pub struct AppContext {
     services: Services,
     task_receipts: TaskReceiptService,
     history_retention: ControlRecoveryOptions,
+    history_archive_filesystem: Option<(DestinationId, Arc<dyn ArtifactStore>)>,
 }
 
 impl AppContext {
@@ -318,6 +322,7 @@ impl AppContext {
             services,
             task_receipts: TaskReceiptService::default(),
             history_retention: ControlRecoveryOptions::default(),
+            history_archive_filesystem: None,
         }
     }
 
@@ -334,6 +339,29 @@ impl AppContext {
     pub(crate) fn with_task_receipts(mut self, service: TaskReceiptService) -> Self {
         self.task_receipts = service;
         self
+    }
+
+    pub(crate) async fn with_history_archive_filesystem(
+        mut self,
+        config: Option<&HistoryArchiveFilesystem>,
+    ) -> Result<Self, ApiError> {
+        self.history_archive_filesystem = match config {
+            Some(config) => Some(config.open().await?),
+            None => None,
+        };
+        Ok(self)
+    }
+
+    pub(crate) fn history_archive_store(
+        &self,
+        destination: DestinationId,
+    ) -> Arc<dyn ArtifactStore> {
+        if let Some((id, store)) = &self.history_archive_filesystem
+            && *id == destination
+        {
+            return store.clone();
+        }
+        self.backend.artifact_store()
     }
 
     pub(crate) fn with_history_retention(mut self, options: ControlRecoveryOptions) -> Self {

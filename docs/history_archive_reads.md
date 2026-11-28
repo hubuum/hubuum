@@ -35,6 +35,25 @@ migration history to activate expiry. Rollback conservatively refuses any of the
 lifecycle control, expiry-membership or publication tables, even when empty, as
 well as retained catalog records or query pins.
 
+## Reading a warm filesystem destination
+
+On Unix, set `--history-archive-filesystem UUID=ABSOLUTE_DIRECTORY` or
+`HUBUUM_HISTORY_ARCHIVE_FILESYSTEM` to read published collection history from
+one private filesystem destination. Supply the UUID registered by the writer
+and the absolute path to its existing owner-only artifact directory. Use a path
+without symbolic links. Every server or worker configured with this setting
+needs access to the same root.
+Startup checks the directory layout and registration. The administrator
+configuration reports `history_archive_filesystem_configured` and keeps the
+directory and UUID private.
+
+An exact-version or as-of query keeps its selected reader for the life of its
+capture. Reads verify the published manifest and segment against the captured
+reference. A sealed copy returns unavailable coverage even if another store
+holds the same bytes. References to other destination IDs continue to use the
+primary artifact store. The current service still requires the captured primary
+history row for verification.
+
 ## Catalog and captured inputs
 
 A per-resource catalog persists its generation and explicit

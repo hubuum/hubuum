@@ -189,6 +189,7 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_BACKUP_MAX_CAPTURE_ROWS", Backups),
     option!("HUBUUM_RESTORE_STAGE_RETENTION_MINUTES", Restores),
     option!("HUBUUM_RESTORE_MAX_UPLOAD_BYTES", Restores),
+    option!("HUBUUM_HISTORY_ARCHIVE_FILESYSTEM", Operations, metadata),
     option!("HUBUUM_CONTROL_RECOVERY_DIRECTORY", Restores, metadata),
     option!("HUBUUM_CONTROL_RECOVERY_KEY", Restores, metadata),
     option!("HUBUUM_EXPORT_MAX_ACTIVE_TASKS_PER_USER", Exports),
