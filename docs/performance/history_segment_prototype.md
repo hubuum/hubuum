@@ -296,3 +296,90 @@ end-to-end cold reads within P2, and subset-rewrite measurements. See the
 The fixture holds artifact bytes in memory. Durable storage and reader
 compatibility across future format versions require separate evidence before
 production deployment or primary-copy retirement.
+
+## Local mixed-segment rewrite
+
+Run the full 10,000- and 100,000-version diagnostic with the command below.
+
+```bash
+cargo test --lib one_percent_subset_rewrite_traffic --locked -- --ignored --nocapture --test-threads=1
+```
+
+The fixture distributes 10,000 objects over 128 classes and 32 collections.
+Eight classes own 60% of objects. Each object has one version in the smaller
+run and ten in the larger run. Ordinary payloads contain 256 bytes of filler
+and every hundredth object contains 64 KiB. Each collection is segmented at
+the 10,000-frame limit. The selected offset rotates in each group of 100
+versions. Every touched segment produces a separate traffic record.
+
+After a warm-up, five fresh runs generated new UUIDs and independently
+verified the same logical workload. All traffic quantities are bytes.
+
+| Versions | Touched segments | Selected | Source open, median | Source scan, median | Destination written, median | Destination verification, median | Largest segment, p95 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10,000 | 32 of 32 | 100 | 2,861,033 | 12,712,710 | 12,694,361 | 15,481,230 | 4,623,784 |
+| 100,000 | 36 of 36 | 1,000 | 4,342,760 | 126,435,512 | 125,691,484 | 129,739,600 | 45,516,363 |
+
+| Run | 10k source plus destination | 10k maximum segment | 100k source plus destination | 100k maximum segment |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 28,271,256 | 4,622,985 | 256,469,747 | 45,516,363 |
+| 2 | 28,266,506 | 4,623,784 | 256,469,750 | 45,516,362 |
+| 3 | 28,268,086 | 4,622,985 | 256,469,774 | 45,516,363 |
+| 4 | 28,268,634 | 4,623,513 | 256,469,750 | 45,516,363 |
+| 5 | 28,268,098 | 4,622,985 | 256,469,781 | 45,516,363 |
+| Median | 28,268,098 | 4,622,985 | 256,469,750 | 45,516,363 |
+| p95 | 28,271,256 | 4,623,784 | 256,469,781 | 45,516,363 |
+
+With five runs, nearest-rank p95 is the largest observation. Source open
+includes the published manifest and verified framing/index blocks. Source scan
+charges each intersecting record block at its actual physical length.
+Destination writes include the sealed manifest. Verification reads back the
+manifest and every destination block and reopens its index. Each segment stayed
+below the P8 ceiling of 134,217,728 bytes for source open, source scan and
+destination writes combined. Subsequent independent lookups compared every
+complete surviving record and checked that each selected UUID was absent.
+
+The fixture uses the memory artifact adapter and excludes database/WAL,
+provider retries, process RSS, publication, superseded-copy cleanup and restore.
+The named deployment still needs those measurements. A staged replacement alone
+supplies no authority to switch catalogs or erase a source.
+
+The rewrite entry point takes an admitted output receipt. Its intent binds the
+exact source manifest digest and sorted resource/version pairs to the new
+attempt. A caller can retain that intent before writing and reconcile the same
+attempt after a restart. The provider checks its owner when staging, sealing
+and fencing the replacement. A different selection cannot use the receipt.
+If the worker loses a seal or publication reply, it can reopen the provider and
+resolve the retained intent. Recovery reads back the sealed manifest and blocks,
+checks each surviving interval against the replacement index and reconstructs
+the expected stream digest from the source frames and the retained header and
+index. This also checks payloads and dependencies when the logical identities
+match. The worker rereads the provider phase under the same owner before
+returning the verified output and any existing publication reference. A fenced
+attempt yields a conflict. Recovery reports the extra destination reads in its
+verification byte count. The five measurements above cover fresh writes.
+Only the owner responsible for settlement can fence an abandoned attempt,
+so a failed writer cannot invalidate a concurrent successful write.
+Fencing prevents subsequent publication. Physical cleanup requires separate evidence.
+
+For a batch spanning several segments, the coordinator supplies the exact batch
+of up to 1,000 resource/version pairs and identifies the members expected in
+each source. Before staging any replacement, the coordinator totals the selected
+frame lengths from the published indexes. All touched sources share a limit of
+1,000 physical frames and 16 MiB. Each copy of a selected resource version in
+a distinct published segment counts against both limits. A missing member,
+a repeated source, or a repeated assignment within one source rejects the
+batch. Each admitted projection binds its source manifest digest. The
+subsequent frame scan checks the full resource and version identities.
+
+A rewrite scans the surviving frames for dependencies on any
+selected version, including versions in another segment. A selected frame
+encountered outside its expected membership also blocks the rewrite. The same
+bounded scan can check a retained segment that the coordinator expects to leave
+intact. The caller must cover the complete inventory and fence its generation
+before catalog handoff or deletion.
+
+Multi-segment output intents bind the full sorted membership, the source
+projection and the source manifest. Reordering an equivalent batch permits
+recovery. Changing another target or its assignment to this source requires a
+new intent. Existing single-segment attempts keep their original commitment.

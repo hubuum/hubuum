@@ -154,6 +154,27 @@ P1/P2 performance acceptance. Full 10k/100k catalog allocation, worker RSS,
 constrained profiles, complete pipeline amplification and subset-rewrite costs
 remain unqualified. No cold-provider or source-retirement acceptance is claimed.
 
+A published mixed segment can stage a fresh replacement from exact resource and
+version UUIDs. Before staging, the batch admits up to 1,000 selected frames
+and 16 MiB across all supplied sources. A resource version present at two
+immutable destinations consumes two frame slots and the bytes of both copies.
+The coordinator requires coverage of every selected resource version and
+accepts each published source once. The worker authenticates and decodes
+every frame, including selected frames. Surviving frames retain their original
+bytes. An absent version, a
+survivor depending on a selected version, corruption or a depleted read budget
+stops staging. After a restart the same owned attempt can recover a sealed or
+published replacement. The worker verifies the destination and compares every
+surviving frame with the original source before returning its provider state.
+Mixed and untouched segments can be checked against all versions in the batch.
+When every frame in a segment is selected, the worker verifies the complete
+resource and version UUID in each authenticated frame and returns the original
+artifact reference and selection commitment. This produces no replacement.
+The same 16 MiB selected-frame limit applies before reading the frames.
+The owning operation must account for every source and fence the catalog
+generation before publishing the handoff and retiring the old copy. See the
+[local subset-rewrite measurements](performance/history_segment_prototype.md#local-mixed-segment-rewrite).
+
 Capture staging exhaustion preserves at most 4 KiB of encoded historical
 authorization facts plus fixed original request/fence/lifetime metadata in a
 private validated error proof. Both adapters preserve this proof across their
