@@ -86,7 +86,7 @@ fn now() -> Result<u64> {
         .map(|time| time.as_secs())
         .map_err(|_| invalid())
 }
-fn key(bytes: &[u8; 16]) -> String {
+fn key(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 fn block_key(ordinal: u32) -> String {
@@ -156,6 +156,20 @@ impl Limits {
     }
 }
 impl State {
+    fn preparing(intent: &ArtifactCreationIntent, expires: u64) -> Self {
+        Self {
+            format: 2,
+            owner: Some(intent.clone()),
+            identity: intent.identity().clone(),
+            limits: intent.limits().into(),
+            expires,
+            phase: Phase::Preparing,
+            blocks: 0,
+            bytes: 0,
+            cleanup_next: 0,
+        }
+    }
+
     fn decode(bytes: &[u8]) -> Result<Self> {
         let state: Self = decode(bytes)?;
         state.limits.validated()?;
@@ -355,7 +369,11 @@ impl FilesystemArtifactStore {
         }
         self.atomic(&self.root, "format", ROOT_FORMAT)
     }
-    fn check_identities(&self, identity: &ArtifactIdentity, require_existing: bool) -> Result<()> {
+    fn check_identities(
+        &self,
+        identity: &ArtifactIdentity,
+        require_existing: bool,
+    ) -> Result<usize> {
         let claims = [
             ("attempts", key(identity.attempt().as_bytes())),
             ("versions", key(identity.version().as_bytes())),
@@ -363,12 +381,14 @@ impl FilesystemArtifactStore {
         // Preflight both keys before writing either. A crash between claims
         // may leave only the attempt key. A version key alone cannot result
         // from this write order.
+        let mut existing = 0;
         let mut missing = false;
         for (directory, name) in &claims {
             let directory = open_dir(&self.root, *directory)?;
             private(&directory, true)?;
             match read(&directory, name, STATE_LIMIT) {
                 Ok(bytes) => {
+                    existing += 1;
                     let owner: ArtifactIdentity = decode(&bytes)?;
                     if &owner != identity || missing {
                         return Err(conflict());
@@ -382,7 +402,7 @@ impl FilesystemArtifactStore {
                 Err(error) => return Err(error),
             }
         }
-        Ok(())
+        Ok(existing)
     }
     fn claim_identities(&self, identity: &ArtifactIdentity) -> Result<()> {
         self.check_identities(identity, false)?;
@@ -445,6 +465,34 @@ impl FilesystemArtifactStore {
             Err(error) => Err(error),
         }
     }
+}
+
+// Before the original state is installed, a productive writer can leave
+// only its own atomic pending write. Preserve any cancellation or other data.
+fn initial_stage_directory(directory: &File) -> Result<bool> {
+    let mut producer = false;
+    let mut cancelling = false;
+    for entry in Dir::read_from(directory)? {
+        let entry = entry?;
+        let name = entry.file_name().to_bytes();
+        match name {
+            b"." | b".." => {}
+            b"pending" if !cancelling => producer = true,
+            _ if !producer
+                && !cancelling
+                && name.strip_prefix(b"cancel-").is_some_and(|digest| {
+                    digest.len() == 64
+                        && digest
+                            .iter()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+                }) =>
+            {
+                cancelling = true
+            }
+            _ => return Err(invalid()),
+        }
+    }
+    Ok(!cancelling)
 }
 
 fn open_dir(directory: &File, name: impl rustix::path::Arg) -> Result<File> {
@@ -574,6 +622,9 @@ impl ArtifactStore for FilesystemArtifactStore {
                     store.sync(&directory)
                 }
                 Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                    if !initial_stage_directory(&directory)? {
+                        return Err(conflict());
+                    }
                     store.claim_identities(&identity)?;
                     store.save(
                         &directory,
@@ -689,6 +740,9 @@ impl ArtifactStore for FilesystemArtifactStore {
                     Ok(bytes) => State::decode(&bytes)?,
                     // Interrupted initial stage has no acknowledged attempt or blocks.
                     Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                        if !initial_stage_directory(&directory)? {
+                            continue;
+                        }
                         remove(&directory, "pending")?;
                         store.sync(&directory)?;
                         fs::unlinkat(&artifacts, entry.file_name(), AtFlags::REMOVEDIR)?;
@@ -818,13 +872,38 @@ impl FilesystemArtifactStore {
         &self,
         intent: &ArtifactCreationIntent,
     ) -> ArtifactResult<Option<ArtifactCleanupReceipt>> {
+        self.cleanup_owned_step(intent, false).await
+    }
+
+    /// Cancel a committed request even when the producer has not reached create.
+    /// Success requires a durable issuer-bound tombstone and both identity indexes.
+    pub async fn cancel_owned_step(
+        &self,
+        intent: &ArtifactCreationIntent,
+    ) -> ArtifactResult<Option<ArtifactCleanupReceipt>> {
+        self.cleanup_owned_step(intent, true).await
+    }
+
+    async fn cleanup_owned_step(
+        &self,
+        intent: &ArtifactCreationIntent,
+        fence_unstarted: bool,
+    ) -> ArtifactResult<Option<ArtifactCleanupReceipt>> {
         let intent = intent.clone();
         self.run(move |store| {
             let (scope, response) = store.filesystem_binding(&intent, false)?;
             if intent.filesystem() != Some(&scope) {
                 return Err(conflict());
             }
-            let (directory, mut state) = store.state(intent.identity())?;
+            let (directory, mut state) = match store.state(intent.identity()) {
+                Ok(found) => found,
+                Err(FilesystemError::Io(error))
+                    if fence_unstarted && error.kind() == io::ErrorKind::NotFound =>
+                {
+                    store.prepare_unstarted_cancellation(&intent, &scope.cleanup_commitment)?
+                }
+                Err(error) => return Err(error),
+            };
             if state.owner.as_ref() != Some(&intent) || state.phase == Phase::Published {
                 return Err(conflict());
             }
@@ -856,6 +935,73 @@ impl FilesystemArtifactStore {
             )?))
         })
         .await
+    }
+
+    // The caller holds the root lock and has verified the original issuer.
+    // A missing state next to payload, metadata or either ID reservation is
+    // ambiguous. Preserve all of it for recovery.
+    fn prepare_unstarted_cancellation(
+        &self,
+        intent: &ArtifactCreationIntent,
+        commitment: &[u8; 32],
+    ) -> Result<(File, State)> {
+        let identity = intent.identity();
+        let reservations = self.check_identities(identity, false)?;
+        if !self
+            .destinations()?
+            .iter()
+            .any(|(id, _)| *id == identity.destination())
+        {
+            return Err(conflict());
+        }
+        let artifacts = open_dir(&self.root, "artifacts")?;
+        private(&artifacts, true)?;
+        let name = key(identity.artifact().as_bytes());
+        if reservations == 0 {
+            match fs::mkdirat(&artifacts, &name, Mode::RWXU) {
+                Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+                Err(error) => return Err(error.into()),
+            }
+            self.sync(&artifacts)?;
+        }
+        let directory = open_dir(&artifacts, &name)?;
+        private(&directory, true)?;
+        // Keep a positive owner across interruption of the index writes. The
+        // scratch name comes from the original issuer's full intent binding.
+        let scratch = format!("cancel-{}", key(commitment));
+        let mut state = State::preparing(intent, 0);
+        state.phase = Phase::Discarded;
+        let expected = encode(&state)?;
+        let mut complete = false;
+        for entry in Dir::read_from(&directory)? {
+            match entry?.file_name().to_bytes() {
+                b"." | b".." => {}
+                name if name == scratch.as_bytes() => {
+                    let retained = read(&directory, &scratch, STATE_LIMIT)?;
+                    if !expected.starts_with(&retained) {
+                        return Err(conflict());
+                    }
+                    complete = retained == expected;
+                }
+                _ => return Err(conflict()),
+            }
+        }
+        // Existing reservations can be completed only if the original durable
+        // cancellation authorized them before the producer could acquire ownership.
+        if reservations != 0 && !complete {
+            return Err(conflict());
+        }
+        let mut pending = open_file(&directory, &scratch, OFlags::WRONLY | OFlags::CREATE)?;
+        if !complete {
+            pending.set_len(0)?;
+            pending.write_all(&expected)?;
+        }
+        self.sync(&pending)?;
+        self.sync(&directory)?;
+        self.claim_identities(identity)?;
+        fs::renameat(&directory, &scratch, &directory, "state")?;
+        self.sync(&directory)?;
+        Ok((directory, state))
     }
 
     fn check_cleanup_directory(&self, directory: &File, state: &State) -> Result<()> {
@@ -1099,17 +1245,12 @@ impl OwnedArtifactStore for FilesystemArtifactStore {
                     (state, false)
                 }
                 Err(FilesystemError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
-                    let state = State {
-                        format: 2,
-                        owner: Some(intent.clone()),
-                        identity: identity.clone(),
-                        limits: intent.limits().into(),
-                        expires: now()?,
-                        phase: Phase::Preparing,
-                        blocks: 0,
-                        bytes: 0,
-                        cleanup_next: 0,
-                    };
+                    // A cancellation interrupted before its first rename owns this
+                    // directory. Only its original issuer may finish the fence.
+                    if !initial_stage_directory(&directory)? {
+                        return Err(conflict());
+                    }
+                    let state = State::preparing(&intent, now()?);
                     // Commit ownership before further identity claims or data I/O.
                     store.save(&directory, &state)?;
                     (state, true)
