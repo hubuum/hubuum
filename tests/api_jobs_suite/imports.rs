@@ -53,6 +53,45 @@ mod tests {
     const IMPORTS_ENDPOINT: &str = "/api/v1/imports";
     type TimestampPair = (NaiveDateTime, NaiveDateTime);
 
+    #[rstest]
+    #[case::submit(false)]
+    #[case::credential_approval(true)]
+    #[actix_web::test]
+    async fn import_preparation_rejects_oversize_before_creating_work(
+        #[case] credential_approval: bool,
+        #[future(awt)] test_context: TestContext,
+    ) {
+        use crate::tests::api_operations::post_request;
+        use serde_json::{Value, json};
+
+        let import = json!({
+            "version": CURRENT_IMPORT_VERSION,
+            "graph": {"group_memberships": [{
+                "principal_ref": "principal", "group_ref": "group",
+                "sources": vec![json!({"source": "sync", "source_scope_ref": "scope", "source_key": "member"}); 10_000]
+            }]}
+        });
+        let (path, body) = if credential_approval {
+            (
+                "/api/v1/iam/credential-approvals",
+                json!({
+                    "password": "testadminpassword",
+                    "operation": {"kind": "import_credentials", "import": import}
+                }),
+            )
+        } else {
+            (IMPORTS_ENDPOINT, import)
+        };
+        let response =
+            post_request(&test_context.pool, &test_context.admin_token, path, body).await;
+        let response = assert_response_status(response, StatusCode::PAYLOAD_TOO_LARGE).await;
+        assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+        assert!(!response.headers().contains_key("retry-after"));
+        let error: Value = test::read_body_json(response).await;
+        assert_eq!(error["reason"], "api_capacity_candidates");
+        assert_eq!(error["retryable"], false);
+    }
+
     struct CoreTimestampImportNames {
         collection: String,
         classes: [String; 2],

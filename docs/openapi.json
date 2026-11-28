@@ -20271,6 +20271,16 @@
               }
             }
           },
+          "413": {
+            "description": "Import credential approval exceeds 10,000 preparation candidates (api_capacity_candidates). Reduce the import. Cache-Control: no-store; no Retry-After.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiRequestAdmissionErrorResponse"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Reauthentication throttled",
             "content": {
@@ -25143,7 +25153,7 @@
             }
           },
           "413": {
-            "description": "Request input or output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes); terminal until the request is reduced. Cache-Control: no-store; no Retry-After.",
+            "description": "The import exceeds 10,000 preparation candidates (api_capacity_candidates), or input/output exceeds its admitted byte allowance (api_capacity_input_bytes or api_capacity_output_bytes). Reduce the request. Cache-Control: no-store; no Retry-After.",
             "content": {
               "application/json": {
                 "schema": {
@@ -29520,6 +29530,7 @@
           "api_capacity_deployment",
           "api_capacity_principal",
           "api_capacity_input_bytes",
+          "api_capacity_candidates",
           "api_capacity_output_bytes",
           "api_capacity_deadline_exceeded",
           "api_capacity_identity_unavailable",

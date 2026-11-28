@@ -169,6 +169,9 @@ impl ApiError {
             ApiError::ApiRequestAdmission(reason) if reason.is_retryable() => {
                 "Expensive request admission is temporarily unavailable; retry after capacity or control state recovers"
             }
+            ApiError::ApiRequestAdmission(ApiRequestRejection::Candidates) => {
+                "An import accepts up to 10,000 preparation candidates. Reduce the graph or its nested entries."
+            }
             ApiError::ApiRequestAdmission(_) => {
                 "The request exceeds its execution or size allowance; reduce the request before retrying"
             }
@@ -460,9 +463,9 @@ impl ResponseError for ApiError {
                 ApiRequestRejection::Deployment | ApiRequestRejection::Principal => {
                     StatusCode::TOO_MANY_REQUESTS
                 }
-                ApiRequestRejection::InputBytes | ApiRequestRejection::OutputBytes => {
-                    StatusCode::PAYLOAD_TOO_LARGE
-                }
+                ApiRequestRejection::InputBytes
+                | ApiRequestRejection::Candidates
+                | ApiRequestRejection::OutputBytes => StatusCode::PAYLOAD_TOO_LARGE,
                 ApiRequestRejection::DeadlineExceeded => StatusCode::UNPROCESSABLE_ENTITY,
                 ApiRequestRejection::IdentityUnavailable
                 | ApiRequestRejection::ReconciliationRequired => StatusCode::SERVICE_UNAVAILABLE,
@@ -594,6 +597,7 @@ mod tests {
     #[case(ApiRequestRejection::Deployment, StatusCode::TOO_MANY_REQUESTS)]
     #[case(ApiRequestRejection::Principal, StatusCode::TOO_MANY_REQUESTS)]
     #[case(ApiRequestRejection::InputBytes, StatusCode::PAYLOAD_TOO_LARGE)]
+    #[case(ApiRequestRejection::Candidates, StatusCode::PAYLOAD_TOO_LARGE)]
     #[case(ApiRequestRejection::OutputBytes, StatusCode::PAYLOAD_TOO_LARGE)]
     #[case(
         ApiRequestRejection::DeadlineExceeded,

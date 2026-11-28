@@ -25,6 +25,10 @@ intervals and read epochs through typed error evidence and restore remapping.
 Preserve both archive-budget and lifecycle-gap evidence through adapter errors;
 API request rejection reasons keep their existing priority.
 
+Clients matching `ApiRequestRejection` exhaustively must add `Candidates`.
+It maps to `StorageErrorKind::InputTooLarge` and a terminal HTTP 413 with the
+wire reason `api_capacity_candidates`.
+
 **Breaking archive recovery capability.** Complete adapters must implement
 `load_history_archive_cleanup` and `settle_history_archive_cleanup` under
 offline control authority. Load the original, uniquely pinned claim under the
