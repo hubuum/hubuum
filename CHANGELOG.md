@@ -281,6 +281,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Task submissions use less temporary memory when hashing large JSON requests.
+  Existing idempotency keys and stored request hashes continue to work.
+
 - **Breaking for older experimental archive readers.** New history segments use
   a compact v2 index and 64 KiB blocks to reduce cold exact and as-of reads.
   Upgrade all archive readers and recovery tools before publishing v2 segments.

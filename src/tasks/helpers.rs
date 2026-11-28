@@ -1,6 +1,6 @@
 use actix_web::http::header::HeaderMap;
+use hubuum_domain::canonical_json_sha256;
 use hubuum_task_core::{IdempotencyKey, IdempotencyKeyError};
-use sha2::{Digest, Sha256};
 use tracing::debug;
 
 use crate::errors::ApiError;
@@ -16,14 +16,7 @@ use super::types::{
 };
 
 pub fn request_hash(payload: &serde_json::Value) -> Result<String, ApiError> {
-    let bytes = serde_json::to_vec(&canonicalize_json(payload))?;
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+    Ok(canonical_json_sha256(payload)?)
 }
 
 pub fn idempotency_key_from_headers(
@@ -49,26 +42,6 @@ pub fn idempotency_key_from_headers(
 
 fn idempotency_key_error(error: IdempotencyKeyError) -> ApiError {
     ApiError::BadRequest(format!("Invalid Idempotency-Key: {error}"))
-}
-
-fn canonicalize_json(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Array(items) => {
-            serde_json::Value::Array(items.iter().map(canonicalize_json).collect())
-        }
-        serde_json::Value::Object(map) => {
-            let mut keys = map.keys().cloned().collect::<Vec<_>>();
-            keys.sort();
-
-            let mut canonical = serde_json::Map::with_capacity(map.len());
-            for key in keys {
-                canonical.insert(key.clone(), canonicalize_json(&map[&key]));
-            }
-
-            serde_json::Value::Object(canonical)
-        }
-        _ => value.clone(),
-    }
 }
 
 pub(super) fn sanitize_error_for_storage(err: &ApiError) -> String {
