@@ -42,6 +42,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Task responses include a timestamped progress observation. Clients can
   distinguish waiting for a worker from waiting for a durable continuation and
   see when an active task has a pending cancellation.
+
+- Administrator configuration reports `artifacts.cold_retrieval` as `disabled`.
+  Startup rejects attempts to select an AWS cold retrieval profile through
+  `HUBUUM_ARCHIVE_COLD_RETRIEVAL` or `--archive-cold-retrieval`.
 - Offline recovery can reconcile an interrupted filesystem archive publication
   against its original private root and committed v2 intent, including a crash
   while reserving IDs before staging begins. Signed reapplication

@@ -197,6 +197,7 @@ pub const APP_CONFIG_ENVIRONMENT: &[EnvironmentVariable] = &[
     option!("HUBUUM_EXPORT_TEMPLATE_MAX_OBJECTS", Exports),
     option!("HUBUUM_EXPORT_MAX_OUTPUT_BYTES", Exports),
     option!("HUBUUM_ARTIFACT_MAX_SPOOL_BYTES", Exports),
+    option!("HUBUUM_ARCHIVE_COLD_RETRIEVAL", Exports),
     option!("HUBUUM_ARTIFACT_WORKER_RESIDENT_BYTES", Exports),
     option!("HUBUUM_EXPORT_STAGE_TIMEOUT_MS", Exports),
     option!("HUBUUM_EXPORT_DB_STATEMENT_TIMEOUT_MS", Exports),

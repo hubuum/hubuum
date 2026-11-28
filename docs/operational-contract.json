@@ -3993,6 +3993,30 @@
       "dynamic_prefix": false
     },
     {
+      "name": "HUBUUM_ARCHIVE_COLD_RETRIEVAL",
+      "owner": "exports",
+      "exposure": "public",
+      "value_kind": "enum",
+      "default_is_set": true,
+      "default": [
+        "disabled"
+      ],
+      "dynamic_default": null,
+      "allowed_values": [
+        "disabled"
+      ],
+      "minimum": null,
+      "maximum": null,
+      "runtime_roles": [
+        "all",
+        "api",
+        "worker"
+      ],
+      "appears_in_running_configuration": true,
+      "source": "server",
+      "dynamic_prefix": false
+    },
+    {
       "name": "HUBUUM_ARCHIVE_TEST_DATABASE_URL",
       "owner": "operations",
       "exposure": "secret",
@@ -8829,6 +8853,27 @@
     {
       "command": "hubuum-server",
       "options": [
+        {
+          "id": "cold_retrieval",
+          "long": "archive-cold-retrieval",
+          "short": null,
+          "environment": "HUBUUM_ARCHIVE_COLD_RETRIEVAL",
+          "value_kind": "enum",
+          "value_count": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "default": [
+            "disabled"
+          ],
+          "dynamic_default": null,
+          "allowed_values": [
+            "disabled"
+          ],
+          "required": false,
+          "conflicts_with": [],
+          "requires": []
+        },
         {
           "id": "max_spool_bytes",
           "long": "max-spool-bytes",

@@ -29573,10 +29573,22 @@
           "api_capacity_reconciliation_required"
         ]
       },
+      "ArchiveColdRetrieval": {
+        "type": "string",
+        "description": "Cold retrieval modes supported by this server release.",
+        "enum": [
+          "disabled"
+        ]
+      },
       "ArtifactOptions": {
         "type": "object",
         "description": "Operational admission limits. Retained manifests use a stable format ceiling,\nso lowering these limits never changes which existing outputs can be read.",
         "properties": {
+          "cold_retrieval": {
+            "$ref": "#/components/schemas/ArchiveColdRetrieval",
+            "description": "Select the archive cold retrieval mode. This release supports only disabled.",
+            "default": "disabled"
+          },
           "max_spool_bytes": {
             "type": "integer",
             "format": "int64",
